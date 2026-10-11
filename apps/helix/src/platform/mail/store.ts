@@ -19,6 +19,11 @@ import { MailFolderStore } from "./store-folders.js";
 import { MailInboundStore } from "./store-inbound.js";
 import { MailOutboundStore } from "./store-outbound.js";
 import { MailPreferencesStore } from "./store-preferences.js";
+import {
+  type MessageAttachmentContent,
+  type ReadMessageAttachmentInput,
+  readVisibleMessageAttachment,
+} from "./store-attachment-read.js";
 import { MailRoutingStore } from "./store-routing.js";
 import { MailSearchStore } from "./store-search.js";
 import { MailThreadStore } from "./store-threads.js";
@@ -41,7 +46,6 @@ import type {
   MailSearchProjectionStore,
   MailSearchRecord,
   MailSearchRequest,
-  MailReplyContext,
   MailThreadDetail,
   MailThreadGetRequest,
   MailThreadListRequest,
@@ -51,6 +55,7 @@ import type {
   MailVacationRecord,
   StoredMailMessage,
 } from "./types.js";
+import type { SetMailUserSettingsInput } from "./user-settings-input.js";
 export {
   type BindOutboundProviderDecisionInput,
   type ClaimedOutboundMail,
@@ -89,7 +94,10 @@ export class PostgresMailStore
   private readonly drafts: MailDraftStore;
   private readonly searchProjection: MailSearchStore;
 
-  constructor(sql: postgres.Sql, options: PostgresMailStoreOptions = {}) {
+  constructor(
+    private readonly sql: postgres.Sql,
+    private readonly options: PostgresMailStoreOptions = {},
+  ) {
     this.drafts = new MailDraftStore(sql);
     this.routing = new MailRoutingStore(sql);
     this.inbound = new MailInboundStore(sql, options);
@@ -162,6 +170,12 @@ export class PostgresMailStore
 
   insertInboundMessage(input: MailMessageInput): Promise<StoredMailMessage> {
     return this.inbound.insertInboundMessage(input);
+  }
+
+  readMessageAttachment(
+    input: ReadMessageAttachmentInput,
+  ): Promise<MessageAttachmentContent | null> {
+    return readVisibleMessageAttachment(this.sql, this.options.storageResolver, input);
   }
 
   readRawSource(input: {
@@ -287,14 +301,7 @@ export class PostgresMailStore
     return this.preferences.getUserSettings(orgId, actorId);
   }
 
-  setUserSettings(input: {
-    readonly orgId: string;
-    readonly actorId: string;
-    readonly signatureText: string;
-    readonly signatureHtml: string | null;
-    readonly includeSignatureOnReplies: boolean;
-    readonly blockedSenders: readonly string[];
-  }): Promise<MailUserSettings> {
+  setUserSettings(input: SetMailUserSettingsInput): Promise<MailUserSettings> {
     return this.preferences.setUserSettings(input);
   }
 
@@ -366,10 +373,6 @@ export class PostgresMailStore
 
   setMailClassification(input: MailClassificationWrite): Promise<void> {
     return this.searchProjection.setMailClassification(input);
-  }
-
-  getReplyContext(input: MailThreadGetRequest): Promise<MailReplyContext | null> {
-    return this.threads.getReplyContext(input);
   }
 
   getThread(input: MailThreadGetRequest): Promise<MailThreadDetail | null> {

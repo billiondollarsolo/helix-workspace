@@ -13,6 +13,11 @@ import {
 } from "./errors.js";
 import type { ClaimedOutboundMail, MailStore, OutboundMailQueueStore } from "./store.js";
 import { prepareOutboundEnvelope } from "./threading.js";
+import {
+  allowlistedOutboundHeaders,
+  assertAllowlistedOutboundHeaders,
+  nodemailerMailbox,
+} from "./outbound-format.js";
 import type {
   MailAttachmentInput,
   MailOutboundDeliveryResult,
@@ -164,20 +169,28 @@ export class NodemailerMailTransport implements OutboundMailTransport {
   ): Promise<MailOutboundDeliveryResult> {
     const dkim = await this.resolveDkim?.(envelope.from.address);
     const info = await this.transporter.sendMail({
-      from: formatAddress(envelope.from),
-      to: envelope.to.map(formatAddress),
-      cc: envelope.cc.map(formatAddress),
-      bcc: envelope.bcc.map(formatAddress),
+      from: nodemailerMailbox(envelope.from),
+      to: envelope.to.map(nodemailerMailbox),
+      cc: envelope.cc.map(nodemailerMailbox),
+      bcc: envelope.bcc.map(nodemailerMailbox),
+      ...(envelope.replyTo === undefined ? {} : { replyTo: nodemailerMailbox(envelope.replyTo) }),
+      ...(envelope.envelopeRecipients === undefined
+        ? {}
+        : { envelope: { from: envelope.from.address, to: [...envelope.envelopeRecipients] } }),
       subject: envelope.subject,
       messageId: envelope.messageId,
       inReplyTo: envelope.inReplyTo,
       references: envelope.references === undefined ? undefined : [...envelope.references],
-      headers: { "X-Helix-Idempotency-Key": handoff.idempotencyKey },
+      headers: {
+        ...allowlistedOutboundHeaders(envelope.headers),
+        "X-Helix-Idempotency-Key": handoff.idempotencyKey,
+      },
       text: envelope.text,
       html: envelope.html,
       attachments: envelope.attachments.map((attachment) => ({
         filename: attachment.filename,
         contentType: attachment.contentType,
+        ...(attachment.contentId === undefined ? {} : { cid: attachment.contentId }),
         content: attachmentContent(attachment.content),
       })),
       ...(dkim === undefined || dkim === null ? {} : { dkim }),
@@ -271,6 +284,7 @@ export class MailSendService {
       throw new MailSendIdempotencyRequiredError();
     }
     assertKnownOutboundAttachmentSizes(input.envelope);
+    assertAllowlistedOutboundHeaders(input.envelope.headers);
     const now = input.now ?? new Date();
     const sendAt = input.sendAt;
     if (
@@ -281,8 +295,9 @@ export class MailSendService {
     ) {
       throw new RangeError("Scheduled mail must be sent within the next 366 days.");
     }
+    const { envelopeRecipients: _transient, ...queued } = input.envelope;
     const envelope = prepareOutboundEnvelope({
-      ...input.envelope,
+      ...queued,
       ...(input.inReplyTo === undefined ? {} : { inReplyTo: input.inReplyTo }),
       ...(input.references === undefined ? {} : { references: input.references }),
     });
@@ -558,12 +573,6 @@ export function isTerminalDeliveryError(error: unknown): boolean {
   const value = error as { readonly retryable?: unknown; readonly responseCode?: unknown };
   if (typeof value.retryable === "boolean") return !value.retryable;
   return typeof value.responseCode === "number" && value.responseCode >= 500;
-}
-
-function formatAddress(address: { readonly address: string; readonly name?: string }): string {
-  return address.name === undefined
-    ? address.address
-    : `"${address.name.replaceAll('"', '\\"')}" <${address.address}>`;
 }
 
 function normalizeDeliveryMetadata(info: SMTPTransport.SentMessageInfo): JsonObject {

@@ -166,6 +166,20 @@ function mapThreadMessage(row: MailThreadRow): MailThreadMessage {
     ...(typeof row.metadata.plainBody === "string" ? { plainBody: row.metadata.plainBody } : {}),
     hasAttachment: row.has_attachment,
     attachments: mailThreadAttachments(row.attachments),
+    ...(typeof row.metadata.messageId === "string"
+      ? { messageIdHeader: row.metadata.messageId }
+      : {}),
+    ...(Array.isArray(row.metadata.references)
+      ? {
+          references: row.metadata.references.filter(
+            (reference): reference is string => typeof reference === "string",
+          ),
+        }
+      : {}),
+    ...(Array.isArray(row.metadata.replyTo)
+      ? { replyTo: mailAddressArray(row.metadata.replyTo) }
+      : {}),
+    ...(typeof row.metadata.subject === "string" ? { subject: row.metadata.subject } : {}),
   };
 }
 

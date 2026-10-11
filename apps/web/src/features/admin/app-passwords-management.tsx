@@ -64,7 +64,12 @@ const commonScopes = [
   "mail.send",
   "drive.read",
   "drive.write",
+  "drive.delete",
 ] as const;
+
+/** Every scope WebDAV needs for read, upload, and delete (desktop sync via rclone). */
+const desktopSyncScopes = ["drive.read", "drive.write", "drive.delete"] as const;
+const DESKTOP_SYNC_HINT_ID = "app-password-desktop-sync-hint";
 
 const ACTOR_STATUS_ID = "app-password-actor-status";
 
@@ -344,14 +349,31 @@ export function AppPasswordsManagement() {
 
           <passwordForm.Field name="scopes">
             {(field) => (
-              <ScopesField
-                id="app-password-scopes"
-                scopes={commonScopes}
-                scopesLabel="Common app password scopes"
-                value={field.state.value}
-                onBlur={field.handleBlur}
-                onChange={(value) => field.handleChange(value)}
-              />
+              <div className="grid gap-2">
+                <ScopesField
+                  id="app-password-scopes"
+                  scopes={commonScopes}
+                  scopesLabel="Common app password scopes"
+                  value={field.state.value}
+                  onBlur={field.handleBlur}
+                  onChange={(value) => field.handleChange(value)}
+                />
+                <div className="flex flex-wrap items-center gap-2" aria-label="Scope presets">
+                  <Button
+                    aria-describedby={DESKTOP_SYNC_HINT_ID}
+                    onClick={() => field.handleChange(desktopSyncScopes.join(" "))}
+                    size="xs"
+                    type="button"
+                    variant="outline"
+                  >
+                    Desktop sync (WebDAV)
+                  </Button>
+                  <span className="text-xs text-muted-foreground" id={DESKTOP_SYNC_HINT_ID}>
+                    Sets {desktopSyncScopes.join(", ")} so the desktop sync can read, upload, and
+                    delete Drive files.
+                  </span>
+                </div>
+              </div>
             )}
           </passwordForm.Field>
 

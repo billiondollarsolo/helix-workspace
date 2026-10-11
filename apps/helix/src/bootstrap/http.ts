@@ -16,6 +16,7 @@ import { TenantActorMismatchError, TenantResolutionError } from "../platform/ten
 import {
   CredentialAuthError,
   installUntrustedIdentityHeaderGuard,
+  sendCredentialAuthError,
   traceIdForRequest,
 } from "./request-principal.js";
 
@@ -125,14 +126,7 @@ export async function installHttp() {
       );
     }
     if (error instanceof CredentialAuthError) {
-      return reply.code(error.statusCode).send(
-        buildErrorEnvelope({
-          statusCode: error.statusCode,
-          code: error.code,
-          message: error.message,
-          traceId,
-        }),
-      );
+      return sendCredentialAuthError(reply, error, traceId);
     }
     if (error instanceof TenantResolutionError) {
       return reply.code(error.statusCode).send(

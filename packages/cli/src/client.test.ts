@@ -58,17 +58,17 @@ describe("buildHelixRequest", () => {
       buildHelixRequest(
         {
           kind: "tool-call",
-          toolId: "mail.list",
-          json: { source: "inline", value: '{"mailbox":"inbox"}' },
+          toolId: "mail.threads.list",
+          json: { source: "inline", value: '{"folder":"inbox"}' },
         },
         { HELIX_BASE_URL: "https://helix.example" },
-        { mailbox: "inbox" },
+        { folder: "inbox" },
       ),
     ).toMatchObject({
-      url: "https://helix.example/v1/api/tools/mail.list",
+      url: "https://helix.example/v1/api/tools/mail.threads.list",
       init: {
         method: "POST",
-        body: '{"mailbox":"inbox"}',
+        body: '{"folder":"inbox"}',
       },
     });
   });

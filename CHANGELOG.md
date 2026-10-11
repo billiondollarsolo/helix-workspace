@@ -40,8 +40,6 @@ All notable changes to Helix Workspace are documented here. This file follows
   fresh install.
 - Approved sends from API credentials keep the actor's email, so the default From address is
   the sender's mailbox instead of `<actor-id>@localhost`.
-- `mail.reply` defaults the subject to `Re: <thread subject>` and derives In-Reply-To and
-  References from the thread, so replies thread in other mail systems.
 - Outbound mail with inline attachments, including calendar invitations, is delivered: dispatch
   read staged mail attachments through Drive access checks, which never cover them.
 - Staged mail attachments keep their filename and Content-ID on the object and record a clean
@@ -51,9 +49,6 @@ All notable changes to Helix Workspace are documented here. This file follows
 - The Assistant works again for fully scoped members: Meet tools get their own opt-in tool
   group, so the default groups stay within the 128-tool limit instead of failing every turn
   with "Too many Assistant tools are selected".
-- CLI mail commands match the mail tools: `send`/`reply` send `bodyText`/`bodyHtml` and an
-  idempotency key, `reply` takes `--to` and `--in-reply-to`, `list` calls `mail.threads.list`
-  with `--folder`/`--offset`, and `search` sends `labels`.
 - Drive folder access grants can be changed and removed, not only created.
 - The Drive file details panel resets its rename field when another file is selected.
 - Drive version restore asks for confirmation, skips the current version, and reports the result;

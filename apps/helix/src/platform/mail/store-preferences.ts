@@ -15,6 +15,7 @@ import type {
   MailUserSettings,
   MailVacationRecord,
 } from "./types.js";
+import type { SetMailUserSettingsInput } from "./user-settings-input.js";
 
 interface MailFilterRow {
   readonly id: string;
@@ -261,28 +262,44 @@ export class MailPreferencesStore {
       : mapUserSettings(rows[0]);
   }
 
-  async setUserSettings(input: {
-    readonly orgId: string;
-    readonly actorId: string;
-    readonly signatureText: string;
-    readonly signatureHtml: string | null;
-    readonly includeSignatureOnReplies: boolean;
-    readonly blockedSenders: readonly string[];
-  }): Promise<MailUserSettings> {
-    const blockedSenders = [...new Set(input.blockedSenders.map(normalizeAddress))].sort();
+  /**
+   * Partial upsert: an omitted field keeps its saved value (or the column
+   * default on first save); `signatureHtml: null` clears the HTML signature.
+   * One `insert … on conflict do update` statement, so concurrent partial
+   * writes to different fields cannot overwrite each other.
+   */
+  async setUserSettings(input: SetMailUserSettingsInput): Promise<MailUserSettings> {
+    const blockedSenders =
+      input.blockedSenders === undefined
+        ? null
+        : [...new Set(input.blockedSenders.map(normalizeAddress))].sort();
+    const has = {
+      text: input.signatureText !== undefined,
+      html: input.signatureHtml !== undefined,
+      replies: input.includeSignatureOnReplies !== undefined,
+      blocked: blockedSenders !== null,
+    };
     const rows = await this.sql<MailUserSettingsRow[]>`
       insert into mail_user_settings (
         org_id, actor_id, signature_text, signature_html,
         include_signature_on_replies, blocked_senders
       ) values (
-        ${input.orgId}, ${input.actorId}, ${input.signatureText}, ${input.signatureHtml},
-        ${input.includeSignatureOnReplies}, ${blockedSenders}
+        ${input.orgId}, ${input.actorId},
+        coalesce(${input.signatureText ?? null}::text, ''),
+        ${input.signatureHtml ?? null}::text,
+        coalesce(${input.includeSignatureOnReplies ?? null}::boolean, true),
+        coalesce(${blockedSenders}::text[], '{}')
       )
       on conflict (org_id, actor_id) do update set
-        signature_text = excluded.signature_text,
-        signature_html = excluded.signature_html,
-        include_signature_on_replies = excluded.include_signature_on_replies,
-        blocked_senders = excluded.blocked_senders,
+        signature_text = case when ${has.text}::boolean
+          then excluded.signature_text else mail_user_settings.signature_text end,
+        signature_html = case when ${has.html}::boolean
+          then excluded.signature_html else mail_user_settings.signature_html end,
+        include_signature_on_replies = case when ${has.replies}::boolean
+          then excluded.include_signature_on_replies
+          else mail_user_settings.include_signature_on_replies end,
+        blocked_senders = case when ${has.blocked}::boolean
+          then excluded.blocked_senders else mail_user_settings.blocked_senders end,
         updated_at = now()
       returning signature_text, signature_html, include_signature_on_replies,
         blocked_senders, updated_at

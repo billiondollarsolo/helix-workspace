@@ -1,4 +1,3 @@
-import { mailCompletionFlags } from "./mail-options.js";
 import type { CompletionShell } from "./parser.js";
 
 const topLevelCommands = [
@@ -37,6 +36,7 @@ export const commandActions: Record<string, readonly string[]> = {
   mail: [
     "send",
     "reply",
+    "forward",
     "list",
     "search",
     "label",
@@ -112,7 +112,11 @@ const searchFlags = ["--query", "--type", "--limit", "--json"] as const;
 const securityTierValues = ["personal", "business", "enterprise", "sovereign"] as const;
 
 const mailActionFlags: Record<string, readonly string[]> = {
-  ...mailCompletionFlags,
+  send: ["--to", "--cc", "--bcc", "--from", "--subject", "--body", "--html", "--json"],
+  reply: ["--thread-id", "--message-id", "--body", "--html", "--cc", "--bcc", "--json"],
+  forward: "--thread-id --message-id --to --cc --bcc --subject --body --json".split(" "),
+  list: "--folder --tab --label --query --limit --offset --mailbox-actor-id --json".split(" "),
+  search: ["--query", "--label", "--limit", "--mailbox-actor-id", "--json"],
   label: ["--thread-id", "--add", "--remove", "--json"],
   archive: ["--thread-id", "--json"],
   delete: ["--thread-id", "--json"],
@@ -154,11 +158,11 @@ const chatActionFlags: Record<string, readonly string[]> = {
     "--topic",
     "--member",
     "--kind",
-    "--private",
+    "--privacy",
     "--json",
   ],
-  search: ["--query", "--room-id", "--limit", "--cursor", "--json"],
-  list: ["--query", "--room-id", "--limit", "--cursor", "--json"],
+  search: ["--query", "--room-id", "--limit", "--json"],
+  list: ["--query", "--room-id", "--limit", "--json"],
   messages: ["--room-id", "--before", "--limit", "--json"],
   "message-list": ["--room-id", "--before", "--limit", "--json"],
 };
@@ -220,8 +224,8 @@ const calendarActionFlags: Record<string, readonly string[]> = {
   ],
   "event-delete": ["--event-id", "--send-cancellation", "--json"],
   delete: ["--event-id", "--send-cancellation", "--json"],
-  "event-respond": ["--event-id", "--attendee-email", "--rsvp-token", "--response", "--json"],
-  respond: ["--event-id", "--attendee-email", "--rsvp-token", "--response", "--json"],
+  "event-respond": ["--event-id", "--response", "--json"],
+  respond: ["--event-id", "--response", "--json"],
   "event-list": ["--calendar-id", "--start", "--end", "--limit", "--json"],
   list: ["--calendar-id", "--start", "--end", "--limit", "--json"],
   "find-time": [
@@ -286,7 +290,6 @@ const webhookActionFlags: Record<string, readonly string[]> = {
     "--name",
     "--url",
     "--event-subject",
-    "--secret-ref",
     "--header",
     "--headers",
     "--metadata",
@@ -299,7 +302,6 @@ const webhookActionFlags: Record<string, readonly string[]> = {
     "--name",
     "--url",
     "--event-subject",
-    "--secret-ref",
     "--header",
     "--headers",
     "--metadata",
@@ -315,7 +317,6 @@ const webhookActionFlags: Record<string, readonly string[]> = {
     "--name",
     "--slug",
     "--source",
-    "--secret-ref",
     "--metadata",
     "--enabled",
     "--disabled",
@@ -326,7 +327,6 @@ const webhookActionFlags: Record<string, readonly string[]> = {
     "--name",
     "--slug",
     "--source",
-    "--secret-ref",
     "--metadata",
     "--enabled",
     "--disabled",

@@ -48,7 +48,8 @@ workflows are development/full-workspace evidence only and are not pilot accepta
 storage-only production profile.
 
 Desktop file sync: users run **`pnpm helix:drive-sync`** (or
-`node scripts/helix-drive-sync-setup.mjs`), enter server URL + app password, and pick **mirror
+`node scripts/helix-drive-sync-setup.mjs`), enter server URL + an admin-issued app password
+(Admin → Apps & integrations → App passwords → **Desktop sync (WebDAV)** preset), and pick **mirror
 folder** or **virtual drive**. No manual rclone config required. See
 [Drive desktop sync](drive-desktop-sync.md).
 

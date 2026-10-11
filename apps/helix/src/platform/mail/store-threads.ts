@@ -10,7 +10,6 @@ import {
 } from "./store-thread-projection.js";
 import type {
   MailFolderId,
-  MailReplyContext,
   MailThreadDetail,
   MailThreadGetRequest,
   MailThreadListRequest,
@@ -107,33 +106,6 @@ export class MailThreadStore {
         and actor_id = ${input.actorId}
         and thread_id = ${input.threadId}
     `;
-  }
-
-  async getReplyContext(input: MailThreadGetRequest): Promise<MailReplyContext | null> {
-    // getThread applies mailbox visibility; only messages it returns are candidates.
-    const thread = await this.getThread(input);
-    if (thread === null) return null;
-    const visibleIds = thread.messages.map((message) => message.id);
-    const rows =
-      visibleIds.length === 0
-        ? []
-        : await this.sql<{ readonly message_id: string | null; readonly refs: unknown }[]>`
-            select metadata->>'messageId' as message_id, metadata->'references' as refs
-            from messages
-            where org_id = ${input.orgId} and thread_id = ${input.threadId}
-              and id in ${this.sql(visibleIds)}
-            order by sent_at desc, id desc
-            limit 1
-          `;
-    const latest = rows[0];
-    const references = Array.isArray(latest?.refs)
-      ? latest.refs.filter((value): value is string => typeof value === "string")
-      : [];
-    return {
-      subject: thread.subject,
-      ...(latest?.message_id == null ? {} : { messageId: latest.message_id }),
-      references,
-    };
   }
 
   async getThread(input: MailThreadGetRequest): Promise<MailThreadDetail | null> {

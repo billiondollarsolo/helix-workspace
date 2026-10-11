@@ -19,6 +19,7 @@ import type {
   UpdateMailFilterInput,
 } from "./store.js";
 import { registerMailTools } from "./tools.js";
+import * as userSettings from "./user-settings-input.js";
 import type {
   MailFilterRecord,
   MailFolderSummary,
@@ -92,7 +93,6 @@ describe("mail ingest", () => {
       arc: false,
       bimi: false,
     });
-
     expect(auth).toMatchObject({
       spf: "pass",
       dkim: "pass",
@@ -488,6 +488,7 @@ describe("mail tools", () => {
       "mail.filter.list",
       "mail.filter.update",
       "mail.folders.list",
+      "mail.forward",
       "mail.inbound.accept",
       "mail.label.apply",
       "mail.labels.list",
@@ -1653,9 +1654,8 @@ class InMemoryMailStore implements MailStore {
     return this.settings;
   }
 
-  async setUserSettings(input: Omit<MailUserSettings, "updatedAt">) {
-    this.settings = { ...input, updatedAt: now() };
-    return this.settings;
+  async setUserSettings(input: userSettings.SetMailUserSettingsInput) {
+    return (this.settings = userSettings.applyMailUserSettingsPatch(this.settings, input, now()));
   }
 
   async getVacation(_orgId: string, actorIdValue: string) {

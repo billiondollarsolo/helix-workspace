@@ -15,6 +15,9 @@ export function jsonSchemaToZod(schema: JsonObject): ZodTypeAny {
 }
 
 function convert(schema: JsonObject): ZodTypeAny {
+  if ("const" in schema) {
+    return enumSchema([schema.const]);
+  }
   if (Array.isArray(schema.enum) && schema.enum.length > 0) {
     return enumSchema(schema.enum);
   }
@@ -23,6 +26,16 @@ function convert(schema: JsonObject): ZodTypeAny {
   }
   if (Array.isArray(schema.oneOf)) {
     return unionSchema(schema.oneOf);
+  }
+
+  // Nullable tool fields publish `type: ["string", "null"]`; accept every
+  // listed type rather than only the first one.
+  if (Array.isArray(schema.type) && schema.type.length > 1) {
+    return unionSchema(
+      schema.type
+        .filter((entry): entry is string => typeof entry === "string")
+        .map((entry) => ({ ...schema, type: entry })),
+    );
   }
 
   const type = schemaType(schema);

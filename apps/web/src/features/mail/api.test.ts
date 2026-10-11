@@ -6,6 +6,7 @@ import {
   createMailFilter,
   deleteMailFilter,
   deleteMailThread,
+  forwardMail,
   getMailOutbound,
   getMailVacation,
   getMailThread,
@@ -129,6 +130,47 @@ describe("mail API", () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ threadId: "thread-1", ...message }),
+    });
+  });
+
+  it("sends reply all and forward as server-derived tool payloads", async () => {
+    const fetchImpl = vi.fn<typeof fetch>(() =>
+      Promise.resolve(Response.json({ status: "queued" })),
+    );
+    await replyToMail({ threadId: "thread-1", replyAll: true, bodyText: "Thanks" }, fetchImpl);
+    await forwardMail(
+      {
+        threadId: "thread-1",
+        messageId: "message-2",
+        to: [{ address: "boss@helix.local" }],
+        subject: "Fwd: Plans",
+        bodyText: "FYI",
+      },
+      fetchImpl,
+    );
+    expect(fetchImpl).toHaveBeenNthCalledWith(1, "/api/tools/mail.reply", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        threadId: "thread-1",
+        replyAll: true,
+        cc: [],
+        bcc: [],
+        bodyText: "Thanks",
+      }),
+    });
+    expect(fetchImpl).toHaveBeenNthCalledWith(2, "/api/tools/mail.forward", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        threadId: "thread-1",
+        messageId: "message-2",
+        to: [{ address: "boss@helix.local" }],
+        cc: [],
+        bcc: [],
+        subject: "Fwd: Plans",
+        bodyText: "FYI",
+      }),
     });
   });
 

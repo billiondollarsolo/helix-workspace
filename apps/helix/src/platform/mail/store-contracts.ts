@@ -2,6 +2,10 @@ import type { JsonObject } from "@helix/sdk-types";
 import type { TenantStorageResolver } from "../storage/tenant-resolver.js";
 import type { PostgresMailAttachmentIngestor } from "./attachment-ingestion.js";
 import type {
+  MessageAttachmentContent,
+  ReadMessageAttachmentInput,
+} from "./store-attachment-read.js";
+import type {
   MailAliasRecord,
   MailDraftRecord,
   MailFilterActions,
@@ -16,7 +20,6 @@ import type {
   MailRawSourceRecord,
   MailSearchHit,
   MailSearchRequest,
-  MailReplyContext,
   MailThreadDetail,
   MailThreadGetRequest,
   MailThreadListRequest,
@@ -26,6 +29,7 @@ import type {
   MailVacationRecord,
   StoredMailMessage,
 } from "./types.js";
+import type { SetMailUserSettingsInput } from "./user-settings-input.js";
 
 export interface CreateMailFilterInput {
   readonly orgId: string;
@@ -195,14 +199,8 @@ export interface MailStore {
   }): Promise<boolean>;
   listFilters(orgId: string, actorId: string): Promise<readonly MailFilterRecord[]>;
   getUserSettings?(orgId: string, actorId: string): Promise<MailUserSettings>;
-  setUserSettings?(input: {
-    readonly orgId: string;
-    readonly actorId: string;
-    readonly signatureText: string;
-    readonly signatureHtml: string | null;
-    readonly includeSignatureOnReplies: boolean;
-    readonly blockedSenders: readonly string[];
-  }): Promise<MailUserSettings>;
+  /** Partial update; see SetMailUserSettingsInput. */
+  setUserSettings?(input: SetMailUserSettingsInput): Promise<MailUserSettings>;
   getVacation(orgId: string, actorId: string): Promise<MailVacationRecord | null>;
   setVacation(input: SetMailVacationInput): Promise<MailVacationRecord>;
   getActiveVacation(orgId: string, actorId: string, now?: Date): Promise<MailVacationRecord | null>;
@@ -220,11 +218,10 @@ export interface MailStore {
   }): Promise<boolean>;
   search(input: MailSearchRequest): Promise<readonly MailSearchHit[]>;
   getThread(input: MailThreadGetRequest): Promise<MailThreadDetail | null>;
-  /**
-   * RFC 5322 reply context for a thread the actor can read: its subject and the
-   * latest visible message's Message-ID and References.
-   */
-  getReplyContext?(input: MailThreadGetRequest): Promise<MailReplyContext | null>;
+  /** Bytes of an attachment on a message the actor can see (used by forward). */
+  readMessageAttachment?(
+    input: ReadMessageAttachmentInput,
+  ): Promise<MessageAttachmentContent | null>;
   /**
    * List the thread-row projection for one folder view, optionally filtered by
    * category tab, label, and free-text query. Paginated; returns `total` for

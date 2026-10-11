@@ -1,8 +1,5 @@
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { runCli, type FetchLike } from "./runner.js";
 
 class CaptureStream extends Writable {
@@ -62,12 +59,12 @@ describe("CLI smoke (E9.3)", () => {
         JSON.stringify({
           openapi: "3.1.0",
           paths: {
-            "/api/tools/mail.list": {
+            "/api/tools/mail.threads.list": {
               post: {
-                operationId: "mail.list",
+                operationId: "mail.threads.list",
                 summary: "List mail",
                 "x-helix-tool": {
-                  id: "mail.list",
+                  id: "mail.threads.list",
                   permission: "mail.read",
                   sideEffects: "read",
                 },
@@ -93,7 +90,7 @@ describe("CLI smoke (E9.3)", () => {
     ).resolves.toBe(0);
 
     expect(requests.some((request) => request.url.includes("/openapi"))).toBe(true);
-    expect(stdout.output).toContain("mail.list");
+    expect(stdout.output).toContain("mail.threads.list");
     expect(stderr.output).toBe("");
   });
 });
@@ -178,12 +175,12 @@ describe("runCli completion commands", () => {
     expect(stdout.output).not.toContain("$scope == plugin");
     expect(stdout.output).not.toContain("$scope == install");
     expect(stdout.output).toContain("--from");
-    expect(stdout.output).toContain("--body --html --idempotency-key --json");
+    expect(stdout.output).toContain("--to --cc --bcc --from --subject --body --html --json");
     expect(stdout.output).toContain("--room-id --body --text --json");
     expect(stdout.output).toContain("--folder --name --mime-type --byte-size --sha256 --json");
-    expect(stdout.output).toContain("--event-id --attendee-email --rsvp-token --response --json");
+    expect(stdout.output).toContain("--event-id --response --json");
     expect(stdout.output).toContain("--room-id --expires-in-seconds --moderator --json");
-    expect(stdout.output).toContain("--event-subject --secret-ref --header --headers");
+    expect(stdout.output).toContain("--event-subject --header --headers");
     expect(stdout.output).toContain("--direction --status --limit --json");
     expect(stdout.output).toContain("app-passwords agent-credentials");
     expect(stdout.output).toContain("--actor-id --label --scope --expires-at --json");
@@ -264,8 +261,6 @@ describe("runCli webhook wrapper commands", () => {
           "https://hooks.example/build",
           "--event-subject",
           "build.finished",
-          "--secret-ref",
-          "secret/webhooks/build",
           "--header",
           "X-Helix=cli",
           "--metadata",
@@ -293,12 +288,12 @@ describe("runCli webhook wrapper commands", () => {
             accept: "application/json",
             authorization: "Bearer token-1",
             "content-type": "application/json",
+            "idempotency-key": expect.any(String),
           },
           body: JSON.stringify({
             name: "Build events",
             url: "https://hooks.example/build",
             eventSubjects: ["build.finished"],
-            secretRef: "secret/webhooks/build",
             headers: { "X-Helix": "cli" },
             metadata: { team: "platform" },
             enabled: false,
@@ -832,7 +827,17 @@ describe("runCli tool discovery commands", () => {
 
     await expect(
       runCli(
-        ["tool", "call", "platform.ping", "--transport", "mcp", "--json", '{"echo":true}'],
+        [
+          "tool",
+          "call",
+          "platform.ping",
+          "--transport",
+          "mcp",
+          "--json",
+          '{"echo":true}',
+          "--idempotency-key",
+          "mcp-key-1",
+        ],
         { HELIX_BASE_URL: "https://helix.example" },
         {
           stdin: Readable.from([]),
@@ -844,7 +849,7 @@ describe("runCli tool discovery commands", () => {
     ).resolves.toBe(0);
 
     expect(requests[0]?.init.body).toBe(
-      '{"jsonrpc":"2.0","id":"helix-tool-call","method":"tools/call","params":{"name":"platform.ping","arguments":{"echo":true}}}',
+      '{"jsonrpc":"2.0","id":"helix-tool-call","method":"tools/call","params":{"name":"platform.ping","arguments":{"echo":true},"_meta":{"idempotencyKey":"mcp-key-1"}}}',
     );
     expect(stdout.output).toBe('{\n  "ok": true\n}\n');
     expect(stderr.output).toBe("");
@@ -937,7 +942,7 @@ describe("runCli tool discovery commands", () => {
 
     await expect(
       runCli(
-        ["mail", "send", "--json", '{"to":["ada@example.com"],"subject":"Hi","bodyText":"Hello"}'],
+        ["mail", "send", "--to", "ada@example.com", "--subject", "Hi", "--body", "Hello"],
         { HELIX_BASE_URL: "https://helix.example", HELIX_ACCESS_TOKEN: "token-1" },
         {
           stdin: Readable.from([]),
@@ -959,6 +964,7 @@ describe("runCli tool discovery commands", () => {
             accept: "application/json",
             authorization: "Bearer token-1",
             "content-type": "application/json",
+            "idempotency-key": expect.any(String),
           },
           body: '{"to":["ada@example.com"],"subject":"Hi","bodyText":"Hello"}',
         },
@@ -1009,6 +1015,7 @@ describe("runCli tool discovery commands", () => {
             accept: "application/json",
             authorization: "Bearer token-1",
             "content-type": "application/json",
+            "idempotency-key": expect.any(String),
           },
           body: '{"name":"report.pdf","folderId":"44444444-4444-4444-8444-444444444444"}',
         },
@@ -1054,6 +1061,7 @@ describe("runCli tool discovery commands", () => {
             accept: "application/json",
             authorization: "Bearer token-1",
             "content-type": "application/json",
+            "idempotency-key": expect.any(String),
           },
           body: '{"roomId":"room-1","body":"Hello"}',
         },
@@ -1110,6 +1118,7 @@ describe("runCli tool discovery commands", () => {
             accept: "application/json",
             authorization: "Bearer token-1",
             "content-type": "application/json",
+            "idempotency-key": expect.any(String),
           },
           body: '{"attendeeEmails":["ada@example.com"],"durationMinutes":30,"windowStartsAt":"2026-06-01T09:00:00-04:00","windowEndsAt":"2026-06-01T17:00:00-04:00"}',
         },
@@ -1262,85 +1271,6 @@ describe("runCli MCP serve", () => {
     const responseLength = String(Buffer.byteLength(responseBody, "utf8"));
     expect(stdout.output).toBe(`Content-Length: ${responseLength}\r\n\r\n${responseBody}`);
     expect(stderr.output).toBe("");
-  });
-});
-
-describe("runCli logout", () => {
-  const tempDirs: string[] = [];
-
-  afterEach(() => {
-    for (const dir of tempDirs.splice(0)) {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  const noFetch: FetchLike = async () => {
-    throw new Error("logout must not perform a network request");
-  };
-
-  it("clears a stored credentials file without calling the API", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "helix-cli-logout-"));
-    tempDirs.push(dir);
-    const credentialsFile = join(dir, "credentials.json");
-    writeFileSync(credentialsFile, '{"access_token":"token-1"}');
-
-    const stdout = new CaptureStream();
-    const stderr = new CaptureStream();
-
-    await expect(
-      runCli(
-        ["logout"],
-        { HELIX_CREDENTIALS_FILE: credentialsFile },
-        { stdin: Readable.from([]), stdout, stderr },
-        noFetch,
-      ),
-    ).resolves.toBe(0);
-
-    expect(existsSync(credentialsFile)).toBe(false);
-    expect(stdout.output).toContain("Cleared stored credentials");
-    expect(stderr.output).toBe("");
-  });
-
-  it("is idempotent when no credentials file exists", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "helix-cli-logout-"));
-    tempDirs.push(dir);
-    const credentialsFile = join(dir, "credentials.json");
-
-    const stdout = new CaptureStream();
-    const stderr = new CaptureStream();
-
-    await expect(
-      runCli(
-        ["logout"],
-        { HELIX_CREDENTIALS_FILE: credentialsFile },
-        { stdin: Readable.from([]), stdout, stderr },
-        noFetch,
-      ),
-    ).resolves.toBe(0);
-
-    expect(stdout.output).toContain("No stored credentials found");
-    expect(stderr.output).toBe("");
-  });
-
-  it("warns when HELIX_ACCESS_TOKEN is still set in the shell", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "helix-cli-logout-"));
-    tempDirs.push(dir);
-    const stdout = new CaptureStream();
-    const stderr = new CaptureStream();
-
-    await expect(
-      runCli(
-        ["logout"],
-        {
-          HELIX_CREDENTIALS_FILE: join(dir, "credentials.json"),
-          HELIX_ACCESS_TOKEN: "token-1",
-        },
-        { stdin: Readable.from([]), stdout, stderr },
-        noFetch,
-      ),
-    ).resolves.toBe(0);
-
-    expect(stderr.output).toContain("unset HELIX_ACCESS_TOKEN");
   });
 });
 

@@ -231,7 +231,7 @@ export async function installApps(context: Awaited<ReturnType<typeof installAuth
       agentCredentialStore,
     );
     if (!resolution.ok) {
-      throw new CredentialAuthError(resolution.statusCode, resolution.code, resolution.message);
+      throw CredentialAuthError.fromResolution(resolution);
     }
     assertActorMatchesRequestTenant(request, resolution.principal.actor);
     if (resolution.principal.actor.id !== unauthenticatedActor.id)

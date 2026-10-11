@@ -10,7 +10,7 @@ import {
   type PasskeyRecord,
 } from "@/lib/auth";
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { SettingsField } from "./settings-controls";
 
 /* ---------- Security ---------- */
@@ -23,25 +23,37 @@ export function SecuritySection() {
   const [totpUri, setTotpUri] = useState<string | null>(null);
   const [recoveryCodes, setRecoveryCodes] = useState<readonly string[]>([]);
   const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [passkeyLoadError, setPasskeyLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   async function run(operation: () => Promise<void>): Promise<void> {
     setBusy(true);
     setMessage(null);
+    setError(null);
     try {
       await operation();
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Security update failed.");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Security update failed.");
     } finally {
       setBusy(false);
     }
   }
 
-  useEffect(() => {
+  /* A failed list must not read as "no passkeys": that hides credentials the
+     user may want to remove. */
+  const loadPasskeys = useCallback((): void => {
+    setPasskeyLoadError(null);
     void listPasskeys()
       .then(setPasskeys)
-      .catch(() => setPasskeys([]));
+      .catch((caught: unknown) => {
+        setPasskeyLoadError(
+          `Could not load your passkeys. ${caught instanceof Error ? caught.message : "Try again."}`,
+        );
+      });
   }, []);
+
+  useEffect(loadPasskeys, [loadPasskeys]);
 
   return (
     <>
@@ -58,12 +70,21 @@ export function SecuritySection() {
             void run(async () => {
               await addPasskey("Helix passkey");
               setPasskeys(await listPasskeys());
+              setPasskeyLoadError(null);
               setMessage("Passkey added.");
             })
           }
         >
           Add passkey
         </button>
+        {passkeyLoadError === null ? null : (
+          <div role="alert" className="mt-2">
+            {passkeyLoadError}
+            <button className="btn sm ml-2" type="button" onClick={loadPasskeys}>
+              Retry loading passkeys
+            </button>
+          </div>
+        )}
         {passkeys.map((passkey) => (
           <div key={passkey.id} className="mt-2">
             {passkey.name ?? "Passkey"}
@@ -76,6 +97,7 @@ export function SecuritySection() {
                 void run(async () => {
                   await deletePasskey(passkey.id);
                   setPasskeys(await listPasskeys());
+                  setMessage("Passkey removed.");
                 })
               }
             >
@@ -85,11 +107,15 @@ export function SecuritySection() {
         ))}
       </SettingsField>
       <SettingsField label="Authenticator app" hint="TOTP fallback requires your current password">
+        <label htmlFor="settings-current-password" className="block mb-1">
+          Current password
+        </label>
         <input
+          id="settings-current-password"
+          name="currentPassword"
           className="input"
           type="password"
           autoComplete="current-password"
-          placeholder="Current password"
           value={password}
           onChange={(event) => setPassword(event.target.value)}
         />
@@ -105,6 +131,7 @@ export function SecuritySection() {
                 setPassword("");
                 await refetchSession();
                 setRecoveryCodes([]);
+                setMessage("Authenticator app turned off.");
               })
             }
           >
@@ -130,11 +157,15 @@ export function SecuritySection() {
         {totpUri === null ? null : (
           <div className="mt-2">
             <div className="[overflow-wrap:anywhere]">{totpUri}</div>
+            <label htmlFor="settings-totp-code" className="block mt-2 mb-1">
+              6-digit code from your authenticator app
+            </label>
             <input
+              id="settings-totp-code"
+              name="totpCode"
               className="input"
               inputMode="numeric"
               autoComplete="one-time-code"
-              placeholder="6-digit code"
               value={totpCode}
               onChange={(event) => setTotpCode(event.target.value)}
             />
@@ -150,6 +181,7 @@ export function SecuritySection() {
                   setTotpCode("");
                   setPassword("");
                   await refetchSession();
+                  setMessage("Authenticator app turned on.");
                 })
               }
             >
@@ -181,6 +213,7 @@ export function SecuritySection() {
         )}
         {recoveryCodes.length === 0 ? null : <pre className="mt-2">{recoveryCodes.join("\n")}</pre>}
       </SettingsField>
+      {error === null ? null : <div role="alert">{error}</div>}
       {message === null ? null : <div role="status">{message}</div>}
     </>
   );

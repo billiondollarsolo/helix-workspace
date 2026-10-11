@@ -1,4 +1,3 @@
-import { parseBasicAuthorization } from "../util/http-auth.js";
 // ponytail: WebDAV bodies stay plain-text per RFC 4918; not the JSON error envelope. File still >400 LOC with PROPFIND XML.
 import type { Actor } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
@@ -33,6 +32,7 @@ import {
   isSecureWebDavRequest,
   type WebDavRateLimiter,
 } from "./webdav-security.js";
+import { authorizeWebDavAccess, isWebDavListable, type WebDavDriveScope } from "./webdav-access.js";
 
 export interface WebDavDriveStore extends DriveStore {
   createFolder(input: DriveFolderCreateInput): Promise<DriveEntryRecord>;
@@ -207,33 +207,22 @@ export async function registerDriveRoutes(
       ) {
         return reply.code(426).header("Upgrade", "TLS/1.2").send("WebDAV requires HTTPS.");
       }
-      const authLimit = rateLimiter.consume(`auth:${request.ip}`, 20, 60_000);
-      if (!authLimit.allowed) {
-        return reply
-          .code(429)
-          .header("Retry-After", String(authLimit.retryAfterSeconds))
-          .send("WebDAV authentication rate limit exceeded.");
-      }
-      const actor = await authenticateWebDav(request, options.appPasswords, requiredScope(method));
-      if (actor === null) {
-        return reply
-          .header("www-authenticate", 'Basic realm="Helix WebDAV"')
-          .code(401)
-          .send("WebDAV app password required.");
-      }
-      if (method !== "GET" && method !== "PROPFIND") {
-        const mutationLimit = rateLimiter.consume(
-          `mutation:${actor.orgId}:${actor.id}`,
-          120,
-          60_000,
-        );
-        if (!mutationLimit.allowed) {
-          return reply
-            .code(429)
-            .header("Retry-After", String(mutationLimit.retryAfterSeconds))
-            .send("WebDAV mutation rate limit exceeded.");
+      const access = await authorizeWebDavAccess({
+        authorization: request.headers.authorization,
+        ip: request.ip,
+        requiredScope: requiredScope(method),
+        mutation: method !== "GET" && method !== "PROPFIND",
+        authenticator: options.appPasswords,
+        rateLimiter,
+      });
+      if (!access.ok) {
+        if (access.retryAfterSeconds !== undefined) {
+          reply.header("Retry-After", String(access.retryAfterSeconds));
         }
+        if (access.status === 401) reply.header("www-authenticate", 'Basic realm="Helix WebDAV"');
+        return reply.code(access.status).send(access.message);
       }
+      const actor = access.actor;
 
       const path = parseDavFilePath(request.url);
       if (path === null) {
@@ -249,7 +238,7 @@ export async function registerDriveRoutes(
           throw error;
         }
         const target = await resolveTarget(options.store, actor, path);
-        if (target === null) {
+        if (target === null || (target.entry !== undefined && !isWebDavListable(target.entry))) {
           return reply.code(404).send("Unknown WebDAV resource.");
         }
         const depth = propfindDepth(headerString(request.headers.depth));
@@ -616,24 +605,7 @@ async function enforceDriveDlp(
   if (decision.action === "warn") reply.header("x-helix-dlp-warning", decision.classification);
 }
 
-async function authenticateWebDav(
-  request: FastifyRequest,
-  authenticator: AppPasswordAuthenticator,
-  requiredScope: string,
-): Promise<Actor | null> {
-  const credentials = parseBasicAuthorization(request.headers.authorization);
-  if (credentials === null) {
-    return null;
-  }
-  return authenticator.authenticateAppPassword({
-    username: credentials.username,
-    password: credentials.password,
-    requiredScope,
-    compatibilityScope: "webdav",
-  });
-}
-
-function requiredScope(method: WebDavMethod): "drive.read" | "drive.write" | "drive.delete" {
+function requiredScope(method: WebDavMethod): WebDavDriveScope {
   switch (method) {
     case "DELETE":
       return "drive.delete";
@@ -736,7 +708,7 @@ async function listWebDavChildren(
       limit: 250,
       ...(cursor === undefined ? {} : { cursor }),
     });
-    entries.push(...page.entries);
+    entries.push(...page.entries.filter(isWebDavListable));
     cursor = page.nextCursor ?? undefined;
   } while (cursor !== undefined);
   return entries;

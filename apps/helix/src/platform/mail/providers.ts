@@ -1,15 +1,17 @@
-import type {
-  JsonObject,
-  OutboundMailDelivery,
-  OutboundMailMessage,
-  OutboundMailProvider,
-} from "@helix/sdk-types";
+import type { JsonObject, OutboundMailDelivery, OutboundMailProvider } from "@helix/sdk-types";
 import nodemailer, { type Transporter } from "nodemailer";
 import type SMTPTransport from "nodemailer/lib/smtp-transport/index.js";
 import { z } from "zod";
 import { outboundFetch } from "../outbound-http.js";
 import { MailDeliveryError } from "./errors.js";
 import type { DkimOptionsResolver, OutboundMailTransport } from "./outbound.js";
+import {
+  formatMailboxAddress,
+  type HelixOutboundMailMessage,
+  outboundMessageHeaders,
+  toNodemailerMail,
+} from "./outbound-format.js";
+import { mailgunMessageBody, postmarkMessageBody } from "./provider-http-payloads.js";
 import type { MailOutboundDeliveryResult, MailOutboundEnvelope } from "./types.js";
 
 /**
@@ -117,7 +119,7 @@ export type FetchLike = (
   init: {
     readonly method: string;
     readonly headers: Record<string, string>;
-    readonly body: string | URLSearchParams;
+    readonly body: string | URLSearchParams | Uint8Array<ArrayBuffer>;
   },
 ) => Promise<{
   readonly ok: boolean;
@@ -165,7 +167,7 @@ export class SesMailProvider implements OutboundMailProvider {
     this.#transport = transport ?? createSmtpTransport(options);
   }
 
-  async send(message: OutboundMailMessage): Promise<OutboundMailDelivery> {
+  async send(message: HelixOutboundMailMessage): Promise<OutboundMailDelivery> {
     const dkim = await this.#resolveDkim?.(message.from.address);
     const info = await this.#transport.sendMail(toNodemailerMail(message, dkim));
     return {
@@ -211,37 +213,13 @@ export class MailgunMailProvider implements OutboundMailProvider {
     this.#fetch = options.fetch ?? defaultFetch();
   }
 
-  async send(message: OutboundMailMessage): Promise<OutboundMailDelivery> {
-    const form = new URLSearchParams();
-    form.set("from", formatAddress(message.from));
-    for (const recipient of message.to) {
-      form.append("to", formatAddress(recipient));
-    }
-    for (const recipient of message.cc) {
-      form.append("cc", formatAddress(recipient));
-    }
-    for (const recipient of message.bcc) {
-      form.append("bcc", formatAddress(recipient));
-    }
-    form.set("subject", message.subject);
-    form.set("text", message.text);
-    if (message.html !== undefined) {
-      form.set("html", message.html);
-    }
-    if (message.replyTo !== undefined) {
-      form.set("h:Reply-To", message.replyTo);
-    }
-    for (const [name, value] of headerEntries(message.headers)) {
-      form.set(`h:${name}`, value);
-    }
+  async send(message: HelixOutboundMailMessage): Promise<OutboundMailDelivery> {
+    const encoded = await mailgunMessageBody(message);
     const authorization = `Basic ${Buffer.from(`api:${this.#apiKey}`).toString("base64")}`;
     const response = await this.#fetch(`${this.#baseUrl}/v3/${this.#domain}/messages`, {
       method: "POST",
-      headers: {
-        Authorization: authorization,
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: form,
+      headers: { Authorization: authorization, "Content-Type": encoded.contentType },
+      body: encoded.body,
     });
     if (!response.ok) {
       await discardText(response);
@@ -294,7 +272,7 @@ export class SmtpRelayMailProvider implements OutboundMailProvider {
     this.#transport = transport ?? createSmtpTransport(options);
   }
 
-  async send(message: OutboundMailMessage): Promise<OutboundMailDelivery> {
+  async send(message: HelixOutboundMailMessage): Promise<OutboundMailDelivery> {
     const dkim = await this.#resolveDkim?.(message.from.address);
     const info = await this.#transport.sendMail(toNodemailerMail(message, dkim));
     return {
@@ -341,22 +319,7 @@ export class PostmarkMailProvider implements OutboundMailProvider {
     this.#fetch = options.fetch ?? defaultFetch();
   }
 
-  async send(message: OutboundMailMessage): Promise<OutboundMailDelivery> {
-    const headers = headerEntries(message.headers);
-    const body: Record<string, unknown> = {
-      From: formatAddress(message.from),
-      To: message.to.map(formatAddress).join(", "),
-      Subject: message.subject,
-      TextBody: message.text,
-      MessageStream: this.#messageStream,
-      ...(message.cc.length > 0 ? { Cc: message.cc.map(formatAddress).join(", ") } : {}),
-      ...(message.bcc.length > 0 ? { Bcc: message.bcc.map(formatAddress).join(", ") } : {}),
-      ...(message.html === undefined ? {} : { HtmlBody: message.html }),
-      ...(message.replyTo === undefined ? {} : { ReplyTo: message.replyTo }),
-      ...(headers.length > 0
-        ? { Headers: headers.map(([name, value]) => ({ Name: name, Value: value })) }
-        : {}),
-    };
+  async send(message: HelixOutboundMailMessage): Promise<OutboundMailDelivery> {
     const response = await this.#fetch(`${this.#baseUrl}/email`, {
       method: "POST",
       headers: {
@@ -364,7 +327,7 @@ export class PostmarkMailProvider implements OutboundMailProvider {
         "Content-Type": "application/json",
         "X-Postmark-Server-Token": this.#serverToken,
       },
-      body: JSON.stringify(body),
+      body: postmarkMessageBody(message, this.#messageStream),
     });
     if (!response.ok) {
       await discardText(response);
@@ -418,7 +381,9 @@ export class ProviderMailTransport implements OutboundMailTransport {
         );
       }
     }
-    const delivery = await this.provider.send(envelopeToMessage(envelope, handoff.idempotencyKey));
+    const delivery = await this.provider.send(
+      envelopeToMessage(envelope, handoff.idempotencyKey, this.provider.kind),
+    );
     return {
       ...(delivery.providerMessageId === undefined
         ? {}
@@ -577,28 +542,40 @@ export async function resolveOutboundTransport(input: {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** Providers that accept an SMTP envelope separate from the visible headers. */
+const ENVELOPE_CAPABLE_PROVIDERS = new Set(["ses", "smtp"]);
+
 function envelopeToMessage(
   envelope: MailOutboundEnvelope,
   idempotencyKey: string,
-): OutboundMailMessage {
-  const headers = {
-    "X-Helix-Idempotency-Key": idempotencyKey,
-    ...(envelope.messageId === undefined ? {} : { "Message-ID": envelope.messageId }),
-    ...(envelope.inReplyTo === undefined ? {} : { "In-Reply-To": envelope.inReplyTo }),
-    ...(envelope.references === undefined ? {} : { References: envelope.references.join(" ") }),
-  };
+  providerKind: string,
+): HelixOutboundMailMessage {
+  const recipients = envelope.envelopeRecipients?.map((address) => address.toLowerCase());
+  const separateEnvelope = recipients !== undefined && ENVELOPE_CAPABLE_PROVIDERS.has(providerKind);
+  // HTTP APIs (Mailgun, Postmark) deliver to every visible recipient, so they
+  // keep only the envelope recipients in To/Cc/Bcc rather than double-deliver.
+  const visible = (list: MailOutboundEnvelope["to"]) =>
+    (recipients === undefined || separateEnvelope
+      ? list
+      : list.filter((entry) => recipients.includes(entry.address.toLowerCase()))
+    ).map(addressOf);
   return {
     from: addressOf(envelope.from),
-    to: envelope.to.map(addressOf),
-    cc: envelope.cc.map(addressOf),
-    bcc: envelope.bcc.map(addressOf),
+    to: visible(envelope.to),
+    cc: visible(envelope.cc),
+    bcc: visible(envelope.bcc),
     subject: envelope.subject,
     text: envelope.text,
     ...(envelope.html === undefined ? {} : { html: envelope.html }),
-    ...(Object.keys(headers).length === 0 ? {} : { headers }),
+    ...(envelope.replyTo === undefined ? {} : { replyTo: formatMailboxAddress(envelope.replyTo) }),
+    headers: outboundMessageHeaders(envelope, idempotencyKey),
+    ...(separateEnvelope && envelope.envelopeRecipients !== undefined
+      ? { envelopeRecipients: envelope.envelopeRecipients }
+      : {}),
     attachments: envelope.attachments.map((attachment) => ({
       ...(attachment.filename === undefined ? {} : { filename: attachment.filename }),
       ...(attachment.contentType === undefined ? {} : { contentType: attachment.contentType }),
+      ...(attachment.contentId === undefined ? {} : { contentId: attachment.contentId }),
       content: new Uint8Array(attachment.content ?? Buffer.alloc(0)),
     })),
   };
@@ -621,7 +598,7 @@ function addressOf(value: { readonly address: string; readonly name?: string }):
 }
 
 /** Shared nodemailer SMTP transport used by the SES and SMTP-relay providers. */
-function createSmtpTransport(options: {
+export function createSmtpTransport(options: {
   readonly host: string;
   readonly port?: number | undefined;
   readonly secure?: boolean | undefined;
@@ -632,49 +609,12 @@ function createSmtpTransport(options: {
     host: options.host,
     port: options.port ?? 587,
     secure: options.secure ?? false,
+    // Same rule as the environment relay: STARTTLS must not be downgradable.
+    requireTLS: options.secure !== true,
     ...(options.user === undefined
       ? {}
       : { auth: { user: options.user, pass: options.pass ?? "" } }),
   });
-}
-
-function toNodemailerMail(
-  message: OutboundMailMessage,
-  dkim?: Awaited<ReturnType<DkimOptionsResolver>>,
-): SMTPTransport.MailOptions {
-  return {
-    from: formatAddress(message.from),
-    to: message.to.map(formatAddress),
-    cc: message.cc.map(formatAddress),
-    bcc: message.bcc.map(formatAddress),
-    subject: message.subject,
-    text: message.text,
-    ...(message.html === undefined ? {} : { html: message.html }),
-    ...(dkim === undefined || dkim === null ? {} : { dkim }),
-    ...(message.replyTo === undefined ? {} : { replyTo: message.replyTo }),
-    ...(message.headers === undefined ? {} : { headers: { ...message.headers } }),
-    attachments: (message.attachments ?? []).map((attachment) => ({
-      ...(attachment.filename === undefined ? {} : { filename: attachment.filename }),
-      ...(attachment.contentType === undefined ? {} : { contentType: attachment.contentType }),
-      content: Buffer.from(attachment.content),
-    })),
-  };
-}
-
-/** Normalised, undefined-safe entry list over an optional headers map. */
-function headerEntries(
-  headers: Readonly<Record<string, string>> | undefined,
-): readonly (readonly [string, string])[] {
-  if (headers === undefined) {
-    return [];
-  }
-  return Object.entries(headers);
-}
-
-function formatAddress(address: { readonly address: string; readonly name?: string }): string {
-  return address.name === undefined
-    ? address.address
-    : `"${address.name.replaceAll('"', '\\"')}" <${address.address}>`;
 }
 
 function defaultFetch(): FetchLike {

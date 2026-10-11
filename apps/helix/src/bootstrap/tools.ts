@@ -20,6 +20,11 @@ import { registerRoutineTools } from "../platform/assistant/routines.js";
 import { PostgresRoutineStore } from "../platform/assistant/routines-postgres.js";
 import { AssistantRoutineWorker } from "../platform/assistant/routines-worker.js";
 import { registerAppPasswordTools } from "../platform/auth/app-passwords.js";
+import { PostgresUserAddressStore } from "../platform/auth/user-addresses.js";
+import {
+  tenantAwarePostgresSql,
+  withTenantPostgresContext,
+} from "../platform/tenancy/postgres-roles.js";
 import { enforceCredentialPolicy } from "../platform/auth/credentials.js";
 import {
   agentCredentialScopeCatalog,
@@ -64,6 +69,7 @@ import type { GlobalSearchType } from "../platform/search/scope.js";
 import { signupEventSchemas } from "../platform/signup/event-schemas.js";
 import { buildEffectiveTenantConfig } from "../platform/tenancy/index.js";
 import { createToolRegistry } from "../platform/tool-registry.js";
+import { createActionTools } from "../platform/tools/actions-tools.js";
 import { createAgentOperationalControlTools } from "../platform/tools/agent-operational-controls-tools.js";
 import { RuntimeAgentOperationalControlStore } from "../platform/tools/agent-operational-controls.js";
 import { PendingActionExpiryWorker } from "../platform/tools/pending-action-expiry-worker.js";
@@ -430,6 +436,9 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
   for (const tool of createAgentOperationalControlTools(agentOperationalControls)) {
     tools.register(tool);
   }
+  for (const tool of createActionTools(tools)) {
+    tools.register(tool);
+  }
 
   registerWebhookTools(tools, { store: webhookStore, secretResolver: webhookSecretResolver });
 
@@ -444,6 +453,13 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
         (await domainsStore.listDomains(orgId))
           .filter((domain) => domain.status === "verified" && domain.mailEnabled)
           .map((domain) => domain.domain),
+      // Domain aliases reach the user too; reply-all must never address them.
+      resolveOwnAddresses: (orgId, actorId) =>
+        withTenantPostgresContext(sql, { orgId, actorId }, async () => {
+          const store = new PostgresUserAddressStore(tenantAwarePostgresSql(sql));
+          const addresses = await store.get(orgId, actorId);
+          return addresses?.addresses.map((entry) => entry.address) ?? [];
+        }),
       ...(resourceClassifier === undefined ? {} : { classifyResource: resourceClassifier }),
     });
     await registerCanonicalApi(app, async (api) => {

@@ -3,16 +3,10 @@ import type { SettingsSectionId } from "@/components/shell/overlay-context";
 import { cn } from "@/lib/utils";
 import { ArrowLeft as ArrowLeftIcon } from "lucide-react";
 import { useEffect, useRef, type ReactNode } from "react";
-import {
-  LanguageSection,
-  NotifySection,
-  ProfileSection,
-  ShortcutsSection,
-  SignatureSection,
-} from "./settings-account";
-import { AISection } from "./settings-ai";
+import { LanguageSection, ProfileSection, ShortcutsSection } from "./settings-account";
 import { AppearanceSection } from "./settings-appearance";
 import { SecuritySection } from "./settings-security";
+import { SignatureSection } from "./settings-signature";
 
 /* ---------- shell ---------- */
 
@@ -25,9 +19,7 @@ const SECTIONS: {
   { id: "profile", label: "Profile", icon: "Users", Component: ProfileSection },
   { id: "appearance", label: "Appearance", icon: "Sun", Component: AppearanceSection },
   { id: "language", label: "Language & region", icon: "Globe", Component: LanguageSection },
-  { id: "notify", label: "Notifications", icon: "Bell", Component: NotifySection },
   { id: "signature", label: "Mail signature", icon: "EditPen", Component: SignatureSection },
-  { id: "ai", label: "Helix AI", icon: "Sparkles", Component: AISection },
   { id: "security", label: "Security", icon: "Shield", Component: SecuritySection },
   { id: "shortcuts", label: "Keyboard shortcuts", icon: "Code", Component: ShortcutsSection },
 ];

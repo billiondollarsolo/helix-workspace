@@ -178,12 +178,16 @@ async function invokeSurface(
       },
     });
     if ("error" in response) {
-      if (response.error.code === -32029) return "rate_limited";
       throw new Error(JSON.stringify(response.error));
     }
     const result = response.result as {
-      readonly structuredContent?: { readonly status?: string };
+      readonly isError?: boolean;
+      readonly structuredContent?: { readonly status?: string; readonly code?: string };
     };
+    if (result.isError === true) {
+      if (result.structuredContent?.code === "rate_limited") return "rate_limited";
+      throw new Error(JSON.stringify(result.structuredContent));
+    }
     return result.structuredContent?.status === "pending_confirmation"
       ? "pending_confirmation"
       : "executed";

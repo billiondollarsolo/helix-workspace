@@ -7,7 +7,37 @@ import type { OutboundMailTransport } from "./outbound.js";
 import type { ClaimedOutboundMail } from "./store-contracts.js";
 import { deliverInboundMessage } from "./store-message-write.js";
 import { MailRoutingStore } from "./store-routing.js";
+import { allowlistedOutboundHeaders, formatMailboxAddress } from "./outbound-format.js";
 import type { MailOutboundEnvelope } from "./types.js";
+
+export function localHeaderMap(envelope: MailOutboundEnvelope): Record<string, string> {
+  const headers: Record<string, string> = {};
+  for (const [name, value] of Object.entries(allowlistedOutboundHeaders(envelope.headers))) {
+    headers[name.toLowerCase()] = value;
+  }
+  if (envelope.replyTo !== undefined) headers["reply-to"] = formatMailboxAddress(envelope.replyTo);
+  return headers;
+}
+
+/**
+ * Envelope for the remote leg of a mixed local/remote send, or null when every
+ * recipient was delivered locally. Visible To/Cc stay intact; only the SMTP
+ * envelope (`envelopeRecipients`) skips the mailboxes already delivered.
+ */
+export function remoteDeliveryEnvelope(
+  envelope: MailOutboundEnvelope,
+  localAddresses: ReadonlySet<string>,
+): MailOutboundEnvelope | null {
+  const remote = [
+    ...new Set(
+      [...envelope.to, ...envelope.cc, ...envelope.bcc]
+        .map((entry) => entry.address.toLowerCase())
+        .filter((address) => !localAddresses.has(address)),
+    ),
+  ];
+  if (remote.length === 0) return null;
+  return localAddresses.size === 0 ? envelope : { ...envelope, envelopeRecipients: remote };
+}
 
 /** Dispatch local mail after the undo window, through the existing mailbox ledger. */
 export class LocalMailTransport implements OutboundMailTransport {
@@ -63,7 +93,12 @@ export class LocalMailTransport implements OutboundMailTransport {
           attachments: envelope.attachments,
           messageId: envelope.messageId,
           references: envelope.references,
-          metadata: { direction: "inbound" },
+          // Same header map as SMTP ingest so loop guards and categories apply.
+          metadata: {
+            direction: "inbound",
+            headers: localHeaderMap(envelope),
+            ...(envelope.replyTo === undefined ? {} : { replyTo: [envelope.replyTo] }),
+          },
         };
         const delivered = await deliverInboundMessage(tx, {
           threadId: this.outbound.threadId,
@@ -80,14 +115,9 @@ export class LocalMailTransport implements OutboundMailTransport {
         }
       });
     }
-    const external = {
-      ...envelope,
-      to: envelope.to.filter((entry) => !local.has(entry.address.toLowerCase())),
-      cc: envelope.cc.filter((entry) => !local.has(entry.address.toLowerCase())),
-      bcc: envelope.bcc.filter((entry) => !local.has(entry.address.toLowerCase())),
-    };
-    if (external.to.length + external.cc.length + external.bcc.length > 0) {
-      return (await this.remote()).send(external, handoff);
+    const remote = remoteDeliveryEnvelope(envelope, local);
+    if (remote !== null) {
+      return (await this.remote()).send(remote, handoff);
     }
     return {
       providerMessageId: envelope.messageId,

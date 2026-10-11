@@ -21,4 +21,11 @@ describe("WebDAV transport and rate security", () => {
     now = 60_000;
     expect(limiter.consume("auth:ip", 2, 60_000).allowed).toBe(true);
   });
+
+  it("peeks at a bucket without spending from it", () => {
+    const limiter = createWebDavRateLimiter(() => 0);
+    for (let i = 0; i < 5; i += 1) expect(limiter.peek("auth:ip", 1, 60_000).allowed).toBe(true);
+    expect(limiter.consume("auth:ip", 1, 60_000).allowed).toBe(true);
+    expect(limiter.peek("auth:ip", 1, 60_000)).toEqual({ allowed: false, retryAfterSeconds: 60 });
+  });
 });

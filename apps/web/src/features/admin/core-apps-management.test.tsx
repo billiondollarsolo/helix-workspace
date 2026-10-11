@@ -98,7 +98,7 @@ describe("CoreAppsManagement", () => {
     await waitFor(() => {
       expect(container.textContent ?? "").toContain("Mail");
     });
-    expect(container.textContent).toContain("Workspace apps");
+    expect(container.textContent).toContain("All apps");
     expect(container.textContent).toContain("2 of 3 enabled");
 
     // Per-app state lives on the switches. It used to be duplicated into an
@@ -112,9 +112,9 @@ describe("CoreAppsManagement", () => {
       "true",
     ]);
     expect(switches.map((element) => element.getAttribute("aria-label"))).toEqual([
-      "Disable Mail",
-      "Enable Chat",
-      "Disable Meet",
+      "Mail on for everyone",
+      "Chat on for everyone",
+      "Meet on for everyone",
     ]);
     const requestUrl = requestUrlOf(fetchMock.mock.calls[0]?.[0]);
     expect(requestUrl).toContain("/api/admin/core-apps");
@@ -130,9 +130,9 @@ describe("CoreAppsManagement", () => {
     await renderManagement();
 
     await waitFor(() => {
-      expect(container.querySelector('[aria-label="Disable Mail"]')).not.toBeNull();
+      expect(container.querySelector('[aria-label="Mail on for everyone"]')).not.toBeNull();
     });
-    await clickSwitch("Disable Mail");
+    await clickSwitch("Mail on for everyone");
 
     // Nothing may have left for the backend on the strength of one toggle click.
     expect(toggleCallFor("mail")).toBeUndefined();
@@ -144,11 +144,11 @@ describe("CoreAppsManagement", () => {
     expect(dialog.textContent).toContain("Disable Mail");
     expect(dialog.textContent).toContain("everyone in your organization");
     expect(blastRadiusText()).toBe(
-      "Every user loses the inbox, composing, and mail results in search.",
+      "Everyone loses the inbox, composing, and mail results in search.",
     );
     // Still on, still reported as on, until the operator confirms.
     expect(
-      container.querySelector('[aria-label="Disable Mail"]')?.getAttribute("aria-checked"),
+      container.querySelector('[aria-label="Mail on for everyone"]')?.getAttribute("aria-checked"),
     ).toBe("true");
 
     await clickDialogButton("Disable Mail");
@@ -171,9 +171,9 @@ describe("CoreAppsManagement", () => {
     await renderManagement();
 
     await waitFor(() => {
-      expect(container.querySelector('[aria-label="Disable Mail"]')).not.toBeNull();
+      expect(container.querySelector('[aria-label="Mail on for everyone"]')).not.toBeNull();
     });
-    await clickSwitch("Disable Mail");
+    await clickSwitch("Mail on for everyone");
     await clickDialogButton("Cancel");
 
     await waitFor(() => {
@@ -184,7 +184,7 @@ describe("CoreAppsManagement", () => {
     expect(document.body.style.pointerEvents).not.toBe("none");
     expect(toggleCallFor("mail")).toBeUndefined();
     expect(
-      container.querySelector('[aria-label="Disable Mail"]')?.getAttribute("aria-checked"),
+      container.querySelector('[aria-label="Mail on for everyone"]')?.getAttribute("aria-checked"),
     ).toBe("true");
   });
 
@@ -197,9 +197,9 @@ describe("CoreAppsManagement", () => {
     await renderManagement();
 
     await waitFor(() => {
-      expect(container.querySelector('[aria-label="Enable Chat"]')).not.toBeNull();
+      expect(container.querySelector('[aria-label="Chat on for everyone"]')).not.toBeNull();
     });
-    await clickSwitch("Enable Chat");
+    await clickSwitch("Chat on for everyone");
 
     await waitFor(() => {
       const toggleCall = toggleCallFor("chat");
@@ -217,13 +217,13 @@ describe("CoreAppsManagement", () => {
     await renderManagement();
 
     await waitFor(() => {
-      expect(container.querySelector('[aria-label="Disable Meet"]')).not.toBeNull();
+      expect(container.querySelector('[aria-label="Meet on for everyone"]')).not.toBeNull();
     });
-    await clickSwitch("Disable Meet");
+    await clickSwitch("Meet on for everyone");
 
     expect(confirmDialog().textContent).toContain("Disable Meet");
     expect(blastRadiusText()).toBe(
-      "Nobody can start or join a meeting from Helix, including meetings already scheduled.",
+      "Nobody can start or join a meeting, including meetings already scheduled.",
     );
     expect(blastRadiusText()).not.toContain("cannot be undone");
   });
@@ -248,7 +248,7 @@ describe("CoreAppsManagement", () => {
     });
 
     await waitFor(() => {
-      expect(container.textContent ?? "").toContain("unavailable");
+      expect(container.textContent ?? "").toContain("App settings couldn't be loaded");
     });
   });
 

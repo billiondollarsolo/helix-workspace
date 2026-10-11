@@ -132,6 +132,19 @@ export async function listAdminUsers(
   return output;
 }
 
+/** Signs the person out everywhere and removes their 2-step verification
+ *  methods and passkeys, so they enroll again at next sign-in. */
+export async function resetUserSignInVerification(actorId: string): Promise<void> {
+  const response = await authenticatedFetch(
+    `/api/admin/users/${encodeURIComponent(actorId)}/mfa/reset`,
+    { method: "POST" },
+  );
+  if (!response.ok) {
+    const output: unknown = await response.json().catch(() => ({}));
+    throw responseError(response, output, "Reset sign-in verification");
+  }
+}
+
 function appendParam(params: URLSearchParams, key: string, value: string | undefined): void {
   const trimmed = value?.trim();
   if (trimmed !== undefined && trimmed.length > 0) {

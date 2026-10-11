@@ -1,14 +1,17 @@
 import { Button } from "@/components/ui/button";
+import { SettingToggle } from "@/features/admin/console/widgets";
 import { Input } from "@/components/ui/input";
 import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
 import {
   EmptyRow,
-  EmptyState,
   PageHeading,
   QueryFailureBanner,
-  StateBanner,
   useQueryFailure,
+  ErrorNotice,
+  Notice,
+  LoadingState,
 } from "@/features/admin/console/primitives";
+import { EmptyState } from "@/components/ui/empty-state";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Pencil as EditPenIcon,
@@ -38,7 +41,6 @@ const TEXTAREA_CLASS =
   "min-h-[76px] w-full min-w-0 resize-y rounded-md border border-outline bg-surface-container px-3 py-2 text-sm text-foreground outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30";
 
 const FIELD_LABEL_CLASS = "grid gap-1 text-xs text-muted-foreground";
-const CHECKBOX_LABEL_CLASS = "flex min-h-8 items-center gap-2 text-sm";
 
 /* auto-fit rather than a fixed column count: switching protocol swaps one SAML
    field for two OIDC fields, and a fixed grid leaves a hole behind. */
@@ -205,11 +207,11 @@ export function IdentityManagement() {
     <>
       <PageHeading
         title="Identity & SSO"
-        subtitle="Local recovery, tenant IdPs, and provisioning entry points"
+        subtitle="Single sign-on, identity providers, and user provisioning."
       />
 
       {identityQuery.isPending && identityFailure === null ? (
-        <StateBanner kind="loading">Loading identity settings…</StateBanner>
+        <LoadingState label="Loading identity settings…" />
       ) : null}
       {identityFailure === null ? null : (
         /* Outline, not default: the add/edit form below stays usable while the
@@ -221,16 +223,15 @@ export function IdentityManagement() {
           error={identityFailure.error}
           isRetrying={identityFailure.isRetrying}
           onRetry={identityFailure.retry}
-          retryVariant="outline"
         >
           The tenant IdP list and the local recovery state are unknown until this loads.
         </QueryFailureBanner>
       )}
-      {formError === null ? null : <StateBanner kind="error">{formError}</StateBanner>}
-      {testLogin === null ? null : (
-        <StateBanner kind={testLogin.status === "ready" ? "info" : "error"}>
-          {testLogin.message}
-        </StateBanner>
+      {formError === null ? null : <ErrorNotice>{formError}</ErrorNotice>}
+      {testLogin === null ? null : testLogin.status === "ready" ? (
+        <Notice>{testLogin.message}</Notice>
+      ) : (
+        <ErrorNotice>{testLogin.message}</ErrorNotice>
       )}
 
       <div className="col gap-4">
@@ -289,10 +290,14 @@ export function IdentityManagement() {
                   Add your first IdP
                 </Button>
               }
-            >
-              A tenant IdP lets this workspace sign in through SAML or OIDC. Local email/password
-              recovery stays available for owners and admins either way.
-            </EmptyState>
+              size="inline"
+              body={
+                <>
+                  A tenant IdP lets this workspace sign in through SAML or OIDC. Local
+                  email/password recovery stays available for owners and admins either way.
+                </>
+              }
+            />
           ) : (
             <div className="col gap-2">
               {sortedConfigs.map((config) => (
@@ -402,28 +407,20 @@ export function IdentityManagement() {
             </div>
 
             <div className="flex flex-wrap items-center gap-4">
-              <label className={CHECKBOX_LABEL_CLASS}>
-                <input
-                  className="size-4"
-                  type="checkbox"
-                  checked={form.enabled}
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, enabled: event.target.checked }))
-                  }
-                />
-                Enabled
-              </label>
-              <label className={CHECKBOX_LABEL_CLASS}>
-                <input
-                  className="size-4"
-                  type="checkbox"
-                  checked={form.isPrimary}
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, isPrimary: event.target.checked }))
-                  }
-                />
-                Primary
-              </label>
+              <SettingToggle
+                label="Enabled"
+                checked={form.enabled}
+                onCheckedChange={(checked) =>
+                  setForm((current) => ({ ...current, enabled: checked }))
+                }
+              />
+              <SettingToggle
+                label="Primary"
+                checked={form.isPrimary}
+                onCheckedChange={(checked) =>
+                  setForm((current) => ({ ...current, isPrimary: checked }))
+                }
+              />
             </div>
 
             <details
@@ -514,7 +511,7 @@ export function IdentityManagement() {
                         of the form, not a page-level panel of its own. */}
                     <h3 className="mb-2 font-semibold text-foreground">Mapping preview</h3>
                     {mappingPreview.status === "error" ? (
-                      <StateBanner kind="error">{mappingPreview.message}</StateBanner>
+                      <ErrorNotice>{mappingPreview.message}</ErrorNotice>
                     ) : mappingPreview.rows.length === 0 ? (
                       <EmptyRow>No mapped attributes.</EmptyRow>
                     ) : (

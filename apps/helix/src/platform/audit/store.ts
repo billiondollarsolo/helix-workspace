@@ -2,7 +2,13 @@ import type { AuditRecord, JsonObject } from "@helix/sdk";
 import type postgres from "postgres";
 import { toSqlJson } from "../util/sql.js";
 import type { ImmutableAuditActivityRecord } from "./immutable-s3.js";
-import type { AuditLogRecord, AuditLogStore, ListAuditLogInput } from "./routes.js";
+import {
+  AUDIT_DENIED_VERB_PATTERN,
+  AUDIT_FAILURE_VERB_PATTERN,
+  type AuditLogRecord,
+  type AuditLogStore,
+  type ListAuditLogInput,
+} from "./routes.js";
 import type {
   AuditShippingBacklog,
   AuditShippingCheckpoint,
@@ -82,6 +88,9 @@ export class PostgresAuditStore
     const objectId = input.objectId ?? null;
     const verb = input.verb ?? null;
     const objectType = input.objectType ?? null;
+    const since = input.since ?? null;
+    const until = input.until ?? null;
+    const outcome = input.outcome ?? null;
     const cursorCreatedAt = input.cursor?.createdAt ?? null;
     const cursorId = input.cursor?.id ?? null;
     return this.sql.begin(async (tx) => {
@@ -105,6 +114,22 @@ export class PostgresAuditStore
           and (${objectId}::uuid is null or object_id = ${objectId}::uuid)
           and (${verb}::text is null or verb = ${verb}::text)
           and (${objectType}::text is null or object_type = ${objectType}::text)
+          and (${since}::timestamptz is null or created_at >= ${since}::timestamptz)
+          and (${until}::timestamptz is null or created_at < ${until}::timestamptz)
+          and (
+            ${outcome}::text is null
+            or (${outcome}::text = 'denied' and verb ~ ${AUDIT_DENIED_VERB_PATTERN})
+            or (
+              ${outcome}::text = 'failure'
+              and verb ~ ${AUDIT_FAILURE_VERB_PATTERN}
+              and verb !~ ${AUDIT_DENIED_VERB_PATTERN}
+            )
+            or (
+              ${outcome}::text = 'success'
+              and verb !~ ${AUDIT_DENIED_VERB_PATTERN}
+              and verb !~ ${AUDIT_FAILURE_VERB_PATTERN}
+            )
+          )
           and (
             ${cursorCreatedAt}::timestamptz is null
             or (created_at, id) < (${cursorCreatedAt}::timestamptz, ${cursorId}::uuid)

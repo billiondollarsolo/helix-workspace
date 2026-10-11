@@ -111,8 +111,7 @@ interface Workspace {
 const CLEAN: Required<Workspace> = {
   domains: { domains: [domainEntry("helix.local", "verified", true)] },
   policies: {
-    // external_sharing is runtime-enforced; dlp is recorded-only and must not
-    // count as "enforced" merely because enforcement=required is stored.
+    // external_sharing is runtime-enforced; dlp is recorded-only, so not "enforced".
     policies: [policy("mfa", true, "required"), policy("external_sharing", true, "required")],
   },
   platform: {
@@ -436,7 +435,7 @@ describe("AdminOverview", () => {
     expect(figureFor("Domains")).toBe("2/2 domains verified");
     // 1 of 3 policies is both enabled AND required — the other two are not.
     expect(figureFor("Security policies")).toBe("1/3 policies enforced");
-    expect(figureFor("Tier readiness")).toBe("Enterprise security tier");
+    expect(figureFor("Security tier")).toBe("Enterprise security tier");
     expect(figureFor("Directory")).toBe("3 accounts");
     expect(figureFor("Workspace apps")).toBe("1/2 apps enabled");
 
@@ -522,7 +521,7 @@ describe("AdminOverview", () => {
     expect(attentionHeading()).toBe("2 things need attention");
     expect(text()).toContain("1 of 1 domain is not verified");
     expect(text()).toContain("The Business tier is not ready");
-    expect(cardText("Tier readiness")).toContain("1 requirement is missing or degraded");
+    expect(cardText("Security tier")).toContain("1 requirement is missing or degraded");
   });
 
   it("says a clean workspace is clean rather than showing an empty page", async () => {
@@ -740,7 +739,9 @@ describe("AdminOverview", () => {
 
     expect(cleanHeading()).toBeNull();
     expect(attentionHeading()).toBeNull();
-    expect(text()).toContain("Checking domains, security policies, tier readiness");
+    expect(container.querySelector('[data-slot="skeleton"]')?.getAttribute("aria-label")).toContain(
+      "Checking domains, security policies, tier readiness",
+    );
     for (const title of ["Domains", "Security policies", "Directory"]) {
       expect(chipFor(title)).toBe("Checking…");
       expect(figureFor(title)).toBe("— reading…");
@@ -870,9 +871,8 @@ describe("AdminOverview", () => {
     // sentence has to be there in exactly that state. Total section count is
     // derived from ADMIN_SECTION_IDS (grows when Chat/Drive admin land).
     expect(cleanHeading()).toBe("Nothing needs attention");
-    expect(text()).toMatch(/These checks read 5 of the console's \d+ sections/);
-    expect(text()).toMatch(/The other \d+ are not read here at all/);
-    expect(text()).toContain("A quiet Overview is not a checked workspace");
+    expect(text()).toMatch(/Checks cover 5 of \d+ admin pages/);
+    expect(text()).toContain("Open a page to review the rest.");
   });
 
   it("names the sections no check reads", async () => {
@@ -896,7 +896,7 @@ describe("AdminOverview", () => {
     // Two different gaps — the check that broke, and the remaining sections
     // nothing here ever looks at. Neither may stand in for the other.
     expect(text()).toContain("1 check is unavailable");
-    expect(text()).toMatch(/These checks read 5 of the console's \d+ sections/);
+    expect(text()).toMatch(/Checks cover 5 of \d+ admin pages/);
   });
 
   /* ---------------------------------------------------------------- */
@@ -908,7 +908,7 @@ describe("AdminOverview", () => {
 
     expect(linkHrefs(card("Domains"))).toEqual(["/admin/domains"]);
     expect(linkHrefs(card("Security policies"))).toEqual(["/admin/policies"]);
-    expect(linkHrefs(card("Tier readiness"))).toEqual(["/admin/tier-readiness"]);
+    expect(linkHrefs(card("Security tier"))).toEqual(["/admin/tier-readiness"]);
     expect(linkHrefs(card("Directory"))).toEqual(["/admin/users"]);
     expect(linkHrefs(card("Workspace apps"))).toEqual(["/admin/workspace-apps"]);
   });

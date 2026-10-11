@@ -1,16 +1,6 @@
-/* A minimal memory router for admin section tests.
- *
- * Sections that render `AdminRelatedNav` now use real `<Link>`s rather than raw
- * `<a href>` anchors — an anchor inside the SPA was a full document reload,
- * which made the "related pages" shortcut the slowest navigation in the
- * console. `<Link>` needs a router in context, and these tests mount one
- * section on its own.
- *
- * Only what the sections actually use: the `/admin/$section` path so `<Link to>`
- * resolves, and a memory history so nothing touches the address bar. Tests that
- * exercise routing itself build their own router (`admin-console.test.tsx`);
- * this is for the ones where the router is incidental scaffolding.
- */
+/* A minimal memory router for admin section tests: sections render real
+ * `<Link>`s, which need a router in context. Only the `/admin/$section` path
+ * and a memory history; tests of routing itself build their own router. */
 
 import { createElement, type ReactElement, type ReactNode } from "react";
 import {

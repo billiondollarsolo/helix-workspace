@@ -17,8 +17,8 @@ test("saves retrieval with recoverable errors, tests only saved settings and man
   page,
 }) => {
   const backend = await mockRetrieval(page, false, true);
-  await page.goto("/admin/ai-retrieval");
-  await expect(page.getByRole("heading", { name: "AI retrieval", exact: true })).toBeVisible();
+  await page.goto("/admin/assistant?tab=search");
+  await expect(page.getByRole("heading", { name: "Search settings", exact: true })).toBeVisible();
   await expect(page.getByLabel("Enable semantic search")).not.toBeChecked();
   await expect(page.getByRole("button", { name: "Test saved vector connection" })).toBeDisabled();
   await page.getByLabel("Enable semantic search").check();
@@ -93,7 +93,7 @@ test("preserves blank stored secrets and requires explicit replacement or cleari
   page,
 }) => {
   const backend = await mockRetrieval(page, true);
-  await page.goto("/admin/ai-retrieval");
+  await page.goto("/admin/assistant?tab=search");
   await page.getByLabel("Maximum search results").fill("7");
   await page.getByRole("button", { name: "Save retrieval settings" }).click();
   await expect(page.getByText("Retrieval settings saved.", { exact: true })).toBeVisible();
@@ -142,7 +142,7 @@ for (const width of [390, 768, 1440])
         theme,
       );
       await mockRetrieval(page, true);
-      await page.goto("/admin/ai-retrieval");
+      await page.goto("/admin/assistant?tab=search");
       await page
         .getByRole("combobox", { name: "Search provider", exact: true })
         .selectOption("searxng");
@@ -239,6 +239,22 @@ async function mockRetrieval(page: Page, configured: boolean, failFirst = false)
         json: {
           config: { security: { tier: "business" }, ai },
           readiness: { ready: true, requirements: [] },
+        },
+      });
+    }
+    if (path.endsWith("/admin/tenant-config")) {
+      const features = { assistant_retrieval: true };
+      return route.fulfill({
+        json: {
+          tenantConfig: {
+            orgId: "org-e2e",
+            orgName: "E2E Org",
+            byo: {},
+            features,
+            quotas: {},
+            branding: {},
+            effective: { byo: {}, features, quotas: {}, branding: {} },
+          },
         },
       });
     }

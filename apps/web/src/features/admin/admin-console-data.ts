@@ -108,40 +108,33 @@ export interface DirectoryUser {
 /* Navigation taxonomy                                                */
 /* ------------------------------------------------------------------ */
 
-/* Nineteen peer entries in one flat list gave no hint that "Apps" meant
- * third-party OAuth grants while "Core apps" meant first-party modules, or
- * that "Tier readiness" is a view of security posture rather than a sibling
- * of it. Sections are grouped by the question an admin is answering, and
- * each id is also its URL segment (`/admin/<id>`), so labels can be reworded
- * without breaking links.
+/* Sections are grouped the way a workspace administrator looks for them:
+ * people first, then each app's settings, then security, reporting, and the
+ * account itself. Each id is also its URL segment (`/admin/<id>`).
  *
- * Overview sits above the groups: it is the console's landing page, not a
- * member of any category.
- *
- * `label` is also the name of the page it opens: every section's
- * `PageHeading title` must be this exact string. Seven sections drifted apart
- * from it — clicking `Domains` landed on a page headed "Domain", `OAuth apps`
- * on one headed "App permissions" — which reads as having navigated somewhere
- * else. The group title supplies the qualifier, so a label stays the short
- * noun ("Policies" under Security, not "Security policies") and the section's
- * subtitle carries the scope. Reword a label and you are renaming the h1 with
- * it; ids are URLs (`/admin/<id>`) and never change with a rename. */
+ * `label` is the page's `<h1>` as well as its nav entry, so the two always
+ * agree. */
 
-export const ADMIN_NAV_ROOT = { id: "overview", label: "Overview", icon: "Grid" } as const;
+export const ADMIN_NAV_ROOT = { id: "overview", label: "Home", icon: "Grid" } as const;
 
 export const ADMIN_NAV_GROUPS = [
   {
-    title: "Organization",
-    items: [
-      { id: "domains", label: "Domains", icon: "Globe" },
-      { id: "workspace-settings", label: "Workspace settings", icon: "Settings" },
-    ],
-  },
-  {
-    title: "People",
+    title: "Directory",
     items: [
       { id: "users", label: "Users", icon: "Users" },
       { id: "groups", label: "Groups & org units", icon: "Building" },
+    ],
+  },
+  {
+    title: "Apps",
+    items: [
+      { id: "workspace-apps", label: "All apps", icon: "Briefcase" },
+      { id: "mail", label: "Mail", icon: "Mail" },
+      { id: "drive", label: "Drive", icon: "Drive" },
+      { id: "chat", label: "Chat", icon: "Chat" },
+      { id: "calendar", label: "Calendar", icon: "Calendar" },
+      { id: "meet", label: "Meet", icon: "Video" },
+      { id: "assistant", label: "Assistant", icon: "Sparkles" },
     ],
   },
   {
@@ -149,36 +142,29 @@ export const ADMIN_NAV_GROUPS = [
     items: [
       { id: "policies", label: "Policies", icon: "Lock" },
       { id: "identity", label: "Identity & SSO", icon: "Key" },
-      { id: "tier-readiness", label: "Tier readiness", icon: "Shield" },
-      { id: "audit", label: "Audit log", icon: "Log" },
+      { id: "app-passwords", label: "App passwords", icon: "Key" },
+      { id: "oauth-apps", label: "OAuth apps", icon: "Grid" },
+      { id: "agent-credentials", label: "Agent credentials", icon: "Code" },
+      { id: "agent-controls", label: "Agent controls", icon: "Shield" },
+      { id: "tier-readiness", label: "Security tier", icon: "Shield" },
     ],
   },
   {
-    title: "Apps & integrations",
+    title: "Reporting",
     items: [
-      { id: "workspace-apps", label: "Workspace apps", icon: "Briefcase" },
-      { id: "mail", label: "Mail", icon: "Mail" },
-      { id: "chat", label: "Chat", icon: "Chat" },
-      { id: "drive", label: "Drive", icon: "Drive" },
-      { id: "oauth-apps", label: "OAuth apps", icon: "Grid" },
-      { id: "app-passwords", label: "App passwords", icon: "Key" },
-      { id: "agent-credentials", label: "Agent credentials", icon: "Sparkles" },
-      { id: "agent-controls", label: "Agent emergency controls", icon: "Shield" },
+      { id: "audit", label: "Audit log", icon: "Log" },
+      { id: "ai-costs", label: "AI costs", icon: "Credit" },
+      { id: "ai-observability", label: "AI observability", icon: "Eye" },
+    ],
+  },
+  {
+    title: "Account",
+    items: [
+      { id: "domains", label: "Domains", icon: "Globe" },
+      { id: "workspace-settings", label: "Workspace settings", icon: "Settings" },
+      { id: "services", label: "Services", icon: "Archive" },
       { id: "webhooks", label: "Webhooks", icon: "Send" },
     ],
-  },
-  {
-    title: "AI",
-    items: [
-      { id: "ai-providers", label: "AI providers", icon: "Sparkles" },
-      { id: "ai-retrieval", label: "AI retrieval", icon: "Globe" },
-      { id: "ai-costs", label: "Cost limits", icon: "Credit" },
-      { id: "ai-observability", label: "Observability", icon: "Eye" },
-    ],
-  },
-  {
-    title: "Platform",
-    items: [{ id: "services", label: "Services", icon: "Settings" }],
   },
 ] as const;
 

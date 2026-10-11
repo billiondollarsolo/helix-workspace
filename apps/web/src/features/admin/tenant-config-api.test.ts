@@ -12,6 +12,7 @@ import {
 const tenantConfigPayload = {
   tenantConfig: {
     orgId: "org-1",
+    orgName: "Acme Corp",
     byo: {},
     features: { assistant_retrieval: true },
     quotas: { api_rps_limit: 10 },

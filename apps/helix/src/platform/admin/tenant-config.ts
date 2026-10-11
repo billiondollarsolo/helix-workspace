@@ -35,6 +35,7 @@ export interface TenantConfigAdminStore {
 
 interface TenantConfigAdminView {
   readonly orgId: string;
+  readonly orgName: string;
   readonly byo: JsonObject;
   readonly features: JsonObject;
   readonly quotas: JsonObject;
@@ -519,6 +520,7 @@ function tenantConfigView(org: OrgRecord): TenantConfigAdminView {
   const effective = buildEffectiveTenantConfig({ org });
   return {
     orgId: org.id,
+    orgName: org.displayName,
     byo: org.byoConfig,
     features: org.featureFlags,
     quotas: org.quotas,

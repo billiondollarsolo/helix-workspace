@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { AdminField, AdminInput, AdminSelect } from "../console/controls";
-import { StateBanner } from "../console/primitives";
+import { notify } from "@/components/ui/toast";
+import { ErrorNotice } from "../console/primitives";
 import { MailAddressInput } from "../mail-address-input";
 import type { CreateGroupInput, Group } from "../groups-api";
 
@@ -24,11 +25,9 @@ export function GroupMailForm({
   );
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
   async function submit() {
     setPending(true);
     setError(null);
-    setSaved(false);
     try {
       await onSave({
         name: name.trim(),
@@ -36,7 +35,7 @@ export function GroupMailForm({
         email: kind === "mailing_list" ? email : null,
         postingPolicy,
       });
-      setSaved(true);
+      notify({ message: group ? "Group saved" : "Group created" });
       onSaved();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not save this group. Try again.");
@@ -46,20 +45,17 @@ export function GroupMailForm({
   }
   return (
     <form
-      className="panel mb-3 space-y-3 p-3"
-      aria-label={group ? `Mail settings for ${group.name}` : "New group"}
+      className="space-y-3"
+      aria-label={group ? `Settings for ${group.name}` : "New group"}
       onSubmit={(event) => {
         event.preventDefault();
         void submit();
       }}
-      onChange={() => setSaved(false)}
     >
       <fieldset disabled={pending} className="min-w-0 space-y-3">
-        <legend className="text-sm font-semibold">
-          {group ? "Group settings" : "Create a group"}
-        </legend>
+        <legend className="sr-only">{group ? "Group settings" : "New group"}</legend>
         <div className="grid gap-3 sm:grid-cols-2">
-          <AdminField label={group ? "Group name" : "New group name"}>
+          <AdminField label="Group name">
             <AdminInput required value={name} onChange={(event) => setName(event.target.value)} />
           </AdminField>
           <AdminField label="Group type">
@@ -95,9 +91,7 @@ export function GroupMailForm({
               </AdminSelect>
             </AdminField>
             <p className="text-sm text-muted-foreground">
-              Workspace senders must be authenticated active users in this workspace, across all its
-              domains. External senders remain subject to normal mail filtering. This setting
-              controls who can send to the group; members receive its mail.
+              Mail from outside the organization is still filtered for spam.
             </p>
           </>
         ) : group?.email ? (
@@ -106,11 +100,10 @@ export function GroupMailForm({
           </p>
         ) : null}
         <Button type="submit" disabled={name.trim().length === 0}>
-          {pending ? "Saving…" : group ? "Save group settings" : "Create group"}
+          {pending ? "Saving…" : group ? "Save" : "Create group"}
         </Button>
       </fieldset>
-      {error ? <StateBanner kind="error">{error}</StateBanner> : null}
-      {saved ? <StateBanner kind="info">Group settings saved.</StateBanner> : null}
+      {error ? <ErrorNotice>{error}</ErrorNotice> : null}
     </form>
   );
 }

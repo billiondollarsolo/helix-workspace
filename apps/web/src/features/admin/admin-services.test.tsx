@@ -126,7 +126,7 @@ describe("AdminServicesOverview admin UI", () => {
     renderAdminServices();
 
     await waitForText("The service catalog could not be loaded.");
-    const banner = container.querySelector('.admin-banner[data-kind="error"]');
+    const banner = container.querySelector('[data-slot="inline-error"]');
     expect(banner?.getAttribute("role")).toBe("alert");
     // The recoverable-failure state, not a dead end: what broke, the closest
     // honest cause, the raw message support can act on, and a working retry.
@@ -164,7 +164,7 @@ describe("AdminServicesOverview admin UI", () => {
     await waitForText("Mail");
 
     expect(fetchMock.mock.calls.length).toBeGreaterThan(1);
-    expect(container.querySelector('.admin-banner[data-kind="error"]')).toBeNull();
+    expect(container.querySelector('[data-slot="inline-error"]')).toBeNull();
     expect(cardStatuses()).toEqual([
       ["Services", "ready"],
       ["Readiness", "ready"],
@@ -204,7 +204,7 @@ describe("AdminServicesOverview admin UI", () => {
 
     renderAdminServices();
     await waitFor(() => {
-      expect(container.querySelector('.admin-banner[data-kind="loading"]')).not.toBeNull();
+      expect(container.querySelector('[data-slot="skeleton"]')).not.toBeNull();
     });
 
     expect(cardStatuses()).toEqual([
@@ -224,7 +224,7 @@ describe("AdminServicesOverview admin UI", () => {
 
     expect(headingTexts("h1")).toEqual(["Services"]);
     expect(container.textContent).toContain(
-      "Runtime service surface, dependencies, routes, scopes, tools, and operations.",
+      "Health and configuration of the services behind each app.",
     );
     expect(headingTexts("h2")).toEqual(["Service catalog"]);
     expect(headingTexts("h3")).toEqual([
@@ -266,9 +266,9 @@ describe("AdminServicesOverview admin UI", () => {
     renderAdminServices();
 
     await waitFor(() => {
-      const banner = container.querySelector('.admin-banner[data-kind="loading"]');
+      const banner = container.querySelector('[data-slot="skeleton"]');
       expect(banner?.getAttribute("role")).toBe("status");
-      expect(banner?.textContent).toBe("Loading admin services");
+      expect(banner?.getAttribute("aria-label")).toBe("Loading admin services");
     });
     expect(container.querySelector(".admin-empty-row")?.textContent).toBe(
       "Loading service catalog…",

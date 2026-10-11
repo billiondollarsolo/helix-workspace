@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AdminUser } from "@/features/admin/admin-users";
 import { profileQueryKeys, type UserProfile } from "@/lib/profile";
 import { sessionQueryKeys } from "@/lib/auth";
+import { key } from "@/test/ui";
 import { AdminUsers } from "./users";
 
 vi.mock("@tanstack/react-router", async () => ({
@@ -110,6 +111,27 @@ describe("Admin user profiles", () => {
     });
   }
 
+  /** Opens the row ⋮ menu and returns its item labels. */
+  async function openRowMenu(name: string): Promise<readonly string[]> {
+    const trigger = button(`Actions for ${name}`);
+    trigger.focus();
+    await key("Enter", {}, trigger);
+    return [...document.querySelectorAll('[role="menuitem"]')].map(
+      (item) => item.textContent?.trim() ?? "",
+    );
+  }
+
+  /** Edit profile from the row ⋮ menu. */
+  async function editProfile(name: string): Promise<void> {
+    await openRowMenu(name);
+    const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (node) => node.textContent?.trim() === "Edit profile",
+    );
+    if (!item) throw new Error(`No Edit profile item for ${name}`);
+    item.focus();
+    await key("Enter", {}, item);
+  }
+
   function input(name: string): HTMLInputElement | HTMLTextAreaElement {
     const node = container.querySelector<HTMLInputElement | HTMLTextAreaElement>(
       `[name="${name}"]`,
@@ -201,11 +223,23 @@ describe("Admin user profiles", () => {
       user("system-1", "system"),
     ]);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    const editButtons = container.querySelectorAll('button[aria-label^="Edit profile for"]');
-    expect(editButtons).toHaveLength(1);
-    const opener = button("Edit profile for Morgan Lee");
-    opener.focus();
-    await click("Edit profile for Morgan Lee");
+    // Only people have profiles: the agent, service, and system rows offer no edit.
+    const others = [
+      ...container.querySelectorAll<HTMLButtonElement>(
+        'button[aria-label="Actions for Taylor Quinn"]',
+      ),
+    ];
+    expect(others).toHaveLength(3);
+    for (const trigger of others) {
+      trigger.focus();
+      await key("Enter", {}, trigger);
+      expect(
+        [...document.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent?.trim()),
+      ).not.toContain("Edit profile");
+      await key("Escape");
+    }
+    const opener = button("Actions for Morgan Lee");
+    await editProfile("Morgan Lee");
     await waitFor(() => expect(input("displayName").value).toBe("Morgan Lee"));
     const dialog = container.querySelector('[role="dialog"]');
     expect(dialog?.getAttribute("aria-modal")).toBe("true");
@@ -231,7 +265,7 @@ describe("Admin user profiles", () => {
     queryClient.setQueryData(sessionQueryKeys.current, { actorId: otherId, name: "Taylor Quinn" });
     await click("Load more");
     await waitFor(() => expect(container.textContent).toContain("Taylor Quinn"));
-    await click("Edit profile for Taylor Quinn");
+    await editProfile("Taylor Quinn");
     await waitFor(() => expect(input("displayName").value).toBe("Taylor Quinn"));
     await change("displayName", "Taylor Rivera");
     await change("pronouns", "she/her");
@@ -262,7 +296,7 @@ describe("Admin user profiles", () => {
 
   it("keeps edits available after a refused save", async () => {
     await renderUsers([user(humanId)]);
-    await click("Edit profile for Morgan Lee");
+    await editProfile("Morgan Lee");
     await waitFor(() => expect(input("displayName").value).toBe("Morgan Lee"));
     await change("displayName", "Morgan Rivera");
     saveError = "You no longer have permission to edit this profile.";
@@ -281,7 +315,7 @@ describe("Admin user profiles", () => {
   it("reports a profile load error and retries before allowing changes", async () => {
     await renderUsers([user(humanId)]);
     loadError = "Profile access was refused.";
-    await click("Edit profile for Morgan Lee");
+    await editProfile("Morgan Lee");
     await waitFor(() =>
       expect(container.querySelector('[role="alert"]')?.textContent).toContain(loadError),
     );

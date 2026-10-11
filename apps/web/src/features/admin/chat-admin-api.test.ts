@@ -25,8 +25,8 @@ describe("mapRetentionFormToToolInput", () => {
     expect(
       mapRetentionFormToToolInput({
         retentionDays: "90",
-        editWindowSeconds: "3600",
-        deleteWindowSeconds: "7200",
+        editWindowMinutes: "60",
+        deleteWindowMinutes: "120",
         roomId: "",
       }),
     ).toEqual({
@@ -40,8 +40,8 @@ describe("mapRetentionFormToToolInput", () => {
     expect(
       mapRetentionFormToToolInput({
         retentionDays: "30",
-        editWindowSeconds: "86400",
-        deleteWindowSeconds: "86400",
+        editWindowMinutes: "1440",
+        deleteWindowMinutes: "1440",
         roomId: "33333333-3333-4333-8333-333333333333",
       }),
     ).toEqual({
@@ -53,8 +53,8 @@ describe("mapRetentionFormToToolInput", () => {
     expect(
       mapRetentionFormToToolInput({
         retentionDays: "30",
-        editWindowSeconds: "86400",
-        deleteWindowSeconds: "86400",
+        editWindowMinutes: "1440",
+        deleteWindowMinutes: "1440",
         roomId: "not-a-uuid",
       }),
     ).toBe("Room ID must be a valid UUID when provided.");
@@ -64,8 +64,8 @@ describe("mapRetentionFormToToolInput", () => {
     expect(
       mapRetentionFormToToolInput({
         retentionDays: "0",
-        editWindowSeconds: "86400",
-        deleteWindowSeconds: "86400",
+        editWindowMinutes: "1440",
+        deleteWindowMinutes: "1440",
         roomId: "",
       }),
     ).toBe("Retention days must be an integer from 1 to 36500.");
@@ -158,7 +158,9 @@ describe("formatRetentionSummary / describeChatAdminUnavailable", () => {
         updatedAt: null,
         configured: false,
       }),
-    ).toContain("platform default");
+    ).toBe(
+      "Messages kept for 2,555 days · editable for 1 day · deletable for 1 day · Legal hold off · Default settings",
+    );
   });
 
   it("explains missing scope and missing chat tools", () => {

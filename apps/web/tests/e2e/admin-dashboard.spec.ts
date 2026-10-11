@@ -12,8 +12,7 @@ interface BackendCall {
   readonly pathname: string;
 }
 
-/** The admin sidebar. Scoped because the "related pages" chips inside a
- *  section are real links too, so an unscoped role=link query can match twice. */
+/** The admin sidebar, so a role=link query cannot match links inside a page. */
 function adminNav(page: Page) {
   return page.getByRole("navigation", { name: "Administration" });
 }
@@ -21,6 +20,7 @@ function adminNav(page: Page) {
 test.describe("/admin dashboard", () => {
   test("renders mocked admin evidence with session-authenticated backend calls", async ({
     page,
+    baseURL,
   }) => {
     const backendCalls: BackendCall[] = [];
 
@@ -34,15 +34,23 @@ test.describe("/admin dashboard", () => {
 
     await page
       .context()
-      .addCookies([{ name: "helix_session", value: adminToken, url: "http://127.0.0.1:4173" }]);
+      .addCookies([
+        { name: "helix_session", value: adminToken, url: baseURL ?? "http://127.0.0.1:4173" },
+      ]);
     await page.goto("/admin");
 
     await adminNav(page).getByRole("link", { name: "Audit log", exact: true }).click();
-    await expect(page.getByRole("region", { name: "Audit log" })).toBeVisible();
-    await expect(page.getByRole("table", { name: "Audit log" })).toContainText("tool.invoked");
-    await expect(page.getByRole("table", { name: "Audit log" })).toContainText(
-      "source: playwright",
-    );
+    await expect(page.getByRole("heading", { name: "Audit log", level: 1 })).toBeVisible();
+    const auditTable = page.getByRole("table", { name: "Audit log" });
+    await expect(auditTable).toContainText("Tool invoked");
+    await expect(auditTable).toContainText("Succeeded");
+    await expect(auditTable).toContainText("E2E Admin");
+    // The raw record, payload included, lives in the details sheet.
+    await auditTable.getByRole("button", { name: /Tool invoked/ }).click();
+    const details = page.getByRole("dialog", { name: "Tool invoked" });
+    await expect(details).toContainText('"source": "playwright"');
+    await page.keyboard.press("Escape");
+    await expect(details).toHaveCount(0);
 
     await adminNav(page).getByRole("link", { name: "Users", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Users" })).toBeVisible();
@@ -69,18 +77,18 @@ test.describe("/admin dashboard", () => {
     );
     await expect(page.getByRole("table", { name: "App passwords" })).toContainText("caldav");
 
-    await adminNav(page).getByRole("link", { name: "Tier readiness", exact: true }).click();
+    await adminNav(page).getByRole("link", { name: "Security tier", exact: true }).click();
     await expect(
-      page.getByRole("heading", { name: "Tier readiness", exact: true, level: 1 }),
+      page.getByRole("heading", { name: "Security tier", exact: true, level: 1 }),
     ).toBeVisible();
     await expect(page.getByText("Live platform config connected").first()).toBeVisible();
     await expect(page.getByRole("heading", { name: "Business platform state" })).toBeVisible();
     await expect(page.getByText("Audit destinations").first()).toBeVisible();
     await expect(page.getByRole("tab", { name: "Plugins" })).toHaveCount(0);
 
-    await adminNav(page).getByRole("link", { name: "Observability", exact: true }).click();
+    await adminNav(page).getByRole("link", { name: "AI observability", exact: true }).click();
     await expect(
-      page.getByRole("heading", { name: "Observability", exact: true, level: 1 }),
+      page.getByRole("heading", { name: "AI observability", exact: true, level: 1 }),
     ).toBeVisible();
     await expect(page.getByText("30 day retention").first()).toBeVisible();
 
@@ -232,6 +240,7 @@ function auditLogResponse() {
         prevHash: null,
         thisHash: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
         createdAt: "2026-05-20T14:00:00.000Z",
+        outcome: "success",
       },
     ],
     nextCursor: null,

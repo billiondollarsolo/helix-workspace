@@ -1,42 +1,61 @@
-import { Circle as CircleIcon, RefreshCw as RefreshIcon } from "lucide-react";
-/* Shared building blocks for the admin console's page bodies.
+/* Shared building blocks for the admin console's pages: the page header,
+ * loading, empty and error states, and the status chip.
  *
- * Every section used to reimplement its own header, scroll container, and
- * loading/error banner — three different page headers and four different empty
- * states across one console. Layout lives in `styles.css` under `.admin-page*`
- * so it can carry a max-width and media queries; the console surface is wide,
- * and without a cap a hostname field stretches to 1350px and a toggle ends up
- * 1400px from the label it controls. */
+ * Every section renders inside the console's page container (see
+ * `admin-console.tsx`), which supplies the scroll, padding and max-width, so a
+ * page is just a `PageHeading` followed by its content. */
 
-import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { InlineError } from "@/components/ui/inline-error";
 import { useRef, type ReactNode } from "react";
 
-export function StateBanner({
-  kind,
-  children,
+/** Loading placeholder. `label` is announced; the shapes are decorative. */
+export function LoadingState({
+  label,
+  variant = "text",
+  count = 3,
 }: {
-  kind: "loading" | "error" | "info";
-  children: ReactNode;
+  readonly label: string;
+  readonly variant?: "row" | "card" | "text";
+  readonly count?: number;
 }) {
+  return <Skeleton variant={variant} count={count} label={label} className="admin-loading" />;
+}
+
+/** A neutral, informational note above or beside content. */
+export function Notice({ children }: { readonly children: ReactNode }) {
   return (
-    <div role={kind === "error" ? "alert" : "status"} className="admin-banner" data-kind={kind}>
+    <div role="status" className="admin-notice">
       {children}
     </div>
   );
 }
 
-/** A mutation's error, or nothing. React Query clears `error` back to `null`
- *  whenever a mutation is not in its error state, so the null check is the
- *  whole condition — the same idiom every section around a write path. */
-export function MutationError({ error }: { readonly error: Error | null }) {
-  return error === null ? null : <StateBanner kind="error">{error.message}</StateBanner>;
+/** A failed action or a problem with what was entered. */
+export function ErrorNotice({
+  title,
+  children,
+}: {
+  readonly title?: string;
+  readonly children: ReactNode;
+}) {
+  return (
+    <InlineError
+      variant="compact"
+      className="admin-error"
+      message={children}
+      {...(title === undefined ? {} : { title })}
+    />
+  );
 }
 
-/** The console's status chip: a tone class, the dot, and a label.
- *
- *  `tone` is interpolated exactly as the sites wrote it, so an empty tone still
- *  produces `"chip "` and the shared `.chip` styling is unchanged. `dot` exists
- *  because one site (an OAuth app's status) deliberately renders without it. */
+/** A mutation's error, or nothing. React Query clears `error` back to `null`
+ *  whenever a mutation is not in its error state. */
+export function MutationError({ error }: { readonly error: Error | null }) {
+  return error === null ? null : <ErrorNotice>{error.message}</ErrorNotice>;
+}
+
+/** The console's status chip: a tone class, the dot, and a label. */
 export function StatusChip({
   tone,
   label,
@@ -60,72 +79,13 @@ export function EmptyRow({ children }: { children: ReactNode }) {
   return <div className="admin-empty-row">{children}</div>;
 }
 
-/** The console's one empty state: what this surface holds, why it's blank, and
- *  the action that fills it. Replaces four different bare-grey-text panels. */
-export function EmptyState({
-  icon,
-  title,
-  children,
-  action,
-}: {
-  /** Defaults to a neutral mark; pass the section's own icon where it helps. */
-  icon?: ReactNode;
-  title: string;
-  /** One sentence on what lives here — an empty table is not self-explanatory. */
-  children?: ReactNode;
-  action?: ReactNode;
-}) {
-  return (
-    <div className="admin-empty">
-      <span className="admin-empty-icon" aria-hidden="true">
-        {icon ?? <CircleIcon size={16} />}
-      </span>
-      <p className="admin-empty-title">{title}</p>
-      {children ? <p className="admin-empty-body">{children}</p> : null}
-      {action ? <div className="admin-empty-action">{action}</div> : null}
-    </div>
-  );
-}
-
-export function PageScroll({ children }: { children: ReactNode }) {
-  return (
-    <div className="admin-page" tabIndex={0}>
-      <div className="admin-page-inner">{children}</div>
-    </div>
-  );
-}
-
-/** What the console shows while a section's chunk is still in flight.
- *
- *  Replaces `<Suspense fallback={null}>`, whose comment claimed "the chunk
- *  resolves in a tick on a local network" — true locally, false over any real
- *  link, where the whole content pane went white between the click and the
- *  first paint. Two visible transitions per navigation, the first of which
- *  reads as a broken page.
- *
- *  Deliberately page-*shaped* rather than a spinner: it holds the geometry the
- *  real page will occupy (heading block, then panel bars at the standard row
- *  height), so content arriving does not shift the layout. `aria-hidden` with a
- *  sibling live region — the bars are decoration, and the thing worth
- *  announcing is "loading", once. */
+/** What the console shows while a section's code is still loading: the page's
+ *  shape, so content arriving does not shift the layout. */
 export function SectionSkeleton() {
   return (
-    <div className="admin-page" tabIndex={0}>
-      <div className="admin-page-inner">
-        <span className="sr-only" role="status">
-          Loading section…
-        </span>
-        <div className="admin-skeleton" aria-hidden="true">
-          <div className="admin-skeleton-title" />
-          <div className="admin-skeleton-subtitle" />
-          <div className="admin-skeleton-panel">
-            <div className="admin-skeleton-row" />
-            <div className="admin-skeleton-row" />
-            <div className="admin-skeleton-row" />
-            <div className="admin-skeleton-row" />
-          </div>
-        </div>
-      </div>
+    <div className="admin-skeleton">
+      <Skeleton variant="text" count={2} label="Loading section" />
+      <Skeleton variant="row" count={6} label="Loading content" />
     </div>
   );
 }
@@ -143,21 +103,47 @@ export function PageHeading({
   meta,
 }: {
   title: string;
+  /** One short sentence on what the page controls. */
   subtitle?: string;
+  /** The page's actions; at most one uses the primary button style. */
   actions?: ReactNode;
   meta?: ReactNode;
 }) {
   return (
     <header className="admin-page-header">
       <div className="admin-page-header-row">
-        {/* Always h1: this is the page for `/admin/<section>`, and sections
-            previously started at h1, h2, or h3 depending on their vintage. */}
-        <h1 id={ADMIN_PAGE_TITLE_ID}>{title}</h1>
-        {meta}
+        <div className="admin-page-title">
+          <h1 id={ADMIN_PAGE_TITLE_ID}>{title}</h1>
+          {meta}
+        </div>
         {actions ? <div className="admin-page-actions">{actions}</div> : null}
       </div>
       {subtitle ? <p className="admin-page-subtitle">{subtitle}</p> : null}
     </header>
+  );
+}
+
+/** Heading for a part of a page, such as a tab panel or a card: an `<h2>`
+ *  under the page's one `<h1>`. */
+export function PanelHeading({
+  title,
+  subtitle,
+  actions,
+  id,
+}: {
+  readonly title: string;
+  readonly subtitle?: ReactNode;
+  readonly actions?: ReactNode;
+  readonly id?: string;
+}) {
+  return (
+    <div className="admin-panel-header">
+      <div className="admin-panel-header-text">
+        <h2 id={id}>{title}</h2>
+        {subtitle === undefined ? null : <p>{subtitle}</p>}
+      </div>
+      {actions === undefined ? null : <div className="admin-page-actions">{actions}</div>}
+    </div>
   );
 }
 
@@ -232,16 +218,13 @@ function describeFailure(error: Error, subject: string): string {
 }
 
 /** The console's one recoverable-error state: what broke, the closest cause we
- *  can honestly report, the raw message to quote to support, and a working
- *  retry. Replaces the "unavailable — try again later." dead ends, which told
- *  an operator to reload the page and gave support nothing to work with. */
+ *  can honestly report, the raw message to quote to support, and Retry. */
 export function QueryFailureBanner({
   summary,
   subject,
   error,
   isRetrying,
   onRetry,
-  retryVariant = "outline",
   children,
 }: {
   readonly summary: string;
@@ -250,33 +233,23 @@ export function QueryFailureBanner({
   readonly error: Error;
   readonly isRetrying: boolean;
   readonly onRetry: () => void;
-  /** A page-level failure is the only action on the page; panel-level ones sit
-   *  beside live content and must not outrank it. */
-  readonly retryVariant?: "default" | "outline";
   /** What the failure costs the user here — disabled filters, hidden panels. */
   readonly children?: ReactNode;
 }) {
   return (
-    <StateBanner kind="error">
-      <div className="admin-failure">
-        <div className="admin-failure-body">
-          <span className="admin-failure-summary">{summary}</span>
+    <InlineError
+      className="admin-error"
+      title={summary}
+      onRetry={onRetry}
+      retrying={isRetrying}
+      retryLabel={isRetrying ? "Retrying…" : "Retry"}
+      message={
+        <span className="admin-failure-body">
           <span>{describeFailure(error, subject)}</span>
           {children === undefined ? null : <span>{children}</span>}
-          {/* The raw message is the only thing support can act on when the
-              status alone does not explain the failure. */}
           <span className="admin-failure-detail mono">{error.message}</span>
-        </div>
-        <Button
-          type="button"
-          size="sm"
-          variant={retryVariant}
-          disabled={isRetrying}
-          onClick={onRetry}
-        >
-          <RefreshIcon size={16} /> {isRetrying ? "Retrying…" : "Retry"}
-        </Button>
-      </div>
-    </StateBanner>
+        </span>
+      }
+    />
   );
 }

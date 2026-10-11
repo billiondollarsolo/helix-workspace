@@ -61,6 +61,28 @@ export interface AssistantSource {
   readonly title?: string;
   readonly url?: string;
 }
+/** A workspace record an answer cited that the reader can still open. */
+export interface AssistantCitation {
+  readonly kind: "mail" | "drive" | "chat" | "calendar";
+  readonly id: string;
+  readonly title: string | null;
+  /** In-app path, e.g. `/drive/<id>`. */
+  readonly path: string;
+}
+export interface AssistantMessageFeedback {
+  readonly rating: "up" | "down";
+  readonly comment: string | null;
+  readonly updatedAt: string;
+}
+/** Rates an answer; a null rating clears the reader's feedback. */
+export function setAssistantMessageFeedback(input: {
+  readonly conversationId: string;
+  readonly messageId: string;
+  readonly rating: AssistantMessageFeedback["rating"] | null;
+  readonly comment?: string;
+}): Promise<{ readonly feedback: AssistantMessageFeedback | null }> {
+  return callAssistantTool("assistant.message.feedback", input);
+}
 export interface AssistantToolGroups {
   /** Most tools one request may declare. */
   readonly limit: number;
@@ -144,6 +166,8 @@ export interface AssistantTurnResponseWithPendingConfirmations {
     readonly content: string;
     readonly attachments?: readonly AssistantAttachment[];
     readonly sources?: readonly AssistantSource[];
+    readonly citations?: readonly AssistantCitation[];
+    readonly feedback?: AssistantMessageFeedback;
     readonly toolActivity?: readonly AssistantToolActivity[];
     readonly toolGroups?: readonly string[];
     readonly webSearch?: boolean;

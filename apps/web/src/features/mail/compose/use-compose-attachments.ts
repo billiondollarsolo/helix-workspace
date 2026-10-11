@@ -4,8 +4,9 @@
 
 import { useQueries } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { trashDriveObject, uploadDriveFile } from "@/features/drive/api";
+import { trashDriveObject } from "@/features/drive/api";
 import { driveUploadStatusQueryOptions } from "@/features/drive/queries";
+import { uploadDriveFile } from "@/features/drive/upload";
 import { validateMailAttachmentSelection, type MailAttachment } from "../api";
 
 type AttachmentState = "uploading" | "scanning" | "ready" | "blocked" | "failed";
@@ -19,6 +20,8 @@ export interface ComposeAttachmentItem {
   readonly state: AttachmentState;
   /** Status text for the chip, e.g. "Scanning for malware". */
   readonly detail: string;
+  /** Whole-number percent sent to storage while uploading; null otherwise. */
+  readonly progress: number | null;
 }
 
 interface UploadEntry {
@@ -27,6 +30,7 @@ interface UploadEntry {
   readonly contentType: string;
   readonly byteSize: number;
   readonly objectId: string | null;
+  readonly uploadedBytes: number;
   /** Uploaded by this window, so its scan is watched and a discard trashes it. */
   readonly fresh: boolean;
   readonly failure: string | null;
@@ -39,6 +43,7 @@ function fromAttachment(attachment: MailAttachment): UploadEntry {
     contentType: attachment.contentType ?? "application/octet-stream",
     byteSize: attachment.byteSize ?? 0,
     objectId: attachment.objectId,
+    uploadedBytes: attachment.byteSize ?? 0,
     fresh: false,
     failure: null,
   };
@@ -95,9 +100,16 @@ export function useComposeAttachments(initial: readonly MailAttachment[]) {
           contentType: entry.contentType,
           byteSize: entry.byteSize,
           objectId: entry.objectId,
+          progress: null,
         };
         if (entry.failure !== null) return { ...base, state: "failed", detail: entry.failure };
-        if (entry.objectId === null) return { ...base, state: "uploading", detail: "Uploading" };
+        if (entry.objectId === null) {
+          const progress =
+            entry.byteSize === 0
+              ? 0
+              : Math.min(100, Math.floor((entry.uploadedBytes / entry.byteSize) * 100));
+          return { ...base, state: "uploading", detail: "Uploading", progress };
+        }
         if (!entry.fresh) return { ...base, state: "ready", detail: "" };
         const status = scans[index]?.data;
         if (status === undefined || !status.terminal) {
@@ -141,11 +153,19 @@ export function useComposeAttachments(initial: readonly MailAttachment[]) {
             contentType: file.type === "" ? "application/octet-stream" : file.type,
             byteSize: file.size,
             objectId: null,
+            uploadedBytes: 0,
             fresh: true,
             failure: null,
           },
         ]);
-        void uploadDriveFile({ file, folderId: null, signal: controller.signal })
+        void uploadDriveFile({
+          file,
+          folderId: null,
+          signal: controller.signal,
+          onProgress: (uploadedBytes) => {
+            patch(key, { uploadedBytes });
+          },
+        })
           .then((result) => {
             patch(key, { objectId: result.objectId });
           })

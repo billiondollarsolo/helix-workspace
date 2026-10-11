@@ -1,18 +1,8 @@
 /* Turning a saved assistant turn into the messages the conversation shows. */
 
-import type { AssistantSource, AssistantTurnResponseWithPendingConfirmations } from "./api";
+import type { AssistantTurnResponseWithPendingConfirmations } from "./api";
 import { assistantNowTime, type AssistantChatMessage } from "./assistant-data";
 
-/** Workspace citations are only on the live turn; keep them on its answer. */
-export function withTurnSources(
-  conversation: readonly AssistantChatMessage[],
-  sources: readonly AssistantSource[] | undefined,
-): readonly AssistantChatMessage[] {
-  const cited = (sources ?? []).filter((source) => !source.type.startsWith("web."));
-  const last = conversation.at(-1);
-  if (cited.length === 0 || last?.role !== "assistant") return conversation;
-  return [...conversation.slice(0, -1), { ...last, sources: [...cited, ...(last.sources ?? [])] }];
-}
 /** Builds a UI conversation from a turn's persisted `messages`, or null. */
 export function hydrateConversation(
   turn: AssistantTurnResponseWithPendingConfirmations,
@@ -39,7 +29,9 @@ export function hydrateConversation(
       (message.role === "assistant" &&
         (message.content.trim().length > 0 ||
           (finalAssistantIds.has(message.id) &&
-            (message.toolActivity?.length || message.sources?.length)))),
+            (message.toolActivity?.length ||
+              message.sources?.length ||
+              message.citations?.length)))),
   );
   if (visible.length === 0) {
     return null;
@@ -52,6 +44,10 @@ export function hydrateConversation(
     ...(message.sources === undefined || !finalAssistantIds.has(message.id)
       ? {}
       : { sources: message.sources }),
+    ...(message.citations === undefined || !finalAssistantIds.has(message.id)
+      ? {}
+      : { citations: message.citations }),
+    ...(message.feedback === undefined ? {} : { feedback: message.feedback }),
     ...(message.toolActivity === undefined || !finalAssistantIds.has(message.id)
       ? {}
       : { toolActivity: message.toolActivity }),

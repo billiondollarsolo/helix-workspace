@@ -22,7 +22,7 @@ export interface ScopedSearchInput {
   readonly attributesToRetrieve?: readonly string[] | undefined;
 }
 
-function allowedSearchTypesForActor(actor: Actor): readonly GlobalSearchType[] {
+export function allowedSearchTypesForActor(actor: Actor): readonly GlobalSearchType[] {
   if (actor.type === "system") {
     return globalSearchTypes;
   }

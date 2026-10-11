@@ -5,14 +5,16 @@ import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { SideSheet } from "@/components/ui/side-sheet";
 import type { DirectoryUser } from "@/features/admin/admin-console-data";
-import { StatusChip } from "@/features/admin/console/primitives";
 import { CopyableId, CopyButton, RelativeTime } from "@/features/admin/console/widgets";
 import { userActionsFor, type UserAction } from "./user-actions";
+import { UserStatusChip } from "./user-suspension-dialog";
 
 const ACTION_BUTTON_LABEL: Record<UserAction, string> = {
   profile: "Edit profile",
   addresses: "Mail addresses",
   "reset-verification": "Reset sign-in verification",
+  suspend: "Suspend",
+  restore: "Restore",
   offboard: "Remove access",
 };
 
@@ -48,10 +50,7 @@ export function UserDetailsSheet({
         <div className="flex items-center gap-3">
           <Avatar name={user.name} size={48} />
           <div className="grid gap-1">
-            <StatusChip
-              tone={user.status === "active" ? "success" : "danger"}
-              label={user.status === "active" ? "Active" : "Suspended"}
-            />
+            <UserStatusChip status={user.status} />
           </div>
         </div>
 
@@ -94,6 +93,12 @@ export function UserDetailsSheet({
             <dd>{user.role}</dd>
           </div>
           <div>
+            <dt>Last sign-in</dt>
+            <dd>
+              <RelativeTime value={user.lastSignInAt} fallback="Never" />
+            </dd>
+          </div>
+          <div>
             <dt>Added</dt>
             <dd>
               <RelativeTime value={user.createdAt} />
@@ -101,7 +106,7 @@ export function UserDetailsSheet({
           </div>
           {user.disabledAt === null ? null : (
             <div>
-              <dt>Suspended</dt>
+              <dt>{user.status === "suspended" ? "Suspended" : "Removed"}</dt>
               <dd>
                 <RelativeTime value={user.disabledAt} />
               </dd>

@@ -1,5 +1,11 @@
 import { type IconName } from "@/components/icon-map";
-import type { AssistantAttachment, AssistantSource, AssistantToolActivity } from "./api";
+import type {
+  AssistantAttachment,
+  AssistantCitation,
+  AssistantMessageFeedback,
+  AssistantSource,
+  AssistantToolActivity,
+} from "./api";
 import type { AssistantToolLimit } from "./tool-limit";
 /** A conversation in the chats list. */
 export interface AssistantThread {
@@ -49,6 +55,10 @@ export interface AssistantChatMessage {
   readonly blocks?: readonly AssistantBlock[];
   readonly attachments?: readonly AssistantAttachment[];
   readonly sources?: readonly AssistantSource[];
+  /** Workspace records the answer cited that the reader can still open. */
+  readonly citations?: readonly AssistantCitation[];
+  /** The reader's thumbs up/down on a saved answer. */
+  readonly feedback?: AssistantMessageFeedback;
   readonly toolActivity?: readonly AssistantToolActivity[];
   readonly toolGroups?: readonly string[];
   readonly webSearch?: boolean;

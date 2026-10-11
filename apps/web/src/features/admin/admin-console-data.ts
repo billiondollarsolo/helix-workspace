@@ -9,12 +9,10 @@
  * static sidebar nav and a couple of view-model types shared by AdminUsers.
  */
 
-/* `invited` used to be a third member of this union and an option in the Users
- * status filter, but the projection derives status from `disabledAt` alone —
- * nothing can ever produce it, so the filter matched zero rows forever. The
- * actors table has no invite state to source it from; add it back with the
- * column that stores it. */
-export type UserStatus = "active" | "suspended";
+/* Workspace membership state from the admin users API: `suspended` is the
+ * reversible hold an administrator can lift; `removed` accounts were
+ * offboarded or deprovisioned and stay closed. */
+export type UserStatus = "active" | "suspended" | "removed";
 
 /** How much of the admin surface an actor can reach.
  *
@@ -100,8 +98,10 @@ export interface DirectoryUser {
   readonly actorType: string;
   readonly status: UserStatus;
   readonly createdAt: string;
-  /** When the account was disabled; null while active. */
+  /** When the account was suspended or removed; null while active. */
   readonly disabledAt: string | null;
+  /** Last sign-in to this workspace; null if they never signed in. */
+  readonly lastSignInAt: string | null;
 }
 
 /* ------------------------------------------------------------------ */

@@ -47,10 +47,10 @@ vi.mock("@/features/people/api", () => ({
   usePeopleSearch: () => ({ people: [], loading: false, error: false }),
 }));
 vi.mock("@/features/drive/api", () => ({
-  uploadDriveFile: drive.upload,
   trashDriveObject: drive.trash,
   getDriveUploadStatus: drive.status,
 }));
+vi.mock("@/features/drive/upload", () => ({ uploadDriveFile: drive.upload }));
 
 const DRAFT_ID = "11111111-1111-4111-8111-111111111111";
 const OUTBOUND_ID = "22222222-2222-4222-8222-222222222222";
@@ -323,14 +323,23 @@ describe("compose window", () => {
     drive.status.mockResolvedValue({ terminal: true, available: false, label: "Quarantined" });
     await openNew({ to: "samara@example.com" });
     const input = document.querySelector<HTMLInputElement>('input[type="file"]');
-    const file = new File(["x"], "report.pdf", { type: "application/pdf" });
+    const file = new File(["x".repeat(4_000)], "report.pdf", { type: "application/pdf" });
     act(() => {
       Object.defineProperty(input, "files", { value: [file], configurable: true });
       input?.dispatchEvent(new Event("change", { bubbles: true }));
     });
     await settle();
-    expect(byLabel("Attachments").textContent).toContain("Uploading…");
-    expect(document.querySelector('[role="progressbar"]')).not.toBeNull();
+    expect(byLabel("Attachments").textContent).toContain("Uploading 0%");
+    const progress = () => document.querySelector('[role="progressbar"]');
+    expect(progress()?.getAttribute("aria-valuenow")).toBe("0");
+    const { onProgress } = drive.upload.mock.calls.at(-1)?.[0] as {
+      readonly onProgress: (loaded: number, total: number) => void;
+    };
+    act(() => {
+      onProgress(1_000, 4_000);
+    });
+    expect(byLabel("Attachments").textContent).toContain("Uploading 25%");
+    expect(progress()?.getAttribute("aria-valuenow")).toBe("25");
     act(() => {
       finishUpload({ objectId: "33333333-3333-4333-8333-333333333333" });
     });

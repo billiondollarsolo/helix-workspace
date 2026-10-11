@@ -1,4 +1,5 @@
 import { CircleAlert, Paperclip, ShieldCheck, X } from "lucide-react";
+import type { CSSProperties } from "react";
 import type { ComposeAttachmentItem } from "./use-compose-attachments";
 
 function formatBytes(bytes: number): string {
@@ -10,7 +11,7 @@ function formatBytes(bytes: number): string {
 function statusText(item: ComposeAttachmentItem): string {
   switch (item.state) {
     case "uploading":
-      return "Uploading…";
+      return `Uploading ${String(item.progress ?? 0)}%`;
     case "scanning":
       return `${item.detail}…`;
     case "ready":
@@ -57,9 +58,20 @@ export function ComposeAttachments({
               </span>
               <span className="compose-attachment-status">{statusText(item)}</span>
             </span>
-            {busy ? (
+            {item.state === "uploading" ? (
               <span
                 className="compose-attachment-progress"
+                role="progressbar"
+                aria-label={`Uploading ${item.filename}`}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={item.progress ?? 0}
+                style={{ "--progress": `${String(item.progress ?? 0)}%` } as CSSProperties}
+              />
+            ) : item.state === "scanning" ? (
+              <span
+                className="compose-attachment-progress"
+                data-scanning=""
                 role="progressbar"
                 aria-label={`${item.filename}: ${statusText(item)}`}
               />

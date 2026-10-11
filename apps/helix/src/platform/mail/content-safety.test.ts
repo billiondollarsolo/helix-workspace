@@ -13,6 +13,20 @@ describe("mail HTML content safety", () => {
     expect(result.html).not.toMatch(/script|iframe|onclick|javascript:|tracker\.example|svg/iu);
   });
 
+  it("keeps allowed text formatting styles and strips CSS injection", () => {
+    const result = sanitizeMailHtml(`
+      <div style="text-align: right; color: #1a73e8">Signed</div>
+      <span style="font-size: 18px; background: url(https://tracker.example/b)">Big</span>
+      <span style="color: expression(steal()); position: absolute">Plain</span>
+      <span style="color: re&#x64;">Encoded</span>
+    `);
+    expect(result.html).toContain('<div style="text-align: right; color: #1a73e8">Signed</div>');
+    expect(result.html).toContain('<span style="font-size: 18px">Big</span>');
+    expect(result.html).toContain("<span>Plain</span>");
+    expect(result.html).toContain("<span>Encoded</span>");
+    expect(result.html).not.toMatch(/tracker|expression|position/iu);
+  });
+
   it("blocks remote/tracking images while preserving MIME cid images", () => {
     const result = sanitizeMailHtml(`
       <img src="https://tracker.example/pixel.gif" width="1" height="1">

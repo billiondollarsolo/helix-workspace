@@ -345,7 +345,7 @@ const adminFamilyActions: Record<string, readonly string[]> = {
   "app-passwords": ["list", "create", "revoke"],
   "agent-credentials": ["list", "create", "rotate", "revoke"],
   credentials: ["list", "create", "rotate", "revoke"],
-  users: ["list"],
+  users: ["list", "suspend", "restore"],
   audit: ["list"],
   "audit-log": ["list"],
 };

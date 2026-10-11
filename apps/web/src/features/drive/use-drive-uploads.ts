@@ -5,8 +5,9 @@
    the folder tree with `drive.create` before uploading into it. */
 import { useQueries, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createDriveEntry, uploadDriveFile } from "./api";
+import { createDriveEntry } from "./api";
 import { driveQueryKeys, driveUploadStatusQueryOptions } from "./queries";
+import { uploadDriveFile } from "./upload";
 import { openDenialMessage } from "./upload-status-ui";
 
 type DriveUploadPhase =

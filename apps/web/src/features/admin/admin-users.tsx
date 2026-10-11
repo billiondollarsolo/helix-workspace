@@ -3,6 +3,7 @@
    `AdminUser` shape that the directory, app passwords, and agent credentials
    surfaces all project from. */
 
+import type { UserStatus } from "@/features/admin/admin-console-data";
 import { authenticatedFetch } from "@/lib/auth";
 import { responseError } from "@/lib/tool-call";
 import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
@@ -14,10 +15,16 @@ export interface AdminUser {
   readonly email: string | null;
   readonly displayName: string;
   readonly scopes: readonly string[];
+  /** `suspended` can be restored; `removed` accounts were offboarded. */
+  readonly status: UserStatus;
   readonly disabledAt: string | null;
+  /** Last sign-in to this workspace; null if they never signed in. */
+  readonly lastSignInAt: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
+
+const USER_STATUSES: readonly string[] = ["active", "suspended", "removed"] satisfies UserStatus[];
 
 export interface AdminUsersListResponse {
   readonly users: readonly AdminUser[];
@@ -145,6 +152,18 @@ export async function resetUserSignInVerification(actorId: string): Promise<void
   }
 }
 
+/** Suspend (sign out and block every credential) or restore one person. */
+export async function setAdminUserSuspended(actorId: string, suspended: boolean): Promise<void> {
+  const response = await authenticatedFetch(
+    `/api/admin/users/${encodeURIComponent(actorId)}/${suspended ? "suspend" : "restore"}`,
+    { method: "POST" },
+  );
+  if (!response.ok) {
+    const output: unknown = await response.json().catch(() => ({}));
+    throw responseError(response, output, suspended ? "Suspend user" : "Restore user");
+  }
+}
+
 function appendParam(params: URLSearchParams, key: string, value: string | undefined): void {
   const trimmed = value?.trim();
   if (trimmed !== undefined && trimmed.length > 0) {
@@ -172,7 +191,10 @@ function isAdminUser(value: unknown): value is AdminUser {
     typeof value.displayName === "string" &&
     Array.isArray(value.scopes) &&
     value.scopes.every((scope) => typeof scope === "string") &&
+    typeof value.status === "string" &&
+    USER_STATUSES.includes(value.status) &&
     (typeof value.disabledAt === "string" || value.disabledAt === null) &&
+    (typeof value.lastSignInAt === "string" || value.lastSignInAt === null) &&
     typeof value.createdAt === "string" &&
     typeof value.updatedAt === "string"
   );

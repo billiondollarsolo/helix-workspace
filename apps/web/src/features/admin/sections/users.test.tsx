@@ -33,7 +33,9 @@ interface ApiUser {
   readonly email: string | null;
   readonly displayName: string;
   readonly scopes: readonly string[];
+  readonly status: "active" | "suspended" | "removed";
   readonly disabledAt: string | null;
+  readonly lastSignInAt: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -45,7 +47,9 @@ function apiUser(overrides: Partial<ApiUser> & Pick<ApiUser, "id">): ApiUser {
     email: `${overrides.id}@helix.local`,
     displayName: `User ${overrides.id}`,
     scopes: [],
+    status: "active",
     disabledAt: null,
+    lastSignInAt: null,
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
     ...overrides,
@@ -363,7 +367,7 @@ describe("AdminUsers", () => {
     expect(grid?.querySelectorAll('[role="row"]')).toHaveLength(2);
     expect(
       [...container.querySelectorAll(".admin-list-header span")].map((span) => span.textContent),
-    ).toEqual(["Name", "Role", "Status", "Added", ""]);
+    ).toEqual(["Name", "Role", "Status", "Last sign-in", ""]);
     expect(text()).toContain("Active");
   });
 
@@ -428,7 +432,12 @@ describe("AdminUsers", () => {
   it("filters by status and asks the server to drop suspended accounts for Active", async () => {
     await renderWith([
       apiUser({ id: "u-1", displayName: "Live One" }),
-      apiUser({ id: "u-2", displayName: "Gone Two", disabledAt: "2026-02-01T00:00:00Z" }),
+      apiUser({
+        id: "u-2",
+        displayName: "Gone Two",
+        status: "suspended",
+        disabledAt: "2026-02-01T00:00:00Z",
+      }),
     ]);
     expect(text()).toContain("Suspended");
 
@@ -470,19 +479,110 @@ describe("AdminUsers", () => {
     await renderWith([
       apiUser({ id: "u-1", displayName: "Person" }),
       apiUser({ id: "a-1", displayName: "Robot", type: "agent" }),
-      apiUser({ id: "u-2", displayName: "Gone", disabledAt: "2026-02-01T00:00:00Z" }),
+      apiUser({
+        id: "u-2",
+        displayName: "Gone",
+        status: "suspended",
+        disabledAt: "2026-02-01T00:00:00Z",
+      }),
+      apiUser({
+        id: "u-3",
+        displayName: "Former",
+        status: "removed",
+        disabledAt: "2026-01-15T00:00:00Z",
+      }),
     ]);
 
     expect(await openRowMenu("Person")).toEqual([
       "Edit profile",
       "Mail addresses",
       "Reset sign-in verification",
+      "Suspend user…",
       "Remove access…",
     ]);
     await key("Escape");
     expect(await openRowMenu("Robot")).toEqual(["Remove access…"]);
     await key("Escape");
-    expect(await openRowMenu("Gone")).toEqual(["Edit profile", "Mail addresses"]);
+    expect(await openRowMenu("Gone")).toEqual(["Edit profile", "Mail addresses", "Restore user…"]);
+    await key("Escape");
+    expect(await openRowMenu("Former")).toEqual(["Edit profile", "Mail addresses"]);
+  });
+
+  it("shows the last sign-in instead of the date added", async () => {
+    await renderWith([
+      apiUser({ id: "u-1", displayName: "Signed In", lastSignInAt: "2026-01-02T09:00:00Z" }),
+      apiUser({ id: "u-2", displayName: "Never Signed In" }),
+    ]);
+    const times = [...container.querySelectorAll(".admin-user-row time")].map((time) =>
+      time.getAttribute("datetime"),
+    );
+    expect(times).toEqual(["2026-01-02T09:00:00Z"]);
+    expect(text()).toContain("Never");
+  });
+
+  it("suspends and restores a person from the row menu after confirming", async () => {
+    const users: ApiUser[] = [apiUser({ id: "u-1", displayName: "Person" })];
+    mockUsers(users);
+    const listUsers = fetchMock.getMockImplementation();
+    const posts: string[] = [];
+    fetchMock.mockImplementation((input, init) => {
+      const href =
+        typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (init?.method !== "POST") {
+        return listUsers?.(input, init) ?? Promise.reject(new Error("No list mock"));
+      }
+      const path = new URL(href, "http://localhost").pathname;
+      posts.push(path);
+      const suspended = path.endsWith("/suspend");
+      users[0] = {
+        ...(users[0] as ApiUser),
+        status: suspended ? "suspended" : "active",
+        disabledAt: suspended ? "2026-03-01T00:00:00Z" : null,
+      };
+      return Promise.resolve(
+        Response.json({ actorId: "u-1", status: users[0].status, changed: true }),
+      );
+    });
+    await render();
+    await waitFor(() => {
+      expect(visibleUsers()).toEqual(["Person"]);
+    });
+
+    const choose = async (label: string) => {
+      await openRowMenu("Person");
+      const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+        (element) => element.textContent?.trim() === label,
+      );
+      await click(item as HTMLElement);
+    };
+    const confirmIn = async (label: string) => {
+      const dialog = document.querySelector<HTMLElement>('[role="alertdialog"]');
+      const action = [...(dialog?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(
+        (element) => element.textContent?.trim() === label,
+      );
+      if (action === undefined) throw new Error(`No ${label} button in the confirmation`);
+      await click(action);
+    };
+
+    await choose("Suspend user…");
+    expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain(
+      "signed out on every device",
+    );
+    expect(posts).toEqual([]);
+    await confirmIn("Suspend");
+    await waitFor(() => {
+      expect(posts).toEqual(["/v1/api/admin/users/u-1/suspend"]);
+      expect(container.querySelector(".admin-user-row .chip.warning")?.textContent).toBe(
+        "Suspended",
+      );
+    });
+
+    await choose("Restore user…");
+    await confirmIn("Restore");
+    await waitFor(() => {
+      expect(posts).toEqual(["/v1/api/admin/users/u-1/suspend", "/v1/api/admin/users/u-1/restore"]);
+      expect(container.querySelector(".admin-user-row .chip.success")?.textContent).toBe("Active");
+    });
   });
 
   it("opens only the chosen action, never the row, when a menu item is clicked", async () => {

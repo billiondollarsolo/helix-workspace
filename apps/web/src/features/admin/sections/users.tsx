@@ -33,12 +33,12 @@ import {
   LoadingState,
   PageHeading,
   QueryFailureBanner,
-  StatusChip,
   useQueryFailure,
 } from "@/features/admin/console/primitives";
 import { RelativeTime, RowMenu } from "@/features/admin/console/widgets";
 import { UserActionDialog, UserActionMenuItems, type UserAction } from "./user-actions";
 import { actorTypeLabel, UserDetailsSheet } from "./user-details-sheet";
+import { UserStatusChip } from "./user-suspension-dialog";
 
 /* The route caps `limit` at 250; the rest is reached through the keyset
    cursor with Load more. Search and type filters run on the server. */
@@ -87,7 +87,12 @@ export async function prefetchAdminDirectoryQuery(queryClient: AdminDirectoryRou
 }
 
 const ROLE_FILTERS = ["all", ...USER_ROLES] as const satisfies readonly RoleFilter[];
-const STATUS_FILTERS = ["all", "active", "suspended"] as const satisfies readonly StatusFilter[];
+const STATUS_FILTERS = [
+  "all",
+  "active",
+  "suspended",
+  "removed",
+] as const satisfies readonly StatusFilter[];
 
 function projectAdminUser(user: AdminUser): DirectoryUser {
   return {
@@ -97,16 +102,26 @@ function projectAdminUser(user: AdminUser): DirectoryUser {
     role: roleForActor(user),
     adminScopes: adminScopesOf(user.scopes),
     actorType: user.type,
-    status: user.disabledAt ? "suspended" : "active",
+    status: user.status,
     createdAt: user.createdAt,
     disabledAt: user.disabledAt,
+    lastSignInAt: user.lastSignInAt,
   };
 }
 
 /** CSV of the given rows, downloaded in the browser. */
 function downloadCsv(rows: readonly DirectoryUser[]): void {
   const escape = (value: string) => `"${value.replace(/"/gu, '""')}"`;
-  const header = ["Name", "Email", "Role", "Admin scopes", "Type", "Status", "Added"];
+  const header = [
+    "Name",
+    "Email",
+    "Role",
+    "Admin scopes",
+    "Type",
+    "Status",
+    "Last sign-in",
+    "Added",
+  ];
   const body = rows.map((user) =>
     [
       user.name,
@@ -115,6 +130,7 @@ function downloadCsv(rows: readonly DirectoryUser[]): void {
       user.adminScopes.join(" "),
       user.actorType,
       user.status,
+      user.lastSignInAt ?? "",
       user.createdAt,
     ]
       .map(escape)
@@ -330,6 +346,7 @@ export function AdminUsers() {
             <option value="all">All statuses</option>
             <option value="active">Active</option>
             <option value="suspended">Suspended</option>
+            <option value="removed">Removed</option>
           </AdminSelect>
           {isFiltered ? (
             <Button
@@ -383,7 +400,7 @@ export function AdminUsers() {
             <span>Name</span>
             <span>Role</span>
             <span>Status</span>
-            <span>Added</span>
+            <span>Last sign-in</span>
             <span />
           </div>
           <SelectableList
@@ -419,13 +436,10 @@ export function AdminUsers() {
                   )}
                 </span>
                 <span className="admin-row-cell">
-                  <StatusChip
-                    tone={user.status === "active" ? "success" : "danger"}
-                    label={user.status === "active" ? "Active" : "Suspended"}
-                  />
+                  <UserStatusChip status={user.status} />
                 </span>
                 <span className="admin-row-cell admin-row-detail">
-                  <RelativeTime value={user.createdAt} />
+                  <RelativeTime value={user.lastSignInAt} fallback="Never" />
                 </span>
                 <span className="admin-row-actions">
                   <RowMenu label={`Actions for ${user.name}`} tabIndex={state.tabIndex}>

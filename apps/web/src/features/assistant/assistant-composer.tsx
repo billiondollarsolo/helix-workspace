@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Paperclip, Plus, Send, Square, X, MessageSquarePlus, Globe, Check } from "lucide-react";
 import { DropdownMenu } from "radix-ui";
-import { uploadDriveFile } from "@/features/drive/api";
+import { uploadDriveFile } from "@/features/drive/upload";
 import { driveUploadStatusQueryOptions } from "@/features/drive/queries";
 import { assistantModelsQueryOptions, assistantToolsQueryOptions } from "./queries";
 import type { AssistantAttachment } from "./api";

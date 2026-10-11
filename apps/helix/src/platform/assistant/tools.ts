@@ -1,5 +1,6 @@
 import type { ToolDefinition } from "@helix/sdk-types";
 import { z } from "zod";
+import { NotFoundError } from "../../api/api-error.js";
 import { actorToolInvocationPrincipal } from "../auth/tool-invocation-principal.js";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { defineTool } from "../tools/define-tool.js";
@@ -8,7 +9,7 @@ import { assistantAttachmentLimits } from "./attachment-limits.js";
 import { assistantToolGroupIds } from "./tool-selection.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import type { AssistantOrchestrator } from "./orchestrator.js";
-import type { AssistantConversation, AssistantStore } from "./types.js";
+import type { AssistantConversation, AssistantFeedbackStore, AssistantStore } from "./types.js";
 
 const uuidSchema = z.string().uuid();
 const metadataSchema = z.record(z.string(), z.unknown()).default({});
@@ -77,6 +78,16 @@ const cancelConfirmationSchema = z.object({
   metadata: metadataSchema,
 });
 
+const messageFeedbackSchema = z
+  .object({
+    conversationId: uuidSchema,
+    messageId: uuidSchema,
+    /** Null clears the feedback. */
+    rating: z.enum(["up", "down"]).nullable(),
+    comment: z.string().trim().max(2000).optional(),
+  })
+  .strict();
+
 const genericObjectJsonSchema = {
   type: "object",
   additionalProperties: true,
@@ -85,12 +96,41 @@ const genericObjectJsonSchema = {
 export interface CreateAssistantToolDefinitionsOptions {
   readonly store: AssistantStore;
   readonly orchestrator: AssistantOrchestrator;
+  readonly feedback?: AssistantFeedbackStore;
 }
 
 export function createAssistantToolDefinitions(
   options: CreateAssistantToolDefinitionsOptions,
 ): readonly ToolDefinition[] {
+  const feedback = options.feedback;
   return [
+    ...(feedback === undefined
+      ? []
+      : [
+          defineTool<z.output<typeof messageFeedbackSchema>, unknown>({
+            id: "assistant.message.feedback",
+            description:
+              "Rate one of your Assistant answers thumbs up or down with an optional comment; " +
+              "a null rating clears it.",
+            permission: "assistant.write",
+            sideEffects: "write",
+            inputSchema: zodToolSchema(messageFeedbackSchema, genericObjectJsonSchema),
+            outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+            handler: async (input, ctx) => {
+              const saved = await feedback.setFeedback({
+                actor: ctx.actor,
+                conversationId: input.conversationId,
+                messageId: input.messageId,
+                rating: input.rating,
+                comment: input.comment ?? null,
+              });
+              if (saved === null) {
+                throw new NotFoundError("That answer isn't in one of your conversations.");
+              }
+              return { messageId: input.messageId, feedback: saved.feedback };
+            },
+          }),
+        ]),
     defineTool({
       id: "assistant.tools.list",
       description: "List authorized Assistant tool groups and default selection.",

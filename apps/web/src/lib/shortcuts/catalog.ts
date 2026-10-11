@@ -148,6 +148,18 @@ export const SHORTCUT_CATALOG = {
     description: "Send the message you are composing",
     allowInInput: true,
   },
+  "dialog.cc": {
+    scope: "dialog",
+    keys: ["mod+shift+c"],
+    description: "Add Cc recipients",
+    allowInInput: true,
+  },
+  "dialog.bcc": {
+    scope: "dialog",
+    keys: ["mod+shift+b"],
+    description: "Add Bcc recipients",
+    allowInInput: true,
+  },
 } as const satisfies Readonly<Record<string, ShortcutDefinition>>;
 
 export type ShortcutId = keyof typeof SHORTCUT_CATALOG;

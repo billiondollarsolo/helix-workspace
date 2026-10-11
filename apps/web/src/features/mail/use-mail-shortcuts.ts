@@ -117,18 +117,3 @@ export function useMailShortcuts(input: MailShortcutsInput) {
           },
   });
 }
-
-/** ⌘/Ctrl+Enter sends while focus is inside the compose window (and not in a
-    confirmation dialog stacked on top of it). */
-export function useComposeSendShortcut(send: () => void, canSend: boolean) {
-  useShortcuts("dialog", {
-    "dialog.send": canSend
-      ? (event) => {
-          const target = event.target instanceof Element ? event.target : null;
-          const inCompose = target?.closest('[aria-labelledby="mail-compose-title"]') != null;
-          if (!inCompose || target?.closest('[aria-modal="true"]') != null) return false;
-          send();
-        }
-      : undefined,
-  });
-}

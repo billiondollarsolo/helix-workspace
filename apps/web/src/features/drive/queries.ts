@@ -1,9 +1,10 @@
 import { queryOptions } from "@tanstack/react-query";
 import { sessionUserQueryOptions } from "@/lib/auth";
 import {
-  getDriveQuotaUsage,
+  getDriveStorageUsage,
   listDrive,
   listDriveAccess,
+  listDriveShareLinks,
   listDriveVersions,
   listDriveWorkflows,
   getDriveUploadStatus,
@@ -40,6 +41,34 @@ export function deriveDriveSuggestions(entries: readonly DriveApiEntry[]): Drive
   return { folders, files };
 }
 
+/** Page sizes: browsing and search each grow by one page up to their own ceiling. */
+export function driveListLimits(scope: DriveScope, searching: boolean) {
+  if (searching) return { base: 50, max: 100 };
+  return { base: 100, max: scope === "recent" ? 50 : 250 };
+}
+
+/** Ask for one extra row so the list knows whether "Show more" applies. */
+export function driveFetchLimit(limit: number, max: number): number {
+  return limit < max ? limit + 1 : limit;
+}
+
+/**
+ * Trash lists every trashed file, wherever it lived, plus trashed root folders.
+ * Files inside a trashed folder travel with the folder, as in Drive.
+ */
+export function trashedEntries(entries: readonly DriveApiEntry[]): DriveApiEntry[] {
+  const unique = new Map<string, DriveApiEntry>();
+  for (const entry of entries) {
+    if (entry.deletedAt !== null && !unique.has(entry.id)) unique.set(entry.id, entry);
+  }
+  const trashedFolders = new Set(
+    [...unique.values()].filter((entry) => entry.type === "folder").map((entry) => entry.id),
+  );
+  return [...unique.values()].filter(
+    (entry) => entry.folderId === null || !trashedFolders.has(entry.folderId),
+  );
+}
+
 export interface DriveItemsQueryInput {
   readonly folderId?: string | null;
   readonly includeTrashed?: boolean;
@@ -69,7 +98,10 @@ const defaultDriveItemsInput = {
 export const driveQueryKeys = {
   access: (objectId: string) => ["drive", "access", objectId] as const,
   versions: (objectId: string) => ["drive", "versions", objectId] as const,
-  quota: ["drive", "quota"] as const,
+  storage: ["drive", "storage"] as const,
+  links: (objectId: string) => ["drive", "links", objectId] as const,
+  folderChildren: (folderId: string | null) =>
+    ["drive", "folder-children", folderId ?? "root"] as const,
   workflows: ["drive", "workflows"] as const,
   uploadStatus: (objectId: string | null) => ["drive", "upload-status", objectId] as const,
   items: (input: DriveItemsQueryInput = defaultDriveItemsInput) =>
@@ -129,7 +161,8 @@ export function driveItemsInputFromRouteSearch(search: DriveRouteSearch): DriveI
   };
 }
 
-/** A search hit promoted into an entry-shaped record for unified rendering. */
+/** A search hit promoted into an entry-shaped record for unified rendering.
+ *  Drive search only returns files whose security scan finished clean. */
 export function entryFromSearchHit(hit: DriveApiSearchHit): DriveApiEntry {
   return {
     id: hit.objectId,
@@ -140,6 +173,8 @@ export function entryFromSearchHit(hit: DriveApiSearchHit): DriveApiEntry {
     mimeType: hit.mimeType,
     byteSize: hit.byteSize,
     sha256: hit.sha256,
+    uploadState: "active",
+    available: true,
     metadata: {},
     deletedAt: null,
     createdAt: hit.updatedAt,
@@ -205,17 +240,35 @@ export function driveVersionsQueryOptions(objectId: string, enabled: boolean) {
   });
 }
 
-/**
- * Organization storage usage for the sidebar meter. `drive.quota.usage` needs
- * `admin.drive`, so most members get a permission error; the meter is optional,
- * so it hides instead of retrying or replacing the Drive view with an error page.
- */
-export function driveQuotaQueryOptions() {
+/** The viewer's storage for the sidebar meter; optional, so it hides on failure. */
+export function driveStorageUsageQueryOptions() {
   return queryOptions({
-    queryKey: driveQueryKeys.quota,
-    queryFn: () => getDriveQuotaUsage(),
+    queryKey: driveQueryKeys.storage,
+    queryFn: () => getDriveStorageUsage(),
     staleTime: 30_000,
     retry: false,
+    throwOnError: false,
+  });
+}
+
+/** Share links for a file, to derive its general access. */
+export function driveShareLinksQueryOptions(objectId: string, enabled: boolean) {
+  return queryOptions({
+    queryKey: driveQueryKeys.links(objectId),
+    queryFn: () => listDriveShareLinks(objectId),
+    enabled,
+    throwOnError: false,
+  });
+}
+
+/** Folders inside `folderId` (root when null), for the Move dialog. */
+export function driveFolderChildrenQueryOptions(folderId: string | null) {
+  return queryOptions({
+    queryKey: driveQueryKeys.folderChildren(folderId),
+    queryFn: async () =>
+      (await listDrive({ folderId, limit: 250 })).entries.filter(
+        (entry) => entry.type === "folder" && entry.deletedAt === null,
+      ),
     throwOnError: false,
   });
 }
@@ -263,18 +316,23 @@ export function driveItemsQueryOptions(input: DriveItemsQueryInput = defaultDriv
         const suggestions = deriveDriveSuggestions([...root.entries, ...files.entries]);
         return { mode: "list", entries: [...suggestions.folders, ...suggestions.files] };
       }
-      if (scope === "my" || scope === "shared" || scope === "trash") {
+      if (scope === "trash") {
+        const limit = input.limit ?? 100;
+        const [root, files] = await Promise.all([
+          listDrive({ folderId: null, includeTrashed: true, limit }),
+          listDrive({ folderId: null, includeTrashed: true, acrossFolders: true, limit }),
+        ]);
+        return { mode: "list", entries: trashedEntries([...root.entries, ...files.entries]) };
+      }
+      if (scope === "my" || scope === "shared") {
         const folderId = input.folderId ?? null;
         return {
           mode: "list",
           entries: (
             await listDrive({
               folderId,
-              includeTrashed: scope === "trash",
               limit: input.limit ?? 100,
-              ...(scope === "trash" || folderId !== null
-                ? {}
-                : { view: scope === "my" ? "owned" : "shared" }),
+              ...(folderId !== null ? {} : { view: scope === "my" ? "owned" : "shared" }),
             })
           ).entries,
         };

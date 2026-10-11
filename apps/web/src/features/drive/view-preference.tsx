@@ -1,5 +1,4 @@
 import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Grid2X2 as GridIcon, List as ListIcon } from "lucide-react";
 import { useCallback, useState } from "react";
 import {
   getDriveDocumentSurfaceView,
@@ -54,35 +53,4 @@ export function useDocumentSurfaceViewPreference(
   );
 
   return [optimisticView ?? preference.data ?? defaultView, setView] as const;
-}
-
-export function DocumentSurfaceViewToggle({
-  view,
-  onViewChange,
-}: {
-  readonly view: DocumentSurfaceView;
-  readonly onViewChange: (view: DocumentSurfaceView) => void;
-}) {
-  return (
-    <>
-      <button
-        type="button"
-        aria-label="Card view"
-        aria-pressed={view === "grid"}
-        className={`btn sm ${view === "grid" ? "primary" : ""}`}
-        onClick={() => onViewChange("grid")}
-      >
-        <GridIcon size={16} />
-      </button>
-      <button
-        type="button"
-        aria-label="List view"
-        aria-pressed={view === "list"}
-        className={`btn sm ${view === "list" ? "primary" : ""}`}
-        onClick={() => onViewChange("list")}
-      >
-        <ListIcon size={16} />
-      </button>
-    </>
-  );
 }

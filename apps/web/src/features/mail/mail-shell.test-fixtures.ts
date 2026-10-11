@@ -6,6 +6,8 @@ export const FOLDERS = [
   { id: "snoozed", label: "Snoozed", total: 0, unread: 0 },
   { id: "sent", label: "Sent", total: 0, unread: 0 },
   { id: "drafts", label: "Drafts", total: 0, unread: 0 },
+  { id: "scheduled", label: "Scheduled", total: 0, unread: 0 },
+  { id: "all", label: "All Mail", total: 12, unread: 3 },
   { id: "archive", label: "Archive", total: 0, unread: 0 },
   { id: "spam", label: "Spam", total: 1, unread: 1 },
   { id: "trash", label: "Trash", total: 0, unread: 0 },
@@ -17,8 +19,11 @@ export const LABELS = [
     slug: "team",
     name: "Team",
     color: "#7c3aed",
+    colorName: "violet",
+    parentId: null,
     sortOrder: 0,
     threadCount: 4,
+    unreadCount: 2,
     shared: true,
   },
 ];
@@ -40,6 +45,7 @@ export function threadRow(overrides: Record<string, unknown> = {}) {
     category: "primary",
     folder: "inbox",
     snoozedUntil: null,
+    participants: [{ name: "Mira Okafor", email: "mira@helix.io", isMe: false }],
     ...overrides,
   };
 }
@@ -50,6 +56,7 @@ export const UPDATES_ROW = threadRow({
   subject: "PR #4521 was merged",
   from: "GitHub",
   fromEmail: "noreply@github.com",
+  participants: [{ name: "GitHub", email: "noreply@github.com", isMe: false }],
   category: "updates",
   labels: [],
 });
@@ -70,6 +77,17 @@ export const THREAD_DETAIL = {
       body: "Here is the consolidated roadmap for review.",
       bodyFormat: "plain",
       hasAttachment: true,
+      attachments: [
+        {
+          objectId: "object-1",
+          filename: "roadmap.pdf",
+          mimeType: "application/pdf",
+          byteSize: 248_000,
+          disposition: "attachment",
+          inline: false,
+          downloadUrl: "/v1/api/mail/messages/message-1/attachments/object-1",
+        },
+      ],
     },
   ],
   labels: ["team"],

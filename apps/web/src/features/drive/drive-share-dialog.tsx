@@ -1,482 +1,339 @@
+/* Share dialog: add people with a role, manage who has access, and set
+   general (link) access. Copy link and Done sit in the footer, like Drive. */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link as LinkIcon, Users as UsersIcon, X as XIcon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import {
+  Building2 as DomainIcon,
+  Globe as AnyoneIcon,
+  Link as LinkIcon,
+  Lock as LockIcon,
+} from "lucide-react";
+import { useId, useState } from "react";
+import { PeoplePicker } from "@/components/people/people-picker";
+import { Avatar } from "@/components/ui/avatar";
+import { Dialog } from "@/components/ui/helix-dialog";
+import { InlineError } from "@/components/ui/inline-error";
+import { Skeleton } from "@/components/ui/skeleton";
+import { notify } from "@/components/ui/toast";
+import type { PersonRef } from "@/features/people/person-ref";
+import { sessionUserQueryOptions } from "@/lib/auth";
 import {
   createDriveShareLink,
+  driveItemUrl,
   drivePublicShareUrl,
   removeDriveAccess,
+  revokeDriveShareLink,
   shareDrive,
   updateDriveAccessRole,
-  type DriveAccessGrant,
   type DriveAccessRole,
 } from "./api";
-import { driveAccessQueryOptions, driveActorQueryOptions, driveQueryKeys } from "./queries";
+import {
+  activeShareLinks,
+  emailDomain,
+  generalAccessFromLinks,
+  generalAccessOptions,
+  type DriveGeneralAccess,
+} from "./drive-general-access";
+import {
+  driveAccessQueryOptions,
+  driveActorQueryOptions,
+  driveQueryKeys,
+  driveShareLinksQueryOptions,
+} from "./queries";
 import {
   DRIVE_ACCESS_ROLE_OPTIONS,
   driveAccessRoleLabel,
   driveAccessRoleValue,
-  driveShareTargetsFromInput,
 } from "./share-access";
 
-interface DriveShareDialogProps {
-  readonly objectId: string;
-  readonly objectName: string;
-  readonly ownerActorId?: string | null;
-  readonly open: boolean;
-  readonly shareUrl?: string | undefined;
-  /** Public links exist for files only; folders share with people. */
-  readonly allowPublicLinks?: boolean;
-  readonly onOpenChange: (open: boolean) => void;
+export interface DriveShareTarget {
+  readonly id: string;
+  readonly kind: "file" | "folder";
+  readonly name: string;
+  readonly ownerActorId: string | null;
+  readonly ownerName: string;
+}
+
+const REMOVE_ACCESS = "remove";
+const ACCESS_ICONS = { restricted: LockIcon, domain: DomainIcon, anyone: AnyoneIcon } as const;
+
+async function copyText(text: string): Promise<void> {
+  await navigator.clipboard.writeText(text);
 }
 
 export function DriveShareDialog({
-  objectId,
-  objectName,
-  ownerActorId = null,
-  open,
-  shareUrl,
-  allowPublicLinks = true,
-  onOpenChange,
-}: DriveShareDialogProps) {
+  target,
+  onClose,
+}: {
+  readonly target: DriveShareTarget;
+  readonly onClose: () => void;
+}) {
   const queryClient = useQueryClient();
-  const actorQuery = useQuery(driveActorQueryOptions());
-  const currentActorId = actorQuery.data?.actorId ?? null;
-  const [shareInput, setShareInput] = useState("");
-  const [shareRole, setShareRole] = useState<DriveAccessRole>("reader");
-  const [copied, setCopied] = useState(false);
-  const [publicPassword, setPublicPassword] = useState("");
-  const [publicExpiry, setPublicExpiry] = useState("");
-  const [publicDomains, setPublicDomains] = useState("");
-  const [oneTime, setOneTime] = useState(false);
-  const [allowDownload, setAllowDownload] = useState(true);
-  const [creatingPublicLink, setCreatingPublicLink] = useState(false);
-  const [publicLinkError, setPublicLinkError] = useState<string | null>(null);
-  const accessQueryKey = driveQueryKeys.access(objectId);
-  const shareInputRef = useRef<HTMLInputElement>(null);
+  const roleId = useId();
+  const accessId = useId();
+  const actor = useQuery(driveActorQueryOptions());
+  const session = useQuery(sessionUserQueryOptions());
+  const currentActorId = actor.data?.actorId ?? null;
+  const isOwner = target.ownerActorId === null || target.ownerActorId === currentActorId;
+  const domain = emailDomain(session.data?.email);
+  const [people, setPeople] = useState<PersonRef[]>([]);
+  const [role, setRole] = useState<DriveAccessRole>("reader");
+  const [linkToken, setLinkToken] = useState<string | null>(null);
+  const files = target.kind === "file";
 
-  const accessQuery = useQuery(driveAccessQueryOptions(objectId, false));
-  const { refetch: refetchAccess } = accessQuery;
+  const access = useQuery(driveAccessQueryOptions(target.id));
+  const links = useQuery(driveShareLinksQueryOptions(target.id, files));
+  const generalAccess = generalAccessFromLinks(links.data ?? []);
 
-  useEffect(() => {
-    if (open) {
-      void refetchAccess();
-    }
-  }, [open, refetchAccess]);
-
-  useEffect(() => {
-    if (!open) return;
-    shareInputRef.current?.focus();
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onOpenChange(false);
-      }
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [open, onOpenChange]);
-
-  const invalidateAccess = async () => {
-    await queryClient.invalidateQueries({ queryKey: accessQueryKey });
-    if (open) {
-      await refetchAccess();
-    }
-    await queryClient.invalidateQueries({ queryKey: driveQueryKeys.all });
+  const refresh = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: driveQueryKeys.access(target.id) }),
+      queryClient.invalidateQueries({ queryKey: driveQueryKeys.links(target.id) }),
+    ]);
   };
 
-  const shareMutation = useMutation({
+  const share = useMutation({
     onMutate: () => undefined,
     onError: () => undefined,
-    mutationFn: (input: {
-      readonly targets: readonly string[];
-      readonly role: DriveAccessRole;
-    }) => {
-      const targets = driveShareTargetsFromInput(input.targets);
-      return shareDrive({
-        objectId,
-        actorIds: targets.actorIds,
-        actorRefs: targets.actorRefs,
-        role: input.role,
-        expiresAt: null,
-      });
-    },
+    mutationFn: () =>
+      shareDrive({
+        objectId: target.id,
+        actorIds: people.flatMap((person) => (person.actorId === null ? [] : [person.actorId])),
+        role,
+      }),
     onSuccess: async () => {
-      setShareInput("");
-      await invalidateAccess();
+      notify({
+        message: `Shared with ${people.length === 1 ? (people[0]?.displayName ?? "1 person") : `${String(people.length)} people`}`,
+      });
+      setPeople([]);
+      await refresh();
     },
   });
 
-  const removeAccessMutation = useMutation({
+  const changeRole = useMutation({
     onMutate: () => undefined,
     onError: () => undefined,
-    mutationFn: (actorId: string) => removeDriveAccess(objectId, actorId),
-    onSuccess: invalidateAccess,
-  });
-
-  const updateAccessMutation = useMutation({
-    onMutate: () => undefined,
-    onError: () => undefined,
-    mutationFn: (input: { readonly actorId: string; readonly role: DriveAccessRole }) =>
-      updateDriveAccessRole(objectId, input.actorId, input.role),
-    onSuccess: invalidateAccess,
-  });
-
-  if (!open) {
-    return null;
-  }
-
-  const submitShare = () => {
-    const targets = shareInput
-      .split(/[\s,]+/)
-      .map((target) => target.trim())
-      .filter((target) => target.length > 0);
-    if (targets.length === 0) {
-      return;
-    }
-    shareMutation.mutate({ targets, role: shareRole });
-  };
-
-  const copyLink = (publicLink = false) => {
-    void (async () => {
-      setPublicLinkError(null);
-      setCreatingPublicLink(true);
-      try {
-        if (!publicLink && shareUrl !== undefined) {
-          await navigator.clipboard.writeText(shareUrl);
-        } else {
-          const link = await createDriveShareLink({
-            objectId,
-            ...(publicPassword.length === 0 ? {} : { password: publicPassword }),
-            expiresAt: publicExpiry.length === 0 ? null : new Date(publicExpiry).toISOString(),
-            oneTime,
-            allowedDomains: publicDomains
-              .split(/[\s,]+/u)
-              .map((domain) => domain.trim().toLowerCase())
-              .filter(Boolean),
-            allowDownload,
-          });
-          if (link.token === null) {
-            throw new Error("New share link did not return its one-time token.");
-          }
-          await navigator.clipboard.writeText(drivePublicShareUrl(link.token));
-        }
-        setCopied(true);
-      } catch (cause) {
-        setPublicLinkError(cause instanceof Error ? cause.message : "Could not create link.");
-      } finally {
-        setCreatingPublicLink(false);
+    mutationFn: async (input: { readonly actorId: string; readonly value: string }) => {
+      if (input.value === REMOVE_ACCESS) {
+        await removeDriveAccess(target.id, input.actorId);
+        return;
       }
-    })();
+      await updateDriveAccessRole(target.id, input.actorId, driveAccessRoleValue(input.value));
+    },
+    onSuccess: refresh,
+  });
+
+  const setGeneralAccess = useMutation({
+    onMutate: () => undefined,
+    onError: () => undefined,
+    mutationFn: async (next: DriveGeneralAccess) => {
+      for (const link of activeShareLinks(links.data ?? [])) {
+        await revokeDriveShareLink(link.id);
+      }
+      if (next === "restricted") return null;
+      const created = await createDriveShareLink({
+        objectId: target.id,
+        allowedDomains: next === "domain" && domain !== null ? [domain] : [],
+      });
+      return created.token;
+    },
+    onSuccess: async (token) => {
+      setLinkToken(token);
+      await refresh();
+    },
+  });
+
+  const copyLink = () => {
+    const url =
+      generalAccess !== "restricted" && linkToken !== null
+        ? drivePublicShareUrl(linkToken)
+        : driveItemUrl(target);
+    copyText(url).then(
+      () => notify({ message: "Link copied" }),
+      () => notify({ message: "Couldn’t copy the link", tone: "error" }),
+    );
   };
 
-  const busy =
-    shareMutation.isPending || removeAccessMutation.isPending || updateAccessMutation.isPending;
-  const error =
-    shareMutation.error ?? removeAccessMutation.error ?? updateAccessMutation.error ?? null;
+  const error = share.error ?? changeRole.error ?? setGeneralAccess.error;
+  const busy = share.isPending || changeRole.isPending || setGeneralAccess.isPending;
+  const accessOptions = generalAccessOptions(domain);
+  const currentAccess =
+    accessOptions.find((option) => option.value === generalAccess) ?? accessOptions[0];
+  const AccessIcon = ACCESS_ICONS[generalAccess];
 
   return (
-    <div className="fixed inset-0 [z-index:80] grid [place-items:center] p-6 [background:color-mix(in_srgb,_black_32%,_transparent)]">
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={`Share ${objectName}`}
-        className="[width:min(560px,_calc(100vw_-_32px))] [max-height:calc(100vh_-_48px)] overflow-auto [border:1px_solid_var(--border)] rounded-lg bg-card text-foreground [box-shadow:0_24px_80px_rgba(15,_23,_42,_0.24)]"
-      >
-        <div className="flex items-start gap-3 [padding:16px_18px] [border-bottom:1px_solid_var(--border)]">
-          <div className="min-w-0">
-            <h2 className="m-0 type-h2 [line-height:1.2]">Share</h2>
-            <div className="mt-1 text-muted-foreground type-body-sm [overflow-wrap:anywhere]">
-              {objectName}
-            </div>
-          </div>
-          <button
-            type="button"
-            className="icon-btn"
-            aria-label="Close share dialog"
-            onClick={() => {
-              onOpenChange(false);
-            }}
-          >
-            <XIcon size={16} />
+    <Dialog
+      title={<h2 className="type-h3 m-0 truncate">Share “{target.name}”</h2>}
+      onClose={onClose}
+      width="min(560px, calc(100vw - 32px))"
+      footer={
+        <>
+          <button type="button" className="btn mr-auto" onClick={copyLink}>
+            <LinkIcon size={16} aria-hidden="true" />
+            Copy link
           </button>
+          <button type="button" className="btn primary" onClick={onClose}>
+            Done
+          </button>
+        </>
+      }
+    >
+      <div className="drive-share-add">
+        <div className="min-w-0 flex-1">
+          <PeoplePicker
+            label="Add people"
+            placeholder="Add people by name or email"
+            value={people}
+            onChange={setPeople}
+          />
         </div>
-
-        <div className="grid gap-2.5 [padding:14px_18px] [border-bottom:1px_solid_var(--border)]">
-          <label
-            className="type-caption font-bold [color:var(--text-2)]"
-            htmlFor={`share-targets-${objectId}`}
-          >
-            Add people
-          </label>
-          <div className="flex gap-2 items-center">
-            <input
-              ref={shareInputRef}
-              id={`share-targets-${objectId}`}
-              className="input flex-1 min-w-0"
-              value={shareInput}
-              onChange={(event) => {
-                setShareInput(event.currentTarget.value);
-              }}
-              placeholder="Email, name, or actor ID"
-            />
-            <select
-              className="input w-32"
-              aria-label="Share role"
-              value={shareRole}
-              onChange={(event) => {
-                setShareRole(event.currentTarget.value as DriveAccessRole);
-              }}
-            >
-              {DRIVE_ACCESS_ROLE_OPTIONS.map((option) => (
-                <option key={option.role} value={option.role}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </div>
+        <label htmlFor={roleId} className="sr-only">
+          Role for new people
+        </label>
+        <select
+          id={roleId}
+          className="input w-32"
+          value={role}
+          onChange={(event) => setRole(driveAccessRoleValue(event.target.value))}
+        >
+          {DRIVE_ACCESS_ROLE_OPTIONS.map((option) => (
+            <option key={option.role} value={option.role}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </div>
+      {people.length > 0 ? (
+        <div className="flex justify-end mt-2">
           <button
             type="button"
-            className="btn sm primary"
-            disabled={busy || shareInput.trim().length === 0}
-            onClick={submitShare}
+            className="btn primary"
+            disabled={busy}
+            onClick={() => share.mutate()}
           >
-            <UsersIcon size={16} />
             Share
           </button>
-          {shareMutation.isSuccess ? (
-            <div className="[color:var(--success,_var(--accent))] type-caption">
-              Access granted.
-            </div>
-          ) : null}
-          {error !== null ? (
-            <div role="alert" className="[color:var(--danger)] type-caption">
-              {error instanceof Error ? error.message : "Sharing failed."}
-            </div>
-          ) : null}
         </div>
-
-        <AccessList
-          grants={accessQuery.data ?? []}
-          loading={accessQuery.isLoading}
-          currentActorId={currentActorId}
-          ownerActorId={ownerActorId}
-          busy={busy}
-          onRemove={(actorId) => {
-            removeAccessMutation.mutate(actorId);
-          }}
-          onRoleChange={(actorId, role) => {
-            updateAccessMutation.mutate({ actorId, role });
-          }}
-        />
-
-        {allowPublicLinks ? (
-          <>
-            <details className="grid gap-2.5 [padding:14px_18px] [border-bottom:1px_solid_var(--border)]">
-              <summary>Public link settings</summary>
-              <p className="text-muted-foreground type-caption">
-                Public links are view-only and can be revoked at any time.
-              </p>
-              <input
-                className="input"
-                type="password"
-                aria-label="Public link password"
-                placeholder="Optional password (12+ characters)"
-                value={publicPassword}
-                onChange={(event) => {
-                  setPublicPassword(event.currentTarget.value);
-                }}
-              />
-              <input
-                className="input"
-                type="datetime-local"
-                aria-label="Public link expiry"
-                value={publicExpiry}
-                onChange={(event) => {
-                  setPublicExpiry(event.currentTarget.value);
-                }}
-              />
-              <input
-                className="input"
-                aria-label="Allowed email domains"
-                placeholder="Optional domains, comma separated"
-                value={publicDomains}
-                onChange={(event) => {
-                  setPublicDomains(event.currentTarget.value);
-                }}
-              />
-              <label>
-                <input
-                  type="checkbox"
-                  checked={oneTime}
-                  onChange={(event) => {
-                    setOneTime(event.currentTarget.checked);
-                  }}
-                />{" "}
-                Expire after first access
-              </label>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={allowDownload}
-                  onChange={(event) => {
-                    setAllowDownload(event.currentTarget.checked);
-                  }}
-                />{" "}
-                Allow download
-              </label>
-            </details>
-            <div className="flex items-center gap-2.5 [padding:12px_18px]">
-              {shareUrl === undefined ? null : (
-                <button
-                  type="button"
-                  className="btn sm"
-                  onClick={() => {
-                    copyLink();
-                  }}
-                >
-                  <LinkIcon size={16} />
-                  Copy link
-                </button>
-              )}
-              <button
-                type="button"
-                className="btn sm"
-                disabled={
-                  creatingPublicLink ||
-                  (publicPassword.length > 0 && publicPassword.length < 12) ||
-                  (publicExpiry.length > 0 && !Number.isFinite(new Date(publicExpiry).valueOf()))
-                }
-                onClick={() => {
-                  copyLink(true);
-                }}
-              >
-                <LinkIcon size={16} />
-                Create public link
-              </button>
-              {copied ? (
-                <span className="[color:var(--success,_var(--accent))] type-caption">
-                  Link copied.
-                </span>
-              ) : null}
-              {publicLinkError === null ? null : (
-                <span role="alert" className="[color:var(--danger)] type-caption">
-                  {publicLinkError}
-                </span>
-              )}
-            </div>
-          </>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-function AccessList({
-  grants,
-  loading,
-  currentActorId,
-  ownerActorId,
-  busy,
-  onRemove,
-  onRoleChange,
-}: {
-  readonly grants: readonly DriveAccessGrant[];
-  readonly loading: boolean;
-  readonly currentActorId: string | null;
-  readonly ownerActorId: string | null;
-  readonly busy: boolean;
-  readonly onRemove: (actorId: string) => void;
-  readonly onRoleChange: (actorId: string, role: DriveAccessRole) => void;
-}) {
-  const canManageAll =
-    ownerActorId === null || (currentActorId !== null && ownerActorId === currentActorId);
-
-  if (loading) {
-    return <div className="text-muted-foreground type-caption">Loading access...</div>;
-  }
-
-  return (
-    <section
-      className="grid gap-2.5 [padding:14px_18px] [border-bottom:1px_solid_var(--border)]"
-      aria-label="People with access"
-    >
-      <div className="type-caption font-bold [color:var(--text-2)] uppercase [letter-spacing:0]">
-        People with access
-      </div>
-      {grants.length === 0 ? (
-        <div className="text-muted-foreground type-caption">Only the owner has access.</div>
-      ) : (
-        <div className="grid gap-2">
-          {grants.map((grant) => {
-            const label = grant.displayName ?? grant.email ?? grant.actorId;
-            const canRemove =
-              canManageAll || (currentActorId !== null && grant.actorId === currentActorId);
-            return (
-              <div key={grant.actorId} className="flex items-center gap-2 min-w-0 type-body-sm">
-                <Avatar name={label} />
-                <span className="flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
-                  {label}
-                </span>
-                {canManageAll ? (
-                  <select
-                    className="input w-31 h-7.5 type-caption"
-                    aria-label={`Access role for ${label}`}
-                    value={driveAccessRoleValue(grant.role)}
-                    disabled={busy}
-                    onChange={(event) => {
-                      onRoleChange(grant.actorId, event.currentTarget.value as DriveAccessRole);
-                    }}
-                  >
-                    {DRIVE_ACCESS_ROLE_OPTIONS.map((option) => (
-                      <option key={option.role} value={option.role}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <span className="text-muted-foreground type-caption">
-                    {driveAccessRoleLabel(grant.role)}
-                  </span>
-                )}
-                {canRemove ? (
-                  <button
-                    type="button"
-                    className="icon-btn"
-                    aria-label={`Remove access for ${label}`}
-                    disabled={busy}
-                    onClick={() => {
-                      onRemove(grant.actorId);
-                    }}
-                  >
-                    <XIcon size={16} />
-                  </button>
-                ) : null}
-              </div>
-            );
-          })}
+      ) : null}
+      {error === null ? null : (
+        <div className="mt-3">
+          <InlineError variant="compact" title="Sharing didn’t change" message={error.message} />
         </div>
       )}
-    </section>
-  );
-}
 
-function Avatar({ name }: { readonly name: string }) {
-  return (
-    <span
-      aria-hidden="true"
-      className="w-6 h-6 rounded-full [display:inline-grid] [place-items:center] shrink-0 [background:var(--accent-soft)] text-primary type-caption font-bold"
-    >
-      {initials(name)}
-    </span>
-  );
-}
+      <section aria-labelledby={`${accessId}-people`} className="mt-4">
+        <h3 id={`${accessId}-people`} className="type-body-sm font-semibold m-0 mb-2">
+          People with access
+        </h3>
+        {access.isLoading ? (
+          <Skeleton variant="row" count={2} label="Loading people with access" />
+        ) : (
+          <ul className="drive-share-people">
+            <li className="drive-share-person">
+              <Avatar name={target.ownerName} size={32} />
+              <span className="min-w-0 flex-1 truncate type-body-sm">
+                {target.ownerName}
+                {target.ownerActorId === currentActorId ? " (you)" : ""}
+              </span>
+              <span className="type-caption text-muted-foreground">Owner</span>
+            </li>
+            {(access.data ?? [])
+              .filter((grant) => grant.actorId !== target.ownerActorId && grant.role !== "owner")
+              .map((grant) => {
+                const name = grant.displayName ?? grant.email ?? "Workspace member";
+                return (
+                  <li key={grant.actorId} className="drive-share-person">
+                    <Avatar name={name} size={32} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate type-body-sm">{name}</span>
+                      {grant.email !== undefined && grant.email !== name ? (
+                        <span className="block truncate type-caption text-muted-foreground">
+                          {grant.email}
+                        </span>
+                      ) : null}
+                    </span>
+                    {isOwner ? (
+                      <select
+                        className="input w-36"
+                        aria-label={`Access for ${name}`}
+                        value={driveAccessRoleValue(grant.role)}
+                        disabled={busy}
+                        onChange={(event) =>
+                          changeRole.mutate({ actorId: grant.actorId, value: event.target.value })
+                        }
+                      >
+                        {DRIVE_ACCESS_ROLE_OPTIONS.map((option) => (
+                          <option key={option.role} value={option.role}>
+                            {option.label}
+                          </option>
+                        ))}
+                        <option value={REMOVE_ACCESS}>Remove access</option>
+                      </select>
+                    ) : (
+                      <span className="type-caption text-muted-foreground">
+                        {driveAccessRoleLabel(grant.role)}
+                      </span>
+                    )}
+                  </li>
+                );
+              })}
+          </ul>
+        )}
+      </section>
 
-function initials(name: string): string {
-  return name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase() ?? "")
-    .join("");
+      {files ? (
+        <section aria-labelledby={`${accessId}-general`} className="mt-4">
+          <h3 id={`${accessId}-general`} className="type-body-sm font-semibold m-0 mb-2">
+            General access
+          </h3>
+          <div className="drive-share-person">
+            <span className="drive-share-access-icon" data-access={generalAccess}>
+              <AccessIcon size={18} aria-hidden="true" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <label htmlFor={`${accessId}-select`} className="sr-only">
+                General access
+              </label>
+              <select
+                id={`${accessId}-select`}
+                className="drive-share-access-select"
+                value={generalAccess}
+                disabled={!isOwner || busy || links.isLoading}
+                onChange={(event) =>
+                  setGeneralAccess.mutate(event.target.value as DriveGeneralAccess)
+                }
+              >
+                {accessOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <p className="type-caption text-muted-foreground m-0">{currentAccess?.description}</p>
+              {isOwner && generalAccess !== "restricted" && linkToken === null ? (
+                <p className="type-caption text-muted-foreground m-0 mt-1">
+                  A link is shown only when it is created.{" "}
+                  <button
+                    type="button"
+                    className="drive-link-button"
+                    disabled={busy}
+                    onClick={() => setGeneralAccess.mutate(generalAccess)}
+                  >
+                    Create a new link
+                  </button>{" "}
+                  to copy it; the old one stops working.
+                </p>
+              ) : null}
+            </div>
+            {generalAccess === "restricted" ? null : (
+              <span className="type-caption text-muted-foreground">Viewer</span>
+            )}
+          </div>
+        </section>
+      ) : (
+        <p className="type-caption text-muted-foreground mt-4 mb-0">
+          People you add get access to everything in this folder.
+        </p>
+      )}
+    </Dialog>
+  );
 }

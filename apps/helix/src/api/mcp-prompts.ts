@@ -2,7 +2,7 @@ import type { Actor } from "@helix/sdk-types";
 import type { RuntimeToolRegistry } from "../platform/tool-registry.js";
 
 /** MCP prompt descriptor surfaced via `prompts/list`. */
-export interface McpPrompt {
+interface McpPrompt {
   readonly name: string;
   readonly title?: string;
   readonly description?: string;
@@ -18,7 +18,7 @@ interface McpPromptMessage {
   readonly content: { readonly type: "text"; readonly text: string };
 }
 
-export interface McpPromptResult {
+interface McpPromptResult {
   readonly description?: string;
   readonly messages: readonly McpPromptMessage[];
 }

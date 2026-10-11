@@ -69,7 +69,7 @@ const deliveryShape = {
   idempotencyKey: z.string().trim().min(8).max(200).optional(),
 };
 
-export const sendSchema = z.object({
+const sendSchema = z.object({
   draft: z.object({ id: uuidSchema, revision: z.number().int().positive() }).optional(),
   ...deliveryShape,
   to: z.array(addressSchema).min(1),

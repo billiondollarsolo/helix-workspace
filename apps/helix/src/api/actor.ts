@@ -48,7 +48,7 @@ export type CredentialResolution =
     };
 
 /** Challenge sent when a presented bearer access token is unknown or expired. */
-export const INVALID_BEARER_TOKEN_CHALLENGE = 'Bearer error="invalid_token"';
+const INVALID_BEARER_TOKEN_CHALLENGE = 'Bearer error="invalid_token"';
 
 export type CredentialActorResolution =
   | { readonly ok: true; readonly actor: Actor }

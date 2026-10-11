@@ -19,8 +19,7 @@ export interface MailboxLike {
 }
 
 /** Extra headers a caller may set on an outbound envelope (case-insensitive). */
-export const OUTBOUND_EXTRA_HEADER_NAMES = ["Auto-Submitted"] as const;
-export type OutboundExtraHeaderName = (typeof OUTBOUND_EXTRA_HEADER_NAMES)[number];
+const OUTBOUND_EXTRA_HEADER_NAMES = ["Auto-Submitted"] as const;
 
 /** Outbound message plus Helix-only delivery hints the built-in providers honour. */
 export type HelixOutboundMailMessage = Omit<OutboundMailMessage, "attachments"> & {

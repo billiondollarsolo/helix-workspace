@@ -14,7 +14,7 @@ import type {
  * keys). They drive RFC 3834 auto-reply suppression, reply addressing, and the
  * promotions category; everything else stays only in the raw source evidence.
  */
-export const INBOUND_HEADER_ALLOWLIST = [
+const INBOUND_HEADER_ALLOWLIST = [
   "auto-submitted",
   "precedence",
   "list-id",

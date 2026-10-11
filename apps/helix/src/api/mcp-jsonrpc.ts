@@ -41,7 +41,7 @@ export function jsonRpcError(
   return { jsonrpc: "2.0", id: id ?? null, error: { code, message } };
 }
 
-export function isJsonRpcId(value: unknown): value is JsonRpcId {
+function isJsonRpcId(value: unknown): value is JsonRpcId {
   return typeof value === "string" || typeof value === "number" || value === null;
 }
 

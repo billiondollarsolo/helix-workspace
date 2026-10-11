@@ -76,7 +76,7 @@ export function projectMcpTool(tool: ToolDefinition, actor: Actor): JsonObject {
 }
 
 /** Standard MCP tool annotations derived from the tool's side-effect class. */
-export function mcpToolAnnotations(tool: ToolDefinition): JsonObject {
+function mcpToolAnnotations(tool: ToolDefinition): JsonObject {
   const readOnly = tool.sideEffects === "read";
   return {
     title: toolTitle(tool.id),
@@ -222,7 +222,7 @@ function isValidIdempotencyKey(value: string): boolean {
  * Stable key for one JSON-RPC request: principal, credential, MCP session,
  * request id, tool, and a canonical hash of the arguments.
  */
-export function derivedIdempotencyKey(
+function derivedIdempotencyKey(
   context: Pick<McpToolCallContext, "principal" | "sessionId">,
   request: JsonRpcRequest,
   toolName: string,
@@ -347,7 +347,7 @@ interface ValidationIssue {
  * MCP tool-execution failure: a successful JSON-RPC result with `isError`
  * so the model sees an actionable message instead of a protocol error.
  */
-export function toolErrorResult(result: ToolInvokeResult & { readonly ok: false }): JsonObject {
+function toolErrorResult(result: ToolInvokeResult & { readonly ok: false }): JsonObject {
   const code = errorCodeForStatus(result.statusCode);
   const retryAfterSeconds = result.retryAfterSeconds ?? result.rateLimit?.retryAfterSeconds;
   const issues = result.statusCode === 400 ? validationIssues(result) : [];
@@ -443,7 +443,7 @@ function errorHint(statusCode: number, retryAfterSeconds: number | undefined): s
  * Pending-confirmation result (MC3): tells the agent to ask a human to
  * approve, where, until when, and how to poll for the outcome.
  */
-export function pendingActionResult(
+function pendingActionResult(
   pending: PendingToolInvocation,
   publicBaseUrl: string | undefined,
 ): JsonObject {

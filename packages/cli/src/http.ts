@@ -43,7 +43,7 @@ export interface RequestPolicy {
   readonly sleep: (ms: number) => Promise<void>;
 }
 
-export interface SendOptions {
+interface SendOptions {
   /**
    * The request is safe to repeat (a read, a tool call carrying an
    * Idempotency-Key, or a storage PUT), so 503s and network errors retry too.

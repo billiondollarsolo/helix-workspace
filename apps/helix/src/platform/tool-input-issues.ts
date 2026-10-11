@@ -1,5 +1,5 @@
 /** One failing input field, shaped like the HTTP validation envelope's `details.issues`. */
-export interface ToolInputIssue {
+interface ToolInputIssue {
   readonly path: readonly (string | number)[];
   readonly message: string;
 }

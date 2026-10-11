@@ -124,7 +124,7 @@ function plainBodyOf(message: MailThreadMessage): string {
 }
 
 /** Quoted original (headers + body) appended to a forward, in text and HTML. */
-export function forwardedContent(
+function forwardedContent(
   original: MailThreadMessage,
   subject: string,
 ): { readonly text: string; readonly html: string } {

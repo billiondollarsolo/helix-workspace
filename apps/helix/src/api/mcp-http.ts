@@ -33,22 +33,22 @@ export type McpHttpOutcome =
       readonly events: AsyncGenerator<McpStreamEvent>;
     };
 
-export const MCP_SESSION_HEADER = "mcp-session-id";
-export const MCP_PROTOCOL_VERSION_HEADER = "mcp-protocol-version";
+const MCP_SESSION_HEADER = "mcp-session-id";
+const MCP_PROTOCOL_VERSION_HEADER = "mcp-protocol-version";
 const MCP_SESSION_ID_PATTERN = /^[\x21-\x7e]{1,128}$/u;
 
 /** URL of the RFC 9728 protected-resource metadata document. */
-export function protectedResourceMetadataUrl(publicBaseUrl: string): string {
+function protectedResourceMetadataUrl(publicBaseUrl: string): string {
   return `${trimBase(publicBaseUrl)}/.well-known/oauth-protected-resource`;
 }
 
 /** The MCP endpoint as an OAuth protected resource identifier. */
-export function mcpResourceUrl(publicBaseUrl: string): string {
+function mcpResourceUrl(publicBaseUrl: string): string {
   return `${trimBase(publicBaseUrl)}${versionedApiPath("/mcp")}`;
 }
 
 /** RFC 6750 / RFC 9728 challenge sent with every 401 from `/mcp`. */
-export function mcpWwwAuthenticate(
+function mcpWwwAuthenticate(
   publicBaseUrl: string,
   error?: { readonly code: "invalid_token"; readonly description: string },
 ): string {
@@ -75,7 +75,7 @@ export function buildProtectedResourceMetadata(input: {
 }
 
 /** Every scope a registered tool can require, sorted for stable output. */
-export function toolScopes(tools: readonly ToolDefinition[]): string[] {
+function toolScopes(tools: readonly ToolDefinition[]): string[] {
   const scopes = new Set<string>();
   for (const tool of tools) {
     scopes.add(tool.permission);

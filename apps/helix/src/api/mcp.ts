@@ -34,7 +34,7 @@ export const MCP_SUPPORTED_PROTOCOL_VERSIONS: readonly string[] = [
   "2025-03-26",
 ];
 
-export interface McpRequestLimits {
+interface McpRequestLimits {
   readonly maxBodyBytes?: number;
   readonly requestTimeoutMs?: number;
 }
@@ -54,7 +54,6 @@ export type McpHandlerInput = {
   readonly publicBaseUrl?: string;
 };
 
-export type { McpPromptProvider } from "./mcp-prompts.js";
 export type { JsonRpcResponse } from "./mcp-jsonrpc.js";
 
 /**

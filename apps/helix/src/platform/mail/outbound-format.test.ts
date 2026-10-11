@@ -1,4 +1,5 @@
-import nodemailer from "nodemailer";
+import nodemailer, { type Transporter } from "nodemailer";
+import type SMTPTransport from "nodemailer/lib/smtp-transport/index.js";
 import addressparser from "nodemailer/lib/addressparser/index.js";
 import { describe, expect, it } from "vitest";
 import { addressSchema } from "./tools-compose.js";
@@ -18,8 +19,12 @@ const adversarialNames = [
   "Back\\slash\\",
 ];
 
-function streamTransport() {
-  return nodemailer.createTransport({ streamTransport: true, buffer: true });
+// The stream transport captures the rendered message; production code is typed for SMTP.
+function streamTransport(): Transporter<SMTPTransport.SentMessageInfo> {
+  return nodemailer.createTransport({
+    streamTransport: true,
+    buffer: true,
+  }) as unknown as Transporter<SMTPTransport.SentMessageInfo>;
 }
 
 function adversarialEnvelope(): MailOutboundEnvelope {

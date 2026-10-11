@@ -17,6 +17,9 @@ All notable changes to Helix Workspace are documented here. This file follows
 - Organizations can always share Drive files with their own members; the `b2b_sharing` flag
   ("External sharing" in admin settings) now governs only public share links, so personal-plan
   and single-tenant workspaces share internally and admins opt in to sharing outside.
+- Live E2E runs give the API a deterministic OpenAI-compatible model
+  (`apps/web/tests/e2e/support/fake-model-server.ts`), so the assistant spec sends a
+  prompt and checks the streamed provider answer instead of only the no-model state.
 - ClamAV is now a Helix-built image (`infra/clamav`) promoted like SpamAssassin, so the
   pinned upstream image can take patched Alpine packages first. Production Compose requires
   `HELIX_CLAMAV_IMAGE` with an immutable `helix-workspace-clamav` digest.

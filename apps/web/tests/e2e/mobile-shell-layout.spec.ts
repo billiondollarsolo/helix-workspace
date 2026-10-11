@@ -57,7 +57,13 @@ test.describe("mobile shell layout", () => {
     await sheet.evaluate((element) =>
       Promise.all(element.getAnimations().map((animation) => animation.finished)),
     );
-    await expect(sheet.getByRole("link")).toHaveText(["Meet", "Helix AI", "Admin", "Search"]);
+    await expect(sheet.getByRole("link")).toHaveText([
+      "Meet",
+      "Contacts",
+      "Helix AI",
+      "Admin",
+      "Search",
+    ]);
     const sheetBox = await sheet.boundingBox();
     expect(sheetBox?.x ?? -1).toBeGreaterThanOrEqual(0);
     expect((sheetBox?.x ?? 0) + (sheetBox?.width ?? 0)).toBeLessThanOrEqual(390);

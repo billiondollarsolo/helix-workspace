@@ -32,6 +32,7 @@ const SCOPE_PRIORITY: Readonly<Record<ShortcutScope, number>> = {
   calendar: 1,
   drive: 1,
   chat: 1,
+  contacts: 1,
   global: 0,
 };
 

@@ -30,6 +30,8 @@ const serviceAccount = "d2080000-0000-4000-8000-0000000000a4";
 const denied = "d2080000-0000-4000-8000-0000000000a5";
 const planner = "d2080000-0000-4000-8000-0000000000a6";
 const denyRole = "d2080000-0000-4000-8000-0000000000b1";
+/** The member role's permissions: profile (0208) and contacts (0215). */
+const MEMBER_PERMISSIONS = ["contacts.read", "contacts.write", "profile.read", "profile.write"];
 
 describe("0208 member profile self-service migration", () => {
   it("adds permissions without disabling IAM triggers or updating role rows", async () => {
@@ -131,7 +133,7 @@ describe(
       );
     }
 
-    it("seeds the member role with exactly profile.read and profile.write in every org", async () => {
+    it("seeds the member role with exactly its profile and contacts permissions in every org", async () => {
       await sql`insert into orgs (id, slug, display_name) values (${laterOrg}, 'member-role-later', 'Later')`;
       const roles = await sql<{ org_id: string; permissions: string[] }[]>`
         select role.org_id, array_agg(held.permission || ':' || held.effect order by held.permission)
@@ -143,8 +145,11 @@ describe(
         group by role.org_id order by role.org_id
       `;
       expect(roles).toEqual([
-        { org_id: org, permissions: ["profile.read:allow", "profile.write:allow"] },
-        { org_id: laterOrg, permissions: ["profile.read:allow", "profile.write:allow"] },
+        { org_id: org, permissions: MEMBER_PERMISSIONS.map((permission) => `${permission}:allow`) },
+        {
+          org_id: laterOrg,
+          permissions: MEMBER_PERMISSIONS.map((permission) => `${permission}:allow`),
+        },
       ]);
       const [missing] = await sql<{ count: number }[]>`
         select count(*)::int as count from orgs organization
@@ -159,7 +164,7 @@ describe(
     it("grants every active person, but never agents, service accounts or suspended members", async () => {
       const grants = async (actorId: string) =>
         (await loadActor(actorId)).roleBindings?.flatMap((binding) => binding.allow) ?? [];
-      expect(await grants(person)).toEqual(["profile.read", "profile.write"]);
+      expect(await grants(person)).toEqual(MEMBER_PERMISSIONS);
       expect(await grants(suspended)).toEqual([]);
       expect(await grants(agent)).toEqual([]);
       expect(await grants(serviceAccount)).toEqual([]);
@@ -170,8 +175,7 @@ describe(
       expect(actor.roleBindings?.flatMap((binding) => binding.allow)).toEqual([
         "calendar.read:freebusy",
         "calendar.write:respond",
-        "profile.read",
-        "profile.write",
+        ...MEMBER_PERMISSIONS,
       ]);
       expect(actorHasPermission(actor, "calendar.read:freebusy")).toBe(true);
       expect(actorHasPermission(actor, "calendar.manage")).toBe(false);

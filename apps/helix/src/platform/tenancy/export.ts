@@ -253,6 +253,7 @@ export async function countTenantExportRows(
     union all select 'cal_resource_bookings', count(*)::integer from cal_resource_bookings where org_id = ${orgId}
     union all select 'carddav_contacts', count(*)::integer from carddav_contacts where org_id = ${orgId}
     union all select 'carddav_addressbooks', count(*)::integer from carddav_addressbooks where org_id = ${orgId}
+    union all select 'carddav_contact_labels', count(*)::integer from carddav_contact_labels where org_id = ${orgId}
     union all select 'meet_rooms', count(*)::integer from meet_rooms where org_id = ${orgId}
     union all select 'chat_room_settings', count(*)::integer from chat_room_settings where org_id = ${orgId}
     union all select 'chat_reactions', count(*)::integer from chat_reactions where org_id = ${orgId}

@@ -1,7 +1,16 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 import { fulfillCoreAppsRoute } from "./support/api-fixtures";
 import { seedBrowserSession } from "./support/backend-mode";
-const PRIMARY_NAMES = ["Mail", "Calendar", "Drive", "Chat", "Meet", "Helix AI", "Admin"] as const;
+const PRIMARY_NAMES = [
+  "Mail",
+  "Calendar",
+  "Drive",
+  "Chat",
+  "Meet",
+  "Contacts",
+  "Helix AI",
+  "Admin",
+] as const;
 const PINNED_NAMES = ["Mail", "Calendar", "Drive", "Chat", "Meet"] as const;
 const EXCLUDED_NAMES = ["Docs", "Sheets", "Slides", "PDF"] as const;
 test.describe("workspace product scope", () => {

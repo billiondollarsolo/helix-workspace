@@ -4,6 +4,7 @@ import { registerAppPasswordTools } from "../platform/auth/app-passwords.js";
 import { registerAgentCredentialTools } from "../platform/auth/tools.js";
 import { registerAssistantTools } from "../platform/assistant/index.js";
 import { registerCalendarTools } from "../platform/calendar/index.js";
+import { registerContactsTools } from "../platform/carddav/index.js";
 import { registerChatTools } from "../platform/chat/index.js";
 import { registerChatInboxTools } from "../platform/chat/inbox.js";
 import { registerDriveS3KeyTools, registerDriveTools } from "../platform/drive/index.js";
@@ -34,6 +35,7 @@ function registeredTools() {
   registerAppPasswordTools(registry, unused);
   registerAccountPreferenceTools(registry, unused);
   registerChatInboxTools(registry, unused);
+  registerContactsTools(registry, unused);
   return registry.list();
 }
 

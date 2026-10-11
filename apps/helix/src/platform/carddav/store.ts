@@ -692,7 +692,7 @@ function boundedAvatarDataUrl(value: string | undefined): string | undefined {
     : undefined;
 }
 
-function contactEtag(vcard: string): string {
+export function contactEtag(vcard: string): string {
   return `"contact-${createHash("sha256").update(vcard).digest("hex")}"`;
 }
 
@@ -908,7 +908,7 @@ async function setCardDavContext(sql: SqlLike, orgId: string, actorId: string): 
   await sql`select set_config('helix.org_id', ${orgId}, true), set_config('helix.actor_id', ${actorId}, true)`;
 }
 
-async function recordContactMutation(
+export async function recordContactMutation(
   sql: SqlLike,
   contact: CardDavContactRecord,
   operation: "created" | "updated" | "deleted",

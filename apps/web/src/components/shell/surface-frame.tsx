@@ -39,6 +39,8 @@ export interface SurfaceFrameProps {
   /** The surface body — typically a left sidebar + main pane. Rendered inside
    *  `.workspace-body`, before the side-panel rail. */
   children: ReactNode;
+  /** Where the surface is (e.g. the URL). The phone drawer closes when it changes. */
+  navigationKey?: string;
 }
 
 export function SurfaceFrame({
@@ -50,8 +52,11 @@ export function SurfaceFrame({
   onSearchChange,
   onSearchSubmit,
   children,
+  navigationKey = "",
 }: SurfaceFrameProps) {
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  // The drawer stays open only on the page it was opened from.
+  const [drawerKey, setDrawerKey] = useState<string | null>(null);
+  const drawerOpen = drawerKey === navigationKey;
   const [sideTool, setSideTool] = useState<SideTool | null>(null);
   const collapsed = useNavCollapsed();
   const mobile = useMobileLayout();
@@ -70,7 +75,7 @@ export function SurfaceFrame({
             aria-expanded={mobile ? drawerOpen : !collapsed}
             onClick={() => {
               if (mobile) {
-                setDrawerOpen((open) => !open);
+                setDrawerKey(drawerOpen ? null : navigationKey);
               } else {
                 toggleNavCollapsed();
               }

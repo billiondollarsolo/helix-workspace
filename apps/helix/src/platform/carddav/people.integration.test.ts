@@ -4,6 +4,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { cleanupTestTenants } from "../../test-support/cleanup-tenants.js";
 import { skipUnlessLiveDatabase } from "../../test-support/live-suite.js";
 import { tenantAwarePostgresSql } from "../tenancy/postgres-roles.js";
+import { contactFieldsSchema } from "@helix/contracts";
+import { PostgresContactsStore } from "./contacts-store.js";
 import { PostgresPeopleStore } from "./people.js";
 
 const live = !skipUnlessLiveDatabase("people directory search");
@@ -39,20 +41,21 @@ describe.skipIf(!live)("people directory search (PostgreSQL)", () => {
       (${foreignId}, ${foreignOrgId}, 'user', 'mina@foreign.test', 'Mina Foreign', '{}', null)`;
     await admin`insert into admin_groups (id, org_id, name, email, kind) values
       (${groupId}, ${orgId}, 'Mina fan club', 'mina-fans@people.test', 'mailing_list')`;
-    await store.importContact({
-      orgId,
-      actorId: viewerId,
-      href: "mina.vcf",
-      vcard:
-        "BEGIN:VCARD\r\nVERSION:4.0\r\nUID:mina\r\nFN:Mina (personal)\r\nEMAIL:mina@people.test\r\nEND:VCARD\r\n",
-    });
-    await store.importContact({
-      orgId,
-      actorId: neighbourId,
-      href: "secret.vcf",
-      vcard:
-        "BEGIN:VCARD\r\nVERSION:4.0\r\nUID:secret\r\nFN:Mina Secret\r\nEMAIL:mina.secret@outside.test\r\nEND:VCARD\r\n",
-    });
+    const contacts = new PostgresContactsStore(sql);
+    await contacts.create(
+      { orgId, actorId: viewerId },
+      contactFieldsSchema.parse({
+        givenName: "Mina (personal)",
+        emails: [{ type: "work", value: "mina@people.test" }],
+      }),
+    );
+    await contacts.create(
+      { orgId, actorId: neighbourId },
+      contactFieldsSchema.parse({
+        givenName: "Mina Secret",
+        emails: [{ type: "other", value: "mina.secret@outside.test" }],
+      }),
+    );
   });
 
   afterAll(async () => {

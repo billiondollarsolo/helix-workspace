@@ -14,6 +14,7 @@ const SHORTCUT_SCOPES = [
   "calendar",
   "drive",
   "chat",
+  "contacts",
   "dialog",
 ] as const;
 export type ShortcutScope = (typeof SHORTCUT_SCOPES)[number];
@@ -25,6 +26,7 @@ const SHORTCUT_SCOPE_LABELS: Readonly<Record<ShortcutScope, string>> = {
   calendar: "Calendar",
   drive: "Drive",
   chat: "Chat",
+  contacts: "Contacts",
   dialog: "Compose and dialogs",
 };
 
@@ -186,6 +188,21 @@ export const SHORTCUT_CATALOG = {
     keys: ["ctrl+alt+shift+arrowdown"],
     description: "Jump to the newest message",
     allowInInput: true,
+  },
+
+  "contacts.create": { scope: "contacts", keys: ["c"], description: "Create a contact" },
+  "contacts.next": { scope: "contacts", keys: ["j"], description: "Move to the next contact" },
+  "contacts.previous": {
+    scope: "contacts",
+    keys: ["k"],
+    description: "Move to the previous contact",
+  },
+  "contacts.select": { scope: "contacts", keys: ["x"], description: "Select the contact" },
+  "contacts.edit": { scope: "contacts", keys: ["e"], description: "Edit the contact" },
+  "contacts.delete": {
+    scope: "contacts",
+    keys: ["#"],
+    description: "Delete the selected contacts",
   },
 
   "dialog.send": {

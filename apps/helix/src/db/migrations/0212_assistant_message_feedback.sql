@@ -2,15 +2,22 @@
 -- answer, with an optional comment. Rows follow the tenant RLS contract every
 -- org_id table carries; the application scopes them to the conversation owner.
 
+-- Tenant-coupled target for the feedback foreign key.
+create unique index assistant_messages_org_id_id_uidx on assistant_messages (org_id, id);
+
 create table assistant_message_feedback (
   org_id uuid not null,
-  message_id uuid not null references assistant_messages(id) on delete cascade,
-  actor_id uuid not null references actors(id) on delete cascade,
+  message_id uuid not null,
+  actor_id uuid not null,
   rating text not null,
   comment text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   primary key (message_id, actor_id),
+  constraint assistant_message_feedback_message_fk foreign key (org_id, message_id)
+    references assistant_messages (org_id, id) on delete cascade,
+  constraint assistant_message_feedback_actor_fk foreign key (org_id, actor_id)
+    references actors (org_id, id) on delete cascade,
   constraint assistant_message_feedback_rating_check check (rating in ('up', 'down')),
   constraint assistant_message_feedback_comment_check
     check (comment is null or char_length(comment) between 1 and 2000)

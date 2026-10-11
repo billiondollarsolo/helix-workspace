@@ -26,7 +26,7 @@ test.beforeEach(() => {
 test("admin edits human profiles with recoverable errors and persisted directory updates", async ({
   page,
 }) => {
-  const updates = await mockAdminProfiles(page, true);
+  const { updates } = await mockAdminProfiles(page, true);
   await page.goto("/admin/users");
   await openEditProfile(page, "Morgan Lee");
   const dialog = page.getByRole("dialog", { name: "Edit profile for Morgan Lee", exact: true });
@@ -93,16 +93,54 @@ test("admin profile dialog is accessible on mobile and restores keyboard focus",
   await expect(opener).toBeFocused();
 });
 
+test("admin suspends and restores a person after confirming, with last sign-in shown", async ({
+  page,
+}) => {
+  const { lifecycle } = await mockAdminProfiles(page);
+  await page.goto("/admin/users");
+  const row = page.locator(".admin-user-row").filter({ hasText: "Morgan Lee" });
+  await expect(page.locator(".admin-list-header")).toContainText("Last sign-in");
+  await expect(row.locator("time")).toHaveAttribute("datetime", "2026-09-30T08:00:00Z");
+  await expect(row.locator(".chip.success")).toHaveText("Active");
+
+  await page.getByRole("button", { name: "Actions for Morgan Lee", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Suspend user…", exact: true }).click();
+  const confirm = page.getByRole("alertdialog", { name: "Suspend Morgan Lee?" });
+  await expect(confirm).toContainText("signed out on every device");
+  await page.addScriptTag({ content: axe.source });
+  const violations = await page.evaluate(async () => {
+    const browser = window as typeof window & { axe: typeof axe };
+    return (
+      await browser.axe.run(document, { runOnly: { type: "tag", values: ["wcag2a", "wcag2aa"] } })
+    ).violations;
+  });
+  expect(violations).toEqual([]);
+  await confirm.getByRole("button", { name: "Suspend", exact: true }).click();
+  await expect(row.locator(".chip.warning")).toHaveText("Suspended");
+
+  await page.getByRole("button", { name: "Actions for Morgan Lee", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Restore user…", exact: true }).click();
+  const restore = page.getByRole("alertdialog", { name: "Restore Morgan Lee?" });
+  await restore.getByRole("button", { name: "Restore", exact: true }).click();
+  await expect(row.locator(".chip.success")).toHaveText("Active");
+  expect(lifecycle).toEqual(["suspend", "restore"]);
+});
+
 /** Edit profile lives in the row ⋮ menu. */
 async function openEditProfile(page: Page, name: string): Promise<void> {
   await page.getByRole("button", { name: `Actions for ${name}`, exact: true }).click();
   await page.getByRole("menuitem", { name: "Edit profile", exact: true }).click();
 }
 
-async function mockAdminProfiles(page: Page, failFirstSave = false): Promise<unknown[]> {
+async function mockAdminProfiles(
+  page: Page,
+  failFirstSave = false,
+): Promise<{ readonly updates: unknown[]; readonly lifecycle: string[] }> {
   await seedBrowserSession(page, "admin-profile-session");
   let profile = { ...initialProfile };
   const updates: unknown[] = [];
+  const lifecycle: string[] = [];
+  let suspended = false;
   await page.route("**/api/**", async (route) => {
     const request = route.request();
     const pathname = new URL(request.url()).pathname;
@@ -122,13 +160,30 @@ async function mockAdminProfiles(page: Page, failFirstSave = false): Promise<unk
         orgId: profile.orgId,
         email: user.type === "user" ? profile.email : null,
         scopes: [],
-        status: "active",
-        disabledAt: null,
-        lastSignInAt: null,
+        ...(user.id === profile.actorId
+          ? {
+              status: suspended ? "suspended" : "active",
+              disabledAt: suspended ? "2026-10-01T00:00:00Z" : null,
+              lastSignInAt: "2026-09-30T08:00:00Z",
+            }
+          : { status: "active", disabledAt: null, lastSignInAt: null }),
         createdAt: "2026-09-01T00:00:00Z",
         updatedAt: "2026-09-01T00:00:00Z",
       }));
       await route.fulfill({ json: { users, nextCursor: null } });
+      return;
+    }
+    const action = /^\/v1\/api\/admin\/users\/[^/]+\/(suspend|restore)$/u.exec(pathname)?.[1];
+    if (action !== undefined && request.method() === "POST") {
+      lifecycle.push(action);
+      suspended = action === "suspend";
+      await route.fulfill({
+        json: {
+          actorId: profile.actorId,
+          status: suspended ? "suspended" : "active",
+          changed: true,
+        },
+      });
       return;
     }
     if (pathname === `/v1/api/admin/users/${profile.actorId}/profile`) {
@@ -153,5 +208,5 @@ async function mockAdminProfiles(page: Page, failFirstSave = false): Promise<unk
       json: { error: `Unexpected ${request.method()} ${pathname}` },
     });
   });
-  return updates;
+  return { updates, lifecycle };
 }

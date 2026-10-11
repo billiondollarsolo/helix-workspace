@@ -1,9 +1,9 @@
 # syntax=docker/dockerfile:1.25.0@sha256:0adf442eae370b6087e08edc7c50b552d80ddf261576f4ebd6421006b2461f12
 
 ARG BUILD_BASE=node:24.18.0-trixie-slim@sha256:ae91dcc111a68c9d2d81ff2a17bda61be126426176fde6fe7d08ab13b7f50573
-ARG RUNTIME_BASE=gcr.io/distroless/nodejs24-debian13:nonroot@sha256:af85d11ce7ef10172855a6e3649e3e8125b1b9e3ca41849ec2918036f05cb212
-ARG GO_BUILD_BASE=golang:1.26.5-alpine3.24@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2
-ARG WEB_RUNTIME_BASE=alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+ARG RUNTIME_BASE=gcr.io/distroless/nodejs24-debian13:nonroot@sha256:9eeb7f5887d0e239e78264b06f7f11d2e14be534050481803a9e4728fcdd278e
+ARG GO_BUILD_BASE=golang:1.26.9-alpine3.24@sha256:3082400e369fa24d5fc60bca20edab3f6d604e0c5a690ec66b295eff4dd87ade
+ARG WEB_RUNTIME_BASE=alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
 
 # Build the stock Caddy command with patched transitive modules and a patched Go
 # toolchain. The upstream binary image can lag fixed Go/library releases even
@@ -14,7 +14,7 @@ WORKDIR /src
 
 RUN go mod init helix.invalid/caddy-build \
     && go get github.com/caddyserver/caddy/v2/cmd/caddy@v2.11.4 \
-    && go get golang.org/x/text@v0.39.0 google.golang.org/grpc@v1.82.1
+    && go get google.golang.org/grpc@v1.83.2 golang.org/x/net@v0.60.0
 
 RUN mkdir -p /out \
     && CGO_ENABLED=0 go build \
@@ -103,8 +103,8 @@ LABEL org.opencontainers.image.title="helix-workspace-web" \
       org.opencontainers.image.source="https://github.com/billiondollarsolo/helix-workspace"
 
 RUN apk add --no-cache \
-      libcrypto3=3.5.7-r0 \
-      libssl3=3.5.7-r0 \
+      libcrypto3=3.5.9-r0 \
+      libssl3=3.5.9-r0 \
     && addgroup -g 10001 -S helix \
     && adduser -u 10001 -S -D -G helix helix \
     && mkdir -p /config /data /srv \

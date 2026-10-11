@@ -6,7 +6,10 @@ const interactionBudgetMs = 2_000;
 test("stays responsive on a throttled low-end browser and network", async ({ context, page }) => {
   await page.route("**/api/**", async (route) => {
     const pathname = new URL(route.request().url()).pathname;
-    if (pathname === "/v1/api/auth/csrf-token") {
+    if (pathname === "/v1/api/auth/get-session") {
+      // BetterAuth answers JSON null for a signed-out browser.
+      await route.fulfill({ json: null });
+    } else if (pathname === "/v1/api/auth/csrf-token") {
       await route.fulfill({ json: { csrfToken: "performance-csrf" } });
     } else if (pathname === "/v1/api/auth/sign-in/email") {
       await route.fulfill({ status: 401, json: { error: "Invalid email or password." } });

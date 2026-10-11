@@ -49,6 +49,7 @@ Production assertions impose additional requirements; follow the [deployment gui
 | `HELIX_BYO_STORAGE_HEALTH_REFRESH_INTERVAL_MS`     | Optional     | `3600000`                                                   |
 | `HELIX_CERBOS_IMAGE`                               | Optional     | —                                                           |
 | `HELIX_CHROMIUM_PATH`                              | Optional     | —                                                           |
+| `HELIX_CLAMAV_IMAGE`                               | Optional     | —                                                           |
 | `HELIX_CONFIG_JSON`                                | Optional     | —                                                           |
 | `HELIX_DATA_ENCRYPTION_KEY`                        | Optional     | —                                                           |
 | `HELIX_DEFAULT_ORG_ID`                             | Optional     | `00000000-0000-0000-0000-000000000000`                      |

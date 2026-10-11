@@ -33,7 +33,7 @@ describe("source supply-chain workflow", () => {
     expect(source).toContain('cron: "17 6 * * *"');
   });
   it("uses only exact secret fingerprints in the historical baseline", () => {
-    expect(secretBaseline).toHaveLength(65);
+    expect(secretBaseline).toHaveLength(70);
     expect(new Set(secretBaseline).size).toBe(secretBaseline.length);
     for (const fingerprint of secretBaseline) {
       expect(fingerprint).toMatch(/^[0-9a-f]{40}:[^:*?\n]+:[a-z0-9-]+:[1-9][0-9]*$/u);

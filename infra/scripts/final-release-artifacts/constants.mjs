@@ -49,7 +49,7 @@ export const REQUIRED_PRODUCTION_IMAGE_SUBJECTS = Object.freeze({
   rustfs: "docker.io/rustfs/rustfs",
   cerbos: "ghcr.io/billiondollarsolo/helix-workspace-cerbos",
   spamassassin: "ghcr.io/billiondollarsolo/helix-workspace-spamassassin",
-  clamav: "docker.io/clamav/clamav",
+  clamav: "ghcr.io/billiondollarsolo/helix-workspace-clamav",
 });
 
 export const APPROVED_MVP_CORE_APPS = Object.freeze(["assistant", "chat", "drive", "mail"]);

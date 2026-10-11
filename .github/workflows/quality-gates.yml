@@ -56,6 +56,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build workspace packages
+        run: pnpm turbo run build --filter="./packages/*"
+
       - name: Check source formatting
         run: pnpm format:check
 
@@ -155,6 +158,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build workspace packages
+        run: pnpm turbo run build --filter="./packages/*"
+
       - name: Start PostgreSQL and RustFS using reviewed image pins
         run: docker compose up -d --build --wait postgres rustfs
 
@@ -230,6 +236,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build workspace packages
+        run: pnpm turbo run build --filter="./packages/*"
+
       - name: Check formatting
         run: pnpm format:check
 
@@ -291,6 +300,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build workspace packages
+        run: pnpm turbo run build --filter="./packages/*"
+
       - name: Check Docker daemon
         run: docker info
 
@@ -330,7 +342,7 @@ jobs:
         run: |
           docker compose -p helix_demo_smoke_ci_${{ github.run_id }} exec -T postgres \
             psql -U helix -d helix_demo_smoke -v ON_ERROR_STOP=1 \
-            -c "update orgs set quotas = jsonb_set(quotas, '{api_rps_limit}', 'null'::jsonb, true) where id = '00000000-0000-0000-0000-000000000000';"
+            -c "update orgs set quotas = jsonb_set(quotas, '{api_rps_limit}', 'null'::jsonb, true) where id = '00000000-0000-4000-8000-000000000100';"
 
       - name: Start Helix API
         env:
@@ -342,7 +354,9 @@ jobs:
           BETTER_AUTH_URL: http://127.0.0.1:39531
           BETTER_AUTH_TRUSTED_ORIGINS: http://127.0.0.1:39531
           HELIX_PUBLIC_URL: http://127.0.0.1:39531
-          HELIX_DEFAULT_ORG_ID: 00000000-0000-0000-0000-000000000000
+          # The demo data, its OAuth client and its users live in the local demo org;
+          # any other default org makes the token endpoint report an unknown client.
+          HELIX_DEFAULT_ORG_ID: 00000000-0000-4000-8000-000000000100
           MEILI_HOST: http://127.0.0.1:39533
           MEILI_MASTER_KEY: helix_dev_meili_master_key
           RUSTFS_ENDPOINT: http://127.0.0.1:39534
@@ -365,14 +379,16 @@ jobs:
           HELIX_BASE_URL: http://127.0.0.1:39531
           HELIX_SMOKE_CLIENT_ID: helix-local-oauth-client
           HELIX_SMOKE_CLIENT_SECRET: helix-local-dev-secret
-          HELIX_SMOKE_K6_API_BASE_URL: http://127.0.0.1:39531
+          # k6 appends /api/tools and /mcp to this base, which the API serves only under /v1.
+          HELIX_SMOKE_K6_API_BASE_URL: http://127.0.0.1:39531/v1
           HELIX_SMOKE_K6_WEB_BASE_URL: http://127.0.0.1:39531
           HELIX_SMOKE_K6_SCENARIO_GROUPS: api_smoke,mail_api,search,chat,mcp,otel_health
           HELIX_SMOKE_K6_DURATION: 2s
           HELIX_K6_RUNNER: docker
-          HELIX_K6_DOCKER_API_BASE_URL: http://host.docker.internal:39531
+          HELIX_K6_DOCKER_API_BASE_URL: http://host.docker.internal:39531/v1
           HELIX_K6_DOCKER_WEB_BASE_URL: http://host.docker.internal:39531
-          API_TARGETS: /healthz,/readyz,/metrics
+          # Relative to the /v1 base; /healthz and /readyz are checked unversioned by the smoke.
+          API_TARGETS: /api/tools,/openapi.json,/metrics
           # The full MCP catalog is roughly 1.7 MB; budget serialization and
           # transfer separately from the low-latency API health probes.
           MCP_CATALOG_P95_MS: "1500"
@@ -423,6 +439,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Build workspace packages
+        run: pnpm turbo run build --filter="./packages/*"
 
       - name: Build web app
         run: pnpm --filter @helix/web build

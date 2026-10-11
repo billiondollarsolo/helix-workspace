@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link as LinkIcon, Users as UsersIcon, X as XIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   createDriveShareLink,
   drivePublicShareUrl,
@@ -24,6 +24,8 @@ interface DriveShareDialogProps {
   readonly ownerActorId?: string | null;
   readonly open: boolean;
   readonly shareUrl?: string | undefined;
+  /** Public links exist for files only; folders share with people. */
+  readonly allowPublicLinks?: boolean;
   readonly onOpenChange: (open: boolean) => void;
 }
 
@@ -33,6 +35,7 @@ export function DriveShareDialog({
   ownerActorId = null,
   open,
   shareUrl,
+  allowPublicLinks = true,
   onOpenChange,
 }: DriveShareDialogProps) {
   const queryClient = useQueryClient();
@@ -49,6 +52,7 @@ export function DriveShareDialog({
   const [creatingPublicLink, setCreatingPublicLink] = useState(false);
   const [publicLinkError, setPublicLinkError] = useState<string | null>(null);
   const accessQueryKey = driveQueryKeys.access(objectId);
+  const shareInputRef = useRef<HTMLInputElement>(null);
 
   const accessQuery = useQuery(driveAccessQueryOptions(objectId, false));
   const { refetch: refetchAccess } = accessQuery;
@@ -58,6 +62,20 @@ export function DriveShareDialog({
       void refetchAccess();
     }
   }, [open, refetchAccess]);
+
+  useEffect(() => {
+    if (!open) return;
+    shareInputRef.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onOpenChange(false);
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open, onOpenChange]);
 
   const invalidateAccess = async () => {
     await queryClient.invalidateQueries({ queryKey: accessQueryKey });
@@ -193,6 +211,7 @@ export function DriveShareDialog({
           </label>
           <div className="flex gap-2 items-center">
             <input
+              ref={shareInputRef}
               id={`share-targets-${objectId}`}
               className="input flex-1 min-w-0"
               value={shareInput}
@@ -254,102 +273,106 @@ export function DriveShareDialog({
           }}
         />
 
-        <details className="grid gap-2.5 [padding:14px_18px] [border-bottom:1px_solid_var(--border)]">
-          <summary>Public link settings</summary>
-          <p className="text-muted-foreground [font-size:var(--text-caption)]">
-            Public links are view-only and can be revoked at any time.
-          </p>
-          <input
-            className="input"
-            type="password"
-            aria-label="Public link password"
-            placeholder="Optional password (12+ characters)"
-            value={publicPassword}
-            onChange={(event) => {
-              setPublicPassword(event.currentTarget.value);
-            }}
-          />
-          <input
-            className="input"
-            type="datetime-local"
-            aria-label="Public link expiry"
-            value={publicExpiry}
-            onChange={(event) => {
-              setPublicExpiry(event.currentTarget.value);
-            }}
-          />
-          <input
-            className="input"
-            aria-label="Allowed email domains"
-            placeholder="Optional domains, comma separated"
-            value={publicDomains}
-            onChange={(event) => {
-              setPublicDomains(event.currentTarget.value);
-            }}
-          />
-          <label>
-            <input
-              type="checkbox"
-              checked={oneTime}
-              onChange={(event) => {
-                setOneTime(event.currentTarget.checked);
-              }}
-            />{" "}
-            Expire after first access
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={allowDownload}
-              onChange={(event) => {
-                setAllowDownload(event.currentTarget.checked);
-              }}
-            />{" "}
-            Allow download
-          </label>
-        </details>
-        <div className="flex items-center gap-2.5 [padding:12px_18px]">
-          {shareUrl === undefined ? null : (
-            <button
-              type="button"
-              className="btn sm"
-              onClick={() => {
-                copyLink();
-              }}
-            >
-              <LinkIcon size={16} />
-              Copy link
-            </button>
-          )}
-          <button
-            type="button"
-            className="btn sm"
-            disabled={
-              creatingPublicLink ||
-              (publicPassword.length > 0 && publicPassword.length < 12) ||
-              (publicExpiry.length > 0 && !Number.isFinite(new Date(publicExpiry).valueOf()))
-            }
-            onClick={() => {
-              copyLink(true);
-            }}
-          >
-            <LinkIcon size={16} />
-            Create public link
-          </button>
-          {copied ? (
-            <span className="[color:var(--success,_var(--accent))] [font-size:var(--text-caption)]">
-              Link copied.
-            </span>
-          ) : null}
-          {publicLinkError === null ? null : (
-            <span
-              role="alert"
-              className="[color:var(--danger,_#dc2626)] [font-size:var(--text-caption)]"
-            >
-              {publicLinkError}
-            </span>
-          )}
-        </div>
+        {allowPublicLinks ? (
+          <>
+            <details className="grid gap-2.5 [padding:14px_18px] [border-bottom:1px_solid_var(--border)]">
+              <summary>Public link settings</summary>
+              <p className="text-muted-foreground [font-size:var(--text-caption)]">
+                Public links are view-only and can be revoked at any time.
+              </p>
+              <input
+                className="input"
+                type="password"
+                aria-label="Public link password"
+                placeholder="Optional password (12+ characters)"
+                value={publicPassword}
+                onChange={(event) => {
+                  setPublicPassword(event.currentTarget.value);
+                }}
+              />
+              <input
+                className="input"
+                type="datetime-local"
+                aria-label="Public link expiry"
+                value={publicExpiry}
+                onChange={(event) => {
+                  setPublicExpiry(event.currentTarget.value);
+                }}
+              />
+              <input
+                className="input"
+                aria-label="Allowed email domains"
+                placeholder="Optional domains, comma separated"
+                value={publicDomains}
+                onChange={(event) => {
+                  setPublicDomains(event.currentTarget.value);
+                }}
+              />
+              <label>
+                <input
+                  type="checkbox"
+                  checked={oneTime}
+                  onChange={(event) => {
+                    setOneTime(event.currentTarget.checked);
+                  }}
+                />{" "}
+                Expire after first access
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={allowDownload}
+                  onChange={(event) => {
+                    setAllowDownload(event.currentTarget.checked);
+                  }}
+                />{" "}
+                Allow download
+              </label>
+            </details>
+            <div className="flex items-center gap-2.5 [padding:12px_18px]">
+              {shareUrl === undefined ? null : (
+                <button
+                  type="button"
+                  className="btn sm"
+                  onClick={() => {
+                    copyLink();
+                  }}
+                >
+                  <LinkIcon size={16} />
+                  Copy link
+                </button>
+              )}
+              <button
+                type="button"
+                className="btn sm"
+                disabled={
+                  creatingPublicLink ||
+                  (publicPassword.length > 0 && publicPassword.length < 12) ||
+                  (publicExpiry.length > 0 && !Number.isFinite(new Date(publicExpiry).valueOf()))
+                }
+                onClick={() => {
+                  copyLink(true);
+                }}
+              >
+                <LinkIcon size={16} />
+                Create public link
+              </button>
+              {copied ? (
+                <span className="[color:var(--success,_var(--accent))] [font-size:var(--text-caption)]">
+                  Link copied.
+                </span>
+              ) : null}
+              {publicLinkError === null ? null : (
+                <span
+                  role="alert"
+                  className="[color:var(--danger,_#dc2626)] [font-size:var(--text-caption)]"
+                >
+                  {publicLinkError}
+                </span>
+              )}
+            </div>
+          </>
+        ) : null}
       </div>
     </div>
   );

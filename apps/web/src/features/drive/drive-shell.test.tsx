@@ -4,8 +4,14 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DriveShell } from "./drive-shell";
-import type { DriveApiEntry } from "./api";
 import { HELIX_DRIVE_ITEM_DRAG_MIME } from "./drag-payload";
+import {
+  FOLDER_CHILDREN,
+  ROOT_ENTRIES,
+  entry,
+  fileButton,
+  firstFileCard,
+} from "./drive-shell.fixtures";
 // Mock @tanstack/react-router so DriveShell can call router hooks without a router context.
 const routerMocks = vi.hoisted(() => ({
   navigate: vi.fn(),
@@ -24,73 +30,6 @@ vi.mock("./file-thumbnail", () => ({
     IS_REACT_ACT_ENVIRONMENT: boolean;
   }
 ).IS_REACT_ACT_ENVIRONMENT = true;
-/** The first selectable file card/row — `aria-pressed` buttons that are not
- *  the `.btn`-classed grid/list toggle buttons. */
-function firstFileCard(container: HTMLElement): HTMLButtonElement | null {
-  return (
-    Array.from(container.querySelectorAll<HTMLButtonElement>("button[aria-pressed]")).find(
-      (button) => !button.classList.contains("btn") && !button.classList.contains("icon-btn"),
-    ) ?? null
-  );
-}
-function fileButton(container: HTMLElement, name: string): HTMLButtonElement | null {
-  return (
-    Array.from(container.querySelectorAll<HTMLButtonElement>("button[aria-pressed]")).find(
-      (button) =>
-        !button.classList.contains("btn") &&
-        !button.classList.contains("icon-btn") &&
-        button.textContent?.includes(name),
-    ) ?? null
-  );
-}
-function entry(
-  overrides: Partial<DriveApiEntry> & Pick<DriveApiEntry, "id" | "type" | "name">,
-): DriveApiEntry {
-  return {
-    folderId: null,
-    ownerActorId: "owner-1",
-    uploadState: "active",
-    available: true,
-    metadata: {},
-    deletedAt: null,
-    createdAt: "2026-05-20T12:00:00.000Z",
-    updatedAt: "2026-05-20T12:00:00.000Z",
-    ...overrides,
-  };
-}
-const ROOT_ENTRIES: readonly DriveApiEntry[] = [
-  entry({ id: "folder-eng", type: "folder", name: "Engineering" }),
-  entry({
-    id: "file-specs",
-    type: "file",
-    name: "Specs.pdf",
-    mimeType: "application/pdf",
-    byteSize: 1024,
-  }),
-  entry({
-    id: "file-roadmap",
-    type: "file",
-    name: "Roadmap.docx",
-    mimeType: "application/msword",
-    byteSize: 2048,
-  }),
-  entry({
-    id: "file-budget",
-    type: "file",
-    name: "Budget.xlsx",
-    mimeType: "application/vnd.ms-excel",
-    byteSize: 4096,
-  }),
-];
-const FOLDER_CHILDREN: readonly DriveApiEntry[] = [
-  entry({
-    id: "file-nested",
-    type: "file",
-    name: "Nested-spec.pdf",
-    folderId: "folder-eng",
-    mimeType: "application/pdf",
-  }),
-];
 describe("DriveShell", () => {
   let container: HTMLDivElement;
   let root: Root;

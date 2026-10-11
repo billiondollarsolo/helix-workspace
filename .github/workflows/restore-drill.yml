@@ -61,6 +61,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build workspace packages
+        run: pnpm turbo run build --filter="./packages/*"
+
       - name: Validate restore contracts
         run: infra/scripts/validate-restore-drill.sh
 
@@ -105,6 +108,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Build workspace packages
+        run: pnpm turbo run build --filter="./packages/*"
 
       - name: Start backup dependencies
         run: docker compose up -d postgres rustfs

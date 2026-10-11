@@ -22,8 +22,9 @@ import {
   type DriveFolderItem,
 } from "./drive-data";
 import { DriveDetailsPanel } from "./drive-details-panel";
-import { DriveShareDialog } from "./drive-share-dialog";
 import { DriveMain } from "./drive-file-list";
+import { DriveFolderDetailsPanel } from "./drive-folder-details-panel";
+import { DriveShareDialog } from "./drive-share-dialog";
 import "./drive-shell.css";
 import { DriveSidebar } from "./drive-sidebar";
 import { type DriveCrumb } from "./drive-view-types";
@@ -96,6 +97,7 @@ export function DriveShell() {
   const [trail, setTrail] = useState<readonly DriveCrumb[]>([]);
   const [selectedFileId, setSelectedFileId] = useState<string | null>(driveSearch.file ?? null);
   const [processingUpload, setProcessingUpload] = useState<ProcessingDriveUpload | null>(null);
+  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderId =
@@ -285,16 +287,31 @@ export function DriveShell() {
     () => files.find((file) => file.id === selectedFileId) ?? null,
     [files, selectedFileId],
   );
+  const selectedFolder = useMemo(
+    () => folders.find((folder) => folder.id === selectedFolderId) ?? null,
+    [folders, selectedFolderId],
+  );
+  const selectedFolderEntry =
+    selectedFolderId === null ? null : (entryById.get(selectedFolderId) ?? null);
   const onSelectFile = (id: string) => {
+    setSelectedFolderId(null);
+    setShareOpen(false);
     setSelectedFileId(entryById.has(id) ? id : null);
+  };
+  const onShowFolderDetails = (folder: DriveFolderItem) => {
+    setSelectedFileId(null);
+    setShareOpen(false);
+    setSelectedFolderId(folder.id);
   };
   const openFolder = (folder: DriveFolderItem) => {
     setSelectedFileId(null);
+    setSelectedFolderId(null);
     setTrail((prev) => [...prev, { id: folder.id, name: folder.name }]);
     pushUrl({ folder: folder.id, file: null });
   };
   const navigateToCrumb = (index: number) => {
     setSelectedFileId(null);
+    setSelectedFolderId(null);
     setTrail((prev) => {
       const next = index < 0 ? [] : prev.slice(0, index + 1);
       const targetId = next.length > 0 ? (next[next.length - 1]?.id ?? null) : null;
@@ -306,6 +323,7 @@ export function DriveShell() {
     setScope(next);
     setTrail([]);
     setSelectedFileId(null);
+    setSelectedFolderId(null);
     pushUrl({ scope: next, folder: null, file: null });
   };
   const onPickFile = () => fileInputRef.current?.click();
@@ -384,6 +402,8 @@ export function DriveShell() {
         selectedFileId={selectedFileId}
         onSelectFile={onSelectFile}
         onOpenFolder={openFolder}
+        selectedFolderId={selectedFolderId}
+        onShowFolderDetails={onShowFolderDetails}
         onSetStarred={(id, starred) => starMutation.mutate({ objectId: id, starred })}
         onUpload={onPickFile}
         onDropFiles={(droppedFiles) => {
@@ -411,6 +431,7 @@ export function DriveShell() {
       />
       {selectedFile !== null ? (
         <DriveDetailsPanel
+          key={`file-details-${selectedFile.id}`}
           file={selectedFile}
           entry={selectedEntry}
           ownerName={actorQuery.data?.name ?? "You"}
@@ -452,11 +473,34 @@ export function DriveShell() {
           onOpenShare={() => setShareOpen(true)}
         />
       ) : null}
+      {selectedFile === null && selectedFolder !== null && !isTrashScope ? (
+        <DriveFolderDetailsPanel
+          key={`folder-details-${selectedFolder.id}`}
+          folder={selectedFolder}
+          entry={selectedFolderEntry}
+          ownerName={actorQuery.data?.name ?? "You"}
+          currentActorId={actorId}
+          onClose={() => setSelectedFolderId(null)}
+          onOpen={() => openFolder(selectedFolder)}
+          onOpenShare={() => setShareOpen(true)}
+        />
+      ) : null}
       {selectedFile !== null ? (
         <DriveShareDialog
+          key={`file-share-${selectedFile.id}`}
           objectId={selectedFile.id}
           objectName={selectedFile.name}
           ownerActorId={selectedEntry?.ownerActorId ?? null}
+          open={shareOpen}
+          onOpenChange={setShareOpen}
+        />
+      ) : selectedFolder !== null && !isTrashScope ? (
+        <DriveShareDialog
+          key={`folder-share-${selectedFolder.id}`}
+          objectId={selectedFolder.id}
+          objectName={selectedFolder.name}
+          ownerActorId={selectedFolderEntry?.ownerActorId ?? null}
+          allowPublicLinks={false}
           open={shareOpen}
           onOpenChange={setShareOpen}
         />

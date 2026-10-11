@@ -54,6 +54,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build workspace packages
+        run: pnpm turbo run build --filter="./packages/*"
+
       - name: Typecheck E2E specs
         run: pnpm --filter @helix/web typecheck:e2e
 
@@ -116,6 +119,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build workspace packages
+        run: pnpm turbo run build --filter="./packages/*"
+
       - name: Install Playwright browsers
         run: pnpm --filter @helix/web exec playwright install --with-deps chromium
 
@@ -160,6 +166,20 @@ jobs:
           pnpm --filter @helix/app db:seed:oauth
           pnpm --filter @helix/app db:seed:logins
 
+      - name: Prepare S3 contract bucket
+        env:
+          S3_CONTRACT_ENDPOINT: http://127.0.0.1:28437
+          S3_CONTRACT_ACCESS_KEY: helixrustfs
+          S3_CONTRACT_SECRET_KEY: helix_rustfs_dev_secret
+          S3_CONTRACT_BUCKET: helix-objects
+        run: >-
+          pnpm --filter @helix/app exec tsx --eval
+          'import { createS3CompatibleStorage } from "./src/platform/storage/index.ts";
+          void createS3CompatibleStorage({ endpoint: process.env.S3_CONTRACT_ENDPOINT,
+          region: "us-east-1", bucket: process.env.S3_CONTRACT_BUCKET,
+          credentials: { accessKeyId: process.env.S3_CONTRACT_ACCESS_KEY,
+          secretAccessKey: process.env.S3_CONTRACT_SECRET_KEY }, fetch }).ensureBucket();'
+
       - name: Run mandatory real-service contracts
         env:
           HELIX_REAL_SERVICES_INTEGRATION: "1"
@@ -183,6 +203,20 @@ jobs:
             src/platform/tenancy/cross-tenant-isolation.test.ts \
             --maxWorkers=1
 
+      - name: Start deterministic AI model
+        # A real assistant round trip needs a provider; this OpenAI-compatible fake
+        # answers deterministically with no network or secrets.
+        run: |
+          pnpm --filter @helix/app exec tsx ../web/tests/e2e/support/fake-model-server.ts > /tmp/helix-fake-model.log 2>&1 &
+          echo "$!" > /tmp/helix-fake-model.pid
+          for attempt in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:28480/healthz >/dev/null && exit 0
+            sleep 1
+          done
+          echo "Fake AI model did not start" >&2
+          cat /tmp/helix-fake-model.log
+          exit 1
+
       - name: Start Helix API from source
         env:
           HOST: 0.0.0.0
@@ -193,7 +227,9 @@ jobs:
           BETTER_AUTH_SECRET: helix_local_better_auth_secret_change_me_32_chars
           BETTER_AUTH_TRUSTED_ORIGINS: http://127.0.0.1:28431,http://127.0.0.1:4173
           HELIX_PUBLIC_URL: http://127.0.0.1:28431
-          HELIX_DEFAULT_ORG_ID: 00000000-0000-0000-0000-000000000000
+          # Same org the OAuth and login seeds populate; a different default org makes
+          # every signed-in request fail with tenant-actor-mismatch.
+          HELIX_DEFAULT_ORG_ID: 00000000-0000-4000-8000-000000000100
           HELIX_DEFAULT_ORG_SLUG: local-e2e
           HELIX_DEFAULT_ORG_NAME: Local E2E Workspace
           REDIS_URL: redis://127.0.0.1:28433
@@ -217,6 +253,10 @@ jobs:
           MAIL_SMTP_RECEIVER_ENABLED: "true"
           MAIL_SMTP_RECEIVER_HOST: 0.0.0.0
           MAIL_SMTP_RECEIVER_PORT: "2525"
+          OPENAI_API_KEY: helix-e2e-fake
+          OPENAI_BASE_URL: http://127.0.0.1:28480/v1
+          OPENAI_MODEL: helix-e2e-model
+          HELIX_AI_ALLOW_PRIVATE_NETWORK: "true"
         run: |
           pnpm --filter @helix/app exec tsx src/index.ts > /tmp/helix-api.log 2>&1 &
           echo "$!" > /tmp/helix-api.pid
@@ -234,9 +274,11 @@ jobs:
       - name: Stop Helix API
         if: always()
         run: |
-          if [ -f /tmp/helix-api.pid ]; then
-            kill "$(cat /tmp/helix-api.pid)" || true
-          fi
+          for pid_file in /tmp/helix-api.pid /tmp/helix-fake-model.pid; do
+            if [ -f "$pid_file" ]; then
+              kill "$(cat "$pid_file")" || true
+            fi
+          done
 
       - name: Dump Helix API log
         if: always()

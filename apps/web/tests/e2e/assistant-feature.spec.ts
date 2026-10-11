@@ -9,6 +9,7 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 import { isLiveBackend, seedBrowserSession } from "./support/backend-mode";
 import { fulfillCoreAppsRoute } from "./support/api-fixtures";
+import { FAKE_MODEL_REPLY_PREFIX } from "./support/fake-model-server";
 
 const prompt = "Share the Q3 Launch PRD with Bruno.";
 
@@ -25,16 +26,26 @@ test.describe("/assistant feature flow", () => {
 
     const composer = page.getByRole("textbox", { name: "Message Helix AI" });
     await composer.fill(prompt);
+
+    const modelPicker = page.getByRole("combobox", { name: "Assistant model" });
+    await expect(modelPicker).not.toHaveText("Loading models…");
+    await expect(modelPicker).toBeEnabled();
     await page.getByRole("button", { name: "Send message" }).click();
 
     // The user's prompt is echoed into the conversation regardless of backend.
-    await expect(page.getByText(prompt)).toBeVisible();
+    // The composer keeps the draft until the send settles, so scope to the conversation.
+    const conversation = page.getByTestId("assistant-conversation");
+    await expect(conversation.getByText(prompt, { exact: true })).toBeVisible();
 
-    if (!isLiveBackend()) {
-      await expect(
-        page.getByText("I found the PRD and need approval before sharing it."),
-      ).toBeVisible();
-    }
+    // Live runs answer through support/fake-model-server.mjs, a deterministic
+    // OpenAI-compatible model, so the full provider round trip is exercised.
+    await expect(
+      conversation.getByText(
+        isLiveBackend()
+          ? `${FAKE_MODEL_REPLY_PREFIX} ${prompt}`
+          : "I found the PRD and need approval before sharing it.",
+      ),
+    ).toBeVisible({ timeout: 30_000 });
   });
 });
 

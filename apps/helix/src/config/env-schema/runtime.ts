@@ -31,6 +31,7 @@ export const runtimeEnv = {
   HELIX_MEILISEARCH_IMAGE: optionalString,
   HELIX_CERBOS_IMAGE: optionalString,
   HELIX_SPAMD_IMAGE: optionalString,
+  HELIX_CLAMAV_IMAGE: optionalString,
   LOG_LEVEL: z.string().default("info"),
   POSTGRES_POOL_MAX: coercePositiveInt(10),
   HELIX_DEFAULT_ORG_ID: z.string().default("00000000-0000-0000-0000-000000000000"),

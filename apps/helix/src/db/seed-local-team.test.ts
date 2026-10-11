@@ -93,8 +93,10 @@ describe.skipIf(!process.env.DATABASE_URL)("additive team account seed", () => {
     const harbor =
       await sql`select status, mail_enabled from admin_domains where org_id = ${orgId} and domain = 'harbor.local'`;
     expect(harbor).toEqual([{ status: "verified", mail_enabled: true }]);
+    const [alias] = teamPerson(0).aliases;
+    if (alias === undefined) throw new Error("The first team person needs a mail alias.");
     const aliasMailbox =
-      await sql`select actor_id from helix_resolve_inbound_mailboxes(${teamPerson(0).aliases[0]}, 'harbor.local', 100)`;
+      await sql`select actor_id from helix_resolve_inbound_mailboxes(${alias}, 'harbor.local', 100)`;
     expect(aliasMailbox).toEqual([{ actor_id: teamPerson(0).actorId }]);
     const person = teamPerson(0);
     const accounts = await sql<

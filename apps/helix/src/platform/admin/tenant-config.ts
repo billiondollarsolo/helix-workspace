@@ -68,6 +68,7 @@ const featureFlagsSchema = z
     dlp_enforcement: dlpModeSchema.optional(),
     watermark: watermarkModeSchema.optional(),
     mail_outbound: z.boolean().optional(),
+    calendar_import_invitations: z.boolean().optional(),
     mail_inbound_policy: inboundAuthenticationPolicySchema.optional(),
   })
   .strict();

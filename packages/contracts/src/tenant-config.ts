@@ -25,7 +25,8 @@ export type TenantByoConfig = z.infer<typeof tenantByoConfigSchema>;
  * Tenant feature flags. Helix is free and open source with no plans: every
  * feature is available to every org. The remaining flags are org-admin policy
  * switches (an admin may turn outbound mail or AI features off), not
- * entitlements, and they default to on. Retired plan-entitlement keys in older
+ * entitlements, and they default to on, except `calendar_import_invitations`,
+ * which an admin opts into. Retired plan-entitlement keys in older
  * stored configs (for example `b2b_sharing`, `byo_storage` or `support_tier`)
  * still parse via passthrough and have no effect.
  */
@@ -36,6 +37,7 @@ export const tenantFeatureFlagsSchema = z
     dlp_enforcement: dlpEnforcementModeSchema,
     watermark: watermarkModeSchema,
     mail_outbound: z.boolean(),
+    calendar_import_invitations: z.boolean(),
   })
   .passthrough();
 export type TenantFeatureFlags = z.infer<typeof tenantFeatureFlagsSchema>;
@@ -84,6 +86,7 @@ export const SYSTEM_TENANT_FEATURE_FLAGS = {
   dlp_enforcement: "off",
   watermark: "off",
   mail_outbound: true,
+  calendar_import_invitations: false,
 } as const satisfies TenantFeatureFlags;
 
 export const SYSTEM_TENANT_QUOTAS = {

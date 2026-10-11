@@ -11,6 +11,12 @@ All notable changes to Helix Workspace are documented here. This file follows
 - Drive folders have a details panel to rename and share them; people added to a folder get
   access to everything inside it.
 - Drive Home suggests recently updated folders and files from across Drive.
+- Admins can turn on "Import calendar invitations from email" (`calendar_import_invitations`,
+  off by default). Inbound iMIP `REQUEST` invitations then land on each addressed recipient's
+  default calendar as awaiting a response, with the external organizer recorded; newer
+  `SEQUENCE` updates apply, and `CANCEL` cancels the imported event. The import sends no mail,
+  skips spam-routed messages and events the recipient already has, ignores calendars over
+  1 MiB or 1,000 VEVENTs, and never fails mail delivery.
 
 ### Changed
 

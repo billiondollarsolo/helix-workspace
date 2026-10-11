@@ -23,7 +23,6 @@ const org = {
   status: "active",
   region: "default",
   tier: "business",
-  planId: "business",
   byoConfig: {},
   featureFlags: {},
   quotas: {},

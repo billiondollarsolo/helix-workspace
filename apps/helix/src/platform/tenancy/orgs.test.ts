@@ -391,7 +391,8 @@ describe("PostgresOrgStore", () => {
       },
     });
 
-    expect(recording.calls[0]?.text).toContain("feature_flags->>'byo_storage' = 'true'");
+    // BYO storage needs no entitlement flag; the configured storage kind decides.
+    expect(recording.calls[0]?.text).not.toContain("feature_flags");
     expect(recording.calls[0]?.text).toContain("byo_config->'storage'->>'kind' = 'byo'");
     expect(recording.calls[0]?.values).toEqual([2]);
     expect(recording.calls[1]?.text).toContain("helix.tenant_config_reason");

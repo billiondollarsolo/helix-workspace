@@ -43,6 +43,20 @@ export function buildEffectiveTenantConfig(input: BuildEffectiveTenantConfigInpu
   };
 }
 
+/** Load an org's effective tenant config (system defaults, then org overrides). */
+export async function loadEffectiveTenantConfig(
+  stores: {
+    readonly orgs: { findById(id: string): Promise<OrgRecord | null> };
+  },
+  orgId: string,
+): Promise<TenantConfig | null> {
+  const org = await stores.orgs.findById(orgId);
+  if (org === null) {
+    return null;
+  }
+  return buildEffectiveTenantConfig({ org });
+}
+
 function mergeJsonObjects(...objects: readonly (JsonObject | undefined)[]): JsonObject {
   const merged: Record<string, JsonValue> = {};
   for (const object of objects) {

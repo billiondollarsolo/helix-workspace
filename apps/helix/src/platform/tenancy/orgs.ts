@@ -583,7 +583,6 @@ export class PostgresOrgStore implements OrgStore {
       select id
       from orgs
       where status = 'active'
-        and feature_flags->>'byo_storage' = 'true'
         and byo_config->'storage'->>'kind' = 'byo'
       order by updated_at asc
       limit ${input.limit ?? 100}

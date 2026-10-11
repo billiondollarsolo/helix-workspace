@@ -119,8 +119,7 @@ const liveStorageMigrationPayload = {
 
 describe("boolean feature-flag groups", () => {
   /* The form renders flags by walking the groups, so a flag missing from every
-   * group is simply absent from the UI — no error, no empty row, nothing. This
-   * is the only thing that catches it. */
+   * group is silently absent from the UI. This is the only thing that catches it. */
   it("place every boolean flag in exactly one group", () => {
     const grouped = BOOLEAN_FEATURE_FLAG_GROUPS.flatMap((group) => [...group.keys]);
     expect(new Set(grouped).size, "a flag appears in more than one group").toBe(grouped.length);
@@ -191,6 +190,7 @@ describe("TenantConfigManagement", () => {
     // The tenant id stays on the page, just not as the page's title.
     expect(container.textContent).toContain("org-1");
     expect(inputByLabel("Display name").value).toBe("Acme");
+    expect(inputByLabel("Import calendar invitations from email").checked).toBe(false);
     expect(selectByLabel("DLP enforcement").value).toBe("warn");
     expect(selectByLabel("Storage mode").value).toBe("byo");
     expect(selectByLabel("Provider").value).toBe("s3-compatible");

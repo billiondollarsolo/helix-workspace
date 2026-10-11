@@ -9,12 +9,14 @@ import {
 describe("tenant-config contract", () => {
   it("turns every boolean feature on by default", () => {
     for (const [key, value] of Object.entries(SYSTEM_TENANT_FEATURE_FLAGS)) {
-      if (typeof value === "boolean") {
+      // Calendar invitation import is an admin opt-in policy, not an entitlement.
+      if (typeof value === "boolean" && key !== "calendar_import_invitations") {
         expect({ key, value }).toEqual({ key, value: true });
       }
     }
     expect(SYSTEM_TENANT_FEATURE_FLAGS.dlp_enforcement).toBe("off");
     expect(SYSTEM_TENANT_FEATURE_FLAGS.watermark).toBe("off");
+    expect(SYSTEM_TENANT_FEATURE_FLAGS.calendar_import_invitations).toBe(false);
   });
 
   it("leaves every quota unlimited by default", () => {

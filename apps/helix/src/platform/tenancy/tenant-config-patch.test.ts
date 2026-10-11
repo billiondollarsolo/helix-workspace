@@ -8,12 +8,12 @@ import {
 
 describe("tenant config patches", () => {
   it("keeps unsubmitted flags and removes flags submitted as null", () => {
-    const current = { byo_storage: true, dlp_enforcement: "warn", ai_smart_compose: true };
+    const current = { mail_outbound: false, dlp_enforcement: "warn", ai_smart_compose: true };
     expect(
       applyTenantConfigPatch(current, { ai_smart_compose: false }, FEATURE_FLAGS_PATCH),
-    ).toEqual({ byo_storage: true, dlp_enforcement: "warn", ai_smart_compose: false });
+    ).toEqual({ mail_outbound: false, dlp_enforcement: "warn", ai_smart_compose: false });
     expect(applyTenantConfigPatch(current, { dlp_enforcement: null }, FEATURE_FLAGS_PATCH)).toEqual(
-      { byo_storage: true, ai_smart_compose: true },
+      { mail_outbound: false, ai_smart_compose: true },
     );
   });
 

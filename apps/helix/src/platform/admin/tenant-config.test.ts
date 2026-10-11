@@ -1116,7 +1116,10 @@ describe("tenant config merge semantics", () => {
       method: "PATCH",
       url: "/api/admin/tenant-config",
       headers: headers("admin.console.write"),
-      payload: { features: { ai_smart_compose: false }, quotas: { api_rps_limit: 9 } },
+      payload: {
+        features: { ai_smart_compose: false, calendar_import_invitations: true },
+        quotas: { api_rps_limit: 9 },
+      },
     });
     expect(response.statusCode).toBe(200);
     expect(body(response)).toMatchObject({
@@ -1126,7 +1129,12 @@ describe("tenant config merge semantics", () => {
       },
     });
     await expect(store.findById(orgId)).resolves.toMatchObject({
-      featureFlags: { mail_outbound: false, dlp_enforcement: "warn", ai_smart_compose: false },
+      featureFlags: {
+        mail_outbound: false,
+        dlp_enforcement: "warn",
+        ai_smart_compose: false,
+        calendar_import_invitations: true,
+      },
     });
     await app.close();
   });

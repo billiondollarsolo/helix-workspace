@@ -87,6 +87,37 @@ describe("Assistant tool results", () => {
     rootContainer.remove();
   });
 
+  it("leaves focus alone when the open drawer re-renders, and Escape uses the latest onClose", async () => {
+    const rootContainer = document.createElement("div");
+    const elsewhere = document.createElement("button");
+    document.body.append(rootContainer, elsewhere);
+    const root = createRoot(rootContainer);
+    const sources = publicWebSources([
+      { id: "page", type: "web.fetch", title: "Forecast", url: "https://weather.example/forecast" },
+    ]);
+    await act(async () => {
+      root.render(<AssistantEvidenceDrawer sources={sources} onClose={() => undefined} />);
+      await Promise.resolve();
+    });
+    // The person moves on, e.g. into a menu, while the drawer stays open.
+    elsewhere.focus();
+    const latest = vi.fn();
+    await act(async () => {
+      root.render(<AssistantEvidenceDrawer sources={sources} onClose={latest} />);
+      await Promise.resolve();
+    });
+    expect(document.activeElement).toBe(elsewhere);
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    });
+    expect(latest).toHaveBeenCalledOnce();
+    act(() => {
+      root.unmount();
+    });
+    rootContainer.remove();
+    elsewhere.remove();
+  });
+
   it("collapses completed tools and keeps pending, failure and interruption distinct", () => {
     const activity = ["running", "executed", "failed", "skipped", "pending_confirmation"].map(
       (status, index) => ({

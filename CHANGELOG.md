@@ -340,6 +340,8 @@ All notable changes to Helix Workspace are documented here. This file follows
   comes back.
 - The "Active" status and the "Created" notice for app passwords and agent credentials are
   readable in dark mode.
+- With Helix AI's Evidence panel open, menus such as the composer's options no longer close by
+  themselves when the conversation updates.
 
 - Mail search no longer looks only in the Inbox's Primary tab, the Label button no longer toggles
   just the first label, Spam uses a report icon, the empty pager no longer says "No results", and

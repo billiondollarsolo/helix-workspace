@@ -42,8 +42,8 @@ We will adopt **option 4**: `HELIX_MODE` environment variable (`single-tenant` |
 ### Negative
 
 - CI must run both modes for every PR (longer cycle).
-- Some code complexity to gate signup/billing routes by mode.
-- Single-tenant operators see "unused" SaaS-related schemas (`orgs.byo_config`, `stripe_links`, etc.) — minor confusion.
+- Some code complexity to gate signup routes by mode.
+- Single-tenant operators see "unused" SaaS-related schemas (for example `orgs.byo_config`) — minor confusion.
 
 ### Neutral
 
@@ -62,7 +62,7 @@ We will adopt **option 4**: `HELIX_MODE` environment variable (`single-tenant` |
 
 ### Alternative 3: Build self-host-only; bolt SaaS later
 
-**Rejected**. Multi-tenancy is invasive (every table, every query, every Cerbos policy); retrofitting is more expensive than designing for it from start. SaaS-specific surfaces (signup, billing, support tooling) bolt on awkwardly.
+**Rejected**. Multi-tenancy is invasive (every table, every query, every Cerbos policy); retrofitting is more expensive than designing for it from start. SaaS-specific surfaces (signup, support tooling) bolt on awkwardly.
 
 ## References
 

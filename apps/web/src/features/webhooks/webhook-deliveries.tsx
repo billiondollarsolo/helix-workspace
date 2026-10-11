@@ -79,7 +79,7 @@ export function DeliveriesPanel({
   readonly selectedDelivery: WebhookDelivery | null;
   readonly setFilters: (filters: Required<DeliveryFilterState>) => void;
   readonly setSelectedDelivery: (delivery: WebhookDelivery | null) => void;
-  /** Endpoint id -> name, so a row can say "Billing sync" instead of a UUID. */
+  /** Endpoint id -> name, so a row can say "CRM sync" instead of a UUID. */
   readonly webhookNames: ReadonlyMap<string, string>;
   readonly onReplay: (deliveryId: string) => void;
   readonly isReplaying: boolean;

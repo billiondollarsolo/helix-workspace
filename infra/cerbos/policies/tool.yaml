@@ -308,13 +308,6 @@ resourcePolicy:
         match:
           expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "admin.chat" && P.attr.scopes.exists(scope, scope == "admin.chat")
 
-    - actions: ["admin.billing"]
-      effect: EFFECT_ALLOW
-      roles: ["user", "agent", "service_account"]
-      condition:
-        match:
-          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "admin.billing" && P.attr.scopes.exists(scope, scope == "admin.billing")
-
     - actions: ["admin.domains"]
       effect: EFFECT_ALLOW
       roles: ["user", "agent", "service_account"]

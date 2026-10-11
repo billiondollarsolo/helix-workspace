@@ -3,7 +3,7 @@ import { z } from "zod";
 /**
  * Canonical client-facing error codes.
  * Preserves existing helix error-envelope mappings (incl. `unauthenticated`,
- * `gone`, `method_not_allowed`, fallback `error`) and adds plan aliases
+ * `gone`, `method_not_allowed`, fallback `error`) and adds the aliases
  * (`unauthorized`, `unprocessable`, `internal_error`).
  */
 export const ERROR_CODES = [

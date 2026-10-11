@@ -177,15 +177,15 @@ describe("events websocket routes", () => {
   it("drops unmarked envelopes on subjects that are not known-global", async () => {
     const { socket, bus } = await connect({
       token: "token-unmarked",
-      subject: "billing.invoice.finalized",
+      subject: "calendar.event.updated",
     });
 
     // An org-scoped event that forgot its orgId looks exactly like a global one
     // from here, so the fail-closed default drops it rather than fanning it out
     // to every tenant.
     await bus.emit({
-      subject: "billing.invoice.finalized",
-      payload: { invoiceId: "inv-1", totalCents: 1000 },
+      subject: "calendar.event.updated",
+      payload: { eventId: "event-1" },
       occurredAt: "2026-05-20T12:00:00.000Z",
     });
 

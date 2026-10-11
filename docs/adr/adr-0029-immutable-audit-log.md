@@ -31,7 +31,7 @@ Audit event taxonomy (canonical event types):
 - **Resource**: `doc.opened`, `doc.saved`, `doc.shared`, `doc.exported`, `doc.suggestion.*`, `doc.comment.*`, `sheet.*`, `slide.*`, `pdf.*`
 - **AI**: `ai.request`, `ai.completion`, `ai.failed`, `ai.cost-spike`
 - **Plugin**: `plugin.installed`, `plugin.uninstalled`, `plugin.enabled`, `plugin.disabled`
-- **Billing**: `billing.plan.changed`, `billing.payment.*`, `billing.suspension`
+- **Billing**: none. Helix has no billing ([ADR-0030](adr-0030-free-open-source-no-plans-or-limits.md)); the `billing.*` events proposed here were never kept.
 - **Security**: `security.policy.changed`, `security.kms.revoked`, `security.dlp.blocked`, `security.breach.detected`
 - **Cross-tenant**: `share.cross_tenant.granted`, `share.cross_tenant.received`, `share.cross_tenant.revoked`
 - **Admin**: `admin.action.*` for any admin console mutation

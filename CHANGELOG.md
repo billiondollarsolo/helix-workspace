@@ -31,6 +31,8 @@ All notable changes to Helix Workspace are documented here. This file follows
 - BYO storage no longer requires a `byo_storage` entitlement flag.
 - Tenant export manifests and signup events drop `planId`, and signup metrics and Alertmanager
   grouping drop the `plan_id` label.
+- A suspended tenant now answers `423 Locked` (code `tenant-suspended`) instead of
+  `402 Payment Required`, with a message that says how to restore access.
 - Live E2E runs give the API a deterministic OpenAI-compatible model
   (`apps/web/tests/e2e/support/fake-model-server.ts`), so the assistant spec sends a
   prompt and checks the streamed provider answer instead of only the no-model state.
@@ -53,6 +55,12 @@ All notable changes to Helix Workspace are documented here. This file follows
   `scim_provisioning`, `custom_domain`, `white_label`, `multi_region_dr`, `dedicated_csm`,
   `marketplace_install_paid`, `support_tier`); stored values still parse and are ignored.
 - The CI step that cleared the demo org's `api_rps_limit` before the k6 load test.
+- The `billing_admin` IAM role and the `admin.billing` permission, including its Cerbos rule
+  and scope-catalog entry. Migration `0203_retire_billing_admin_role.sql` records every
+  existing grant as revoked in the append-only delegation log, removes those grants (and any
+  delegated beneath them), strips the permission from custom roles and stored credential and
+  token scopes, and stops new organizations from receiving the role.
+- Leftover billing and plan wording in docs, tests and the observability plugin README.
 
 ### Fixed
 

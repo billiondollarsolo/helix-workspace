@@ -12,7 +12,7 @@ metadata:
     helix.io/role: {{ $role | quote }}
   {{- if .hook }}
   annotations:
-    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook: {{ .hookEvents | default "pre-install,pre-upgrade" }}
     helm.sh/hook-weight: "-20"
     helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
   {{- end }}
@@ -147,3 +147,9 @@ spec:
 {{- end }}
 ---
 {{ include "helix.networkPolicy" (dict "root" . "role" "image-verifier" "policy" .Values.networkPolicy.imageVerifier "hook" true) }}
+{{- if .Values.migrations.enabled }}
+{{- /* Migration Job: DNS plus PostgreSQL only (CloudNativePG pods or exact
+       external endpoints), created just before the Job in the same hook. */}}
+---
+{{ include "helix.networkPolicy" (dict "root" . "role" "migrate" "policy" .Values.networkPolicy.migrate "hook" true "hookEvents" (include "helix.migrationHook" .) "database" true) }}
+{{- end }}

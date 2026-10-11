@@ -148,6 +148,8 @@ extract_policy "$ROLES" helix-realtime "$WORK_DIR/role-network-policy.yaml"
 extract_policy "$ENTERPRISE" helix-default "$WORK_DIR/enterprise-default-network-policy.yaml"
 extract_policy "$SOVEREIGN" helix-image-verifier "$WORK_DIR/sovereign-verifier-network-policy.yaml"
 extract_policy "$NETWORK_ALLOWLIST" helix-default "$WORK_DIR/allowlist-network-policy.yaml"
+extract_policy "$BASE" helix-migrate "$WORK_DIR/base-migrate-network-policy.yaml"
+extract_policy "$ENTERPRISE" helix-migrate "$WORK_DIR/enterprise-migrate-network-policy.yaml"
 
 BASE_DEFAULT_POLICY="$WORK_DIR/base-default-network-policy.yaml"
 BASE_VERIFIER_POLICY="$WORK_DIR/base-verifier-network-policy.yaml"
@@ -305,6 +307,22 @@ assert_contains "$CNPG_RECOVERY" '^    recovery:$' "recovery values must bootstr
 assert_contains "$CNPG_RECOVERY" 'barmanObjectName: "helix-postgres-backup"' "recovery must read the source through the Barman Cloud Plugin"
 assert_not_contains "$CNPG_RECOVERY" 'postInitApplicationSQL:' "a restored cluster already carries its extensions and roles"
 assert_not_contains "$BASE" '^kind: Cluster$|POSTGRES_TLS_CA_FILE|HELIX_MIGRATION_DATABASE_URL' "external Postgres must not render CloudNativePG wiring"
+BASE_MIGRATE_POLICY="$WORK_DIR/base-migrate-network-policy.yaml"
+ENTERPRISE_MIGRATE_POLICY="$WORK_DIR/enterprise-migrate-network-policy.yaml"
+assert_contains "$BASE_MIGRATE_POLICY" 'helix.io/role: "migrate"' "migration Job must have its own NetworkPolicy"
+assert_contains "$BASE_MIGRATE_POLICY" 'helm.sh/hook: pre-install,pre-upgrade' "migration policy must exist before the pre-install/pre-upgrade Job"
+assert_contains "$BASE_MIGRATE_POLICY" 'helm.sh/hook-weight: "-20"' "migration policy must be created before the Job"
+assert_contains "$BASE_MIGRATE_POLICY" '^  ingress: \[\]$' "migration Job must deny all ingress"
+assert_contains "$BASE_MIGRATE_POLICY" 'k8s-app: kube-dns' "migration Job must reach exact cluster DNS"
+assert_not_contains "$BASE_MIGRATE_POLICY" 'port: 443|cidr:|namespaceSelector: \{\}|podSelector: \{\}|- \{\}' "migration Job must have no egress beyond DNS until a PostgreSQL endpoint is configured"
+assert_contains "$BASE" 'helix.io/service-account: "helix"' "migration pods must carry the network identity label"
+assert_contains "$ENTERPRISE_MIGRATE_POLICY" 'helm.sh/hook: post-install' "first-install migration policy must follow the post-install Job"
+assert_contains "$ENTERPRISE_MIGRATE_POLICY" 'cnpg.io/cluster: "helix-postgres"' "migration Job must reach the CloudNativePG cluster"
+assert_contains "$ENTERPRISE_MIGRATE_POLICY" '^          port: 5432$' "migration Job must reach only PostgreSQL"
+assert_not_contains "$ENTERPRISE_MIGRATE_POLICY" 'port: 443|cidr:' "migration Job must not reach public HTTPS"
+assert_contains "$ENTERPRISE_UPGRADE" 'helm.sh/hook: pre-install,pre-upgrade' "upgrade migration policy must precede the pre-upgrade Job"
+assert_contains "$BASE" "^              value: \"ghcr\\.io/helix/helix@${VALIDATION_DIGEST}\"$" "pods must receive HELIX_IMAGE from the selected image digest"
+assert_template_fails migrate-public-https --set networkPolicy.migrate.egress.publicHttps=true
 assert_template_fails cnpg-tag-image --set cloudnativepg.enabled=true --set-string cloudnativepg.image.digest=
 assert_template_fails cnpg-placeholder-image --set cloudnativepg.enabled=true \
   --set-string cloudnativepg.image.digest=sha256:0000000000000000000000000000000000000000000000000000000000000000

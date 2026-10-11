@@ -276,6 +276,15 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Changed
 
+- **Breaking (Helm chart 1.0.0):** CloudNativePG values changed. Replace `cloudnativepg.imageName`
+  with `cloudnativepg.image.{repository,digest}` (PostgreSQL 18 operand), rename
+  `backup.barmanObjectStore.wal.additionalCommandArgs` to `wal.archiveAdditionalCommandArgs`, and
+  rewrite `recovery.externalClusters` entries as `{name, barmanObjectName, serverName}`. Backups now
+  need the Barman Cloud Plugin. See "Upgrading to chart 1.0.0" in the Helm README; PostgreSQL 17
+  clusters must be restored into a new PostgreSQL 18 cluster.
+- The Helm migration Job gets its own NetworkPolicy (DNS and PostgreSQL egress only;
+  `networkPolicy.migrate.egress.endpoints` for an external server) and every Helix pod receives
+  `HELIX_IMAGE` from the selected image digest.
 - CloudNativePG backups use the Barman Cloud Plugin (`ObjectStore`, `method: plugin`, plugin
   recovery sources) instead of the deprecated in-core `barmanObjectStore`.
   `cloudnativepg.imageName` is replaced by `cloudnativepg.image.{repository,digest}`, WAL arguments

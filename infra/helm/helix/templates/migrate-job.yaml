@@ -24,10 +24,6 @@
   bootstrap SQL has run. Every upgrade keeps the pre-upgrade ordering.
 */}}
 {{- $cnpg := .Values.cloudnativepg }}
-{{- $hook := "pre-install,pre-upgrade" }}
-{{- if and $cnpg.enabled .Release.IsInstall }}
-{{- $hook = "post-install" }}
-{{- end }}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -36,7 +32,7 @@ metadata:
     {{- include "helix.labels" . | nindent 4 }}
     helix.io/role: migrate
   annotations:
-    "helm.sh/hook": {{ $hook }}
+    "helm.sh/hook": {{ include "helix.migrationHook" . }}
     "helm.sh/hook-weight": "-5"
     "helm.sh/hook-delete-policy": before-hook-creation
 spec:
@@ -49,6 +45,7 @@ spec:
       labels:
         {{- include "helix.selectorLabels" . | nindent 8 }}
         helix.io/role: migrate
+        helix.io/service-account: {{ include "helix.serviceAccountName" . | quote }}
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

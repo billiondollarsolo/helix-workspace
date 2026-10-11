@@ -167,7 +167,13 @@ topologySpreadConstraints:
 {{- if and .Values.ingress.enabled (not $networkPolicy.application.ingress) -}}
 {{- fail "ingress.enabled requires at least one exact networkPolicy.application.ingress source" -}}
 {{- end -}}
-{{- $policies := dict "application" $networkPolicy.application "imageVerifier" $networkPolicy.imageVerifier "roleDefault" $networkPolicy.roleDefault -}}
+{{- $policies := dict "application" $networkPolicy.application "imageVerifier" $networkPolicy.imageVerifier "roleDefault" $networkPolicy.roleDefault "migrate" $networkPolicy.migrate -}}
+{{- if $networkPolicy.migrate.ingress -}}
+{{- fail "networkPolicy.migrate ingress must remain empty" -}}
+{{- end -}}
+{{- if $networkPolicy.migrate.egress.publicHttps -}}
+{{- fail "networkPolicy.migrate egress is DNS, PostgreSQL, and exact secret-store endpoints only; publicHttps is not allowed" -}}
+{{- end -}}
 {{- range $role := .Values.roleDeployments -}}
 {{- $_ := set $policies (printf "roleDeployments.%s.networkPolicy" $role.name) ($role.networkPolicy | default $networkPolicy.roleDefault) -}}
 {{- end -}}
@@ -273,6 +279,9 @@ default role. Input is the chart root context.
 {{- define "helix.containerEnv" -}}
 - name: NODE_ENV
   value: production
+# The exact digest this pod runs, for the production image-pinning check.
+- name: HELIX_IMAGE
+  value: {{ include "helix.image" . | quote }}
 - name: HOST
   value: 0.0.0.0
 - name: PORT
@@ -522,6 +531,19 @@ An explicit `apps` list takes precedence over a named `role`.
 {{- $image := .Values.cloudnativepg.image -}}
 {{- $digest := required "cloudnativepg.image.digest must be the published helix-workspace-postgres-cnpg sha256 digest" $image.digest -}}
 {{- printf "%s@%s" $image.repository $digest -}}
+{{- end -}}
+
+{{- /*
+  Hook events for the migration Job and its NetworkPolicy. An in-chart
+  CloudNativePG Cluster does not exist during pre-install hooks, so the first
+  install migrates post-install; every upgrade migrates pre-upgrade.
+*/ -}}
+{{- define "helix.migrationHook" -}}
+{{- if and .Values.cloudnativepg.enabled .Release.IsInstall -}}
+post-install
+{{- else -}}
+pre-install,pre-upgrade
+{{- end -}}
 {{- end -}}
 
 {{- define "helix.cloudnativepgClientTls" -}}

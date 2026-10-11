@@ -320,6 +320,17 @@ networkPolicy:
       publicHttps: false
       endpoints: []
       inCluster: []
+  # The schema migration Job (hook) may reach DNS and PostgreSQL only. With
+  # CloudNativePG enabled its cluster pods are allowed automatically; for an
+  # external PostgreSQL list the exact host (/32 or /128) and port under
+  # endpoints. With vault.agentInject, also list the exact Vault endpoint or
+  # in-cluster workload the injected agent needs. Public HTTPS is rejected.
+  migrate:
+    ingress: []
+    egress:
+      publicHttps: false
+      endpoints: []
+      inCluster: []
   # Cosign needs registry access before install/upgrade. It has no ingress and
   # may only use DNS and public HTTPS; sovereign installs disable public HTTPS.
   imageVerifier:

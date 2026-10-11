@@ -427,6 +427,26 @@ Backups and recovery:
 - `cloudnativepg.tde`: TDE/KMS annotations and optional PostgreSQL parameters. PVC annotations are
   applied through `inheritedMetadata`, because a CloudNativePG `pvcTemplate` has no metadata.
 
+### Upgrading to chart 1.0.0
+
+Chart 1.0.0 changes CloudNativePG values incompatibly. The old image, WAL-argument, and recovery
+keys fail rendering with an explicit message until they are migrated:
+
+| Before (0.x)                                                                   | Chart 1.0.0                                                                                                                           |
+| ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `cloudnativepg.imageName: ghcr.io/cloudnative-pg/postgresql:17`                | `cloudnativepg.image.repository` + `cloudnativepg.image.digest` (the published `helix-workspace-postgres-cnpg` digest, PostgreSQL 18) |
+| `cloudnativepg.backup.barmanObjectStore.wal.additionalCommandArgs`             | `wal.archiveAdditionalCommandArgs` (and optional `wal.restoreAdditionalCommandArgs`)                                                  |
+| `cloudnativepg.recovery.externalClusters[]` with an inline `barmanObjectStore` | `{name, barmanObjectName, serverName}`; `barmanObjectName` names an `ObjectStore` in the release namespace                            |
+| in-core `spec.backup.barmanObjectStore`, `method: barmanObjectStore`           | Barman Cloud Plugin `ObjectStore`, Cluster `plugins`, `method: plugin` (install the plugin first)                                     |
+| `cloudnativepg.bootstrap.owner: helix` (base values)                           | `helix_migrator`                                                                                                                      |
+
+An existing PostgreSQL 17 CloudNativePG cluster cannot switch images in place: restore it into a
+new PostgreSQL 18 cluster (dump/restore or `pg_upgrade`, as in the deployment guide), then run
+`ALTER EXTENSION vector UPDATE`. The chart also adds `networkPolicy.migrate` (DNS and PostgreSQL
+egress for the migration Job; list an external PostgreSQL host under `endpoints`, and with
+`vault.agentInject` the exact Vault endpoint its agent needs) and sets
+`HELIX_IMAGE` from the selected image digest.
+
 For Tier 3, replace the example backup destination, object-store credentials Secret, storage-class/KMS annotations, and `--sse-kms-key-id` values with your cloud or on-prem KMS values before install.
 
 `pnpm infra:helm:validate` renders the external and CloudNativePG paths (install, upgrade, and

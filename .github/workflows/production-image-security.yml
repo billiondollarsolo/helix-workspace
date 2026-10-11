@@ -236,6 +236,14 @@ jobs:
             source: build
             image: helix/postgres-pgvector:18.6-pgvector0.8.5
             context: infra/postgres
+            dockerfile: infra/postgres/Dockerfile
+          # CloudNativePG operand (Helm cloudnativepg.image): CNPG minimal
+          # PostgreSQL 18.6 plus the same pinned pgvector 0.8.5 source.
+          - inventory_name: postgres-cnpg
+            source: build
+            image: helix/postgres-cnpg:18.6-pgvector0.8.5
+            context: infra/postgres
+            dockerfile: infra/postgres/Dockerfile.cnpg
           - inventory_name: redis
             source: pull
             image: redis:8.8.3-alpine@sha256:0b2b77d3ea5078274795e3177cdbdada8b96316684a38911d528534ed679b5ec
@@ -286,6 +294,7 @@ jobs:
         run: >-
           docker buildx build
           --load
+          --file "${{ matrix.dockerfile || format('{0}/Dockerfile', matrix.context) }}"
           --tag "${{ matrix.image }}"
           "${{ matrix.context }}"
 
@@ -406,6 +415,11 @@ jobs:
             artifact: helix-workspace-postgres-publication-candidate
             local_image: helix/postgres-pgvector:18.6-pgvector0.8.5
             registry_name: helix-workspace-postgres
+            workspace_source: false
+          - candidate: postgres-cnpg
+            artifact: helix-workspace-postgres-cnpg-publication-candidate
+            local_image: helix/postgres-cnpg:18.6-pgvector0.8.5
+            registry_name: helix-workspace-postgres-cnpg
             workspace_source: false
           - candidate: nats
             artifact: helix-workspace-nats-publication-candidate

@@ -11,10 +11,10 @@ spec:
   backupOwnerReference: {{ $cnpg.scheduledBackup.backupOwnerReference | quote }}
   immediate: {{ $cnpg.scheduledBackup.immediate }}
   suspend: {{ $cnpg.scheduledBackup.suspend }}
-  method: barmanObjectStore
+  method: plugin
+  pluginConfiguration:
+    name: {{ $cnpg.backup.pluginName | quote }}
   cluster:
     name: {{ $cnpg.clusterName }}
-  {{- with $cnpg.scheduledBackup.target }}
-  target: {{ . | quote }}
-  {{- end }}
+  target: {{ default $cnpg.backup.target $cnpg.scheduledBackup.target | quote }}
 {{- end }}

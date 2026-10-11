@@ -65,7 +65,7 @@ cloudnativepg:
         compression: gzip
         encryption: aws:kms
         maxParallel: 4
-        additionalCommandArgs:
+        archiveAdditionalCommandArgs:
           - --sse-kms-key-id=alias/helix
       data:
         compression: gzip

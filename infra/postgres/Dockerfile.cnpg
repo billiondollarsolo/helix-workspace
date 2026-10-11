@@ -1,0 +1,50 @@
+# syntax=docker/dockerfile:1.25.0@sha256:0adf442eae370b6087e08edc7c50b552d80ddf261576f4ebd6421006b2461f12
+
+# CloudNativePG operand for Helix: the CNPG `minimal` PostgreSQL 18.6 image
+# (Debian trixie, PGDG packages, UID 26, the layout the operator's instance
+# manager expects) plus pgvector compiled from the same pinned commit and
+# verified archive as the Compose image in ./Dockerfile. Backups use the
+# Barman Cloud Plugin sidecar, so barman-cloud is intentionally not installed
+# (the CNPG `system` flavour that bundled it is deprecated).
+ARG CNPG_POSTGRES_BASE=ghcr.io/cloudnative-pg/postgresql:18.6-minimal-trixie@sha256:37ade18dbdddba430858c72725aceeec66f33fa5333e82ea1df4942f6c1c83a3
+
+FROM ${CNPG_POSTGRES_BASE} AS build
+
+ARG PGVECTOR_COMMIT=159b79aaad5983fb7459c1e3df2897fbb2d11788
+ARG PGVECTOR_ARCHIVE_SHA256=9a483fad70ae2e0a50b3dccb6c4b4931d9a07375a1d5815e82b57870448a7d52
+
+USER root
+WORKDIR /src
+
+# Server headers must come from the exact PGDG build in the base image, so the
+# dev package is pinned to the installed postgresql-18 version.
+RUN apt-get update \
+    && server_version="$(dpkg-query -W -f='${Version}' postgresql-18)" \
+    && apt-get install -y --no-install-recommends \
+      build-essential \
+      "postgresql-server-dev-18=${server_version}" \
+    && rm -rf /var/lib/apt/lists/*
+
+ADD --checksum=sha256:${PGVECTOR_ARCHIVE_SHA256} \
+  https://github.com/pgvector/pgvector/archive/${PGVECTOR_COMMIT}.tar.gz \
+  /tmp/pgvector.tar.gz
+
+# OPTFLAGS="" keeps the build portable across CPUs (no -march=native); the
+# minimal operand has no LLVM JIT, so no bitcode is emitted.
+RUN tar -xzf /tmp/pgvector.tar.gz --strip-components=1 \
+    && make OPTFLAGS="" with_llvm=no \
+    && make OPTFLAGS="" with_llvm=no install DESTDIR=/out
+
+FROM ${CNPG_POSTGRES_BASE} AS runtime
+
+LABEL org.opencontainers.image.title="helix-postgres-cnpg" \
+      org.opencontainers.image.description="CloudNativePG PostgreSQL 18 operand with pgvector 0.8.5" \
+      org.opencontainers.image.vendor="Helix" \
+      org.opencontainers.image.source="https://github.com/pgvector/pgvector" \
+      org.opencontainers.image.revision="159b79aaad5983fb7459c1e3df2897fbb2d11788" \
+      org.opencontainers.image.version="0.8.5"
+
+COPY --from=build /out/usr/lib/postgresql/18/lib/ /usr/lib/postgresql/18/lib/
+COPY --from=build /out/usr/share/postgresql/18/extension/ /usr/share/postgresql/18/extension/
+
+USER 26

@@ -103,6 +103,7 @@ spec:
               mountPath: /mnt/secrets-store
               readOnly: true
             {{- end }}
+            {{- with (include "helix.postgresTlsVolumeMount" $) }}{{- . | nindent 12 }}{{- end }}
             {{- with $.Values.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -152,6 +153,7 @@ spec:
             volumeAttributes:
               secretProviderClass: {{ $.Values.vault.csi.providerClassName | quote }}
         {{- end }}
+        {{- with (include "helix.postgresTlsVolume" $) }}{{- . | nindent 8 }}{{- end }}
         {{- with $.Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

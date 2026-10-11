@@ -171,6 +171,7 @@ const migrationEnvSchema = envSchema.pick({
   POSTGRES_TLS_CERT_FILE: true,
   POSTGRES_TLS_KEY_FILE: true,
   POSTGRES_POOL_MAX: true,
+  HELIX_MIGRATION_DATABASE_WAIT_SECONDS: true,
   HELIX_WORKSPACE_PROFILE: true,
   HELIX_IMAGE: true,
   HELIX_WEB_IMAGE: true,

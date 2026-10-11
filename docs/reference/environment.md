@@ -87,6 +87,7 @@ Production assertions impose additional requirements; follow the [deployment gui
 | `HELIX_MFA_ASSERTION_ISSUER`                       | Optional     | —                                                           |
 | `HELIX_MFA_ASSERTION_SECRET`                       | Optional     | —                                                           |
 | `HELIX_MIGRATION_DATABASE_URL`                     | Optional     | —                                                           |
+| `HELIX_MIGRATION_DATABASE_WAIT_SECONDS`            | Optional     | `0`                                                         |
 | `HELIX_MODE`                                       | Optional     | `single-tenant`                                             |
 | `HELIX_NATS_IMAGE`                                 | Optional     | —                                                           |
 | `HELIX_OBJECT_STORAGE_ENCRYPTION_AT_REST_ATTESTED` | Optional     | —                                                           |

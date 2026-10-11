@@ -66,6 +66,7 @@ describe("production image supply-chain workflow", () => {
       "app",
       "web",
       "postgres",
+      "postgres-cnpg",
       "nats",
       "meilisearch",
       "cerbos",
@@ -124,7 +125,7 @@ describe("production image supply-chain workflow", () => {
     expect(source).toContain("schemaVersion: 1");
     expect(source).toContain("repository: process.env.WORKSPACE_REPOSITORY");
     expect(publishJob.match(/workspace_source: true/gu)).toHaveLength(2);
-    expect(publishJob.match(/workspace_source: false/gu)).toHaveLength(6);
+    expect(publishJob.match(/workspace_source: false/gu)).toHaveLength(7);
     expect(publishJob).toContain("name: Verify workspace application source predicate");
     expect(publishJob).toContain("name: Sign workspace application source provenance");
     expect(publishJob).toContain(
@@ -183,6 +184,7 @@ describe("production image supply-chain workflow", () => {
     );
     expect(inventory).toEqual([
       "postgres",
+      "postgres-cnpg",
       "redis",
       "nats",
       "meilisearch",
@@ -192,6 +194,10 @@ describe("production image supply-chain workflow", () => {
       "clamav",
     ]);
     expect(source).toContain("docker buildx build");
+    expect(source).toContain("dockerfile: infra/postgres/Dockerfile.cnpg");
+    expect(source).toContain(
+      `--file "\${{ matrix.dockerfile || format('{0}/Dockerfile', matrix.context) }}"`,
+    );
     expect(source).toContain('docker pull "${{ matrix.image }}"');
     expect(source).toContain("output-file: helix-workspace/${{ matrix.inventory_name }}.spdx.json");
     expect(source).toContain("output: helix-workspace/${{ matrix.inventory_name }}.trivy.json");

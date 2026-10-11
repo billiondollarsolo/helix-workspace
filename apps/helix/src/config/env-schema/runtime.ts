@@ -34,6 +34,7 @@ export const runtimeEnv = {
   HELIX_CLAMAV_IMAGE: optionalString,
   LOG_LEVEL: z.string().default("info"),
   POSTGRES_POOL_MAX: coercePositiveInt(10),
+  HELIX_MIGRATION_DATABASE_WAIT_SECONDS: coerceNonNegInt(0),
   HELIX_DEFAULT_ORG_ID: z.string().default("00000000-0000-0000-0000-000000000000"),
   HELIX_PUBLIC_URL: optionalUrl,
   PUBLIC_BASE_URL: optionalUrl,

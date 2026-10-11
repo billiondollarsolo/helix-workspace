@@ -16,7 +16,18 @@
 
   The migration runner takes an advisory lock (see migration-runner-lock.test),
   so a Job that runs while an old replica is still serving is safe.
+
+  An in-chart CloudNativePG Cluster is an ordinary release resource, so on the
+  first install it does not exist while pre-install hooks run. That install
+  runs this Job post-install instead and the runner retries connections for
+  migrations.databaseWaitSeconds; CloudNativePG accepts them only after its
+  bootstrap SQL has run. Every upgrade keeps the pre-upgrade ordering.
 */}}
+{{- $cnpg := .Values.cloudnativepg }}
+{{- $hook := "pre-install,pre-upgrade" }}
+{{- if and $cnpg.enabled .Release.IsInstall }}
+{{- $hook = "post-install" }}
+{{- end }}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -25,7 +36,7 @@ metadata:
     {{- include "helix.labels" . | nindent 4 }}
     helix.io/role: migrate
   annotations:
-    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook": {{ $hook }}
     "helm.sh/hook-weight": "-5"
     "helm.sh/hook-delete-policy": before-hook-creation
 spec:
@@ -80,9 +91,28 @@ spec:
           # differently from the app is not a state this chart can produce.
           env:
             {{- include "helix.containerEnv" . | nindent 12 }}
+            # Owner-capable credential for this Job only; application pods
+            # never receive it.
+            {{- $migrationSecret := .Values.external.postgres.migrationUrlSecret }}
+            {{- if $migrationSecret.name }}
+            - name: HELIX_MIGRATION_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $migrationSecret.name | quote }}
+                  key: {{ $migrationSecret.key | quote }}
+            {{- else if $cnpg.enabled }}
+            - name: HELIX_MIGRATION_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ printf "%s-app" $cnpg.clusterName | quote }}
+                  key: uri
+            {{- end }}
+            - name: HELIX_MIGRATION_DATABASE_WAIT_SECONDS
+              value: {{ .Values.migrations.databaseWaitSeconds | toString | quote }}
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            {{- with (include "helix.postgresTlsVolumeMount" .) }}{{- . | nindent 12 }}{{- end }}
             {{- if .Values.vault.csi.enabled }}
             - name: vault-secrets
               mountPath: /mnt/secrets-store
@@ -93,6 +123,7 @@ spec:
       volumes:
         - name: tmp
           emptyDir: {}
+        {{- with (include "helix.postgresTlsVolume" .) }}{{- . | nindent 8 }}{{- end }}
         {{- if .Values.vault.csi.enabled }}
         - name: vault-secrets
           csi:

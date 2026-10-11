@@ -8,6 +8,23 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Added
 
+- PostgreSQL deployment for CloudNativePG: the Helm `Cluster` now runs
+  `helix-workspace-postgres-cnpg`, a digest-pinned CloudNativePG `minimal` PostgreSQL 18.6 operand
+  with pgvector 0.8.5 built from the same pinned source as the Compose image
+  (`infra/postgres/Dockerfile.cnpg`), built, scanned, and published by the Production Image
+  Security workflow. The chart's bootstrap SQL creates `vector`, `pgcrypto`, and `pg_trgm` and the
+  Helix role model as the superuser, managed roles reconcile the runtime logins, and migrations run
+  as the non-superuser `helix_migrator`. The migration Job gets the owner credential
+  (`external.postgres.migrationUrlSecret` or the CloudNativePG owner Secret), pins the operator CA,
+  and runs post-install on a first CloudNativePG install while waiting for the cluster
+  (`migrations.databaseWaitSeconds`).
+- Database prerequisite checks: the migration runner and production application replicas verify
+  PostgreSQL 18, pgvector 0.8 or newer, and the required extensions, and explain the SQL to run
+  instead of failing with `permission denied` part-way through the migrations. New
+  `HELIX_MIGRATION_DATABASE_WAIT_SECONDS`.
+- A "Database" section in the production deployment guide and the Helm README covering the
+  supported paths, extension and role bootstrap, external PostgreSQL requirements, and pgvector
+  upgrades.
 - Contacts app (`/contacts`, in the app launcher and the phone More sheet): an A–Z list of your
   contacts with email, phone, job title and labels, sorted by first or last name; select several
   to label, export or delete them (with Undo), or star and edit one from the row. A contact page
@@ -259,6 +276,12 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Changed
 
+- CloudNativePG backups use the Barman Cloud Plugin (`ObjectStore`, `method: plugin`, plugin
+  recovery sources) instead of the deprecated in-core `barmanObjectStore`.
+  `cloudnativepg.imageName` is replaced by `cloudnativepg.image.{repository,digest}`, WAL arguments
+  move to `wal.archiveAdditionalCommandArgs`, and `recovery.externalClusters` entries take
+  `name`, `barmanObjectName`, and `serverName`. `pnpm infra:helm:validate` also checks the
+  CloudNativePG resources against their CRD schemas.
 - Calendar invitations for events with a Helix Meet call carry the join link: a "Join with Helix
   Meet" link in the email (text and HTML), the link in the event description and in an empty
   location, and RFC 7986 `CONFERENCE` plus `X-GOOGLE-CONFERENCE` in the `.ics`. The link is an
@@ -362,6 +385,14 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Fixed
 
+- Migrations could not run as a non-superuser owner: the CloudNativePG path failed on
+  `CREATE EXTENSION vector` and production Compose on migration 0090's role DDL. Migration 0090 now
+  only verifies roles that the superuser bootstrap provisioned (and still creates or repairs them
+  when the migrator is a superuser), with identical resulting privileges.
+- Production Compose no longer lets the development role script give `helix_worker` and
+  `helix_readonly` well-known passwords; the production bootstrap creates them without one.
+- The CloudNativePG `Cluster` rendered invalid `pvcTemplate` metadata and WAL
+  `additionalCommandArgs`; PVC annotations now travel through `inheritedMetadata`.
 - Two people uploading through the S3 API into the same new folder of a shared folder get one
   folder, not two: folder creation is serialized per parent folder rather than per person.
 - Signed-in devices name Chromium, Edge and headless Chrome correctly instead of "Safari".

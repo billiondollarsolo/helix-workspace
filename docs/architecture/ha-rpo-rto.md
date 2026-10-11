@@ -85,15 +85,15 @@ Helm/CNPG path: enterprise `ScheduledBackup` + recovery cluster; O-K.16 evidence
 
 ### Kubernetes / Helm (O-K8S)
 
-| Control                     | Chart / values                            | Notes                                        |
-| --------------------------- | ----------------------------------------- | -------------------------------------------- |
-| Replicas ≥ 2                | `replicaCount` / HPA `minReplicas`        | Not multi-region                             |
-| HPA (CPU/mem/WS)            | `autoscaling`                             | Needs metrics adapter for WS gauge           |
-| PDB                         | `podDisruptionBudget`                     | minAvailable 1 by default                    |
-| NetworkPolicy               | `networkPolicy`                           | Business+ CIDR allow-list                    |
-| Migrate Job                 | `migrations` pre-install/pre-upgrade hook | Aborts release on failure                    |
-| CNPG HA + barmanObjectStore | `values-enterprise.yaml`                  | Preferred K8s RPO path                       |
-| Workspace packaging         | `workspace.*` in `values.yaml`            | MVP fail-closed defaults; see PKG flip below |
+| Control                       | Chart / values                            | Notes                                        |
+| ----------------------------- | ----------------------------------------- | -------------------------------------------- |
+| Replicas ≥ 2                  | `replicaCount` / HPA `minReplicas`        | Not multi-region                             |
+| HPA (CPU/mem/WS)              | `autoscaling`                             | Needs metrics adapter for WS gauge           |
+| PDB                           | `podDisruptionBudget`                     | minAvailable 1 by default                    |
+| NetworkPolicy                 | `networkPolicy`                           | Business+ CIDR allow-list                    |
+| Migrate Job                   | `migrations` pre-install/pre-upgrade hook | Aborts release on failure                    |
+| CNPG HA + Barman Cloud Plugin | `values-enterprise.yaml`                  | Preferred K8s RPO path                       |
+| Workspace packaging           | `workspace.*` in `values.yaml`            | MVP fail-closed defaults; see PKG flip below |
 
 ## Full Workspace readiness gates (document only — not enabled)
 

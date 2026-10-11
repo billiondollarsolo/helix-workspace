@@ -53,12 +53,14 @@ green.
 
 The Production Image Security workflow builds the reviewed API and storage-only web runtime,
 validates their runtime contracts, generates SPDX JSON SBOMs, and blocks high/critical container
-findings before publication. The two application images and all eight dependency images must
+findings before publication. The two application images and all nine dependency images (including
+the CloudNativePG PostgreSQL operand built from `infra/postgres/Dockerfile.cnpg`) must
 complete their scans and SBOM inventory before any image is published. Successful scan jobs export
 the exact locally reviewed images as checksummed Docker image archives; the aggregate
 publication job verifies the workflow revision, archive checksum, and loaded image ID before
 pushing those same bits by immutable commit tag. It never rebuilds an image. Only the application,
-web, PostgreSQL, NATS, Meilisearch, Cerbos, SpamAssassin, and ClamAV images are published;
+web, PostgreSQL, CloudNativePG PostgreSQL, NATS, Meilisearch, Cerbos, SpamAssassin, and ClamAV
+images are published;
 digest-pinned Redis and RustFS remain pull-and-scan inventory. GitHub then creates Sigstore-backed
 provenance and SBOM attestations for each exact registry digest. The raw SBOMs and signed
 attestation bundles are retained together as workflow supply-chain evidence. Application and web

@@ -29,28 +29,29 @@ Jitsi + PKG gates — do not enable in defaults.
 
 ## Lifecycle and data plane
 
-| Concern                             | Compose                                              | Helm                                                             | Status |
-| ----------------------------------- | ---------------------------------------------------- | ---------------------------------------------------------------- | ------ |
-| Schema migrate before new code      | `helix-migrate` one-shot; app `depends_on` completed | pre-install/pre-upgrade Job `dist/db/migrate.js`                 | P      |
-| Advisory lock on migrate            | migrate runner                                       | same image/runner                                                | P      |
-| Immutable image digests             | `${HELIX_*_IMAGE:?…}` digest-required env            | `image.digest` / STIG requireDigest on sovereign                 | P      |
-| Non-root + read-only rootfs         | `user: 10001`, `read_only: true`                     | `runAsNonRoot`, `readOnlyRootFilesystem: true`                   | P      |
-| Public surface                      | Caddy 80/443 + SMTP only                             | Ingress optional; no data-plane NodePorts by default             | D      |
-| Postgres                            | In-compose TLS Postgres                              | External URL or CloudNativePG (enterprise)                       | D      |
-| Redis / NATS / Meilisearch / object | In-compose private network                           | External services via `external.*`                               | D      |
-| ClamAV / SpamAssassin               | Production overlay enables Mail+Drive scanners       | Not bundled in app chart; operator supplies endpoint (O-K.9 gap) | G      |
-| Observability                       | Optional compose profile                             | PrometheusRule opt-in; scrape annotations on Deployment          | D      |
+| Concern                             | Compose                                              | Helm                                                                                                                                                     | Status |
+| ----------------------------------- | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| Schema migrate before new code      | `helix-migrate` one-shot; app `depends_on` completed | pre-install/pre-upgrade Job `dist/db/migrate.js` (post-install on a first CloudNativePG install)                                                         | P      |
+| Advisory lock on migrate            | migrate runner                                       | same image/runner                                                                                                                                        | P      |
+| Immutable image digests             | `${HELIX_*_IMAGE:?…}` digest-required env            | `image.digest` / STIG requireDigest on sovereign                                                                                                         | P      |
+| Non-root + read-only rootfs         | `user: 10001`, `read_only: true`                     | `runAsNonRoot`, `readOnlyRootFilesystem: true`                                                                                                           | P      |
+| Public surface                      | Caddy 80/443 + SMTP only                             | Ingress optional; no data-plane NodePorts by default                                                                                                     | D      |
+| Postgres                            | In-compose TLS PostgreSQL 18.6 + pgvector 0.8.5      | External PostgreSQL 18 + pgvector ≥ 0.8, or CloudNativePG (enterprise) on the `helix-workspace-postgres-cnpg` operand (PostgreSQL 18.6 + pgvector 0.8.5) | D      |
+| Postgres extensions and roles       | `infra/postgres/init` superuser scripts              | CloudNativePG `postInitApplicationSQL` + managed roles; external: operator runs the documented SQL                                                       | P      |
+| Redis / NATS / Meilisearch / object | In-compose private network                           | External services via `external.*`                                                                                                                       | D      |
+| ClamAV / SpamAssassin               | Production overlay enables Mail+Drive scanners       | Not bundled in app chart; operator supplies endpoint (O-K.9 gap)                                                                                         | G      |
+| Observability                       | Optional compose profile                             | PrometheusRule opt-in; scrape annotations on Deployment                                                                                                  | D      |
 
 ## Resilience / RPO-RTO
 
-| Concern                    | Compose                                         | Helm                                                           | Status |
-| -------------------------- | ----------------------------------------------- | -------------------------------------------------------------- | ------ |
-| Multi-replica app          | Single container (host HA)                      | `replicaCount` ≥ 2 + HPA + PDB                                 | D      |
-| Graceful shutdown          | `stop_grace_period: 60s`                        | preStop sleep + `terminationGracePeriodSeconds`                | P      |
-| Backup toolchain           | `backup.sh` / `restore.sh` / `restore-drill.sh` | Same scripts against external DB **or** CNPG barmanObjectStore | P      |
-| RPO ≤ 24h / RTO ≤ 4h gates | `rpo-rto-check.mjs` + O-D.13 drill              | Same check + O-K.16 / CNPG recovery drill                      | P      |
-| Continuous WAL / PITR      | Operator `archive_command` + `--pitr`           | CNPG `barmanObjectStore` on enterprise overlay                 | D      |
-| Off-host encrypted backup  | Business+ fail-closed in `backup.sh`            | Same contract; CNPG SSE-KMS path for enterprise                | P      |
+| Concern                    | Compose                                         | Helm                                                             | Status |
+| -------------------------- | ----------------------------------------------- | ---------------------------------------------------------------- | ------ |
+| Multi-replica app          | Single container (host HA)                      | `replicaCount` ≥ 2 + HPA + PDB                                   | D      |
+| Graceful shutdown          | `stop_grace_period: 60s`                        | preStop sleep + `terminationGracePeriodSeconds`                  | P      |
+| Backup toolchain           | `backup.sh` / `restore.sh` / `restore-drill.sh` | Same scripts against external DB **or** CNPG Barman Cloud Plugin | P      |
+| RPO ≤ 24h / RTO ≤ 4h gates | `rpo-rto-check.mjs` + O-D.13 drill              | Same check + O-K.16 / CNPG recovery drill                        | P      |
+| Continuous WAL / PITR      | Operator `archive_command` + `--pitr`           | CNPG Barman Cloud Plugin `ObjectStore` on enterprise overlay     | D      |
+| Off-host encrypted backup  | Business+ fail-closed in `backup.sh`            | Same contract; CNPG SSE-KMS path for enterprise                  | P      |
 
 ## Security controls
 

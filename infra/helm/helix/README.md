@@ -259,8 +259,9 @@ git tag helm-v0.9.0 && git push origin helm-v0.9.0
 Production requires `auth.secretRef` and `external.postgres.urlSecret` to point at
 operator-managed Secrets; inline database credentials are rejected at render time. The database
 Secret must authenticate directly as the constrained `helix_app` role created by migrations—not as
-the database owner or a role that can assume it. Run migrations separately with an owner-capable
-migration credential; application pods never receive that credential.
+the database owner or a role that can assume it. The migration Job receives the owner-capable
+`helix_migrator` credential from `external.postgres.migrationUrlSecret` (or the CloudNativePG
+owner Secret); application pods never receive it. See [Database](#database).
 `publicUrl` must be one HTTPS origin. Redis and NATS may use their non-credentialed
 internal URLs or their matching `urlSecret` entries. Object storage, Meilisearch,
 KMS, and SIEM tokens are always read from Kubernetes Secrets.
@@ -352,18 +353,82 @@ The sovereign overlay sets `fips.enabled=true`, `fips.crypto.mode=required`, and
 
 The matching policy and evidence contracts live under `infra/security/tier4/`.
 
-## CloudNativePG
+## Database
 
-Set `cloudnativepg.enabled=true` to render a `postgresql.cnpg.io/v1` `Cluster`. The enterprise
-overlay bootstraps the database as `helix_migrator`; use its CloudNativePG-generated owner Secret
-only for the separate migration command. Application pods read `DATABASE_URL` from the
-operator-provisioned `helix-postgres-runtime` Secret, whose login must be `helix_app`.
+Helix needs PostgreSQL 18 with pgvector 0.8 or newer and the `vector`, `pgcrypto`, and `pg_trgm`
+extensions. The full requirements, role model, startup checks, and external-PostgreSQL bootstrap
+SQL are in [docs/deployment-production.md#database](../../../docs/deployment-production.md#database).
 
-The chart exposes:
+| Values                   | Database                                                                               |
+| ------------------------ | -------------------------------------------------------------------------------------- |
+| `values.yaml` (default)  | external PostgreSQL via `external.postgres.urlSecret` (`cloudnativepg.enabled: false`) |
+| `values-enterprise.yaml` | in-chart CloudNativePG `Cluster`, managed roles, Barman Cloud Plugin backups and PITR  |
 
-- `cloudnativepg.backup.barmanObjectStore`: object-store destination, endpoint, S3 credentials, WAL compression/encryption/parallelism, base-backup compression/encryption, tags, and extra Barman command arguments.
-- `cloudnativepg.scheduledBackup`: daily `ScheduledBackup` settings using CloudNativePG's six-field cron format.
-- `cloudnativepg.bootstrap.recovery` and `cloudnativepg.recovery.externalClusters`: PITR/recovery source and `recoveryTarget` settings for restore clusters.
-- `cloudnativepg.tde`: an explicit TDE/KMS surface rendered as Cluster annotations, inherited resource annotations, PVC template annotations, and optional PostgreSQL parameters for environments using storage-class encryption, Postgres TDE images, or pgcrypto-based compensating controls.
+Production Compose is the 1.0 release path. On Kubernetes, CloudNativePG is the supported
+database path; the default keeps it off so clusters without the operator can use an external
+server.
+
+### External PostgreSQL
+
+Bootstrap the database once as a superuser with the SQL in the deployment guide, then provide two
+Secrets:
+
+- `external.postgres.urlSecret`: `DATABASE_URL` for `helix_app`; application pods receive only this.
+- `external.postgres.migrationUrlSecret`: `HELIX_MIGRATION_DATABASE_URL` for `helix_migrator`;
+  only the migration Job receives it. Without it the Job falls back to `DATABASE_URL`, which
+  cannot apply migrations when that URL is the least-privileged `helix_app`.
+
+Mount the server CA and set `POSTGRES_TLS_CA_FILE` through `extraVolumes`, `extraVolumeMounts`, and
+`env`.
+
+### CloudNativePG
+
+Requires CloudNativePG 1.26 or newer and, with backups enabled, the Barman Cloud Plugin. Set
+`cloudnativepg.enabled=true` to render:
+
+- A `Cluster` running `cloudnativepg.image.repository@cloudnativepg.image.digest`: the
+  `helix-workspace-postgres-cnpg` operand (CloudNativePG `minimal` PostgreSQL 18.6 plus pgvector
+  0.8.5 from the Compose image's pinned source). The digest is required; tags and the legacy
+  `cloudnativepg.imageName` are rejected.
+- `bootstrap.initdb` with owner `helix_migrator` and `postInitApplicationSQL` that runs once as the
+  superuser: creates `vector` and `pgcrypto`, creates the four Helix roles with the migration 0090
+  attributes, grants `helix_migration_owner` to the owner, applies the function grants, then
+  creates `pg_trgm`. Append site-specific statements with
+  `cloudnativepg.bootstrap.extraPostInitApplicationSQL`.
+- `managed.roles` for `helix_migration_owner` and the `helix_app`, `helix_worker`, and
+  `helix_readonly` logins. The operator keeps their attributes reconciled and sets passwords from
+  `cloudnativepg.roles.{app,worker,readonly}.passwordSecret` (type `kubernetes.io/basic-auth`,
+  labelled `cnpg.io/reload: "true"`).
+- The migration Job with `HELIX_MIGRATION_DATABASE_URL` from the operator-generated
+  `<clusterName>-app` Secret (key `uri`, the `helix_migrator` login) unless
+  `external.postgres.migrationUrlSecret` is set. On the first install the Job is a `post-install`
+  hook, because the `Cluster` does not exist while pre-install hooks run, and the runner waits up to
+  `migrations.databaseWaitSeconds` for it. Application pods restart until the schema is current, so
+  do not combine the first install with `helm install --wait`. Upgrades run the Job `pre-upgrade`.
+- With `cloudnativepg.clientTls.enabled` (default), the operator CA Secret `<clusterName>-ca` is
+  mounted into application and migration pods and pinned with `POSTGRES_TLS_CA_FILE`.
+
+Application pods read `DATABASE_URL` from `external.postgres.urlSecret`; on the enterprise overlay
+that is the operator-provisioned `helix-postgres-runtime` Secret, whose URL must name `helix_app`
+at `<clusterName>-rw` with the password from `helix-postgres-role-app`.
+
+Backups and recovery:
+
+- `cloudnativepg.backup.barmanObjectStore`: rendered as the `ObjectStore` `spec.configuration`
+  (destination, endpoint such as RustFS or any S3 service, credentials, WAL and base-backup
+  compression/encryption, `wal.archiveAdditionalCommandArgs`, `data.additionalCommandArgs`,
+  tags). `serverName` becomes the Cluster plugin parameter. The retention policy moves to the
+  `ObjectStore`.
+- `cloudnativepg.scheduledBackup`: a daily `ScheduledBackup` with `method: plugin` in
+  CloudNativePG's six-field cron format.
+- `cloudnativepg.bootstrap.recovery` and `cloudnativepg.recovery.externalClusters` (`name`,
+  `barmanObjectName`, `serverName`): PITR into a new cluster. A recovered cluster keeps its
+  extensions and roles, so no bootstrap SQL runs.
+- `cloudnativepg.tde`: TDE/KMS annotations and optional PostgreSQL parameters. PVC annotations are
+  applied through `inheritedMetadata`, because a CloudNativePG `pvcTemplate` has no metadata.
 
 For Tier 3, replace the example backup destination, object-store credentials Secret, storage-class/KMS annotations, and `--sse-kms-key-id` values with your cloud or on-prem KMS values before install.
+
+`pnpm infra:helm:validate` renders the external and CloudNativePG paths (install, upgrade, and
+recovery), asserts the bootstrap SQL, roles, plugin backups, hook ordering, and CA wiring, and
+validates the CloudNativePG and Barman Cloud resources against their CRD schemas with kubeconform.

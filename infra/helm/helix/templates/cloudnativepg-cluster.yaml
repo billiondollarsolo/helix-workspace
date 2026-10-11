@@ -11,8 +11,16 @@
 {{- end }}
 {{- end }}
 {{- $clusterAnnotations = mergeOverwrite $clusterAnnotations $cnpg.annotations $cnpg.tde.annotations }}
-{{- $inheritedAnnotations := mergeOverwrite (deepCopy $cnpg.inheritedAnnotations) $cnpg.tde.inheritedAnnotations }}
+{{- /*
+  CloudNativePG pvcTemplate is a bare PersistentVolumeClaimSpec with no
+  metadata, so PVC (storage, WAL, TDE) annotations travel through
+  inheritedMetadata, which the operator applies to every object it creates.
+*/}}
 {{- $storageAnnotations := mergeOverwrite (deepCopy $cnpg.storage.annotations) $cnpg.tde.storageAnnotations }}
+{{- if $cnpg.walStorage.enabled }}
+{{- $storageAnnotations = mergeOverwrite $storageAnnotations (deepCopy $cnpg.walStorage.annotations) }}
+{{- end }}
+{{- $inheritedAnnotations := mergeOverwrite (deepCopy $cnpg.inheritedAnnotations) $storageAnnotations $cnpg.tde.inheritedAnnotations }}
 {{- $postgresqlParameters := mergeOverwrite (deepCopy $cnpg.postgresql.parameters) $cnpg.tde.postgresqlParameters }}
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
@@ -25,7 +33,7 @@ metadata:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
-  imageName: {{ $cnpg.imageName | quote }}
+  imageName: {{ include "helix.cloudnativepgImage" . | quote }}
   instances: {{ $cnpg.instances }}
   affinity:
     nodeSelector:
@@ -43,54 +51,39 @@ spec:
       {{- toYaml . | nindent 6 }}
   {{- end }}
   storage:
-    {{- if or $cnpg.storage.pvcTemplate.enabled $storageAnnotations }}
-    pvcTemplate:
-      {{- with $storageAnnotations }}
-      metadata:
-        annotations:
-          {{- toYaml . | nindent 10 }}
-      {{- end }}
-      spec:
-        accessModes:
-          {{- toYaml $cnpg.storage.pvcTemplate.accessModes | nindent 10 }}
-        resources:
-          requests:
-            storage: {{ $cnpg.storage.size | quote }}
-        {{- with $cnpg.storage.storageClass }}
-        storageClassName: {{ . | quote }}
-        {{- end }}
-        volumeMode: {{ $cnpg.storage.pvcTemplate.volumeMode | quote }}
-    {{- else }}
     size: {{ $cnpg.storage.size | quote }}
     {{- with $cnpg.storage.storageClass }}
     storageClass: {{ . | quote }}
     {{- end }}
+    {{- if $cnpg.storage.pvcTemplate.enabled }}
+    pvcTemplate:
+      accessModes:
+        {{- toYaml $cnpg.storage.pvcTemplate.accessModes | nindent 8 }}
+      resources:
+        requests:
+          storage: {{ $cnpg.storage.size | quote }}
+      {{- with $cnpg.storage.storageClass }}
+      storageClassName: {{ . | quote }}
+      {{- end }}
+      volumeMode: {{ $cnpg.storage.pvcTemplate.volumeMode | quote }}
     {{- end }}
   {{- if $cnpg.walStorage.enabled }}
-  {{- $walStorageAnnotations := mergeOverwrite (deepCopy $cnpg.walStorage.annotations) $cnpg.tde.storageAnnotations }}
   walStorage:
-    {{- if or $cnpg.walStorage.pvcTemplate.enabled $walStorageAnnotations }}
-    pvcTemplate:
-      {{- with $walStorageAnnotations }}
-      metadata:
-        annotations:
-          {{- toYaml . | nindent 10 }}
-      {{- end }}
-      spec:
-        accessModes:
-          {{- toYaml $cnpg.walStorage.pvcTemplate.accessModes | nindent 10 }}
-        resources:
-          requests:
-            storage: {{ $cnpg.walStorage.size | quote }}
-        {{- with $cnpg.walStorage.storageClass }}
-        storageClassName: {{ . | quote }}
-        {{- end }}
-        volumeMode: {{ $cnpg.walStorage.pvcTemplate.volumeMode | quote }}
-    {{- else }}
     size: {{ $cnpg.walStorage.size | quote }}
     {{- with $cnpg.walStorage.storageClass }}
     storageClass: {{ . | quote }}
     {{- end }}
+    {{- if $cnpg.walStorage.pvcTemplate.enabled }}
+    pvcTemplate:
+      accessModes:
+        {{- toYaml $cnpg.walStorage.pvcTemplate.accessModes | nindent 8 }}
+      resources:
+        requests:
+          storage: {{ $cnpg.walStorage.size | quote }}
+      {{- with $cnpg.walStorage.storageClass }}
+      storageClassName: {{ . | quote }}
+      {{- end }}
+      volumeMode: {{ $cnpg.walStorage.pvcTemplate.volumeMode | quote }}
     {{- end }}
   {{- end }}
   bootstrap:
@@ -119,17 +112,62 @@ spec:
       secret:
         name: {{ . | quote }}
       {{- end }}
+      # Runs once as the superuser inside the application database, before
+      # the migration Job: extensions the migrations need (pgvector is not a
+      # trusted extension) and the Helix role model, so migrations run as the
+      # non-superuser owner.
+      postInitApplicationSQL:
+        {{- include "helix.cloudnativepgBootstrapSQL" . | nindent 8 }}
+        {{- range $statement := $cnpg.bootstrap.extraPostInitApplicationSQL }}
+        - {{ $statement | quote }}
+        {{- end }}
     {{- end }}
+  managed:
+    roles:
+      - name: helix_migration_owner
+        ensure: present
+        comment: Helix schema owner (NOLOGIN; assumed by the migration login)
+        login: false
+        superuser: false
+        bypassrls: true
+        inherit: false
+        createdb: false
+        createrole: false
+        replication: false
+      {{- range $role := list "app" "worker" "readonly" }}
+      - name: {{ printf "helix_%s" $role }}
+        ensure: present
+        comment: {{ printf "Helix %s runtime role" $role | quote }}
+        login: true
+        superuser: false
+        bypassrls: false
+        inherit: false
+        createdb: false
+        createrole: false
+        replication: false
+        passwordSecret:
+          name: {{ required (printf "cloudnativepg.roles.%s.passwordSecret is required" $role) (index $cnpg.roles $role).passwordSecret | quote }}
+      {{- end }}
   {{- if $cnpg.backup.enabled }}
-  backup:
-    target: {{ $cnpg.backup.target | quote }}
-    retentionPolicy: {{ $cnpg.backup.retentionPolicy | quote }}
-    barmanObjectStore:
-      {{- include "helix.cloudnativepgObjectStore" $cnpg.backup.barmanObjectStore | nindent 6 }}
+  plugins:
+    - name: {{ $cnpg.backup.pluginName | quote }}
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: {{ include "helix.cloudnativepgObjectStoreName" . | quote }}
+        {{- with $cnpg.backup.barmanObjectStore.serverName }}
+        serverName: {{ . | quote }}
+        {{- end }}
   {{- end }}
   {{- with $cnpg.recovery.externalClusters }}
   externalClusters:
-    {{- toYaml . | nindent 4 }}
+    {{- range $source := . }}
+    - name: {{ required "cloudnativepg.recovery.externalClusters[].name is required" $source.name | quote }}
+      plugin:
+        name: {{ $cnpg.backup.pluginName | quote }}
+        parameters:
+          barmanObjectName: {{ required "cloudnativepg.recovery.externalClusters[].barmanObjectName is required" $source.barmanObjectName | quote }}
+          serverName: {{ required "cloudnativepg.recovery.externalClusters[].serverName is required" $source.serverName | quote }}
+    {{- end }}
   {{- end }}
   monitoring:
     enablePodMonitor: true

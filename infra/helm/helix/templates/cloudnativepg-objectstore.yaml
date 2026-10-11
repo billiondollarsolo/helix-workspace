@@ -1,0 +1,18 @@
+{{- if and .Values.cloudnativepg.enabled .Values.cloudnativepg.backup.enabled }}
+{{- $cnpg := .Values.cloudnativepg }}
+{{- /*
+  Barman Cloud Plugin object store for base backups and the WAL archive.
+  serverName is a Cluster plugin parameter; the plugin requires the
+  ObjectStore copy to stay empty, so it is stripped here.
+*/}}
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: {{ include "helix.cloudnativepgObjectStoreName" . }}
+  labels:
+    {{- include "helix.labels" . | nindent 4 }}
+spec:
+  retentionPolicy: {{ $cnpg.backup.retentionPolicy | quote }}
+  configuration:
+    {{- include "helix.cloudnativepgObjectStore" (omit $cnpg.backup.barmanObjectStore "serverName") | nindent 4 }}
+{{- end }}

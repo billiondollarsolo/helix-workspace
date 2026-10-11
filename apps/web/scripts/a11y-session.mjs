@@ -90,6 +90,39 @@ const FIXTURES = new Map([
     },
   ],
   ["/v1/api/core-apps", coreAppsShell()],
+  /* Settings → Security: this device and one other, so the list and its
+     per-device Sign out button are audited. */
+  [
+    "/v1/api/account/sessions",
+    {
+      sessions: [
+        {
+          id: "a11y-session",
+          current: true,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          lastActiveAt: "2026-01-01T00:00:00.000Z",
+          expiresAt: "2026-02-01T00:00:00.000Z",
+          ipAddress: "203.0.113.10",
+          userAgent: null,
+          browser: "Chrome",
+          os: "Linux",
+          deviceType: "desktop",
+        },
+        {
+          id: "a11y-phone",
+          current: false,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          lastActiveAt: "2026-01-01T00:00:00.000Z",
+          expiresAt: "2026-02-01T00:00:00.000Z",
+          ipAddress: null,
+          userAgent: null,
+          browser: "Safari",
+          os: "iOS",
+          deviceType: "mobile",
+        },
+      ],
+    },
+  ],
   [
     "/v1/api/people",
     {
@@ -200,6 +233,23 @@ const TOOL_FIXTURES = new Map([
     },
   ],
   ["notifications.list", { notifications: [] }],
+  [
+    "app.passwords.list",
+    {
+      appPasswords: [
+        {
+          id: "a11y-app-password",
+          label: "Phone calendar",
+          scopes: ["calendar.read", "calendar.write"],
+          lastUsedAt: null,
+          expiresAt: null,
+          revokedAt: null,
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      grantableScopes: ["mail.send", "calendar.read", "calendar.write", "drive.read"],
+    },
+  ],
   ["webhook.overview", { outbound: [], inbound: [], deliveries: [] }],
   [
     "drive.list",
@@ -284,8 +334,11 @@ export async function installAuditSession(context) {
 /** Routes that only make sense signed *out*. Seeding a session on these would
  *  bounce the audit straight back into the shell and silently stop auditing the
  *  auth surfaces — the mirror image of the bug this module fixes. */
-const SIGNED_OUT_ROUTES = new Set(["/login", "/signup"]);
+const SIGNED_OUT_ROUTES = ["/login", "/signup", "/oauth/consent"];
 
 export function routeNeedsSession(routePath) {
-  return !SIGNED_OUT_ROUTES.has(routePath);
+  const pathname = new URL(routePath, "http://audit.invalid").pathname;
+  return !SIGNED_OUT_ROUTES.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
 }

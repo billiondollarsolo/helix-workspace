@@ -45,19 +45,18 @@ test.describe("/login authenticated handoff", () => {
     });
 
     await page.goto("/login");
-    await expect(page.getByText("Local email/password login")).toBeVisible();
-    await expect(page.getByText("Email + password")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
+    await expect(page.getByText("Local email/password login")).toHaveCount(0);
+    await expect(page.getByLabel("Password", { exact: true })).toHaveCount(0);
 
     await page.getByLabel("Email", { exact: true }).fill(" admin@helix.local ");
+    await page.getByRole("button", { name: "Next" }).click();
+    await expect(page.getByText("admin@helix.local", { exact: true })).toBeVisible();
     await page.getByLabel("Password", { exact: true }).fill("helix-admin-password");
-    await page.getByRole("button", { name: "Sign in" }).click();
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
 
     await expect(page).toHaveURL(/\/mail(?:[/?#]|$)/);
-    await expect(
-      page.getByRole("textbox", {
-        name: "Search mail (try from:mira, has:attachment, label:urgent)",
-      }),
-    ).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Search mail", exact: true })).toBeVisible();
     await expect
       .poll(() => page.evaluate((key) => window.localStorage.getItem(key), accessTokenStorageKey))
       .toBeNull();
@@ -96,10 +95,21 @@ test.describe("/login authenticated handoff", () => {
 
     await page.goto("/login");
     await page.getByLabel("Email", { exact: true }).fill("admin@helix.local");
+    await page.getByRole("button", { name: "Next" }).click();
     await page.getByLabel("Password", { exact: true }).fill("wrong-password");
-    await page.getByRole("button", { name: "Sign in" }).click();
+    await page.getByLabel("Show password").check();
+    await expect(page.getByLabel("Password", { exact: true })).toHaveAttribute("type", "text");
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
 
-    await expect(page.getByRole("alert")).toHaveText("Invalid email or password.");
+    // One message for every credential failure: it never says whether the account exists.
+    await expect(page.getByRole("alert")).toHaveText(
+      "Wrong email or password. Try again or reset your password.",
+    );
+    await expect(page.getByLabel("Password", { exact: true })).toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+    await expect(page.getByRole("alert")).toBeFocused();
     await expect(page).toHaveURL(/\/login(?:[/?#]|$)/);
     await expect
       .poll(() => page.evaluate((key) => window.localStorage.getItem(key), accessTokenStorageKey))
@@ -132,6 +142,11 @@ async function mockAppApi(
     const pathname = new URL(request.url()).pathname;
     if (pathname === "/v1/api/auth/csrf-token") {
       await fulfillJson(route, { csrfToken: "e2e-csrf-token" });
+      return;
+    }
+
+    if (pathname === "/v1/api/auth/domain-discovery") {
+      await fulfillJson(route, { managed: false });
       return;
     }
 

@@ -92,6 +92,32 @@ export function redirectToLogin(reauthenticate = false): void {
   window.location.replace(`/login?${search.toString()}`);
 }
 
+export const WRONG_CREDENTIALS_MESSAGE =
+  "Wrong email or password. Try again or reset your password.";
+const CREDENTIAL_FAILURE_STATUSES = new Set([400, 401, 404, 422]);
+
+/**
+ * How an email address signs in: "sso" when its domain is managed by an
+ * identity provider, otherwise "password". This is a domain lookup only and
+ * says nothing about whether an account exists; any failure means "password".
+ */
+export async function discoverSignInMethod(
+  email: string,
+  fetchImpl: AuthFetch = authenticatedFetch,
+): Promise<"sso" | "password"> {
+  try {
+    const discovery = await authJson(fetchImpl, "/api/auth/domain-discovery", {
+      method: "POST",
+      body: JSON.stringify({ email: email.trim().toLowerCase() }),
+    });
+    return isRecord(discovery) && discovery.managed === true && discovery.protocol === "oidc"
+      ? "sso"
+      : "password";
+  } catch {
+    return "password";
+  }
+}
+
 /** Signs in with email + password via Better-Auth. Sets the session cookie. */
 export async function signInWithEmail(
   input: SignInInput,
@@ -105,7 +131,12 @@ export async function signInWithEmail(
   });
   const output: unknown = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(errorMessageFromOutput(output) ?? "Invalid email or password.");
+    // Never say which half was wrong: that would reveal whether an account exists.
+    throw new Error(
+      CREDENTIAL_FAILURE_STATUSES.has(response.status)
+        ? WRONG_CREDENTIALS_MESSAGE
+        : (errorMessageFromOutput(output) ?? WRONG_CREDENTIALS_MESSAGE),
+    );
   }
   if (isRecord(output) && output.twoFactorRedirect === true) {
     throw new SecondFactorRequiredError(

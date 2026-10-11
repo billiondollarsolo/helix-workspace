@@ -1,37 +1,14 @@
-import { iconMap as Icons, type IconName } from "@/components/icon-map";
-import { settingsSectionBase, type SettingsSectionId } from "@/components/shell/overlay-context";
-import { MailSettingsSection } from "@/features/mail/settings";
+/* Settings — the full-screen account and preferences overlay.
+   Desktop: section nav (with search) beside the open section.
+   Mobile: the section list first, then the full-width section with a back
+   button. The open section lives in `?settings=<section>[/<tab>]`. */
+
+import { ArrowLeft, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
-import { ArrowLeft as ArrowLeftIcon } from "lucide-react";
-import { useEffect, useRef, type ReactNode } from "react";
-import { LanguageSection, ProfileSection } from "./settings-account";
-import { AppearanceSection } from "./settings-appearance";
-import { S3KeysSection } from "./settings-s3-keys";
-import { SecuritySection } from "./settings-security";
-import { ShortcutsSection } from "./settings-shortcuts";
-
-/* ---------- shell ---------- */
-
-/** Tabbed sections get the tab from `?settings=<section>/<tab>` and switch it here. */
-interface SettingsSectionProps {
-  tab: string | undefined;
-  onTabChange: (tab: string) => void;
-}
-
-const SECTIONS: {
-  id: ReturnType<typeof settingsSectionBase>;
-  label: string;
-  icon: IconName;
-  Component: (props: SettingsSectionProps) => ReactNode;
-}[] = [
-  { id: "profile", label: "Profile", icon: "Users", Component: ProfileSection },
-  { id: "appearance", label: "Appearance", icon: "Sun", Component: AppearanceSection },
-  { id: "language", label: "Language & region", icon: "Globe", Component: LanguageSection },
-  { id: "mail", label: "Mail", icon: "Mail", Component: MailSettingsSection },
-  { id: "security", label: "Security", icon: "Shield", Component: SecuritySection },
-  { id: "s3-keys", label: "S3 access keys", icon: "Key", Component: S3KeysSection },
-  { id: "shortcuts", label: "Keyboard shortcuts", icon: "Code", Component: ShortcutsSection },
-];
+import { settingsSectionBase, type SettingsSectionId } from "./overlay-context";
+import { SettingsNav } from "./settings-nav";
+import { SETTINGS_SECTIONS } from "./settings-sections";
 
 export interface SettingsPageProps {
   open: boolean;
@@ -43,37 +20,73 @@ export interface SettingsPageProps {
 const SETTINGS_FOCUSABLE =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-export function SettingsPage({ open, section, onSectionChange, onClose }: SettingsPageProps) {
+/** Focusable controls that are rendered (the other layout's controls are hidden). */
+function visibleFocusable(root: HTMLElement): HTMLElement[] {
+  return Array.from(root.querySelectorAll<HTMLElement>(SETTINGS_FOCUSABLE)).filter(
+    (node) => node.getClientRects().length > 0,
+  );
+}
+
+export function SettingsPage({ open, ...props }: SettingsPageProps) {
+  return open ? <SettingsDialog {...props} /> : null;
+}
+
+function SettingsDialog({ section, onSectionChange, onClose }: Omit<SettingsPageProps, "open">) {
   const dialogRef = useRef<HTMLDivElement | null>(null);
+  const sectionRef = useRef<HTMLElement | null>(null);
+  /* Mobile only (CSS hides the other pane): the Profile home opens on the
+     section list; a deep link to any other section opens that section. */
+  const [mobilePane, setMobilePane] = useState<"list" | "section">(
+    settingsSectionBase(section) === "profile" ? "list" : "section",
+  );
+
   useEffect(() => {
-    if (!open) {
-      return;
-    }
     const previousFocus =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const previousOverflow = document.body.style.overflow;
     let cancelled = false;
     document.body.style.overflow = "hidden";
+    /* Settings covers the whole app: the app behind it is inert and hidden
+       (not unmounted, so drafts and scroll positions survive). */
+    const background = Array.from(dialogRef.current?.parentElement?.children ?? []).filter(
+      (node): node is HTMLElement => node instanceof HTMLElement && node !== dialogRef.current,
+    );
+    const restoreBackground = background.map((node) => {
+      const { inert } = node;
+      const { visibility } = node.style;
+      node.inert = true;
+      node.style.visibility = "hidden";
+      return () => {
+        node.inert = inert;
+        node.style.visibility = visibility;
+      };
+    });
     queueMicrotask(() => {
       if (!cancelled) {
-        dialogRef.current?.querySelector<HTMLElement>(SETTINGS_FOCUSABLE)?.focus();
+        const dialog = dialogRef.current;
+        if (dialog !== null) (visibleFocusable(dialog)[0] ?? dialog).focus();
       }
     });
     const onKeyDown = (event: KeyboardEvent) => {
+      const dialog = dialogRef.current;
+      /* Dialogs opened from a section (confirmations, the photo cropper)
+         handle their own keys; leave them alone. */
+      const owner = document.activeElement?.closest('[role="dialog"], [role="alertdialog"]');
+      if (dialog === null || event.defaultPrevented || (owner != null && owner !== dialog)) {
+        return;
+      }
       if (event.key === "Escape") {
         event.preventDefault();
         onClose();
         return;
       }
-      if (event.key !== "Tab" || dialogRef.current === null) {
+      if (event.key !== "Tab") {
         return;
       }
-      const focusable = Array.from(
-        dialogRef.current.querySelectorAll<HTMLElement>(SETTINGS_FOCUSABLE),
-      );
+      const focusable = visibleFocusable(dialog);
       if (focusable.length === 0) {
         event.preventDefault();
-        dialogRef.current.focus();
+        dialog.focus();
         return;
       }
       const first = focusable[0];
@@ -91,19 +104,25 @@ export function SettingsPage({ open, section, onSectionChange, onClose }: Settin
       cancelled = true;
       document.removeEventListener("keydown", onKeyDown);
       document.body.style.overflow = previousOverflow;
+      for (const restore of restoreBackground) restore();
       if (previousFocus?.isConnected === true) {
         previousFocus.focus();
       }
     };
-  }, [open, onClose]);
-
-  if (!open) {
-    return null;
-  }
+  }, [onClose]);
 
   const sectionBase = settingsSectionBase(section);
-  const activeSection = SECTIONS.find((entry) => entry.id === sectionBase);
+  const activeSection =
+    SETTINGS_SECTIONS.find((entry) => entry.id === sectionBase) ?? SETTINGS_SECTIONS[0];
   const ActiveSectionBody = activeSection?.Component;
+  const onList = mobilePane === "list";
+
+  const selectSection = (id: SettingsSectionId) => {
+    onSectionChange(id);
+    setMobilePane("section");
+    sectionRef.current?.scrollTo?.({ top: 0 });
+    queueMicrotask(() => sectionRef.current?.focus({ preventScroll: true }));
+  };
 
   return (
     <div
@@ -114,11 +133,24 @@ export function SettingsPage({ open, section, onSectionChange, onClose }: Settin
       tabIndex={-1}
       className="fixed inset-0 bg-background [z-index:300] flex flex-col"
     >
-      <div className="h-12 flex items-center [padding:0_16px] gap-3 [border-bottom:1px_solid_var(--border)] bg-card">
-        <button type="button" className="icon-btn" onClick={onClose} aria-label="Back">
-          <ArrowLeftIcon size={16} />
+      <div className="h-14 flex items-center [padding:0_12px] gap-2 [border-bottom:1px_solid_var(--border)] bg-card">
+        <button
+          type="button"
+          className="icon-btn md:hidden"
+          onClick={onList ? onClose : () => setMobilePane("list")}
+          aria-label={onList ? "Close settings" : "All settings"}
+        >
+          <ArrowLeft size={18} aria-hidden="true" />
         </button>
-        <span id="settings-title" className="type-body font-semibold">
+        <button
+          type="button"
+          className="icon-btn max-md:hidden"
+          onClick={onClose}
+          aria-label="Close settings"
+        >
+          <X size={18} aria-hidden="true" />
+        </button>
+        <span id="settings-title" className="type-h3 font-semibold">
           Settings
         </span>
         <div className="ml-auto">
@@ -128,42 +160,32 @@ export function SettingsPage({ open, section, onSectionChange, onClose }: Settin
         </div>
       </div>
       <div className="flex-1 flex min-h-0">
-        <nav
-          aria-label="Settings sections"
-          className="w-60 [border-right:1px_solid_var(--border)] bg-card p-3"
+        <div
+          className={cn(
+            "overflow-y-auto bg-card [border-right:1px_solid_var(--border)] [padding:12px] md:w-68 md:shrink-0",
+            onList ? "max-md:flex-1" : "max-md:hidden",
+          )}
         >
-          {SECTIONS.map((entry) => {
-            const Icon = Icons[entry.icon];
-            const selected = sectionBase === entry.id;
-            return (
-              <button
-                key={entry.id}
-                type="button"
-                onClick={() => onSectionChange(entry.id)}
-                aria-current={selected ? "page" : undefined}
-                className={cn(
-                  "w-full flex items-center gap-2.5 h-8 [padding:0_10px] rounded-md type-body-sm text-left",
-                  selected ? "[background:var(--accent-soft)]" : "bg-transparent",
-                  selected ? "text-primary" : "text-foreground",
-                  selected ? "font-semibold" : "font-normal",
-                )}
-              >
-                <Icon size={16} />
-                {entry.label}
-              </button>
-            );
-          })}
-        </nav>
+          <SettingsNav active={onList ? null : sectionBase} onSelect={selectSection} />
+        </div>
         <section
+          ref={sectionRef}
+          tabIndex={-1}
           aria-label={`${activeSection?.label ?? "Settings"} settings`}
-          className="flex-1 overflow-y-auto [padding:24px_32px] max-w-180 min-w-0"
+          className={cn(
+            "flex-1 min-w-0 overflow-y-auto outline-none [padding:24px_16px] md:[padding:28px_40px]",
+            onList && "max-md:hidden",
+          )}
         >
-          {ActiveSectionBody ? (
-            <ActiveSectionBody
-              tab={section.split("/")[1]}
-              onTabChange={(tab) => onSectionChange(`${sectionBase}/${tab}`)}
-            />
-          ) : null}
+          <div className="mx-auto max-w-180">
+            {ActiveSectionBody ? (
+              <ActiveSectionBody
+                tab={section.split("/")[1]}
+                onTabChange={(tab) => onSectionChange(`${sectionBase}/${tab}`)}
+                onNavigate={selectSection}
+              />
+            ) : null}
+          </div>
         </section>
       </div>
     </div>

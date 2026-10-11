@@ -143,6 +143,7 @@ function renderInlineText(value: string): string {
   return escapeHtml(value)
     .replace(/\*\*([^*\n]+)\*\*/gu, "<strong>$1</strong>")
     .replace(/`([^`\n]+)`/gu, "<code>$1</code>")
+    .replace(/~~([^~\n]+)~~/gu, "<s>$1</s>")
     .replace(/(^|[^*])\*([^*\n]+)\*/gu, "$1<em>$2</em>");
 }
 

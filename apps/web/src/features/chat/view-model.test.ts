@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { reactionViews, readCountFor, seenByForMessage, seenMarkers } from "./view-model";
-import type { ChatReadReceiptRecord } from "./api";
+import {
+  conversationViews,
+  homeFeed,
+  reactionViews,
+  readCountFor,
+  seenByForMessage,
+  seenMarkers,
+} from "./view-model";
+import type { ChatReadReceiptRecord, ChatRoomRecord } from "./api";
 
 const ordered = ["m1", "m2", "m3"];
 const self = "self";
@@ -72,5 +79,79 @@ describe("reaction projections", () => {
       { emoji: "✅", count: 2, mine: true },
       { emoji: "🎉", count: 1, mine: false },
     ]);
+  });
+});
+
+describe("conversation rows", () => {
+  const member = (actorId: string, displayName: string) => ({
+    actorId,
+    role: "member" as const,
+    displayName,
+    email: `${actorId}@example.com`,
+  });
+  const base = {
+    orgId: "o",
+    createdByActorId: null,
+    metadata: {},
+    createdAt: "2026-07-18T00:00:00.000Z",
+    updatedAt: "2026-07-18T00:00:00.000Z",
+  };
+  const rooms: ChatRoomRecord[] = [
+    {
+      ...base,
+      id: "dm",
+      kind: "chat_dm",
+      subject: "legacy subject",
+      members: [member(self, "Me"), member("ana", "Ana Ruiz")],
+      settings: null,
+    },
+    {
+      ...base,
+      id: "group",
+      kind: "chat_dm",
+      subject: null,
+      members: [member(self, "Me"), member("ana", "Ana Ruiz"), member("bo", "Bo Lin")],
+      settings: null,
+    },
+    {
+      ...base,
+      id: "space",
+      kind: "chat_room",
+      subject: "Launch",
+      members: [member(self, "Me")],
+      settings: null,
+    },
+  ];
+
+  it("names DMs after the other people and carries unread counts", () => {
+    const views = conversationViews(
+      rooms,
+      self,
+      [
+        {
+          roomId: "space",
+          unreadCount: 4,
+          mentionCount: 1,
+          lastMessageAt: "2026-07-18T09:00:00.000Z",
+          lastReadAt: null,
+        },
+        {
+          roomId: "dm",
+          unreadCount: 0,
+          mentionCount: 0,
+          lastMessageAt: "2026-07-18T10:00:00.000Z",
+          lastReadAt: null,
+        },
+      ],
+      new Map([["ana", true]]),
+    );
+    expect(views.map((view) => [view.name, view.kind, view.unread, view.active])).toEqual([
+      ["Ana Ruiz", "dm", 0, true],
+      ["Ana Ruiz and Bo Lin", "dm", 0, false],
+      ["Launch", "space", 4, false],
+    ]);
+    expect(views[1]?.peer).toBeNull();
+    // Home: unread first, then most recently active.
+    expect(homeFeed(views).map((view) => view.id)).toEqual(["space", "dm", "group"]);
   });
 });

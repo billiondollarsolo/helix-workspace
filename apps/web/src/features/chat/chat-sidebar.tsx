@@ -1,420 +1,211 @@
-import { PeoplePicker } from "@/components/people/people-picker";
+/* Chat navigation: New chat, Home, Mentions, then Direct messages and
+   Spaces. Unread conversations are bold with a count; conversations where
+   you were @mentioned show an @ badge. On phones this is the first screen. */
+
 import { Avatar } from "@/components/ui/avatar";
-import { Tooltip } from "@/components/ui/tooltip";
-import { Hash as HashIcon, Plus as PlusIcon, Users as UsersIcon } from "lucide-react";
-import { useState } from "react";
-import type { PersonRef } from "@/features/people/person-ref";
+import { Skeleton } from "@/components/ui/skeleton";
+import { AtSign as MentionIcon, House as HomeIcon } from "lucide-react";
+import type { ReactNode } from "react";
+import type { ChatConversationView } from "./view-model";
 
-/* ----------------------------------------------------------------
-   Spaces sidebar — 240px
-   ---------------------------------------------------------------- */
-
-interface SidebarRowSpace {
-  readonly id: string;
-  readonly name: string;
-  readonly memberCount: number;
-  readonly unread: number;
-}
-
-interface SidebarRowDirect {
-  readonly id: string;
-  readonly name: string;
-  readonly presence: "active" | "offline";
-  readonly unread: number;
-}
+export type ChatView =
+  | { readonly kind: "home" }
+  | { readonly kind: "mentions" }
+  | { readonly kind: "room"; readonly roomId: string };
 
 interface ChatSidebarProps {
-  readonly loading: boolean;
-  readonly offline: boolean;
-  readonly spaces: readonly SidebarRowSpace[];
-  readonly directs: readonly SidebarRowDirect[];
-  readonly activeRoomId: string | undefined;
-  readonly onSelect: (id: string) => void;
-  readonly onCreateRoom: (input: {
-    readonly kind: "chat_room" | "chat_dm";
-    readonly subject?: string;
-    readonly memberActorIds: readonly string[];
-    readonly readReceiptsEnabled: boolean;
-    readonly spaceType?: "conversation" | "announcement" | "project";
-    readonly historyPolicy: "full" | "since_join" | "off";
-    readonly retentionDays: number | null;
-    readonly legalHold: boolean;
-    readonly notificationPolicy: "all" | "mentions" | "none";
-    readonly externalAccess: "internal" | "guests" | "federated";
-  }) => void;
+  readonly status: "loading" | "error" | "ready";
+  readonly conversations: readonly ChatConversationView[];
+  readonly view: ChatView;
+  readonly totalUnread: number;
+  readonly totalMentions: number;
+  readonly onSelect: (view: ChatView) => void;
+  /** The New chat menu (`NewChat variant="sidebar"`). */
+  readonly newChat: ReactNode;
 }
 
 export function ChatSidebar({
-  loading,
-  offline,
-  spaces,
-  directs,
+  status,
+  conversations,
+  view,
+  totalUnread,
+  totalMentions,
+  onSelect,
+  newChat,
+}: ChatSidebarProps) {
+  const directs = conversations.filter((conversation) => conversation.kind === "dm");
+  const spaces = conversations.filter((conversation) => conversation.kind === "space");
+  const activeRoomId = view.kind === "room" ? view.roomId : null;
+
+  return (
+    <nav className="surf-sidebar chat-sidebar" aria-label="Chat">
+      {newChat}
+      <div className="chat-nav-group">
+        <NavRow
+          label="Home"
+          icon={<HomeIcon size={18} aria-hidden="true" />}
+          current={view.kind === "home"}
+          unread={totalUnread}
+          onClick={() => onSelect({ kind: "home" })}
+        />
+        <NavRow
+          label="Mentions"
+          icon={<MentionIcon size={18} aria-hidden="true" />}
+          current={view.kind === "mentions"}
+          unread={0}
+          mentions={totalMentions}
+          onClick={() => onSelect({ kind: "mentions" })}
+        />
+      </div>
+
+      {status === "loading" ? (
+        <Skeleton
+          variant="text"
+          count={6}
+          label="Loading conversations"
+          className="chat-sidebar-skeleton"
+        />
+      ) : status === "error" ? null : (
+        <>
+          <ConversationSection
+            title="Direct messages"
+            emptyText="No direct messages yet."
+            conversations={directs}
+            activeRoomId={activeRoomId}
+            onSelect={(roomId) => onSelect({ kind: "room", roomId })}
+          />
+          <ConversationSection
+            title="Spaces"
+            emptyText="You aren’t in any spaces yet."
+            conversations={spaces}
+            activeRoomId={activeRoomId}
+            onSelect={(roomId) => onSelect({ kind: "room", roomId })}
+          />
+        </>
+      )}
+    </nav>
+  );
+}
+
+function ConversationSection({
+  title,
+  emptyText,
+  conversations,
   activeRoomId,
   onSelect,
-  onCreateRoom,
-}: ChatSidebarProps) {
-  const [creating, setCreating] = useState(false);
-  const [draftName, setDraftName] = useState("");
-  const [draftPeer, setDraftPeer] = useState<PersonRef[]>([]);
-  const draftPeerActorId = draftPeer[0]?.actorId ?? null;
-  const [draftKind, setDraftKind] = useState<"chat_room" | "chat_dm">("chat_room");
-  const [draftSpaceType, setDraftSpaceType] = useState<"conversation" | "announcement" | "project">(
-    "conversation",
-  );
-  const [draftReadReceipts, setDraftReadReceipts] = useState(true);
-  const [draftHistoryPolicy, setDraftHistoryPolicy] = useState<"full" | "since_join" | "off">(
-    "full",
-  );
-  const [draftRetentionDays, setDraftRetentionDays] = useState("");
-  const [draftLegalHold, setDraftLegalHold] = useState(false);
-  const [draftNotificationPolicy, setDraftNotificationPolicy] = useState<
-    "all" | "mentions" | "none"
-  >("all");
-  const [draftExternalAccess, setDraftExternalAccess] = useState<
-    "internal" | "guests" | "federated"
-  >("guests");
-  const retentionDays = draftRetentionDays === "" ? null : Number(draftRetentionDays);
-  const retentionIsValid =
-    retentionDays === null ||
-    (Number.isInteger(retentionDays) && retentionDays >= 1 && retentionDays <= 36_500);
-
+}: {
+  readonly title: string;
+  readonly emptyText: string;
+  readonly conversations: readonly ChatConversationView[];
+  readonly activeRoomId: string | null;
+  readonly onSelect: (roomId: string) => void;
+}) {
   return (
-    <aside className="surf-sidebar chat-sidebar" aria-label="Spaces and direct messages">
-      <div className="chat-sidebar-section">
-        <span>Spaces</span>
-        <button
-          type="button"
-          className="icon-btn chat-sidebar-add"
-          aria-label="New conversation"
-          onClick={() => {
-            setCreating((v) => !v);
-          }}
-        >
-          <PlusIcon size={14} />
-        </button>
-      </div>
-
-      {creating ? (
-        <div className="chat-sidebar-create" role="dialog" aria-label="New conversation">
-          <select
-            aria-label="Conversation type"
-            value={draftKind}
-            onChange={(e) => {
-              setDraftKind(e.target.value as "chat_room" | "chat_dm");
-            }}
-          >
-            <option value="chat_room">Space</option>
-            <option value="chat_dm">Direct message</option>
-          </select>
-          {draftKind === "chat_room" ? (
-            <select
-              aria-label="Space type"
-              value={draftSpaceType}
-              onChange={(event) => {
-                setDraftSpaceType(
-                  event.target.value as "conversation" | "announcement" | "project",
-                );
-              }}
-            >
-              <option value="conversation">Conversation</option>
-              <option value="announcement">Announcement</option>
-              <option value="project">Project</option>
-            </select>
-          ) : null}
-          <select
-            aria-label="History policy"
-            value={draftHistoryPolicy}
-            onChange={(event) => {
-              setDraftHistoryPolicy(event.target.value as "full" | "since_join" | "off");
-            }}
-          >
-            <option value="full">Full history</option>
-            <option value="since_join">History since joining</option>
-            <option value="off">History off</option>
-          </select>
-          <select
-            aria-label="Notification policy"
-            value={draftNotificationPolicy}
-            onChange={(event) => {
-              setDraftNotificationPolicy(event.target.value as "all" | "mentions" | "none");
-            }}
-          >
-            <option value="all">All messages</option>
-            <option value="mentions">Mentions only</option>
-            <option value="none">No notifications</option>
-          </select>
-          <select
-            aria-label="External access"
-            value={draftExternalAccess}
-            onChange={(event) => {
-              setDraftExternalAccess(event.target.value as "internal" | "guests" | "federated");
-            }}
-          >
-            <option value="internal">Internal only</option>
-            <option value="guests">Guests allowed</option>
-            <option value="federated">Federated partners</option>
-          </select>
-          <input
-            type="number"
-            min={1}
-            max={36_500}
-            aria-label="Retention days"
-            placeholder="Retention days (optional)"
-            value={draftRetentionDays}
-            onChange={(event) => {
-              setDraftRetentionDays(event.target.value);
-            }}
+    <section className="chat-nav-section" aria-label={title}>
+      <h2 className="surf-section-label">{title}</h2>
+      {conversations.length === 0 ? (
+        <p className="chat-sidebar-empty">{emptyText}</p>
+      ) : (
+        conversations.map((conversation) => (
+          <NavRow
+            key={conversation.id}
+            label={conversation.name}
+            icon={<ConversationAvatar conversation={conversation} size={22} />}
+            current={conversation.id === activeRoomId}
+            unread={conversation.unread}
+            mentions={conversation.mentions}
+            onClick={() => onSelect(conversation.id)}
           />
-          <label>
-            <input
-              type="checkbox"
-              checked={draftLegalHold}
-              onChange={(event) => {
-                setDraftLegalHold(event.target.checked);
-              }}
-            />
-            Legal hold
-          </label>
-          {draftKind === "chat_dm" ? (
-            <PeoplePicker
-              label="Person"
-              placeholder="Name or email"
-              max={1}
-              value={draftPeer}
-              onChange={setDraftPeer}
-            />
-          ) : (
-            <input
-              type="text"
-              aria-label="Space name"
-              placeholder="Space name"
-              value={draftName}
-              onChange={(e) => {
-                setDraftName(e.target.value);
-              }}
-            />
-          )}
-          <label>
-            <input
-              type="checkbox"
-              checked={draftReadReceipts}
-              onChange={(event) => {
-                setDraftReadReceipts(event.target.checked);
-              }}
-            />
-            Share read receipts
-          </label>
-          <button
-            type="button"
-            className="btn primary sm"
-            disabled={
-              (draftKind === "chat_dm"
-                ? draftPeerActorId === null
-                : draftName.trim().length === 0) || !retentionIsValid
-            }
-            onClick={() => {
-              const name = draftName.trim();
-              if (draftKind === "chat_dm") {
-                if (draftPeerActorId === null) return;
-                onCreateRoom({
-                  kind: "chat_dm",
-                  memberActorIds: [draftPeerActorId],
-                  readReceiptsEnabled: draftReadReceipts,
-                  historyPolicy: draftHistoryPolicy,
-                  retentionDays,
-                  legalHold: draftLegalHold,
-                  notificationPolicy: draftNotificationPolicy,
-                  externalAccess: draftExternalAccess,
-                });
-              } else {
-                if (name.length === 0) return;
-                onCreateRoom({
-                  kind: "chat_room",
-                  subject: name,
-                  memberActorIds: [],
-                  readReceiptsEnabled: draftReadReceipts,
-                  spaceType: draftSpaceType,
-                  historyPolicy: draftHistoryPolicy,
-                  retentionDays,
-                  legalHold: draftLegalHold,
-                  notificationPolicy: draftNotificationPolicy,
-                  externalAccess: draftExternalAccess,
-                });
-              }
-              setDraftName("");
-              setDraftPeer([]);
-              setDraftReadReceipts(true);
-              setDraftSpaceType("conversation");
-              setDraftHistoryPolicy("full");
-              setDraftRetentionDays("");
-              setDraftLegalHold(false);
-              setDraftNotificationPolicy("all");
-              setDraftExternalAccess("guests");
-              setCreating(false);
-            }}
-          >
-            Create
-          </button>
-        </div>
-      ) : null}
-
-      {loading ? (
-        <p className="chat-sidebar-state">Loading spaces…</p>
-      ) : spaces.length === 0 ? (
-        <p className="chat-sidebar-state">No spaces yet.</p>
-      ) : (
-        spaces.map((s) => {
-          const selected = activeRoomId === s.id;
-          return (
-            <button
-              key={s.id}
-              type="button"
-              className="surf-nav-row chat-nav-row"
-              data-selected={selected}
-              data-unread={s.unread > 0}
-              aria-current={selected ? "true" : undefined}
-              onClick={() => {
-                onSelect(s.id);
-              }}
-            >
-              <HashIcon size={16} />
-              <span className="chat-nav-name truncate">{s.name}</span>
-              {s.unread > 0 ? <span className="chat-unread-badge">{s.unread}</span> : null}
-            </button>
-          );
-        })
+        ))
       )}
-
-      <div className="chat-sidebar-section">
-        <span>Direct messages</span>
-        <button
-          type="button"
-          className="icon-btn chat-sidebar-add"
-          aria-label="Start direct message"
-          onClick={() => {
-            setDraftKind("chat_dm");
-            setCreating(true);
-          }}
-        >
-          <PlusIcon size={14} />
-        </button>
-      </div>
-
-      {loading ? (
-        <p className="chat-sidebar-state">Loading…</p>
-      ) : directs.length === 0 ? (
-        <p className="chat-sidebar-state">No direct messages.</p>
-      ) : (
-        directs.map((d) => {
-          const selected = activeRoomId === d.id;
-          return (
-            <button
-              key={d.id}
-              type="button"
-              className="surf-nav-row chat-nav-row"
-              data-selected={selected}
-              data-unread={d.unread > 0}
-              aria-current={selected ? "true" : undefined}
-              onClick={() => {
-                onSelect(d.id);
-              }}
-            >
-              <span className="chat-presence-wrap">
-                <Avatar name={d.name} size={20} />
-                <span
-                  className="chat-presence-dot"
-                  data-presence={d.presence}
-                  aria-label={d.presence === "active" ? "Active" : "Offline"}
-                />
-              </span>
-              <span className="chat-nav-name truncate">{d.name}</span>
-              {d.unread > 0 ? <span className="chat-unread-badge">{d.unread}</span> : null}
-            </button>
-          );
-        })
-      )}
-
-      {offline ? (
-        <p className="chat-sidebar-state chat-sidebar-offline">Offline — chat rooms unavailable.</p>
-      ) : null}
-    </aside>
+    </section>
   );
 }
 
-/* ----------------------------------------------------------------
-   Channel header
-   ---------------------------------------------------------------- */
-
-interface ChatChannelHeaderProps {
-  readonly infoOpen: boolean;
-  readonly onToggleInfo: () => void;
-  readonly name: string;
-  readonly memberCount: number;
-  readonly onInvite?: ((actorId: string) => void) | undefined;
+function NavRow({
+  label,
+  icon,
+  current,
+  unread,
+  mentions = 0,
+  onClick,
+}: {
+  readonly label: string;
+  readonly icon: ReactNode;
+  readonly current: boolean;
+  readonly unread: number;
+  readonly mentions?: number;
+  readonly onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="surf-nav-row chat-nav-row"
+      aria-current={current ? "page" : undefined}
+      data-unread={unread > 0 || mentions > 0}
+      title={label}
+      onClick={onClick}
+    >
+      {icon}
+      <span className="label">{label}</span>
+      <UnreadBadge unread={unread} mentions={mentions} />
+    </button>
+  );
 }
 
-export function ChatChannelHeader({
-  name,
-  memberCount,
-  onInvite,
-  infoOpen,
-  onToggleInfo,
-}: ChatChannelHeaderProps) {
-  const [inviteOpen, setInviteOpen] = useState(false);
-  const [inviteId, setInviteId] = useState("");
+/** "@" when you were mentioned, otherwise the unread count. */
+export function UnreadBadge({
+  unread,
+  mentions,
+}: {
+  readonly unread: number;
+  readonly mentions: number;
+}) {
+  if (mentions > 0) {
+    return (
+      <span className="count chat-badge chat-badge-mention">
+        <span aria-hidden="true">@</span>
+        <span className="sr-only">
+          {mentions === 1 ? "1 mention" : `${String(mentions)} mentions`}
+        </span>
+      </span>
+    );
+  }
+  if (unread <= 0) return null;
   return (
-    <header className="chat-channel-header">
-      <HashIcon size={16} />
-      <span className="chat-channel-name">{name}</span>
-      <span className="chat-channel-meta">· {memberCount} members</span>
-      <div className="chat-channel-actions">
-        <button
-          type="button"
-          className="icon-btn"
-          aria-label="Channel info"
-          aria-expanded={infoOpen}
-          onClick={onToggleInfo}
-        >
-          <UsersIcon size={16} />
-        </button>
-        <Tooltip label="Add people" side="bottom">
-          <button
-            type="button"
-            className="icon-btn"
-            aria-label="Add people"
-            onClick={() => {
-              setInviteOpen((v) => !v);
-            }}
-          >
-            <PlusIcon size={16} />
-          </button>
-        </Tooltip>
-      </div>
-      {inviteOpen ? (
-        <div className="chat-channel-invite">
-          <input
-            type="text"
-            aria-label="Actor id to invite"
-            placeholder="Actor UUID"
-            value={inviteId}
-            onChange={(e) => {
-              setInviteId(e.target.value);
-            }}
-          />
-          <button
-            type="button"
-            className="btn primary sm"
-            disabled={inviteId.trim().length === 0}
-            onClick={() => {
-              onInvite?.(inviteId.trim());
-              setInviteId("");
-              setInviteOpen(false);
-            }}
-          >
-            Invite
-          </button>
-        </div>
-      ) : null}
-    </header>
+    <span className="count chat-badge">
+      <span aria-hidden="true">{unread > 99 ? "99+" : unread}</span>
+      <span className="sr-only">{unread === 1 ? "1 unread" : `${String(unread)} unread`}</span>
+    </span>
+  );
+}
+
+/** A person's avatar with presence for a one-to-one chat; initials for spaces and groups. */
+export function ConversationAvatar({
+  conversation,
+  size,
+}: {
+  readonly conversation: ChatConversationView;
+  readonly size: number;
+}) {
+  if (conversation.peer !== null) {
+    return (
+      <span className="chat-avatar-wrap" aria-hidden="true">
+        <Avatar name={conversation.name} size={size} />
+        <span
+          className="chat-presence-dot"
+          data-presence={conversation.active ? "active" : "offline"}
+        />
+      </span>
+    );
+  }
+  return (
+    <span className="chat-avatar-wrap" aria-hidden="true">
+      <Avatar
+        name={conversation.name}
+        size={size}
+        className={conversation.kind === "space" ? "chat-space-avatar" : undefined}
+      />
+    </span>
   );
 }

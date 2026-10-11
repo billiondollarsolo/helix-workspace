@@ -11,6 +11,16 @@
       "surface": "auth"
     },
     {
+      "name": "Sign-up invitation",
+      "path": "/signup/invite?token=a11y-invite",
+      "surface": "auth"
+    },
+    {
+      "name": "Verify email",
+      "path": "/signup/verify-email?token=a11y-verify",
+      "surface": "auth"
+    },
+    {
       "name": "Mail",
       "path": "/mail",
       "surface": "shell"
@@ -43,6 +53,46 @@
     {
       "name": "Search",
       "path": "/search?q=harbor",
+      "surface": "shell"
+    },
+    {
+      "name": "Settings Profile",
+      "path": "/assistant?settings=profile",
+      "surface": "shell"
+    },
+    {
+      "name": "Settings Personal info",
+      "path": "/assistant?settings=personal-info",
+      "surface": "shell"
+    },
+    {
+      "name": "Settings Security",
+      "path": "/assistant?settings=security",
+      "surface": "shell"
+    },
+    {
+      "name": "Settings App passwords",
+      "path": "/assistant?settings=app-passwords",
+      "surface": "shell"
+    },
+    {
+      "name": "Settings S3 access keys",
+      "path": "/assistant?settings=s3-keys",
+      "surface": "shell"
+    },
+    {
+      "name": "Settings Language and region",
+      "path": "/assistant?settings=language",
+      "surface": "shell"
+    },
+    {
+      "name": "Settings Appearance",
+      "path": "/assistant?settings=appearance",
+      "surface": "shell"
+    },
+    {
+      "name": "Settings Keyboard shortcuts",
+      "path": "/assistant?settings=shortcuts",
       "surface": "shell"
     },
     {

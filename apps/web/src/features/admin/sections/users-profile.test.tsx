@@ -41,6 +41,7 @@ function profile(actor: AdminUser): UserProfile {
     orgId: actor.orgId,
     email: actor.email,
     displayName: actor.displayName,
+    avatarDataUrl: null,
     pronouns: "they/them",
     jobTitle: "Engineer",
     about: "Building useful things.",

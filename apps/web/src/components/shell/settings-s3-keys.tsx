@@ -11,7 +11,7 @@ import {
   type S3AccessKeyCreated,
   type S3KeyScope,
 } from "./s3-keys-api";
-import { SettingsField } from "./settings-controls";
+import { SettingsCard, SettingsField, SettingsHeader } from "./settings-controls";
 
 const SCOPE_LABELS: Record<S3KeyScope, string> = {
   "drive.read": "Read (list and download)",
@@ -84,151 +84,152 @@ export function S3KeysSection() {
 
   return (
     <>
-      <h1 className="type-h2 font-semibold [margin:0_0_4px]">S3 access keys</h1>
-      <div className="type-body-sm text-muted-foreground mb-2">
-        Use Drive from aws, rclone, boto3, and other S3 clients. Keys act as you, limited to the
-        scopes you choose; uploads are malware-scanned like any Drive upload.
-      </div>
-      <SettingsField label="Endpoint" hint="Path-style addressing; region us-east-1">
-        <code className="block break-all">{endpoint}</code>
-        <div className="type-caption text-muted-foreground mt-1">
-          Buckets: <code>my-drive</code> (your files) and <code>shared-with-me</code>.
-        </div>
-      </SettingsField>
-      <SettingsField label="New key" controlId={labelId} hint="Name it after the device or tool">
-        <form onSubmit={onCreate} className="grid gap-2">
-          <input
-            id={labelId}
-            name="label"
-            className="input"
-            value={label}
-            maxLength={120}
-            required
-            onChange={(event) => setLabel(event.target.value)}
-          />
-          <fieldset className="grid gap-1 border-0 p-0 m-0">
-            <legend className="type-body-sm font-medium mb-1">Scopes</legend>
-            {S3_KEY_SCOPES.map((scope) => (
-              <label key={scope} className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  name="scopes"
-                  value={scope}
-                  checked={scopes.includes(scope)}
-                  onChange={(event) => toggleScope(scope, event.target.checked)}
-                />
-                {SCOPE_LABELS[scope]}
-              </label>
-            ))}
-          </fieldset>
-          <div>
-            <button
-              className="btn sm primary"
-              type="submit"
-              disabled={busy || label.trim().length === 0 || scopes.length === 0}
-            >
-              Create access key
-            </button>
+      <SettingsHeader
+        title="S3 access keys"
+        description="Use Drive from aws, rclone, boto3, and other S3 clients. Keys act as you, limited to the scopes you choose; uploads are malware-scanned like any Drive upload."
+      />
+      <SettingsCard title="Access keys">
+        <SettingsField label="Endpoint" hint="Path-style addressing; region us-east-1">
+          <code className="block break-all">{endpoint}</code>
+          <div className="type-caption text-muted-foreground mt-1">
+            Buckets: <code>my-drive</code> (your files) and <code>shared-with-me</code>.
           </div>
-        </form>
-      </SettingsField>
-      {created === null ? null : (
-        <div
-          ref={secretRef}
-          tabIndex={-1}
-          role="region"
-          aria-label="New S3 access key"
-          className="[border:1px_solid_var(--border)] rounded-md p-3 my-3 grid gap-2"
-        >
-          <strong>Copy the secret now — it is not shown again.</strong>
-          <div>
-            Access key ID: <code>{created.accessKey.accessKeyId}</code>
-          </div>
-          <div>
-            Secret access key: <code className="break-all">{created.secretAccessKey}</code>
-          </div>
-          <label className="grid gap-1">
-            aws CLI
-            <textarea
-              className="input font-mono"
-              readOnly
-              rows={3}
-              value={awsCliExample(endpoint)}
+        </SettingsField>
+        <SettingsField label="New key" controlId={labelId} hint="Name it after the device or tool">
+          <form onSubmit={onCreate} className="grid gap-2">
+            <input
+              id={labelId}
+              name="label"
+              className="input"
+              value={label}
+              maxLength={120}
+              required
+              onChange={(event) => setLabel(event.target.value)}
             />
-          </label>
-          <label className="grid gap-1">
-            rclone.conf
-            <textarea
-              className="input font-mono"
-              readOnly
-              rows={8}
-              value={rcloneExample(endpoint, created.accessKey.accessKeyId)}
-            />
-          </label>
-          <div>
-            <button className="btn sm" type="button" onClick={() => setCreated(null)}>
-              I saved the secret
-            </button>
-          </div>
-        </div>
-      )}
-      <SettingsField label="Your keys" hint="Revoking a key stops it immediately">
-        {keys.length === 0 ? (
-          <div className="text-muted-foreground">No S3 access keys yet.</div>
-        ) : (
-          <table className="w-full type-body-sm">
-            <caption className="sr-only">Your S3 access keys</caption>
-            <thead>
-              <tr>
-                <th scope="col" className="text-left">
-                  Name
-                </th>
-                <th scope="col" className="text-left">
-                  Access key ID
-                </th>
-                <th scope="col" className="text-left">
-                  Scopes
-                </th>
-                <th scope="col" className="text-left">
-                  Last used
-                </th>
-                <th scope="col">
-                  <span className="sr-only">Actions</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {keys.map((key) => (
-                <tr key={key.id}>
-                  <td>{key.label}</td>
-                  <td>
-                    <code>{key.accessKeyId}</code>
-                  </td>
-                  <td>{key.scopes.join(", ")}</td>
-                  <td>{formatDate(key.lastUsedAt)}</td>
-                  <td>
-                    <button
-                      className="btn sm"
-                      type="button"
-                      disabled={busy}
-                      aria-label={`Revoke S3 access key ${key.label}`}
-                      onClick={() =>
-                        void run(async () => {
-                          await revokeS3AccessKey(key.id);
-                          setKeys(await listS3AccessKeys());
-                          setMessage(`Revoked ${key.label}.`);
-                        })
-                      }
-                    >
-                      Revoke
-                    </button>
-                  </td>
-                </tr>
+            <fieldset className="grid gap-1 border-0 p-0 m-0">
+              <legend className="type-body-sm font-medium mb-1">Scopes</legend>
+              {S3_KEY_SCOPES.map((scope) => (
+                <label key={scope} className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    name="scopes"
+                    value={scope}
+                    checked={scopes.includes(scope)}
+                    onChange={(event) => toggleScope(scope, event.target.checked)}
+                  />
+                  {SCOPE_LABELS[scope]}
+                </label>
               ))}
-            </tbody>
-          </table>
+            </fieldset>
+            <div>
+              <button
+                className="btn sm primary"
+                type="submit"
+                disabled={busy || label.trim().length === 0 || scopes.length === 0}
+              >
+                Create access key
+              </button>
+            </div>
+          </form>
+        </SettingsField>
+        {created === null ? null : (
+          <div
+            ref={secretRef}
+            tabIndex={-1}
+            role="region"
+            aria-label="New S3 access key"
+            className="[border:1px_solid_var(--border)] rounded-md p-3 my-3 grid gap-2"
+          >
+            <strong>Copy the secret now — it is not shown again.</strong>
+            <div>
+              Access key ID: <code>{created.accessKey.accessKeyId}</code>
+            </div>
+            <div>
+              Secret access key: <code className="break-all">{created.secretAccessKey}</code>
+            </div>
+            <label className="grid gap-1">
+              aws CLI
+              <textarea
+                className="input font-mono"
+                readOnly
+                rows={3}
+                value={awsCliExample(endpoint)}
+              />
+            </label>
+            <label className="grid gap-1">
+              rclone.conf
+              <textarea
+                className="input font-mono"
+                readOnly
+                rows={8}
+                value={rcloneExample(endpoint, created.accessKey.accessKeyId)}
+              />
+            </label>
+            <div>
+              <button className="btn sm" type="button" onClick={() => setCreated(null)}>
+                I saved the secret
+              </button>
+            </div>
+          </div>
         )}
-      </SettingsField>
+        <SettingsField label="Your keys" hint="Revoking a key stops it immediately">
+          {keys.length === 0 ? (
+            <div className="text-muted-foreground">No S3 access keys yet.</div>
+          ) : (
+            <table className="w-full type-body-sm">
+              <caption className="sr-only">Your S3 access keys</caption>
+              <thead>
+                <tr>
+                  <th scope="col" className="text-left">
+                    Name
+                  </th>
+                  <th scope="col" className="text-left">
+                    Access key ID
+                  </th>
+                  <th scope="col" className="text-left">
+                    Scopes
+                  </th>
+                  <th scope="col" className="text-left">
+                    Last used
+                  </th>
+                  <th scope="col">
+                    <span className="sr-only">Actions</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {keys.map((key) => (
+                  <tr key={key.id}>
+                    <td>{key.label}</td>
+                    <td>
+                      <code>{key.accessKeyId}</code>
+                    </td>
+                    <td>{key.scopes.join(", ")}</td>
+                    <td>{formatDate(key.lastUsedAt)}</td>
+                    <td>
+                      <button
+                        className="btn sm"
+                        type="button"
+                        disabled={busy}
+                        aria-label={`Revoke S3 access key ${key.label}`}
+                        onClick={() =>
+                          void run(async () => {
+                            await revokeS3AccessKey(key.id);
+                            setKeys(await listS3AccessKeys());
+                            setMessage(`Revoked ${key.label}.`);
+                          })
+                        }
+                      >
+                        Revoke
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </SettingsField>
+      </SettingsCard>
       {message === null ? null : <div role="status">{message}</div>}
       {error === null ? null : <div role="alert">{error}</div>}
     </>

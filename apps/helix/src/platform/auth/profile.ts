@@ -19,6 +19,7 @@ import { assertActorMatchesRequestTenant } from "../tenancy/middleware.js";
 import { setTenantPostgresActorId } from "../tenancy/postgres-roles.js";
 import { isRecord } from "../util/json.js";
 import { toSqlJson } from "../util/sql.js";
+import { avatarDataUrlSchema, safeAvatarDataUrl } from "../util/avatar.js";
 import { hasControlCharacter } from "../util/strings.js";
 
 const singleLine = (max: number) =>
@@ -40,6 +41,8 @@ const profilePatch = z
         (value) => !hasControlCharacter(value.replace(/[\r\n\t]/gu, "")),
         "Remove control characters.",
       ),
+    /** A square PNG, JPEG or WebP data URL; null removes the photo. */
+    avatarDataUrl: avatarDataUrlSchema.nullable(),
   })
   .partial()
   .strict()
@@ -53,6 +56,7 @@ export interface UserProfile {
   pronouns: string;
   jobTitle: string;
   about: string;
+  avatarDataUrl: string | null;
 }
 
 interface ProfileRow {
@@ -79,11 +83,16 @@ export class PostgresProfileStore {
     actorId: string,
     patch: z.infer<typeof profilePatch>,
   ): Promise<UserProfile | null> {
-    const { displayName, ...details } = patch;
+    const { displayName, avatarDataUrl, ...details } = patch;
+    // The directory reads the photo from metadata.avatarDataUrl.
     const [row] = await this.sql<ProfileRow[]>`
       update actors set
         display_name = coalesce(${displayName ?? null}, display_name),
-        metadata = jsonb_set(metadata, '{profile}',
+        metadata = (case
+            when ${avatarDataUrl === undefined} then metadata
+            when ${avatarDataUrl === null} then metadata - 'avatarDataUrl'
+            else jsonb_set(metadata, '{avatarDataUrl}', to_jsonb(${avatarDataUrl ?? ""}::text))
+          end) || jsonb_build_object('profile',
           (case when jsonb_typeof(metadata->'profile') = 'object'
             then metadata->'profile' else '{}'::jsonb end) || ${this.sql.json(toSqlJson(details))}::jsonb),
         updated_at = now()
@@ -104,6 +113,9 @@ function userProfile(row: ProfileRow): UserProfile {
     pronouns: typeof details.pronouns === "string" ? details.pronouns : "",
     jobTitle: typeof details.jobTitle === "string" ? details.jobTitle : "",
     about: typeof details.about === "string" ? details.about : "",
+    avatarDataUrl: safeAvatarDataUrl(
+      typeof row.metadata.avatarDataUrl === "string" ? row.metadata.avatarDataUrl : null,
+    ),
   };
 }
 

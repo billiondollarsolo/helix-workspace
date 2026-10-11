@@ -220,14 +220,6 @@ describe("chat API", () => {
         kind: "chat_dm",
         memberActorIds: ["55555555-5555-4555-8555-555555555555"],
         privacy: "restricted",
-        readReceiptsEnabled: true,
-        spaceType: "conversation",
-        historyPolicy: "full",
-        retentionDays: null,
-        legalHold: false,
-        notificationPolicy: "all",
-        externalAccess: "guests",
-        metadata: {},
       }),
     });
     expect(fetchImpl).toHaveBeenNthCalledWith(2, "/api/tools/chat.invite", {

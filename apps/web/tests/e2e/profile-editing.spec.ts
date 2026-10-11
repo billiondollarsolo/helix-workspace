@@ -30,11 +30,8 @@ test("profile save keeps a failed draft, updates identity, and persists after re
 }) => {
   const requests = await mockProfileBackend(page, true);
   await page.goto("/assistant");
-  await expect(
-    page.getByRole("heading", { name: "What can I help you with, Léa Nguyen?" }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: /^Account:/ }).click();
-  await page.getByRole("button", { name: "Manage your account", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Hi Léa, what can I help with?" })).toBeVisible();
+  await openPersonalInfo(page);
   const settings = page.getByRole("dialog", { name: "Settings", exact: true });
   await expect(settings.getByLabel("Display name", { exact: true })).toHaveValue(
     initialProfile.displayName,
@@ -54,25 +51,19 @@ test("profile save keeps a failed draft, updates identity, and persists after re
   await expect(settings.getByRole("status")).toHaveText("Profile saved.");
   expect(requests).toEqual([editedFields, editedFields]);
   await settings.getByRole("button", { name: "Done", exact: true }).click();
-  await expect(
-    page.getByRole("heading", { name: "What can I help you with, Nora Singh?" }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Hi Nora, what can I help with?" })).toBeVisible();
 
-  await page.getByRole("button", { name: /^Account:/ }).click();
-  await page.getByRole("button", { name: "Manage your account", exact: true }).click();
+  await openPersonalInfo(page);
   await expectProfileFields(page, editedFields);
-  await expect(page).toHaveURL(/settings=profile/);
+  await expect(page).toHaveURL(/settings=personal-info/);
   await page.reload();
   await expectProfileFields(page, editedFields);
   await page
     .getByRole("dialog", { name: "Settings", exact: true })
     .getByRole("button", { name: "Done", exact: true })
     .click();
-  await expect(
-    page.getByRole("heading", { name: "What can I help you with, Nora Singh?" }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: /^Account:/ }).click();
-  await page.getByRole("button", { name: "Manage your account", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Hi Nora, what can I help with?" })).toBeVisible();
+  await openPersonalInfo(page);
   await settings.getByLabel("Pronouns", { exact: true }).fill("");
   await settings.getByLabel("Job title", { exact: true }).fill("");
   await settings.getByLabel("About", { exact: true }).fill("");
@@ -82,6 +73,75 @@ test("profile save keeps a failed draft, updates identity, and persists after re
   expect(requests).toEqual([editedFields, editedFields, clearedFields]);
   await page.reload();
   await expectProfileFields(page, clearedFields);
+});
+
+test("a new photo is cropped to a square, resized in the browser and saved", async ({ page }) => {
+  await seedBrowserSession(page, "profile-photo-session");
+  let profile: Record<string, unknown> = { ...initialProfile, avatarDataUrl: null };
+  const patches: Record<string, unknown>[] = [];
+  await page.route("**/api/**", async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (pathname === "/v1/api/auth/get-session") {
+      await fulfillJson(route, {
+        user: {
+          id: "u",
+          actorId: initialProfile.actorId,
+          email: initialProfile.email,
+          name: "Léa",
+        },
+      });
+      return;
+    }
+    if (pathname === "/v1/api/profile") {
+      if (request.method() === "PATCH") {
+        const body = request.postDataJSON() as Record<string, unknown>;
+        patches.push(body);
+        profile = { ...profile, ...body };
+      }
+      await fulfillJson(route, { profile });
+      return;
+    }
+    if (await fulfillCoreAppsRoute(route)) return;
+    await fulfillJson(route, {});
+  });
+  await page.goto("/assistant?settings=personal-info");
+  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+  // A wide 600×300 PNG drawn in the page, so the crop really has to square it.
+  const png = await page.evaluate(async () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 600;
+    canvas.height = 300;
+    const context = canvas.getContext("2d");
+    if (context === null) throw new Error("no canvas");
+    context.fillStyle = "rgb(20, 120, 200)";
+    context.fillRect(0, 0, 600, 300);
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+    return Array.from(new Uint8Array(await (blob as Blob).arrayBuffer()));
+  });
+  await settings
+    .getByLabel("Add photo")
+    .setInputFiles({ name: "wide.png", mimeType: "image/png", buffer: Buffer.from(png) });
+  const crop = page.getByRole("dialog", { name: "Crop your photo" });
+  await expect(crop.getByRole("img", { name: "Photo crop preview" })).toBeVisible();
+  await crop.getByLabel("Zoom").fill("2");
+  await crop.getByRole("img", { name: "Photo crop preview" }).press("ArrowLeft");
+  await crop.getByRole("button", { name: "Save photo" }).click();
+  await expect(crop).toHaveCount(0);
+  expect(patches).toHaveLength(1);
+  const saved = String(patches[0]?.avatarDataUrl);
+  expect(saved).toMatch(/^data:image\/jpeg;base64,/u);
+  const size = await page.evaluate(async (url) => {
+    const image = new Image();
+    image.src = url;
+    await image.decode();
+    return [image.naturalWidth, image.naturalHeight];
+  }, saved);
+  expect(size).toEqual([256, 256]);
+  await expect(settings.getByRole("img", { name: "Profile photo of Léa Nguyen" })).toBeVisible();
+  await settings.getByRole("button", { name: "Remove photo" }).click();
+  await expect(settings.getByLabel("Add photo")).toBeAttached();
+  expect(patches[1]).toEqual({ avatarDataUrl: null });
 });
 
 for (const viewport of [
@@ -105,7 +165,7 @@ for (const viewport of [
         );
       }, theme);
       await mockProfileBackend(page);
-      await page.goto("/assistant?settings=profile");
+      await page.goto("/assistant?settings=personal-info");
       await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
       await expectProfileFields(page, initialProfile);
       await expect(page.getByRole("button", { name: "Save profile", exact: true })).toBeVisible();
@@ -127,6 +187,15 @@ for (const viewport of [
       expect(overflow).toBe(false);
     });
   }
+}
+
+/** Account menu → Manage your account (the Profile home) → Personal info. */
+async function openPersonalInfo(page: Page) {
+  await page.getByRole("button", { name: /^Account:/ }).click();
+  await page.getByRole("button", { name: "Manage your account", exact: true }).click();
+  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+  await expect(settings.getByRole("heading", { name: /^Welcome, / })).toBeVisible();
+  await settings.getByRole("button", { name: "Personal info", exact: true }).click();
 }
 
 async function expectProfileFields(page: Page, fields: typeof editedFields) {

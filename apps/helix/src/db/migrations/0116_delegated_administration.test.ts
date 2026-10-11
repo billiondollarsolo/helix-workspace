@@ -174,7 +174,12 @@ describe.skipIf(sql === null)("0116 live delegated administration boundaries", (
     });
     childBinding = rows[0]?.id ?? "";
     const grants = await database<{ grants: unknown }[]>`
-      select helix_actor_role_bindings(${orgA}, ${target}) as grants
+      select coalesce(jsonb_agg(grant_entry), '[]'::jsonb) as grants
+      from jsonb_array_elements(helix_actor_role_bindings(${orgA}, ${target})) grant_entry
+      -- Explicit bindings only; every active member also holds workspace_member (0208).
+      where grant_entry->>'roleId' not in (
+        select id::text from iam_roles where role_key = 'workspace_member'
+      )
     `;
     expect(grants[0]?.grants).toEqual([
       expect.objectContaining({
@@ -386,7 +391,12 @@ describe.skipIf(sql === null)("0116 live delegated administration boundaries", (
     `;
     expect(events.map((event) => event.event_type)).toEqual(["granted", "revoked"]);
     const grants = await database<{ grants: unknown }[]>`
-      select helix_actor_role_bindings(${orgA}, ${target}) as grants
+      select coalesce(jsonb_agg(grant_entry), '[]'::jsonb) as grants
+      from jsonb_array_elements(helix_actor_role_bindings(${orgA}, ${target})) grant_entry
+      -- Explicit bindings only; every active member also holds workspace_member (0208).
+      where grant_entry->>'roleId' not in (
+        select id::text from iam_roles where role_key = 'workspace_member'
+      )
     `;
     expect(grants[0]?.grants).toEqual([]);
 

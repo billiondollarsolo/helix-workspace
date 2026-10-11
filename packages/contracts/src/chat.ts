@@ -266,6 +266,8 @@ export const chatMessageSchema = z.object({
     )
     .default([]),
   replyCount: z.number().int().nonnegative().safe().default(0),
+  /** When the newest thread reply was sent; null without replies. */
+  lastReplyAt: z.string().nullable().default(null),
   pin: z
     .object({
       roomId: z.string().uuid(),

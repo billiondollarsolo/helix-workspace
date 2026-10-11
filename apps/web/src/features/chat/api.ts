@@ -15,9 +15,15 @@ import { callTool } from "@/lib/tool-call";
 
 export type ChatMessageRecord = { readonly renderedBodyHtml?: string } & Omit<
   ChatMessage,
-  "revision" | "reactions" | "replyCount" | "pin" | "attachmentObjectIds" | "attachments"
+  | "revision"
+  | "reactions"
+  | "replyCount"
+  | "lastReplyAt"
+  | "pin"
+  | "attachmentObjectIds"
+  | "attachments"
 > &
-  Partial<Pick<ChatMessage, "revision" | "reactions" | "replyCount" | "pin">> & {
+  Partial<Pick<ChatMessage, "revision" | "reactions" | "replyCount" | "lastReplyAt" | "pin">> & {
     readonly attachmentObjectIds: readonly string[];
     readonly attachments?: readonly ChatAttachmentRecord[];
   };
@@ -256,21 +262,17 @@ export async function listChatMessages(
   return output.messages ?? [];
 }
 
-/** Caller-facing create input — defaults applied by the server schema. */
+/**
+ * What a person chooses when starting a conversation. Retention, legal hold,
+ * history and external-access policy are organization settings managed in
+ * Admin, so new conversations take the server defaults for them.
+ */
 export type CreateChatRoomRequest = {
   readonly subject?: string;
   readonly kind?: "chat_room" | "chat_dm";
   readonly memberActorIds?: readonly string[];
   readonly topic?: string;
-  readonly privacy?: "discoverable" | "restricted" | "private";
-  readonly readReceiptsEnabled?: boolean;
-  readonly spaceType?: "conversation" | "announcement" | "project";
-  readonly historyPolicy?: "full" | "since_join" | "off";
-  readonly retentionDays?: number | null;
-  readonly legalHold?: boolean;
-  readonly notificationPolicy?: "all" | "mentions" | "none";
-  readonly externalAccess?: "internal" | "guests" | "federated";
-  readonly metadata?: Record<string, unknown>;
+  readonly privacy?: "discoverable" | "restricted";
 };
 
 export type InviteToRoomRequest = {
@@ -283,22 +285,54 @@ export async function createChatRoom(
   input: CreateChatRoomRequest,
   fetchImpl: ChatApiFetch = authenticatedFetch,
 ): Promise<ChatRoomRecord> {
-  const payload: ChatCreateRoomInput = {
+  const payload: Partial<ChatCreateRoomInput> = {
     kind: input.kind ?? "chat_room",
     memberActorIds: [...(input.memberActorIds ?? [])],
     privacy: input.privacy ?? "restricted",
-    readReceiptsEnabled: input.readReceiptsEnabled ?? true,
-    spaceType: input.spaceType ?? "conversation",
-    historyPolicy: input.historyPolicy ?? "full",
-    retentionDays: input.retentionDays ?? null,
-    legalHold: input.legalHold ?? false,
-    notificationPolicy: input.notificationPolicy ?? "all",
-    externalAccess: input.externalAccess ?? "guests",
-    metadata: input.metadata ?? {},
     ...(input.subject === undefined ? {} : { subject: input.subject }),
     ...(input.topic === undefined ? {} : { topic: input.topic }),
   };
   return callChatTool<ChatRoomRecord>("chat.create_room", payload, fetchImpl);
+}
+
+/** Spaces anyone in the organization can find and join. */
+export async function discoverChatRooms(
+  input: { readonly query?: string; readonly limit?: number } = {},
+  fetchImpl: ChatApiFetch = authenticatedFetch,
+): Promise<readonly ChatRoomRecord[]> {
+  const output = await callChatTool<{ readonly rooms?: readonly ChatRoomRecord[] }>(
+    "chat.room.discover",
+    { query: input.query, limit: input.limit ?? 50 },
+    fetchImpl,
+  );
+  return (output.rooms ?? []).filter((room) => room.settings?.privacy === "discoverable");
+}
+
+export async function joinChatRoom(
+  roomId: string,
+  fetchImpl: ChatApiFetch = authenticatedFetch,
+): Promise<ChatRoomRecord> {
+  return callChatTool<ChatRoomRecord>("chat.room.join", { roomId }, fetchImpl);
+}
+
+/** Replies in a message's thread, newest first (like `chat.message.list`). */
+export async function listThreadReplies(
+  input: { readonly roomId: string; readonly parentMessageId: string; readonly limit?: number },
+  fetchImpl: ChatApiFetch = authenticatedFetch,
+): Promise<readonly ChatMessageRecord[]> {
+  const output = await callChatTool<{ readonly messages?: readonly ChatMessageRecord[] }>(
+    "chat.thread.list",
+    { ...input, limit: input.limit ?? 100 },
+    fetchImpl,
+  );
+  return output.messages ?? [];
+}
+
+export async function unpinChatMessage(
+  input: { readonly roomId: string; readonly messageId: string },
+  fetchImpl: ChatApiFetch = authenticatedFetch,
+): Promise<{ readonly ok: true }> {
+  return callChatTool("chat.unpin", input, fetchImpl);
 }
 
 export async function inviteToRoom(

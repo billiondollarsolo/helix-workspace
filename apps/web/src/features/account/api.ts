@@ -75,17 +75,26 @@ export interface AppPasswordRecord {
   readonly createdAt: string;
 }
 
+export interface MyAppPasswords {
+  readonly appPasswords: readonly AppPasswordRecord[];
+  /** App password scopes you hold, so may grant to a new password. */
+  readonly grantableScopes: readonly string[];
+}
+
 /** Your own app passwords (secrets are never listed). */
 export async function listMyAppPasswords(
   input: { readonly actorId: string; readonly includeRevoked?: boolean },
   fetchImpl: AuthFetch = authenticatedFetch,
-): Promise<readonly AppPasswordRecord[]> {
-  const output = await callTool<{ readonly appPasswords: readonly AppPasswordRecord[] }>(
+): Promise<MyAppPasswords> {
+  const output = await callTool<Partial<MyAppPasswords>>(
     "app.passwords.list",
     { actorId: input.actorId, includeRevoked: input.includeRevoked ?? false },
     { fetchImpl },
   );
-  return output.appPasswords;
+  return {
+    appPasswords: output.appPasswords ?? [],
+    grantableScopes: output.grantableScopes ?? [],
+  };
 }
 
 /** Creates an app password for yourself; the password is shown once. */

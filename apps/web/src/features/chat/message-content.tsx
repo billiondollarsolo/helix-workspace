@@ -90,7 +90,8 @@ function renderSafeMarkdownNode(node: Node, index: number): ReactNode {
       return children;
     }
   }
-  if (!["p", "br", "strong", "em", "code", "h1", "h2", "h3", "span"].includes(tag)) return null;
+  if (!["p", "br", "strong", "em", "s", "code", "h1", "h2", "h3", "span"].includes(tag))
+    return null;
   return createElement(
     tag,
     { key: index, ...(node.classList.contains("sr-only") ? { className: "sr-only" } : {}) },

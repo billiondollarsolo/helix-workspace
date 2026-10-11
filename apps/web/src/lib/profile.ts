@@ -11,10 +11,14 @@ const profileSchema = z.object({
   pronouns: z.string(),
   jobTitle: z.string(),
   about: z.string(),
+  /** A square PNG, JPEG or WebP data URL, or null for initials. */
+  avatarDataUrl: z.string().nullable().default(null),
 });
 
 export type UserProfile = z.infer<typeof profileSchema>;
 export type ProfileInput = Pick<UserProfile, "displayName" | "pronouns" | "jobTitle" | "about">;
+/** Any subset of the editable fields; `avatarDataUrl: null` removes the photo. */
+export type ProfileUpdate = Partial<ProfileInput & Pick<UserProfile, "avatarDataUrl">>;
 
 export const profileQueryKeys = {
   current: ["profile", "current"] as const,
@@ -30,11 +34,11 @@ export function profileQueryOptions(actorId?: string) {
   });
 }
 
-export function updateProfile(input: ProfileInput, actorId?: string): Promise<UserProfile> {
+export function updateProfile(input: ProfileUpdate, actorId?: string): Promise<UserProfile> {
   return requestProfile(actorId, input);
 }
 
-async function requestProfile(actorId?: string, input?: ProfileInput): Promise<UserProfile> {
+async function requestProfile(actorId?: string, input?: ProfileUpdate): Promise<UserProfile> {
   const path =
     actorId === undefined
       ? "/api/profile"

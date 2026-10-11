@@ -3,11 +3,11 @@ import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PostgresDriveWorkflowStore } from "../../platform/drive/workflows.js";
 import { tenantAwarePostgresSql } from "../../platform/tenancy/postgres-roles.js";
+import { uniqueTestRole } from "../../test-support/test-role.js";
 
 describe.skipIf(process.env.DATABASE_URL === undefined)("tenant-isolated Drive workflows", () => {
   const admin = postgres(process.env.DATABASE_URL ?? "", { prepare: false });
-  const role = "helix_drive_workflow_test_app";
-  const password = "helix_drive_workflow_test_password";
+  const { name: role, password } = uniqueTestRole("helix_drive_workflow_test");
   const runtimeUrl = new URL(process.env.DATABASE_URL ?? "postgres://localhost/helix");
   runtimeUrl.username = role;
   runtimeUrl.password = password;
@@ -30,7 +30,6 @@ describe.skipIf(process.env.DATABASE_URL === undefined)("tenant-isolated Drive w
     `;
     if (ready[0]?.ready !== true) throw new Error("Run migration 0160 before this test.");
     await cleanup();
-    await admin.unsafe(`drop role if exists ${role}`);
     await admin.unsafe(
       `create role ${role} login inherit nosuperuser nobypassrls password '${password}'`,
     );

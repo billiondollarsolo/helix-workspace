@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PostgresChatAttachmentStore } from "../../platform/chat/attachments.js";
 import { PostgresDriveStore } from "../../platform/drive/store.js";
 import { createDefaultTenantStorageResolver } from "../../platform/storage/tenant-resolver.js";
+import { cleanupTestTenants } from "../../test-support/cleanup-tenants.js";
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const sql = DATABASE_URL === undefined ? null : postgres(DATABASE_URL, { max: 3 });
@@ -284,20 +285,8 @@ describe.skipIf(sql === null)("0126 live Chat attachment isolation", () => {
   }
 
   async function cleanup(): Promise<void> {
-    await database.begin(async (tx) => {
-      await tx.unsafe("set local session_replication_role = replica");
-      await tx`delete from drive_quarantine_deletions where org_id in (${orgA}, ${orgB})`;
-      await tx`delete from chat_room_events where org_id in (${orgA}, ${orgB})`;
-      await tx`delete from message_attachments where org_id in (${orgA}, ${orgB})`;
-      await tx`delete from chat_attachments where org_id in (${orgA}, ${orgB})`;
-      await tx`delete from messages where org_id in (${orgA}, ${orgB})`;
-      await tx`delete from objects where org_id in (${orgA}, ${orgB})`;
-      await tx`delete from permissions where org_id in (${orgA}, ${orgB})`;
-      await tx`delete from chat_room_settings where org_id in (${orgA}, ${orgB})`;
-      await tx`delete from threads where org_id in (${orgA}, ${orgB})`;
-      await tx`delete from organization_memberships where org_id in (${orgA}, ${orgB})`;
-      await tx`delete from actors where id in (${owner}, ${member}, ${outsider}, ${otherTenant})`;
-      await tx`delete from orgs where id in (${orgA}, ${orgB})`;
-    });
+    // Every org-scoped row, including the defaults org creation adds (roles,
+    // config audit, storage counters), so a rerun starts from nothing.
+    await cleanupTestTenants(database, [orgA, orgB]);
   }
 });

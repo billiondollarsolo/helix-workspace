@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { cleanupTestTenants } from "../../test-support/cleanup-tenants.js";
 import { withTenantPostgresContext } from "../tenancy/postgres-roles.js";
 import {
   PostgresScimProvisioningStore,
@@ -237,18 +238,10 @@ describe("Postgres SCIM provisioning", { skip: !process.env.DATABASE_URL }, () =
       await tx`delete from account where id = 'scim-integration-account'`;
       await tx`delete from "user" where id = 'scim-integration-user'`;
       await tx`delete from app_passwords where actor_id in (${SOURCE}, ${TARGET})`;
-      await tx`delete from admin_groups where org_id = ${ORG_A} and
-               (id = ${GROUP} or name like 'SCIM integration %')`;
-      await tx`delete from search_reindex_jobs where org_id = ${ORG_A}`;
-      await tx`delete from objects where id = ${OBJECT}`;
-      await tx`delete from resource_classifications where org_id in (${ORG_A}, ${ORG_B})`;
-      await tx`delete from actors where org_id = ${ORG_A} and
-               (id in (${SOURCE}, ${TARGET}) or email like '%-scim@helix.test')`;
     });
-    await withTenantPostgresContext(sql, { orgId: ORG_B }, async (tx) => {
-      await tx`delete from actors where id = ${CROSS_TENANT_TARGET}`;
-    });
-    await sql`delete from orgs where id in (${ORG_A}, ${ORG_B})`;
+    // Every org-scoped row, including the audit trail: leftover activity on a
+    // fixed org id collides with the next run's restarted audit chain.
+    await cleanupTestTenants(sql, [ORG_A, ORG_B]);
   }
 });
 

@@ -67,7 +67,7 @@ import { registerWebSearchTool } from "../platform/search/web-tools.js";
 import { getWebSearchEnabled } from "../platform/search/web.js";
 import type { GlobalSearchType } from "../platform/search/scope.js";
 import { signupEventSchemas } from "../platform/signup/event-schemas.js";
-import { buildEffectiveTenantConfig } from "../platform/tenancy/index.js";
+import { loadEffectiveTenantConfig } from "../platform/tenancy/index.js";
 import { createToolRegistry } from "../platform/tool-registry.js";
 import { createActionTools } from "../platform/tools/actions-tools.js";
 import { createAgentOperationalControlTools } from "../platform/tools/agent-operational-controls-tools.js";
@@ -299,16 +299,8 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
 
   const featureFlags = new TenantConfigFeatureFlagProvider({
     environment: bootEnv.NODE_ENV,
-    loadTenantConfig: async ({ orgId }) => {
-      const org = await orgStore.findById(orgId);
-      if (org === null) {
-        return null;
-      }
-      return buildEffectiveTenantConfig({
-        org,
-        plan: await planStore.findById(org.planId),
-      });
-    },
+    loadTenantConfig: ({ orgId }) =>
+      loadEffectiveTenantConfig({ orgs: orgStore, plans: planStore }, orgId),
   });
 
   const runtimeFeatureFlags = {

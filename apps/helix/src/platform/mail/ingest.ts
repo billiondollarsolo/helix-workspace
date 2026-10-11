@@ -116,6 +116,22 @@ export interface IngestRawMailResult {
 
 export type InboundScanFailurePolicy = "deliver" | "defer";
 
+/** One delivered message's calendar parts, offered to the optional iMIP importer. */
+export interface InboundCalendarInvitationDelivery {
+  readonly orgId: string;
+  readonly messageId: string;
+  readonly recipients: readonly MailInboundRecipient[];
+  readonly attachments: readonly Pick<
+    ParsedMail["attachments"][number],
+    "contentType" | "content"
+  >[];
+}
+
+/** Post-delivery calendar invitation import. Implementations must not fail delivery. */
+export interface InboundCalendarInvitationImporter {
+  importInvitations(delivery: InboundCalendarInvitationDelivery): Promise<void>;
+}
+
 interface InboundScannerUnavailableEvent {
   readonly scanner: "spam" | "antivirus";
   readonly policy: InboundScanFailurePolicy;
@@ -183,6 +199,8 @@ export interface SmtpReceiverOptions {
         readonly content: unknown;
       }) => Promise<boolean>)
     | undefined;
+  /** Imports iMIP invitations for delivered mailboxes when the tenant enables it. */
+  readonly calendarInvitations?: InboundCalendarInvitationImporter | undefined;
 }
 
 export class MailauthAuthenticator implements MailAuthenticator {
@@ -603,6 +621,7 @@ export async function ingestSmtpEnvelope(input: {
   readonly runForTenant?:
     (<T>(orgId: string, operation: () => Promise<T>) => Promise<T>) | undefined;
   readonly authorizeForward?: SmtpReceiverOptions["authorizeForward"];
+  readonly calendarInvitations?: InboundCalendarInvitationImporter | undefined;
 }): Promise<readonly IngestRawMailResult[]> {
   const resolved = await Promise.all(input.envelopeTo.map(input.resolveRecipient));
   if (resolved.some((resolution) => !acceptsInboundRecipient(resolution))) {
@@ -660,6 +679,9 @@ export async function ingestSmtpEnvelope(input: {
               ? {}
               : { quarantineStore: input.quarantineStore }),
             ...(input.authenticator === undefined ? {} : { authenticator: input.authenticator }),
+            ...(input.calendarInvitations === undefined
+              ? {}
+              : { calendarInvitations: input.calendarInvitations }),
             scanners: { ...input.scanners, failurePolicy },
             malwareDisposition: "quarantine",
             ...(authenticationPolicy === undefined ? {} : { authenticationPolicy }),
@@ -720,6 +742,7 @@ export async function ingestRawMail(input: {
   readonly malwareDisposition?: "spam" | "quarantine" | "reject";
   readonly authenticationPolicy?: InboundAuthenticationPolicy | false;
   readonly threatVerdicts?: InboundThreatVerdicts;
+  readonly calendarInvitations?: InboundCalendarInvitationImporter | undefined;
 }): Promise<IngestRawMailResult> {
   // P2-6: an `smtp.receive` span covers authentication, parsing, persistence,
   // inbound-filter evaluation, and spam/antivirus scanning for one message.
@@ -892,6 +915,17 @@ export async function ingestRawMail(input: {
                 source: feedback.source,
                 evidence: feedback.evidence,
               });
+          }
+          // Never import invitations from spam-routed mail; import failures never fail delivery.
+          if (input.calendarInvitations !== undefined && !scan.routedToSpam) {
+            await input.calendarInvitations
+              .importInvitations({
+                orgId: input.input.orgId,
+                messageId: stored.messageId,
+                recipients: deliveredRecipients,
+                attachments: parsed.attachments,
+              })
+              .catch(() => undefined);
           }
           return { stored, auth, filterResult, scan, policy };
         } catch (error) {

@@ -83,6 +83,7 @@ const featureFlagsSchema = z
     watermark: watermarkModeSchema.optional(),
     b2b_sharing: z.boolean().optional(),
     mail_outbound: z.boolean().optional(),
+    calendar_import_invitations: z.boolean().optional(),
     mail_inbound_policy: inboundAuthenticationPolicySchema.optional(),
     sso_saml: z.boolean().optional(),
     scim_provisioning: z.boolean().optional(),

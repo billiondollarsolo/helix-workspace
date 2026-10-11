@@ -10,6 +10,7 @@ describe("tenant-config contract", () => {
   it("defaults every editors flag with sdk-types parity", () => {
     expect(SYSTEM_TENANT_FEATURE_FLAGS.assistant_retrieval).toBe(false);
     expect(SYSTEM_TENANT_FEATURE_FLAGS.mail_outbound).toBe(true);
+    expect(SYSTEM_TENANT_FEATURE_FLAGS.calendar_import_invitations).toBe(false);
     expect(SYSTEM_TENANT_FEATURE_FLAGS.support_tier).toBe("community");
   });
 

@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { createRecordingSql } from "../../test-support/recording-sql.js";
 import type { TenantStorageClient } from "../storage/tenant-resolver.js";
 import { MailRawSourceIntegrityError } from "./errors.js";
-import { prepareMailRawSource } from "./raw-source.js";
+import { MAIL_RAW_PARSE_OPTIONS, prepareMailRawSource } from "./raw-source.js";
 import { PostgresMailStore } from "./store.js";
 
 const orgId = "11111111-1111-4111-8111-111111111111";
@@ -18,7 +18,7 @@ const raw = Buffer.from(
 
 describe("PostgresMailStore raw source", () => {
   it("stores one canonical content-addressed RFC822 object", async () => {
-    const source = prepareMailRawSource(raw, await simpleParser(raw));
+    const source = prepareMailRawSource(raw, await simpleParser(raw, MAIL_RAW_PARSE_OPTIONS));
     const storage = new RecordingStorage();
     const recording = createRecordingSql([
       [],
@@ -76,7 +76,7 @@ describe("PostgresMailStore raw source", () => {
   });
 
   it("reads only an actor-owned source and verifies bytes before returning it", async () => {
-    const source = prepareMailRawSource(raw, await simpleParser(raw));
+    const source = prepareMailRawSource(raw, await simpleParser(raw, MAIL_RAW_PARSE_OPTIONS));
     const storageKey = `mail/sources/${messageId}/${source.sha256}.eml`;
     const storage = new RecordingStorage();
     storage.objects.set(storageKey, { key: storageKey, body: raw });
@@ -106,7 +106,7 @@ describe("PostgresMailStore raw source", () => {
   });
 
   it("fails closed when stored bytes have been changed", async () => {
-    const source = prepareMailRawSource(raw, await simpleParser(raw));
+    const source = prepareMailRawSource(raw, await simpleParser(raw, MAIL_RAW_PARSE_OPTIONS));
     const storageKey = `mail/sources/${messageId}/${source.sha256}.eml`;
     const tampered = Buffer.from(raw);
     tampered[tampered.byteLength - 4] = 88;

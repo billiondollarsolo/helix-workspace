@@ -179,7 +179,10 @@ export function createMailComposeToolDefinitions(
       ...(input.draft === undefined ? {} : { draft: input.draft }),
       ...(input.sendAt === undefined ? {} : { sendAt: new Date(input.sendAt) }),
       source: ctx.actor.type === "agent" ? "agent" : "interactive",
-      ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
+      // A REST Idempotency-Key header (kept across approval) counts like the input field.
+      ...((input.idempotencyKey ?? ctx.idempotencyKey) === undefined
+        ? {}
+        : { idempotencyKey: input.idempotencyKey ?? ctx.idempotencyKey }),
     });
   const classify = async (ctx: ToolContext, messageId: string, content: string) =>
     options.classifyResource?.({

@@ -25,6 +25,16 @@ export class MailFilterNotFoundError extends NotFoundError {
   }
 }
 
+export class MailExternalRecipientForbiddenError extends ForbiddenError {
+  constructor() {
+    super(
+      "Sending to recipients outside this organization's verified mail domains needs the mail.external scope.",
+      { details: { mailCode: "mail.external_scope_required", requiredScope: "mail.external" } },
+    );
+    this.name = "MailExternalRecipientForbiddenError";
+  }
+}
+
 export class MailInboundActorForbiddenError extends ForbiddenError {
   constructor(actorType: string) {
     super(`mail.inbound.accept requires a service-account or system actor; got ${actorType}.`, {

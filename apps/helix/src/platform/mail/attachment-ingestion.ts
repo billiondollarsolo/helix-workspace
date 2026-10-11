@@ -58,7 +58,17 @@ export class PostgresMailAttachmentIngestor {
         ) values (
           ${objectId}, ${input.orgId}, ${input.ownerActorId ?? null}, 'mail_attachment',
           ${storageKey}, ${input.attachment.mimeType}, ${bytes.byteLength}, ${expectedSha256},
-          ${tx.json({ ingestState: "pending_upload", stageId })}
+          ${tx.json({
+            ingestState: "pending_upload",
+            stageId,
+            // Mail views read the filename and Content-ID from the object.
+            ...(input.attachment.filename === undefined
+              ? {}
+              : { filename: input.attachment.filename }),
+            ...(input.attachment.contentId === undefined
+              ? {}
+              : { contentId: input.attachment.contentId }),
+          })}
         )
       `;
       await tx`
@@ -131,11 +141,18 @@ export class PostgresMailAttachmentIngestor {
         input.ownerActorId,
         async (tx) =>
           tx<{ readonly id: string }[]>`
-          update mail_attachment_ingestions set status = 'clean',
-            scan_evidence = ${tx.json({ ...scan.evidence, scanned: true, infected: false })},
+          with stage as (
+            update mail_attachment_ingestions set status = 'clean',
+              scan_evidence = ${tx.json({ ...scan.evidence, scanned: true, infected: false })},
+              updated_at = now()
+            where org_id = ${input.orgId} and id = ${stageId} and status = 'scanning'
+            returning id, object_id
+          )
+          update objects set metadata = metadata || ${tx.json({ ingestState: "clean" })},
             updated_at = now()
-          where org_id = ${input.orgId} and id = ${stageId} and status = 'scanning'
-          returning id
+          from stage
+          where objects.org_id = ${input.orgId} and objects.id = stage.object_id
+          returning stage.id
         `,
       );
       if (updated[0] === undefined)
@@ -165,6 +182,48 @@ export class PostgresMailAttachmentIngestor {
         ? error
         : new MailAttachmentRejectedError(reason);
     }
+  }
+
+  /**
+   * Read a staged attachment that is attached to one of the actor's own messages.
+   * Inline attachments (including calendar invitations) are `mail_attachment`
+   * objects, which Drive access checks never cover, so dispatch reads them here.
+   * Returns null when the object is not such an attachment.
+   */
+  async openAttached(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly objectId: string;
+  }): Promise<Buffer | null> {
+    const rows = await this.phase(
+      input.orgId,
+      input.actorId,
+      (tx) => tx<
+        { readonly storage_key: string; readonly byte_size: string; readonly sha256: string }[]
+      >`
+        select stage.storage_key, object.byte_size, object.sha256
+        from mail_attachment_ingestions stage
+        join objects object on object.id = stage.object_id and object.org_id = stage.org_id
+        where stage.org_id = ${input.orgId} and stage.object_id = ${input.objectId}
+          and stage.status = 'attached' and stage.cleaned_at is null
+          and stage.owner_actor_id is not distinct from ${input.actorId}
+          and object.kind = 'mail_attachment' and object.deleted_at is null
+        limit 1
+      `,
+    );
+    const row = rows[0];
+    if (row === undefined) return null;
+    const storage = await this.options.storageResolver({ orgId: input.orgId });
+    if (storage === undefined) throw new Error("Mail attachment storage is unavailable.");
+    const object = await readAuthoritativeObject(
+      storage.client,
+      row.storage_key,
+      Number(row.byte_size),
+    );
+    if (object.sha256 !== row.sha256) {
+      throw new MailAttachmentRejectedError("Mail attachment bytes changed after scanning.");
+    }
+    return object.bytes;
   }
 
   async release(stages: readonly StagedMailAttachment[]): Promise<void> {

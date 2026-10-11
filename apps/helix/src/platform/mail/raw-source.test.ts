@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { MailRawSourceIntegrityError } from "./errors.js";
 import {
+  MAIL_RAW_PARSE_OPTIONS,
   MAIL_RAW_PARSER,
   MAIL_RAW_SOURCE_MAX_BYTES,
   prepareMailRawSource,
@@ -59,7 +60,7 @@ describe("raw mail evidence", () => {
   });
 
   it("projects MIME structure without retaining executable or secret values", async () => {
-    const projection = projectParsedMail(await simpleParser(raw));
+    const projection = projectParsedMail(await simpleParser(raw, MAIL_RAW_PARSE_OPTIONS));
     const encoded = JSON.stringify(projection);
     const attachments = projection.attachments as readonly Record<string, unknown>[];
 
@@ -84,7 +85,7 @@ describe("raw mail evidence", () => {
   });
 
   it("verifies byte identity and deterministic reparsing", async () => {
-    const source = prepareMailRawSource(raw, await simpleParser(raw));
+    const source = prepareMailRawSource(raw, await simpleParser(raw, MAIL_RAW_PARSE_OPTIONS));
 
     await expect(verifyMailRawSource(source)).resolves.toBeUndefined();
     expect(source.bytes).toEqual(raw);
@@ -105,8 +106,18 @@ describe("raw mail evidence", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("verifies a plain-text message parsed exactly as SMTP ingest parses it", async () => {
+    // Ingest skips text-to-HTML conversion; verification once reparsed with defaults,
+    // so every inbound message with a text body failed integrity and was deferred.
+    const plain = Buffer.from(
+      "From: ada@example.net\r\nTo: bob@example.com\r\nSubject: Hi\r\n\r\nHello Bob\r\n",
+    );
+    const source = prepareMailRawSource(plain, await simpleParser(plain, MAIL_RAW_PARSE_OPTIONS));
+    await expect(verifyMailRawSource(source)).resolves.toBeUndefined();
+  });
+
   it("fails closed for mutated bytes, projections, and unknown versions", async () => {
-    const source = prepareMailRawSource(raw, await simpleParser(raw));
+    const source = prepareMailRawSource(raw, await simpleParser(raw, MAIL_RAW_PARSE_OPTIONS));
     const mutated = Buffer.from(source.bytes);
     mutated[mutated.byteLength - 5] = mutated[mutated.byteLength - 5] === 65 ? 66 : 65;
 

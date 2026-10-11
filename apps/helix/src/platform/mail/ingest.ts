@@ -22,7 +22,8 @@ import {
   type InboundThreatVerdicts,
 } from "./inbound-policy.js";
 import type { MailQuarantineStore } from "./quarantine.js";
-import { prepareMailRawSource } from "./raw-source.js";
+import { dmarcAlignmentEvidence } from "./dmarc-evidence.js";
+import { MAIL_RAW_PARSE_OPTIONS, prepareMailRawSource } from "./raw-source.js";
 import { InMemorySmtpRateLimitStore, type SmtpRateLimitStore } from "./smtp-rate-limit.js";
 import {
   smtpDisabledCommands,
@@ -612,7 +613,7 @@ export async function ingestSmtpEnvelope(input: {
       resolution !== null && isAddressResolution(resolution) && resolution.rules.length > 0,
   );
   const parsed = hasRoutingRules
-    ? await simpleParser(input.raw, { skipTextToHtml: true })
+    ? await simpleParser(input.raw, MAIL_RAW_PARSE_OPTIONS)
     : undefined;
   if (parsed !== undefined) assertParsedMailBounds(parsed);
 
@@ -738,7 +739,7 @@ export async function ingestRawMail(input: {
           const [auth, parsed, scannerResult] = await Promise.all([
             authenticator.authenticate(canonicalInput),
             canonicalInput.parsed === undefined
-              ? simpleParser(raw, { maxHtmlLengthToParse: 5 * 1024 * 1024, skipTextToHtml: true })
+              ? simpleParser(raw, MAIL_RAW_PARSE_OPTIONS)
               : Promise.resolve(canonicalInput.parsed),
             scanInboundMail(input.scanners, raw),
           ]);
@@ -1239,17 +1240,7 @@ export function summarizeAuthentication(result: AuthenticateResult): MailAuthent
               record: result.dmarc.rr,
               comment: result.dmarc.status.comment,
               error: result.dmarc.error,
-              alignment: compactJsonObject({
-                spf: compactJsonObject({
-                  result: result.dmarc.alignment.spf.result ?? null,
-                  strict: result.dmarc.alignment.spf.strict,
-                }),
-                dkim: compactJsonObject({
-                  result: result.dmarc.alignment.dkim.result ?? null,
-                  strict: result.dmarc.alignment.dkim.strict,
-                  underSized: result.dmarc.alignment.dkim.underSized,
-                }),
-              }),
+              alignment: dmarcAlignmentEvidence(result.dmarc),
             }),
     }),
   };

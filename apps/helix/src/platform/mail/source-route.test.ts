@@ -3,7 +3,7 @@ import fastify, { type FastifyInstance } from "fastify";
 import { simpleParser } from "mailparser";
 import { describe, expect, it } from "vitest";
 import { ApiError } from "../../api/api-error.js";
-import { prepareMailRawSource } from "./raw-source.js";
+import { MAIL_RAW_PARSE_OPTIONS, prepareMailRawSource } from "./raw-source.js";
 import { registerMailSourceRoutes } from "./source-route.js";
 import type { MailRawSourceStore } from "./store.js";
 import type { MailRawSourceRecord } from "./types.js";
@@ -72,7 +72,10 @@ class FakeSourceStore implements MailRawSourceStore {
 }
 
 async function record(): Promise<MailRawSourceRecord> {
-  return { messageId, ...prepareMailRawSource(raw, await simpleParser(raw)) };
+  return {
+    messageId,
+    ...prepareMailRawSource(raw, await simpleParser(raw, MAIL_RAW_PARSE_OPTIONS)),
+  };
 }
 
 function actor(scopes: readonly string[]): Actor {

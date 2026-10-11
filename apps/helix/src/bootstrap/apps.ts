@@ -53,6 +53,7 @@ import {
   installTenantPostgresContextHook,
   isLongLivedTenantRequest,
   resolveTenantContext,
+  seedDefaultObjectStorePrefix,
   setTenantPostgresActorId,
   withTenantPostgresContext,
 } from "../platform/tenancy/index.js";
@@ -146,6 +147,11 @@ export async function installApps(context: Awaited<ReturnType<typeof installAuth
     orgs: orgStore,
     defaultOrg,
     logger: app.log,
+    ensureDefaultStorage: async (orgId) => {
+      await withTenantPostgresContext(sql, { orgId }, (tx) =>
+        seedDefaultObjectStorePrefix(tx, orgId),
+      );
+    },
   });
 
   const configuredTenantRootHosts =

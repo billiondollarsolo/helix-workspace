@@ -47,6 +47,7 @@ export async function installMailWorkers(context: Awaited<ReturnType<typeof inst
     mailStore,
     mailQuarantineStore,
     driveStore,
+    mailAttachmentIngestor,
   } = context;
   const outboxWorker = new OutboxWorker({
     store: outboxStore,
@@ -166,6 +167,17 @@ export async function installMailWorkers(context: Awaited<ReturnType<typeof inst
             suppressionStore: mailDeliveryEventStore,
             // Stream/large attachments referenced by Drive objectId (G8 / Mail A2.5).
             resolveAttachment: async (objectId, context) => {
+              // Inline attachments and invitations are staged mail objects, not Drive files.
+              const staged = await mailAttachmentIngestor.openAttached({ ...context, objectId });
+              if (staged !== null) {
+                if (staged.byteLength > bootEnv.MAIL_SMTP_MAX_MESSAGE_BYTES) {
+                  throw new MailDeliveryError(
+                    `Mail attachment ${objectId} exceeds the outbound mail limit.`,
+                    false,
+                  );
+                }
+                return staged;
+              }
               const file = await driveStore.openFile({
                 orgId: context.orgId,
                 actorId: context.actorId,

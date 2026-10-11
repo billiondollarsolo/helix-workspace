@@ -40,7 +40,7 @@ export async function prefetchAdminTenantConfigQuery(queryClient: TenantConfigRo
 const BOOLEAN_FEATURE_FLAGS = [
   ["assistant_retrieval", "Assistant retrieval"],
   ["ai_smart_compose", "AI smart compose"],
-  ["b2b_sharing", "B2B sharing"],
+  ["b2b_sharing", "External sharing (public links)"],
   ["mail_outbound", "Outbound mail"],
   ["scim_provisioning", "SCIM provisioning"],
   ["custom_domain", "Custom domains"],

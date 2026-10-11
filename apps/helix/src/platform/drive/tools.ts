@@ -7,12 +7,12 @@ import { BadRequestError, ForbiddenError, NotFoundError } from "../../api/api-er
 import type { ResourceClassifier } from "../../api/classify-resource.js";
 import { actorHasScope } from "../../api/scopes.js";
 import {
-  evaluateExternalEmailSharePolicy,
   evaluatePublicShareLinkPolicy,
   type SecurityPolicyLike,
 } from "../admin/security-policy-runtime.js";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
+import { resolveInternalShareTargets } from "./share-targets.js";
 import type { DriveStore } from "./store.js";
 import {
   driveAccessListOutputSchema,
@@ -481,22 +481,10 @@ export function createDriveToolDefinitions(
       inputSchema: zodToolSchema(shareSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(driveShareOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
-        if (options.getExternalSharingPolicy !== undefined) {
-          const emailTargets = input.actorRefs.filter((ref) => ref.includes("@"));
-          if (emailTargets.length > 0) {
-            const policy = await options.getExternalSharingPolicy(ctx.actor.orgId);
-            const decision = evaluateExternalEmailSharePolicy(policy, emailTargets);
-            if (!decision.allowed) {
-              throw new ForbiddenError(decision.message, {
-                details: { code: decision.code },
-              });
-            }
-          }
-        }
         const resolvedActorIds =
           input.actorRefs.length === 0
             ? []
-            : await resolveDriveShareActorRefs(options, ctx.actor.orgId, input.actorRefs);
+            : await resolveInternalShareTargets(options, ctx.actor.orgId, input.actorRefs);
         const actorIds = [...new Set([...input.actorIds, ...resolvedActorIds])];
         if (actorIds.length === 0) {
           throw new BadRequestError("Drive share requires at least one workspace user.");

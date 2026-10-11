@@ -3,7 +3,7 @@ import { simpleParser } from "mailparser";
 import { describe, expect, it } from "vitest";
 import { createRecordingSql as sharedRecordingSql } from "../../test-support/recording-sql.js";
 import type { TenantStorageClient } from "../storage/tenant-resolver.js";
-import { prepareMailRawSource } from "./raw-source.js";
+import { MAIL_RAW_PARSE_OPTIONS, prepareMailRawSource } from "./raw-source.js";
 import { PostgresMailStore } from "./store.js";
 
 const orgId = "11111111-1111-4111-8111-111111111111";
@@ -182,7 +182,7 @@ async function rawSource(messageId: string, body: string) {
   const raw = Buffer.from(
     `From: sender@example.net\r\nTo: alice@example.com\r\nMessage-ID: ${messageId}\r\n\r\n${body}\r\n`,
   );
-  return prepareMailRawSource(raw, await simpleParser(raw));
+  return prepareMailRawSource(raw, await simpleParser(raw, MAIL_RAW_PARSE_OPTIONS));
 }
 
 function identityRow(overrides: Partial<Record<string, unknown>> = {}) {

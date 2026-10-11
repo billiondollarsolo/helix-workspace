@@ -14,6 +14,9 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Changed
 
+- Organizations can always share Drive files with their own members; the `b2b_sharing` flag
+  ("External sharing" in admin settings) now governs only public share links, so personal-plan
+  and single-tenant workspaces share internally and admins opt in to sharing outside.
 - Live E2E runs give the API a deterministic OpenAI-compatible model
   (`apps/web/tests/e2e/support/fake-model-server.ts`), so the assistant spec sends a
   prompt and checks the streamed provider answer instead of only the no-model state.
@@ -26,6 +29,27 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Fixed
 
+- Inbound mail is stored again: the receiver crashed summarizing DMARC for senders with no
+  DMARC record (mailauth omits `alignment`), and raw-source integrity always failed because
+  ingest and verification parsed with different mailparser options. Both answered 451.
+- External mail sends work with Cerbos: the composite `mail.external` scope is checked against
+  the actor's grants, as tool scope composition intends, instead of the tool policy, which has
+  no rule for it and denied every external send.
+- Single-tenant default orgs get the default object-store namespace at boot, as SaaS
+  provisioning gives every org, so Drive uploads and inbound mail evidence have storage on a
+  fresh install.
+- Approved sends from API credentials keep the actor's email, so the default From address is
+  the sender's mailbox instead of `<actor-id>@localhost`.
+- Approved mail sends from the CLI and other API callers succeed: the compose tools accept the
+  request `Idempotency-Key` header (kept across approval) as the send's idempotency key.
+- `helix mail reply` takes `--to`, which API and agent replies must set so the approval shows
+  who receives the reply.
+- Outbound mail with inline attachments, including calendar invitations, is delivered: dispatch
+  read staged mail attachments through Drive access checks, which never cover them.
+- Staged mail attachments keep their filename and Content-ID on the object and record a clean
+  scan, so received attachments show their names.
+- Calendar RSVP links use `HELIX_PUBLIC_URL` like the rest of the app instead of
+  `http://localhost:3000` when only that is configured.
 - The Assistant works again for fully scoped members: Meet tools get their own opt-in tool
   group, so the default groups stay within the 128-tool limit instead of failing every turn
   with "Too many Assistant tools are selected".

@@ -388,11 +388,30 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
       if (!enforcement.ok) {
         return null;
       }
+      // Identity comes from the actor row: without its email, approved mail sends
+      // defaulted their From to `<actor-id>@localhost` and were rejected.
+      const identityRows = (await sql`
+        select display_name, email
+        from actors
+        where id = ${credential.actorId}
+          and org_id = ${credential.orgId}
+          and disabled_at is null
+        limit 1
+      `) as unknown as readonly {
+        readonly display_name: string;
+        readonly email: string | null;
+      }[];
+      const identity = identityRows[0];
+      if (identity === undefined) {
+        return null;
+      }
       return {
         actor: {
           id: credential.actorId,
           orgId: credential.orgId,
           type: "agent",
+          displayName: identity.display_name,
+          ...(identity.email === null ? {} : { email: identity.email }),
           scopes: credential.scopes,
         },
         credentialId: credential.id,
@@ -580,7 +599,9 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
     registerCalendarTools(tools, {
       store: calendarStore,
       invitationSender: calendarInvitationSender,
-      rsvpBaseUrl: bootEnv.PUBLIC_BASE_URL ?? "http://localhost:3000",
+      // Same precedence as the auth and route origins; PUBLIC_BASE_URL alone left
+      // RSVP links pointing at localhost when only HELIX_PUBLIC_URL was configured.
+      rsvpBaseUrl: bootEnv.HELIX_PUBLIC_URL ?? bootEnv.PUBLIC_BASE_URL ?? "http://localhost:3000",
     });
   }
 

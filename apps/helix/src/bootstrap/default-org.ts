@@ -16,6 +16,11 @@ export async function verifyDefaultOrgAtBoot(input: {
   readonly orgs: Pick<OrgStore, "getOrCreateDefaultOrg">;
   readonly defaultOrg: DefaultOrgInput;
   readonly logger: DefaultOrgBootLogger;
+  /**
+   * Gives the default org the object-store namespace that tenant provisioning gives
+   * every SaaS org. Without it Drive uploads and inbound mail evidence have no storage.
+   */
+  readonly ensureDefaultStorage: (orgId: string) => Promise<void>;
 }): Promise<OrgRecord | null> {
   const bootDefaultOrg = await ensureDefaultOrgForMode({
     config: input.config,
@@ -23,6 +28,7 @@ export async function verifyDefaultOrgAtBoot(input: {
     defaultOrg: input.defaultOrg,
   });
   if (bootDefaultOrg !== null) {
+    await input.ensureDefaultStorage(bootDefaultOrg.id);
     input.logger.info(
       {
         orgId: bootDefaultOrg.id,

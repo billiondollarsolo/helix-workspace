@@ -46,7 +46,8 @@ export function defaultObjectStoreConfig(orgId: string): JsonObject {
   };
 }
 
-async function seedDefaultObjectStorePrefix(
+/** Idempotently give an org the default object-store namespace, keeping any existing storage. */
+export async function seedDefaultObjectStorePrefix(
   sql: ProvisioningSql,
   orgId: string,
 ): Promise<TenantStorageNamespaceRecord> {

@@ -102,8 +102,11 @@ export const mailFilterCriteriaSchema = z.object({
   hasAttachment: z.boolean().optional(),
 });
 export const mailFilterActionsSchema = z.object({
+  /** Label slugs to apply. */
   applyLabels: z.array(z.string().min(1)).optional(),
   archive: z.boolean().optional(),
+  markRead: z.boolean().optional(),
+  star: z.boolean().optional(),
   delete: z.boolean().optional(),
   snoozeUntil: z.string().datetime().optional(),
 });

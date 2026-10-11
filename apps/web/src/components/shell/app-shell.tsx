@@ -17,6 +17,7 @@ import { CommandPalette } from "@/components/shell/command-palette";
 import { SettingsPage } from "@/components/shell/settings-page";
 import { NetworkStatus } from "@/components/shell/network-status";
 import { GlobalShortcuts } from "@/lib/shortcuts/global-shortcuts";
+import { MailDialogsHost } from "@/features/mail/settings";
 import {
   ShellOverlayContext,
   isSettingsSectionId,
@@ -126,6 +127,7 @@ export function AppShell() {
           }}
           onClose={closeSettings}
         />
+        <MailDialogsHost />
       </div>
     </ShellOverlayContext.Provider>
   );

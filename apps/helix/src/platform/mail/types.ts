@@ -284,6 +284,8 @@ export type MailFilterCriteria = JsonObject & {
 export type MailFilterActions = JsonObject & {
   readonly applyLabels?: readonly string[];
   readonly archive?: boolean;
+  readonly markRead?: boolean;
+  readonly star?: boolean;
   readonly delete?: boolean;
   readonly snoozeUntil?: string;
 };

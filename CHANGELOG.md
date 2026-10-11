@@ -23,6 +23,28 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Fixed
 
+- Inbound mail is stored again: the receiver crashed summarizing DMARC for senders with no
+  DMARC record (mailauth omits `alignment`), and raw-source integrity always failed because
+  ingest and verification parsed with different mailparser options. Both answered 451.
+- External mail sends work with Cerbos: the composite `mail.external` scope is checked against
+  the actor's grants, as tool scope composition intends, instead of the tool policy, which has
+  no rule for it and denied every external send.
+- Single-tenant default orgs get the default object-store namespace at boot, as SaaS
+  provisioning gives every org, so Drive uploads and inbound mail evidence have storage on a
+  fresh install.
+- Approved sends from API credentials keep the actor's email, so the default From address is
+  the sender's mailbox instead of `<actor-id>@localhost`.
+- `mail.reply` defaults the subject to `Re: <thread subject>` and derives In-Reply-To and
+  References from the thread, so replies thread in other mail systems.
+- Outbound mail with inline attachments, including calendar invitations, is delivered: dispatch
+  read staged mail attachments through Drive access checks, which never cover them.
+- Staged mail attachments keep their filename and Content-ID on the object and record a clean
+  scan, so received attachments show their names.
+- Calendar RSVP links use `HELIX_PUBLIC_URL` like the rest of the app instead of
+  `http://localhost:3000` when only that is configured.
+- CLI mail commands match the mail tools: `send`/`reply` send `bodyText`/`bodyHtml` and an
+  idempotency key, `reply` takes `--to` and `--in-reply-to`, `list` calls `mail.threads.list`
+  with `--folder`/`--offset`, and `search` sends `labels`.
 - Drive folder access grants can be changed and removed, not only created.
 - The Drive file details panel resets its rename field when another file is selected.
 - Drive version restore asks for confirmation, skips the current version, and reports the result;

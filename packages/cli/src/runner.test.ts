@@ -178,7 +178,7 @@ describe("runCli completion commands", () => {
     expect(stdout.output).not.toContain("$scope == plugin");
     expect(stdout.output).not.toContain("$scope == install");
     expect(stdout.output).toContain("--from");
-    expect(stdout.output).toContain("--to --cc --bcc --from --subject --body --html --json");
+    expect(stdout.output).toContain("--body --html --idempotency-key --json");
     expect(stdout.output).toContain("--room-id --body --text --json");
     expect(stdout.output).toContain("--folder --name --mime-type --byte-size --sha256 --json");
     expect(stdout.output).toContain("--event-id --attendee-email --rsvp-token --response --json");
@@ -937,7 +937,7 @@ describe("runCli tool discovery commands", () => {
 
     await expect(
       runCli(
-        ["mail", "send", "--to", "ada@example.com", "--subject", "Hi", "--body", "Hello"],
+        ["mail", "send", "--json", '{"to":["ada@example.com"],"subject":"Hi","bodyText":"Hello"}'],
         { HELIX_BASE_URL: "https://helix.example", HELIX_ACCESS_TOKEN: "token-1" },
         {
           stdin: Readable.from([]),
@@ -960,7 +960,7 @@ describe("runCli tool discovery commands", () => {
             authorization: "Bearer token-1",
             "content-type": "application/json",
           },
-          body: '{"to":["ada@example.com"],"subject":"Hi","body":"Hello"}',
+          body: '{"to":["ada@example.com"],"subject":"Hi","bodyText":"Hello"}',
         },
       },
     ]);

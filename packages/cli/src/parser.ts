@@ -1,3 +1,10 @@
+import {
+  mailListOptions,
+  mailReplyOptions,
+  mailSearchOptions,
+  mailSendOptions,
+  type MailOptionSpec,
+} from "./mail-options.js";
 export type HelixCommand =
   | { readonly kind: "tool-list"; readonly source?: ToolListSource }
   | {
@@ -313,7 +320,7 @@ function parseMailCommand(
     case "list":
       return {
         kind: "tool-call",
-        toolId: "mail.list",
+        toolId: "mail.threads.list",
         json: parseMailOptions(jsonArgs, mailListOptions, "helix mail list"),
       };
     case "search":
@@ -574,53 +581,6 @@ function parseMailFilterOptions(
   return { source: "inline", value: JSON.stringify(input) };
 }
 
-const mailSendOptions = {
-  arrays: new Set(["--to", "--cc", "--bcc"]),
-  strings: new Map([
-    ["--from", "from"],
-    ["--subject", "subject"],
-    ["--body", "body"],
-    ["--html", "html"],
-  ]),
-  numbers: new Map<string, string>(),
-} as const;
-
-const mailReplyOptions = {
-  arrays: new Set(["--cc", "--bcc"]),
-  strings: new Map([
-    ["--thread-id", "threadId"],
-    ["--message-id", "messageId"],
-    ["--body", "body"],
-    ["--html", "html"],
-  ]),
-  numbers: new Map<string, string>(),
-} as const;
-
-const mailListOptions = {
-  arrays: new Set(["--label"]),
-  strings: new Map([
-    ["--mailbox", "mailbox"],
-    ["--cursor", "cursor"],
-  ]),
-  numbers: new Map([["--limit", "limit"]]),
-} as const;
-
-const mailSearchOptions = {
-  arrays: new Set(["--label"]),
-  strings: new Map([
-    ["--query", "query"],
-    ["--mailbox", "mailbox"],
-    ["--cursor", "cursor"],
-  ]),
-  numbers: new Map([["--limit", "limit"]]),
-} as const;
-
-type MailOptionSpec = {
-  readonly arrays: ReadonlySet<string>;
-  readonly strings: ReadonlyMap<string, string>;
-  readonly numbers: ReadonlyMap<string, string>;
-};
-
 function parseMailOptions(
   args: readonly string[],
   spec: MailOptionSpec,
@@ -642,9 +602,12 @@ function parseMailOptions(
       throw new CliUsageError(mailUsage(commandName, spec));
     }
 
-    if (spec.arrays.has(flag)) {
-      const field = flag.slice(2).replaceAll("-", "_");
-      input[field] = [...readStringArray(input[field]), ...parseCommaSeparatedValues(value)];
+    const arrayField = spec.arrays.get(flag);
+    if (arrayField !== undefined) {
+      input[arrayField] = [
+        ...readStringArray(input[arrayField]),
+        ...parseCommaSeparatedValues(value),
+      ];
       continue;
     }
 
@@ -663,6 +626,9 @@ function parseMailOptions(
     throw new CliUsageError(mailUsage(commandName, spec));
   }
 
+  if (spec.idempotent === true && input.idempotencyKey === undefined) {
+    input.idempotencyKey = globalThis.crypto.randomUUID();
+  }
   return { source: "inline", value: JSON.stringify(input) };
 }
 
@@ -713,7 +679,7 @@ function rejectPositionalSubject(subject: string | undefined, usageMessage: stri
 }
 
 function mailUsage(commandName: string, spec: MailOptionSpec): string {
-  const arrayFlags = [...spec.arrays].map((flag) => `${flag} <value>`);
+  const arrayFlags = [...spec.arrays.keys()].map((flag) => `${flag} <value>`);
   const stringFlags = [...spec.strings.keys()].map((flag) => `${flag} <value>`);
   const numberFlags = [...spec.numbers.keys()].map((flag) => `${flag} <number>`);
   return `Usage: ${commandName} [--json [JSON]] [${[...arrayFlags, ...stringFlags, ...numberFlags].join("] [")}]`;
@@ -2425,10 +2391,10 @@ export const usage = `Usage:
   helix tool call <id> [--transport <rest|mcp>] [--json [JSON]]
   helix search <query>
   helix search --query <text> [--type <mail|chat|drive|calendar>] [--limit <number>] [--json [JSON]]
-  helix mail send [--to <email>] [--cc <email>] [--bcc <email>] [--from <email>] [--subject <text>] [--body <text>] [--html <html>] [--json [JSON]]
-  helix mail reply [--thread-id <id>] [--message-id <id>] [--body <text>] [--html <html>] [--cc <email>] [--bcc <email>] [--json [JSON]]
-  helix mail list [--mailbox <name>] [--label <label>] [--limit <number>] [--cursor <cursor>] [--json [JSON]]
-  helix mail search [--query <text>] [--mailbox <name>] [--label <label>] [--limit <number>] [--cursor <cursor>] [--json [JSON]]
+  helix mail send [--to <email>] [--cc <email>] [--bcc <email>] [--from <email>] [--subject <text>] [--body <text>] [--html <html>] [--idempotency-key <key>] [--json [JSON]]
+  helix mail reply [--thread-id <id>] [--to <email>] [--cc <email>] [--bcc <email>] [--in-reply-to <message-id>] [--subject <text>] [--body <text>] [--html <html>] [--idempotency-key <key>] [--json [JSON]]
+  helix mail list [--folder <name>] [--label <label>] [--query <text>] [--limit <number>] [--offset <number>] [--json [JSON]]
+  helix mail search [--query <text>] [--label <label>] [--limit <number>] [--json [JSON]]
   helix mail label [--thread-id <id>] [--add <label>] [--remove <label>] [--json [JSON]]
   helix mail archive [--thread-id <id>] [--json [JSON]]
   helix mail delete [--thread-id <id>] [--json [JSON]]

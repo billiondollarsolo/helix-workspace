@@ -1,3 +1,4 @@
+import { mailCompletionFlags } from "./mail-options.js";
 import type { CompletionShell } from "./parser.js";
 
 const topLevelCommands = [
@@ -111,10 +112,7 @@ const searchFlags = ["--query", "--type", "--limit", "--json"] as const;
 const securityTierValues = ["personal", "business", "enterprise", "sovereign"] as const;
 
 const mailActionFlags: Record<string, readonly string[]> = {
-  send: ["--to", "--cc", "--bcc", "--from", "--subject", "--body", "--html", "--json"],
-  reply: ["--thread-id", "--message-id", "--body", "--html", "--cc", "--bcc", "--json"],
-  list: ["--mailbox", "--label", "--limit", "--cursor", "--json"],
-  search: ["--query", "--mailbox", "--label", "--limit", "--cursor", "--json"],
+  ...mailCompletionFlags,
   label: ["--thread-id", "--add", "--remove", "--json"],
   archive: ["--thread-id", "--json"],
   delete: ["--thread-id", "--json"],

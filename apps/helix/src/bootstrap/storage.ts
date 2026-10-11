@@ -308,6 +308,7 @@ export async function installStorage(context: Awaited<ReturnType<typeof installA
     mailAttachmentCleanupWorker,
     mailTrashPurgeWorker,
     mailStore,
+    mailAttachmentIngestor,
     mailQuarantineStore,
     driveStore,
     driveWorkflowStore,

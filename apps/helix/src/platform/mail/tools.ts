@@ -34,6 +34,7 @@ import { ingestRawMail, MailauthAuthenticator, type MailAuthenticator } from "./
 import { hasExternalRecipient, requireTenantMailRecipients } from "./recipient-authorization.js";
 import { MailSendService } from "./outbound.js";
 import { mailOutboundDisplayStatus } from "./reliability.js";
+import { replyHeaders } from "./reply-headers.js";
 import { MailDraftConflictError, type MailStore } from "./store.js";
 import { normalizeProviderDeliveryId } from "./threading.js";
 import type {
@@ -428,6 +429,7 @@ export function createMailToolDefinitions(
         await requireTenantMailRecipients(input, ctx, options.resolveInternalDomains);
         const from = await authorizedFrom(input.from, ctx.actor, options);
         const settings = await mailUserSettings(options.store, ctx.actor.orgId, ctx.actor.id);
+        const reply = await replyHeaders(input, ctx.actor, options.store);
         const outbound = await new MailSendService({
           store: options.store,
           undoWindowMs: input.undoWindowMs ?? options.undoWindowMs ?? 30_000,
@@ -435,8 +437,8 @@ export function createMailToolDefinitions(
           orgId: ctx.actor.orgId,
           actorId: ctx.actor.id,
           threadId: input.threadId,
-          ...(input.inReplyTo === undefined ? {} : { inReplyTo: input.inReplyTo }),
-          references: input.references,
+          ...(reply.inReplyTo === undefined ? {} : { inReplyTo: reply.inReplyTo }),
+          references: reply.references,
           source: ctx.actor.type === "agent" ? "agent" : "interactive",
           ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
           ...(input.sendAt === undefined ? {} : { sendAt: new Date(input.sendAt) }),
@@ -444,7 +446,7 @@ export function createMailToolDefinitions(
             toEnvelope(
               {
                 ...input,
-                subject: input.subject ?? "Re:",
+                subject: reply.subject,
               },
               from,
             ),
@@ -457,7 +459,7 @@ export function createMailToolDefinitions(
           resourceType: "mail.message",
           resourceId: outbound.messageId,
           derivation: {
-            content: `${input.subject ?? "Re:"}\n${input.bodyText}`,
+            content: `${reply.subject}\n${input.bodyText}`,
             scanContent: true,
           },
         });

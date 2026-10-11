@@ -16,6 +16,7 @@ import type {
   MailRawSourceRecord,
   MailSearchHit,
   MailSearchRequest,
+  MailReplyContext,
   MailThreadDetail,
   MailThreadGetRequest,
   MailThreadListRequest,
@@ -219,6 +220,11 @@ export interface MailStore {
   }): Promise<boolean>;
   search(input: MailSearchRequest): Promise<readonly MailSearchHit[]>;
   getThread(input: MailThreadGetRequest): Promise<MailThreadDetail | null>;
+  /**
+   * RFC 5322 reply context for a thread the actor can read: its subject and the
+   * latest visible message's Message-ID and References.
+   */
+  getReplyContext?(input: MailThreadGetRequest): Promise<MailReplyContext | null>;
   /**
    * List the thread-row projection for one folder view, optionally filtered by
    * category tab, label, and free-text query. Paginated; returns `total` for

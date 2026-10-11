@@ -173,6 +173,7 @@ describe("admin MFA route coverage", () => {
 describe("default org boot verification", () => {
   it("verifies the single-tenant default org during server boot", async () => {
     const calls: unknown[] = [];
+    const storageOrgs: string[] = [];
     const logs: unknown[] = [];
     const org = await verifyDefaultOrgAtBoot({
       config: { mode: "single-tenant" },
@@ -203,9 +204,15 @@ describe("default org boot verification", () => {
           logs.push({ input, message });
         },
       },
+      ensureDefaultStorage: async (orgId) => {
+        storageOrgs.push(orgId);
+      },
     });
 
     expect(org?.id).toBe("11111111-1111-4111-8111-111111111111");
+    // Single-tenant orgs never pass through SaaS provisioning, so boot must give the
+    // default org its object-store namespace or Drive and inbound mail have no storage.
+    expect(storageOrgs).toEqual(["11111111-1111-4111-8111-111111111111"]);
     expect(calls).toEqual([{ id: "11111111-1111-4111-8111-111111111111", slug: "acme" }]);
     expect(logs).toEqual([
       {
@@ -234,6 +241,9 @@ describe("default org boot verification", () => {
         info() {
           throw new Error("should not log");
         },
+      },
+      ensureDefaultStorage: async () => {
+        throw new Error("should not provision storage");
       },
     });
 

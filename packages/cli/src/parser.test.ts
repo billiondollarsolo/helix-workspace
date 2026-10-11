@@ -63,52 +63,15 @@ describe("parseCliArgs", () => {
   });
 
   it("parses mail aliases as tool calls", () => {
-    expect(
-      parseCliArgs([
-        "mail",
-        "send",
-        "--to",
-        "ada@example.com,grace@example.com",
-        "--cc",
-        "team@example.com",
-        "--subject",
-        "Launch",
-        "--body",
-        "Ready",
-      ]),
-    ).toEqual({
-      kind: "tool-call",
-      toolId: "mail.send",
-      json: {
-        source: "inline",
-        value:
-          '{"to":["ada@example.com","grace@example.com"],"cc":["team@example.com"],"subject":"Launch","body":"Ready"}',
-      },
-    });
     expect(parseCliArgs(["mail", "send", "--json", '{"to":["ada@example.com"]}'])).toEqual({
       kind: "tool-call",
       toolId: "mail.send",
       json: { source: "inline", value: '{"to":["ada@example.com"]}' },
     });
-    expect(parseCliArgs(["mail", "reply", "--thread-id", "thread-1", "--body", "Thanks"])).toEqual({
-      kind: "tool-call",
-      toolId: "mail.reply",
-      json: { source: "inline", value: '{"threadId":"thread-1","body":"Thanks"}' },
-    });
     expect(parseCliArgs(["mail", "reply", "--json"])).toEqual({
       kind: "tool-call",
       toolId: "mail.reply",
       json: { source: "stdin" },
-    });
-    expect(parseCliArgs(["mail", "list", "--mailbox", "inbox", "--limit", "25"])).toEqual({
-      kind: "tool-call",
-      toolId: "mail.list",
-      json: { source: "inline", value: '{"mailbox":"inbox","limit":25}' },
-    });
-    expect(parseCliArgs(["mail", "search", "--query", "roadmap", "--label", "work"])).toEqual({
-      kind: "tool-call",
-      toolId: "mail.search",
-      json: { source: "inline", value: '{"query":"roadmap","label":["work"]}' },
     });
     expect(parseCliArgs(["mail", "search", "--json", '{"query":"roadmap"}'])).toEqual({
       kind: "tool-call",

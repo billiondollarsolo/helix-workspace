@@ -407,6 +407,12 @@ export interface MailThreadAttachment {
   readonly disposition: string;
 }
 
+export interface MailReplyContext {
+  readonly subject: string;
+  readonly messageId?: string | undefined;
+  readonly references: readonly string[];
+}
+
 export interface MailThreadDetail {
   readonly id: string;
   readonly subject: string;

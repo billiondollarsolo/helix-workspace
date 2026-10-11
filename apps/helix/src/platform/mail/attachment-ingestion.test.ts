@@ -1,4 +1,5 @@
 import type { StorageObject, StorageObjectHead } from "@helix/sdk-types";
+import { createHash } from "node:crypto";
 import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
 import type { TenantStorageClient } from "../storage/tenant-resolver.js";
@@ -80,6 +81,29 @@ describe("PostgresMailAttachmentIngestor", () => {
     expect(storage.keys()).toEqual([]);
     expect(sql.queries.some((query) => query.includes("cleaned_at = now()"))).toBe(true);
   });
+
+  it("opens an attachment attached to the actor's own message and verifies its bytes", async () => {
+    // Inline attachments and invitations are mail_attachment objects; dispatch read
+    // them through Drive, which rejects that kind, so every such send failed.
+    const storage = new MemoryStorage();
+    const bytes = Buffer.from("BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n");
+    await storage.put({ key: "mail/attachments/s/h", body: bytes });
+    const row = (sha256: string) => ({
+      storage_key: "mail/attachments/s/h",
+      byte_size: String(bytes.byteLength),
+      sha256,
+    });
+    const openAttachedWith = (attached?: Record<string, unknown>) =>
+      new PostgresMailAttachmentIngestor(recordingSql(undefined, attached).sql, {
+        storageResolver: () => ({ client: storage, managedBy: "helix-default", prefix: "" }),
+      }).openAttached({ orgId, actorId, objectId: "55555555-5555-4555-8555-555555555555" });
+
+    await expect(
+      openAttachedWith(row(createHash("sha256").update(bytes).digest("hex"))),
+    ).resolves.toEqual(bytes);
+    await expect(openAttachedWith(row("0".repeat(64)))).rejects.toThrow("changed after scanning");
+    await expect(openAttachedWith()).resolves.toBeNull();
+  });
 });
 
 const cleanScanner = {
@@ -93,7 +117,10 @@ const cleanScanner = {
   },
 };
 
-function recordingSql(claim?: Record<string, unknown>): {
+function recordingSql(
+  claim?: Record<string, unknown>,
+  attached?: Record<string, unknown>,
+): {
   readonly sql: postgres.Sql;
   readonly queries: readonly string[];
 } {
@@ -106,9 +133,13 @@ function recordingSql(claim?: Record<string, unknown>): {
         ? claim === undefined
           ? []
           : [claim]
-        : query.includes("returning id")
-          ? [{ id: "stage" }]
-          : [],
+        : query.includes("stage.status = 'attached'")
+          ? attached === undefined
+            ? []
+            : [attached]
+          : query.includes("returning id")
+            ? [{ id: "stage" }]
+            : [],
     );
   };
   const sql = Object.assign(tag, {

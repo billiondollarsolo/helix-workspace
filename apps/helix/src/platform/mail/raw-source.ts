@@ -8,6 +8,15 @@ import type { MailRawSourceInput } from "./types.js";
 export const MAIL_RAW_PARSER = "mailparser@3.9.20";
 const MAIL_RAW_PROJECTION_VERSION = 1;
 export const MAIL_RAW_SOURCE_MAX_BYTES = 50 * 1024 * 1024;
+/**
+ * The single mailparser configuration for inbound mail. The stored projection and
+ * its later verification must parse identically: `skipTextToHtml` alone changes
+ * `textAsHtml` from generated HTML to "", so mismatched options rejected all mail.
+ */
+export const MAIL_RAW_PARSE_OPTIONS = {
+  maxHtmlLengthToParse: 5 * 1024 * 1024,
+  skipTextToHtml: true,
+} as const;
 
 /** Copy and describe the exact input bytes; parsed content is only a disposable projection. */
 export function prepareMailRawSource(raw: Buffer | string, parsed: ParsedMail): MailRawSourceInput {
@@ -41,7 +50,7 @@ export async function verifyMailRawSource(source: MailRawSourceInput): Promise<v
   ) {
     throw new MailRawSourceIntegrityError();
   }
-  const reparsed = projectParsedMail(await simpleParser(source.bytes));
+  const reparsed = projectParsedMail(await simpleParser(source.bytes, MAIL_RAW_PARSE_OPTIONS));
   if (sha256(canonicalJson(reparsed)) !== source.projectionSha256) {
     throw new MailRawSourceIntegrityError();
   }

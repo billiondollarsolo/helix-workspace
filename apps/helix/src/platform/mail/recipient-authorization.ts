@@ -1,4 +1,6 @@
 import type { ToolContext } from "@helix/sdk-types";
+import { actorHasPermission } from "../permissions/roles.js";
+import { MailExternalRecipientForbiddenError } from "./errors.js";
 /** Lower-cased domain portion of an email address, or "" when unparseable. */
 function addressDomain(address: string): string {
   const at = address.lastIndexOf("@");
@@ -41,5 +43,10 @@ export async function requireTenantMailRecipients(
   const domains = new Set(
     (await resolveDomains(ctx.actor.orgId)).map((domain) => domain.toLowerCase()),
   );
-  if (hasExternalRecipient(input, domains)) await ctx.requirePermission("mail.external");
+  // `mail.external` is a composite scope: it is checked against the actor's own
+  // grants, like the tool's declared scope composition, and never sent to the
+  // tool PDP, whose rules match only a tool's base permission.
+  if (hasExternalRecipient(input, domains) && !actorHasPermission(ctx.actor, "mail.external")) {
+    throw new MailExternalRecipientForbiddenError();
+  }
 }

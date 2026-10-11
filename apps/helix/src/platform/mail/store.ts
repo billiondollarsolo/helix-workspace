@@ -41,6 +41,7 @@ import type {
   MailSearchProjectionStore,
   MailSearchRecord,
   MailSearchRequest,
+  MailReplyContext,
   MailThreadDetail,
   MailThreadGetRequest,
   MailThreadListRequest,
@@ -365,6 +366,10 @@ export class PostgresMailStore
 
   setMailClassification(input: MailClassificationWrite): Promise<void> {
     return this.searchProjection.setMailClassification(input);
+  }
+
+  getReplyContext(input: MailThreadGetRequest): Promise<MailReplyContext | null> {
+    return this.threads.getReplyContext(input);
   }
 
   getThread(input: MailThreadGetRequest): Promise<MailThreadDetail | null> {

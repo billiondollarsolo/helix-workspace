@@ -82,6 +82,15 @@ export function foldMessages(
   ];
 }
 
+/** The conversation up to the message being answered, which the panel treats as the latest. */
+function replyContext(
+  messages: readonly MailThreadMessage[],
+  target: MailThreadMessage | undefined,
+): readonly MailThreadMessage[] {
+  const index = target === undefined ? -1 : messages.indexOf(target);
+  return index === -1 ? messages : messages.slice(0, index + 1);
+}
+
 export function ThreadView({
   row,
   detail,
@@ -248,12 +257,12 @@ export function ThreadView({
             </div>
           ) : (
             <MailReplyPanel
-              key={`${reply.mode}-${reply.message?.id ?? "last"}`}
+              key={reply.message?.id ?? "last"}
               mode={reply.mode}
+              onModeChange={(mode) => setReply({ mode, message: reply.message })}
               threadId={row.threadId}
               subject={subject}
-              senderName={row.from}
-              original={reply.message ?? last}
+              messages={replyContext(messages, reply.message)}
               onClose={() => setReply(null)}
             />
           )}

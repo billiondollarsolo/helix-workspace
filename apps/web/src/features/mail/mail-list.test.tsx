@@ -7,6 +7,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resetComposeWindows } from "./compose/compose-store";
 import { MailShell } from "./mail-shell";
 import { FOLDERS, LABELS, THREAD_DETAIL, threadRow, UPDATES_ROW } from "./mail-shell.test-fixtures";
 import { MAIL_DRAG_TYPE } from "./mail-thread-row";
@@ -215,6 +216,7 @@ beforeEach(() => {
 
 afterEach(() => {
   act(() => root.unmount());
+  resetComposeWindows();
   document.body.innerHTML = "";
   window.removeEventListener("keydown", dispatchShortcut);
   vi.unstubAllGlobals();
@@ -307,6 +309,63 @@ describe("conversation list", () => {
     expect(document.querySelector('[role="tablist"]')).toBeNull();
     expect(container.textContent).toContain("No conversations in Sent");
     expect(document.querySelector('[data-slot="pager"]')).toBeNull();
+  });
+
+  it("resumes a saved draft from Drafts in a compose window", async () => {
+    const draftId = "11111111-1111-4111-8111-111111111111";
+    threadsResponse = (body) =>
+      body.folder === "drafts"
+        ? {
+            threads: [
+              threadRow({
+                threadId: draftId,
+                messageId: draftId,
+                subject: "Half-written plan",
+                folder: "drafts",
+                messageCount: 0,
+                unread: false,
+              }),
+            ],
+            total: 1,
+            limit: 50,
+            offset: 0,
+          }
+        : defaultThreads(body);
+    fetchMock.mockImplementation((input, init) =>
+      urlOf(input).endsWith("/mail.draft.get")
+        ? Promise.resolve(
+            Response.json({
+              draft: {
+                id: draftId,
+                orgId: "o",
+                actorId: "a",
+                threadId: null,
+                to: [],
+                cc: [],
+                bcc: [],
+                subject: "Half-written plan",
+                bodyText: "Step one",
+                attachments: [],
+                revision: 2,
+                expiresAt: "2026-12-01T00:00:00.000Z",
+                createdAt: "2026-10-01T00:00:00.000Z",
+                updatedAt: "2026-10-01T00:00:00.000Z",
+              },
+            }),
+          )
+        : respond(input, init),
+    );
+    render();
+    await flush();
+    click(button("Drafts"));
+    await flush();
+    expect(rowFor("Half-written plan").textContent).toContain("Draft");
+    click(rowFor("Half-written plan"));
+    await flush();
+    expect(document.querySelector<HTMLInputElement>('[aria-label="Subject"]')?.value).toBe(
+      "Half-written plan",
+    );
+    expect(toolCalls("mail.thread.get")).toEqual([]);
   });
 
   it("searches All Mail with operators and shows Search results", async () => {

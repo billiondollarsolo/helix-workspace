@@ -1,0 +1,725 @@
+@layer components {
+  /* ---------- Dock and windows ----------
+     Windows dock bottom-right, newest on the left. They sit under menus and
+     popovers (z-50) so Send ▾ and the formatting menus open above them. */
+  .compose-dock {
+    position: fixed;
+    right: var(--space-4);
+    bottom: 0;
+    z-index: 45;
+    display: flex;
+    flex-direction: row-reverse;
+    align-items: flex-end;
+    gap: var(--space-3);
+    max-width: calc(100vw - 2 * var(--space-4));
+    pointer-events: none;
+  }
+
+  .compose-window {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    width: 560px;
+    max-width: calc(100vw - 2 * var(--space-4));
+    height: min(620px, calc(100dvh - 72px));
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-bottom: 0;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    background: var(--surface);
+    box-shadow: var(--shadow-lg);
+    pointer-events: auto;
+  }
+
+  .compose-window[data-minimized] {
+    width: 280px;
+    height: auto;
+  }
+
+  .compose-window[data-maximized] {
+    position: fixed;
+    inset: 5vh 0 auto 0;
+    z-index: 46;
+    width: min(1100px, calc(100vw - 2 * var(--space-8)));
+    max-width: none;
+    height: 90vh;
+    margin: 0 auto;
+    border-bottom: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    animation: compose-grow var(--motion-duration-base) var(--motion-ease-enter);
+  }
+
+  .compose-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 45;
+    background: color-mix(in srgb, var(--text) 40%, transparent);
+    pointer-events: auto;
+  }
+
+  @keyframes compose-grow {
+    from {
+      opacity: 0;
+      transform: scale(0.98);
+    }
+  }
+
+  .compose-titlebar {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: var(--space-0-5);
+    height: 40px;
+    padding: 0 var(--space-1) 0 var(--space-1);
+    background: var(--surface-2);
+  }
+
+  .compose-title {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+    font-size: var(--text-body-sm);
+    font-weight: 600;
+  }
+
+  .compose-title-btn {
+    display: block;
+    width: 100%;
+    padding: var(--space-1) var(--space-2);
+    overflow: hidden;
+    border-radius: var(--radius);
+    color: var(--text);
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .compose-chrome-btn,
+  .compose-icon-btn {
+    display: inline-grid;
+    flex-shrink: 0;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border-radius: var(--radius);
+    color: var(--text-2);
+  }
+
+  .compose-icon-btn {
+    width: 36px;
+    height: 36px;
+  }
+
+  .compose-chrome-btn:hover,
+  .compose-icon-btn:hover,
+  .compose-icon-btn[aria-pressed="true"],
+  .compose-icon-btn[aria-expanded="true"],
+  .compose-title-btn:hover {
+    background: var(--hover);
+    color: var(--text);
+  }
+
+  .compose-icon-btn:disabled {
+    opacity: 0.4;
+    pointer-events: none;
+  }
+
+  .compose-chrome-btn:focus-visible,
+  .compose-icon-btn:focus-visible,
+  .compose-title-btn:focus-visible,
+  .compose-link-btn:focus-visible,
+  .compose-tool:focus-visible,
+  .compose-attachment-remove:focus-visible,
+  .reply-mode-btn:focus-visible,
+  .reply-recipients-summary:focus-visible {
+    outline: var(--focus-ring-width) solid var(--focus-ring-color);
+    outline-offset: -2px;
+  }
+
+  .compose-content {
+    position: relative;
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .compose-content[hidden] {
+    display: none;
+  }
+
+  .compose-loading {
+    margin: 0;
+    padding: var(--space-4);
+    color: var(--text-2);
+    font-size: var(--text-body-sm);
+  }
+
+  /* ---------- Fields ---------- */
+  .compose-fields {
+    flex-shrink: 0;
+    padding: 0 var(--space-4);
+  }
+
+  .compose-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-height: 40px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .compose-recipient-row .people-picker {
+    flex: 1;
+    align-items: center;
+  }
+
+  .compose-recipient-row .people-picker-label {
+    min-width: 28px;
+    padding-top: 0;
+  }
+
+  .compose-recipient-row .people-picker-field {
+    border: 0;
+    background: transparent;
+    padding-left: 0;
+  }
+
+  .compose-recipient-row .people-picker-field:focus-within {
+    box-shadow: none;
+  }
+
+  .compose-recipient-row[data-invalid] .people-picker-label {
+    color: var(--danger);
+  }
+
+  .compose-reveal-links {
+    display: flex;
+    flex-shrink: 0;
+    gap: var(--space-1);
+  }
+
+  .compose-link-btn {
+    padding: var(--space-0-5) var(--space-1);
+    border-radius: var(--radius);
+    color: var(--text-2);
+    font-size: var(--text-body-sm);
+  }
+
+  .compose-link-btn:hover {
+    color: var(--text);
+    text-decoration: underline;
+  }
+
+  .compose-subject {
+    flex: 1;
+    min-width: 0;
+    height: 38px;
+    border: 0;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    font-size: var(--text-body-sm);
+    outline: none;
+  }
+
+  .compose-subject:focus-visible {
+    box-shadow: inset 0 -2px 0 var(--accent);
+  }
+
+  /* ---------- Body ---------- */
+  .compose-body {
+    flex: 1;
+    min-height: 120px;
+    padding: var(--space-3) var(--space-4);
+    overflow-y: auto;
+    overflow-wrap: anywhere;
+    border: 0;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    font-size: var(--text-body);
+    line-height: var(--leading-relaxed);
+    outline: none;
+    resize: none;
+  }
+
+  /* The caret marks focus in the body; a light inset keeps it visible without a heavy frame. */
+  .compose-body:focus-visible {
+    box-shadow: inset 0 0 0 1px var(--accent-soft-border);
+  }
+
+  .compose-body[data-empty][data-placeholder]:not([data-placeholder=""])::before {
+    content: attr(data-placeholder);
+    color: var(--text-3);
+    pointer-events: none;
+  }
+
+  .compose-body blockquote {
+    margin: var(--space-1) 0 var(--space-1) var(--space-2);
+    padding-left: var(--space-3);
+    border-left: 3px solid var(--border-2);
+    color: var(--text-2);
+  }
+
+  .compose-body ul,
+  .compose-body ol {
+    margin: var(--space-1) 0;
+    padding-left: var(--space-6);
+  }
+
+  .compose-body ul {
+    list-style: disc;
+  }
+
+  .compose-body ol {
+    list-style: decimal;
+  }
+
+  .compose-body a {
+    color: var(--accent);
+    text-decoration: underline;
+  }
+
+  .compose-signature {
+    flex-shrink: 0;
+    padding: 0 var(--space-4) var(--space-2);
+    color: var(--text-2);
+    font-size: var(--text-body-sm);
+    white-space: pre-wrap;
+  }
+
+  .compose-signature-dash {
+    display: block;
+  }
+
+  .compose-forward-note {
+    margin: 0;
+    padding: 0 var(--space-4) var(--space-2);
+    color: var(--text-2);
+    font-size: var(--text-caption);
+  }
+
+  .compose-drop-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    display: grid;
+    place-content: center;
+    justify-items: center;
+    gap: var(--space-2);
+    border: 2px dashed var(--accent);
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 600;
+    pointer-events: none;
+  }
+
+  /* ---------- Attachments ---------- */
+  .compose-attachments {
+    display: flex;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin: 0;
+    padding: 0 var(--space-4) var(--space-2);
+    list-style: none;
+  }
+
+  .compose-attachment {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    max-width: 260px;
+    padding: var(--space-1-5) var(--space-1) var(--space-1-5) var(--space-2);
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-2);
+  }
+
+  .compose-attachment[data-state="blocked"],
+  .compose-attachment[data-state="failed"] {
+    border-color: var(--danger);
+    background: var(--danger-soft);
+  }
+
+  .compose-attachment-icon {
+    flex-shrink: 0;
+    color: var(--text-2);
+  }
+
+  .compose-attachment[data-state="blocked"] .compose-attachment-icon,
+  .compose-attachment[data-state="failed"] .compose-attachment-icon {
+    color: var(--danger);
+  }
+
+  .compose-attachment-text {
+    display: grid;
+    min-width: 0;
+  }
+
+  .compose-attachment-name {
+    overflow: hidden;
+    color: var(--text);
+    font-size: var(--text-body-sm);
+    font-weight: 500;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .compose-attachment-status {
+    overflow: hidden;
+    color: var(--text-2);
+    font-size: var(--text-caption);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .compose-attachment-progress {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    height: 2px;
+    overflow: hidden;
+    background: var(--accent-soft);
+  }
+
+  .compose-attachment-progress::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    width: 40%;
+    background: var(--accent);
+    animation: compose-progress 1.2s var(--motion-ease-standard) infinite;
+  }
+
+  @keyframes compose-progress {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(250%);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .compose-attachment-progress::after {
+      width: 100%;
+      animation: none;
+      opacity: 0.6;
+    }
+  }
+
+  .compose-attachment-remove {
+    display: inline-grid;
+    flex-shrink: 0;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    border-radius: var(--radius);
+    color: var(--text-2);
+  }
+
+  .compose-attachment-remove:hover {
+    background: var(--hover);
+    color: var(--text);
+  }
+
+  .compose-errors {
+    flex-shrink: 0;
+    padding: 0 var(--space-4) var(--space-2);
+    color: var(--danger);
+    font-size: var(--text-body-sm);
+  }
+
+  .compose-errors p,
+  .compose-error {
+    margin: 0;
+  }
+
+  .compose-error {
+    color: var(--danger);
+    font-size: var(--text-body-sm);
+  }
+
+  /* ---------- Formatting toolbar ---------- */
+  .compose-toolbar {
+    display: flex;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-0-5);
+    margin: 0 var(--space-3);
+    padding: var(--space-0-5);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-2);
+  }
+
+  .compose-tool {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-0-5);
+    min-width: 30px;
+    height: 30px;
+    padding: 0 var(--space-1);
+    border-radius: var(--radius);
+    color: var(--text-2);
+  }
+
+  .compose-tool:hover,
+  .compose-tool[aria-expanded="true"] {
+    background: var(--hover);
+    color: var(--text);
+  }
+
+  .compose-tool-separator {
+    width: 1px;
+    height: 18px;
+    margin: 0 var(--space-0-5);
+    background: var(--border);
+  }
+
+  .compose-swatches {
+    display: grid;
+    grid-template-columns: repeat(6, 28px);
+    gap: var(--space-1-5);
+  }
+
+  .compose-swatch {
+    width: 28px;
+    height: 28px;
+    border: 1px solid var(--border);
+    border-radius: 50%;
+  }
+
+  .compose-emoji-grid {
+    display: grid;
+    grid-template-columns: repeat(8, 36px);
+    gap: var(--space-0-5);
+  }
+
+  .compose-emoji {
+    width: 36px;
+    height: 36px;
+    border-radius: var(--radius);
+    font-size: var(--text-h3);
+  }
+
+  .compose-emoji:hover {
+    background: var(--hover);
+  }
+
+  /* ---------- Bottom bar ---------- */
+  .compose-bottom-bar {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-2) var(--space-3);
+  }
+
+  .compose-bottom-tools {
+    display: flex;
+    align-items: center;
+    gap: var(--space-0-5);
+    margin-left: var(--space-2);
+  }
+
+  .compose-save-status {
+    margin-left: auto;
+    overflow: hidden;
+    color: var(--text-3);
+    font-size: var(--text-caption);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .compose-save-status[data-tone="error"] {
+    color: var(--danger);
+    white-space: normal;
+  }
+
+  .compose-menu-detail {
+    margin-left: var(--space-3);
+    color: var(--text-3);
+    font-size: var(--text-caption);
+  }
+
+  .compose-schedule-summary {
+    margin: var(--space-3) 0 0;
+    color: var(--text-2);
+    font-size: var(--text-body-sm);
+  }
+
+  .compose-link-form {
+    display: grid;
+    gap: var(--space-1-5);
+  }
+
+  .compose-link-form label {
+    color: var(--text-2);
+    font-size: var(--text-body-sm);
+  }
+
+  .compose-print-frame {
+    position: fixed;
+    width: 0;
+    height: 0;
+    border: 0;
+    visibility: hidden;
+  }
+
+  /* ---------- Inline reply ---------- */
+  .reply-panel {
+    display: flex;
+    flex-direction: column;
+    margin-top: var(--space-4);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+    box-shadow: var(--shadow-md);
+  }
+
+  .reply-panel .compose-body {
+    min-height: 140px;
+  }
+
+  .reply-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-2) var(--space-3) 0;
+  }
+
+  .reply-mode-btn {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: var(--space-0-5);
+    height: 32px;
+    padding: 0 var(--space-1-5);
+    border-radius: var(--radius);
+    color: var(--text-2);
+  }
+
+  .reply-mode-btn:hover,
+  .reply-mode-btn[aria-expanded="true"] {
+    background: var(--hover);
+    color: var(--text);
+  }
+
+  .reply-recipients-summary {
+    flex: 1;
+    min-width: 0;
+    padding: var(--space-1) var(--space-2);
+    overflow: hidden;
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: var(--text-body-sm);
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .reply-recipients-summary:hover {
+    background: var(--hover);
+  }
+
+  .reply-recipients-label,
+  .reply-recipients-cc {
+    color: var(--text-2);
+  }
+
+  .reply-fields {
+    padding: 0 var(--space-4);
+  }
+
+  .reply-forwarded {
+    margin: 0 var(--space-4) var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    border-left: 3px solid var(--border-2);
+    color: var(--text-2);
+    font-size: var(--text-body-sm);
+    white-space: pre-wrap;
+  }
+
+  .reply-forward-attachments {
+    display: grid;
+    gap: var(--space-1);
+    padding-bottom: var(--space-2);
+  }
+
+  .reply-include-attachments {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 0 var(--space-4);
+    color: var(--text-2);
+    font-size: var(--text-body-sm);
+  }
+
+  /* ---------- Phones: one full-screen window ---------- */
+  @media (max-width: 640px) {
+    .compose-dock {
+      inset: 0;
+      z-index: 45;
+      display: block;
+      max-width: none;
+    }
+
+    .compose-window,
+    .compose-window[data-maximized] {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      max-width: none;
+      height: 100dvh;
+      padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+        env(safe-area-inset-left);
+      border: 0;
+      border-radius: 0;
+      animation: none;
+    }
+
+    .compose-window[data-minimized] {
+      inset: auto var(--space-2) calc(64px + env(safe-area-inset-bottom)) auto;
+      width: min(280px, calc(100vw - 2 * var(--space-4)));
+      height: auto;
+      padding: 0;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+    }
+
+    .compose-maximize,
+    .compose-backdrop {
+      display: none;
+    }
+
+    .compose-bottom-bar {
+      flex-wrap: wrap;
+    }
+
+    .compose-save-status {
+      flex-basis: 100%;
+      order: -1;
+      margin-left: 0;
+    }
+
+    .compose-bottom-tools {
+      margin-left: 0;
+    }
+
+    .compose-discard {
+      margin-left: auto;
+    }
+
+    .compose-dock:has(.compose-window:not([data-minimized])) {
+      pointer-events: auto;
+    }
+  }
+}

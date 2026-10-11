@@ -1,54 +1,57 @@
 // @vitest-environment jsdom
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { NotifyOptions } from "@/components/ui/toast";
+import { axeViolations, key, unmountAll } from "@/test/ui";
 import type { MailThreadDetail, MailThreadRow } from "./api";
-import { forwardSubject } from "./mail-reply-panel";
+import {
+  buttonByText,
+  byLabel,
+  click,
+  openMenu,
+  renderWithClient,
+  settle,
+  typeBody,
+  waitFor,
+  addRecipient,
+} from "@/test/mail-compose";
 import { ThreadView } from "./mail-thread-view";
 
-(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
-  true;
-
 const api = vi.hoisted(() => ({
-  replyToMail: vi.fn(() => Promise.resolve({ status: "queued" })),
-  forwardMail: vi.fn(() => Promise.resolve({ status: "queued" })),
+  replyToMail: vi.fn(),
+  forwardMail: vi.fn(),
+  saveMailDraft: vi.fn(),
+  discardMailDraft: vi.fn(),
+  cancelOutboundMail: vi.fn(),
 }));
+const toasts = vi.hoisted(() => ({ notify: vi.fn<(options: NotifyOptions) => string>() }));
 
-vi.mock("./api", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./api")>()),
-  replyToMail: api.replyToMail,
-  forwardMail: api.forwardMail,
-}));
-
-vi.mock("./mail-sender-select", () => ({
-  useMailSender: () => ({
-    from: "me@helix.test",
-    setFrom: () => undefined,
-    available: [{ address: "me@helix.test", sendAsEnabled: true }],
-    addresses: { isPending: false, isError: false },
-    authorized: true,
-  }),
-  MailSenderSelect: () => null,
+vi.mock("./api", async (original) => ({ ...(await original<object>()), ...api }));
+vi.mock("@/components/ui/toast", () => ({ notify: toasts.notify }));
+vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn(), useSearch: () => ({}) }));
+vi.mock("@/features/people/api", () => ({
+  usePeopleSearch: () => ({ people: [], loading: false, error: false }),
 }));
 
 const row = {
   threadId: "thread-1",
   messageId: "message-2",
   subject: "Plans",
-  from: "Friend",
-  fromEmail: "friend@example.com",
+  from: "Samara",
+  fromEmail: "samara@example.com",
   preview: "",
   time: "2026-10-02T10:00:00.000Z",
   unread: false,
   starred: false,
   hasAttachment: true,
-  messageCount: 2,
+  messageCount: 3,
   labels: [],
   category: "primary",
   folder: "inbox",
   snoozedUntil: null,
-} as unknown as MailThreadRow;
+  participants: [],
+} as MailThreadRow;
 
 const detail: MailThreadDetail = {
   id: "thread-1",
@@ -62,12 +65,12 @@ const detail: MailThreadDetail = {
   lastActivity: "2026-10-02T10:00:00.000Z",
   unread: false,
   starred: false,
-  direction: "inbound",
+  direction: "mixed",
   messages: [
     {
       id: "message-1",
       from: { address: "me@helix.test", name: "Me" },
-      to: [{ address: "friend@example.com" }],
+      to: [{ address: "samara@example.com", name: "Samara" }],
       cc: [],
       bcc: [],
       sentAt: "2026-10-01T10:00:00.000Z",
@@ -79,147 +82,192 @@ const detail: MailThreadDetail = {
     {
       id: "message-2",
       subject: "Re: Plans",
-      from: { address: "friend@example.com", name: "Friend" },
-      to: [{ address: "me@helix.test" }],
-      cc: [{ address: "carol@example.com" }],
+      from: { address: "samara@example.com", name: "Samara" },
+      to: [{ address: "me@helix.test", name: "Me" }],
+      cc: [{ address: "carol@example.com", name: "Carol" }],
       bcc: [],
       sentAt: "2026-10-02T10:00:00.000Z",
       body: "Quarterly plans attached.",
       bodyFormat: "plain",
       hasAttachment: true,
-      attachments: [],
+      attachments: [
+        {
+          objectId: "44444444-4444-4444-8444-444444444444",
+          filename: "plan.pdf",
+          mimeType: "application/pdf",
+          byteSize: 2048,
+          disposition: "attachment",
+          inline: false,
+          downloadUrl: "/v1/api/mail/attachments/x",
+        },
+      ],
     },
   ],
 };
 
-let container: HTMLDivElement;
-let root: Root;
-
 beforeEach(() => {
-  api.replyToMail.mockClear();
-  api.forwardMail.mockClear();
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-  act(() => {
-    root.render(
-      <QueryClientProvider client={new QueryClient()}>
-        <ThreadView
-          row={row}
-          detail={detail}
-          loading={false}
-          error={null}
-          retrying={false}
-          onRetry={() => undefined}
-          folder="inbox"
-          labels={[]}
-          labelsBySlug={new Map()}
-          position={null}
-          myAddress={null}
-          initialReply={null}
-          onBack={() => undefined}
-          onAction={() => undefined}
-          onMarkUnread={() => undefined}
-          onSnooze={() => undefined}
-          onMove={() => undefined}
-        />
-      </QueryClientProvider>,
-    );
-  });
-});
-
-afterEach(() => {
-  act(() => {
-    root.unmount();
-  });
-  container.remove();
-});
-
-function click(text: string) {
-  const button = Array.from(container.querySelectorAll("button")).find(
-    (candidate) => candidate.textContent?.trim().endsWith(text) === true,
+  vi.clearAllMocks();
+  const result = {
+    id: "55555555-5555-4555-8555-555555555555",
+    threadId: "thread-1",
+    undoUntil: new Date(Date.now() + 30_000).toISOString(),
+  };
+  api.replyToMail.mockResolvedValue(result);
+  api.forwardMail.mockResolvedValue({ ...result, threadId: "thread-2" });
+  api.saveMailDraft.mockResolvedValue({ id: "66666666-6666-4666-8666-666666666666", revision: 1 });
+  renderWithClient(
+    <ThreadView
+      row={row}
+      detail={detail}
+      loading={false}
+      error={null}
+      retrying={false}
+      onRetry={() => undefined}
+      folder="inbox"
+      labels={[]}
+      labelsBySlug={new Map()}
+      position={null}
+      myAddress={null}
+      initialReply={null}
+      onBack={() => undefined}
+      onAction={() => undefined}
+      onMarkUnread={() => undefined}
+      onSnooze={() => undefined}
+      onMove={() => undefined}
+    />,
   );
-  if (button === undefined) throw new Error(`Button not found: ${text}`);
-  act(() => {
-    button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-  });
+});
+
+afterEach(unmountAll);
+
+function panel(): HTMLElement {
+  const section = document.querySelector<HTMLElement>("section.reply-panel");
+  if (section === null) throw new Error("No reply panel");
+  return section;
 }
 
-function field(label: string): HTMLInputElement | HTMLTextAreaElement {
-  const element = container.querySelector(`[aria-label="${label}"]`);
-  if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement))
-    throw new Error(`Field not found: ${label}`);
-  return element;
+async function openReply(label: "Reply" | "Reply all" | "Forward") {
+  click(buttonByText(label));
+  await waitFor(() => document.querySelector(`section[aria-label="${label}"]`) !== null);
 }
 
-function type(label: string, value: string) {
-  const input = field(label);
-  const proto =
-    input instanceof HTMLTextAreaElement
-      ? HTMLTextAreaElement.prototype
-      : HTMLInputElement.prototype;
-  const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
-  act(() => {
-    setter?.call(input, value);
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-}
+describe("inline reply", () => {
+  it("shows who the reply goes to, never me, and sends to exactly those chips", async () => {
+    await openReply("Reply");
+    const summary = panel().querySelector(".reply-recipients-summary");
+    expect(summary?.textContent).toBe("To: Samara");
+    expect(panel().textContent).not.toMatch(/Replying to|Me</u);
+    expect(await axeViolations(panel())).toEqual([]);
 
-async function flush() {
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  });
-}
-
-describe("thread reply actions (ML4e)", () => {
-  it("Reply lets the server choose the sender's Reply-To/From and threading headers", async () => {
-    click("Reply");
-    type("Reply body", "Sounds good");
-    click("Send");
-    await flush();
+    typeBody("<div>Sounds good</div>", panel());
+    click(buttonByText("Send", panel()));
+    await waitFor(() => api.replyToMail.mock.calls.length === 1);
     expect(api.replyToMail).toHaveBeenCalledWith(
-      expect.objectContaining({ threadId: "thread-1", replyAll: false, bodyText: "Sounds good" }),
+      expect.objectContaining({
+        threadId: "thread-1",
+        messageId: "message-2",
+        to: [{ address: "samara@example.com", name: "Samara" }],
+        cc: [],
+        subject: "Re: Plans",
+        bodyText: "Sounds good",
+      }),
     );
-    const [input] = api.replyToMail.mock.calls[0] as unknown as [Record<string, unknown>];
-    expect(input).not.toHaveProperty("to");
+    expect(api.replyToMail.mock.calls[0]?.[0]).not.toHaveProperty("replyAll");
+    await waitFor(() => document.querySelector("section.reply-panel") === null);
+    expect(toasts.notify.mock.calls.at(-1)?.[0]).toMatchObject({
+      message: "Message sent",
+      action: { label: "Undo" },
+      secondaryAction: { label: "View message" },
+    });
   });
 
-  it("Reply all asks the server for every original recipient", async () => {
-    click("Reply all");
-    expect(container.textContent).toContain("Replying all");
-    type("Reply body", "Thanks all");
-    click("Send");
-    await flush();
+  it("Reply all adds the other recipients, and the recipients can be edited", async () => {
+    await openReply("Reply all");
+    expect(panel().querySelector(".reply-recipients-summary")?.textContent).toBe(
+      "To: Samara, Carol",
+    );
+    click(panel().querySelector(".reply-recipients-summary"));
+    await settle();
+    expect(byLabel("To recipients", panel()).textContent).toContain("Samara");
+    expect(byLabel("Cc recipients", panel()).textContent).toContain("Carol");
+    click(byLabel("Remove Carol", panel()));
+    addRecipient("To", "dana@example.com", panel());
+    typeBody("<div>Thanks all</div>", panel());
+    click(buttonByText("Send", panel()));
+    await waitFor(() => api.replyToMail.mock.calls.length === 1);
     expect(api.replyToMail).toHaveBeenCalledWith(
-      expect.objectContaining({ threadId: "thread-1", replyAll: true, bodyText: "Thanks all" }),
+      expect.objectContaining({
+        to: [{ address: "samara@example.com", name: "Samara" }, { address: "dana@example.com" }],
+        cc: [],
+      }),
     );
   });
 
-  it("Forward opens a composer with Fwd: and the quoted original, then calls mail.forward", async () => {
-    click("Forward");
-    expect(field("Forward subject").value).toBe("Fwd: Plans");
-    const quote = container.querySelector('[aria-label="Forwarded message"]')?.textContent ?? "";
+  it("switches between Reply, Reply all, and Forward and can edit the subject", async () => {
+    await openReply("Reply");
+    typeBody("<div>Draft text</div>", panel());
+    await openMenu(byLabel("Reply: change response type", panel()));
+    const items = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]'));
+    expect(items.map((item) => item.textContent)).toEqual([
+      "Reply",
+      "Reply all",
+      "Forward",
+      "Edit subject",
+    ]);
+    act(() => {
+      items[1]?.focus();
+    });
+    await key("Enter");
+    await waitFor(() => document.querySelector('section[aria-label="Reply all"]') !== null);
+    expect(panel().querySelector(".reply-recipients-summary")?.textContent).toBe(
+      "To: Samara, Carol",
+    );
+    expect(byLabel("Message body", panel()).innerHTML).toBe("<div>Draft text</div>");
+
+    await openMenu(byLabel("Reply all: change response type", panel()));
+    const edit = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).at(-1);
+    act(() => {
+      edit?.focus();
+    });
+    await key("Enter");
+    expect(byLabel<HTMLInputElement>("Subject", panel()).value).toBe("Re: Plans");
+  });
+
+  it("forwards the original message with its attachments", async () => {
+    await openReply("Forward");
+    expect(byLabel<HTMLInputElement>("Subject", panel()).value).toBe("Fwd: Plans");
+    const quote = byLabel("Forwarded message", panel()).textContent ?? "";
     expect(quote).toContain("---------- Forwarded message ---------");
-    expect(quote).toContain("From: Friend <friend@example.com>");
+    expect(quote).toContain("From: Samara <samara@example.com>");
     expect(quote).toContain("Quarterly plans attached.");
-    expect(quote).toContain("Attachments are forwarded with the message.");
-    type("Forward recipients", "boss@example.com");
-    click("Send");
-    await flush();
+    expect(byLabel("Forwarded attachments", panel()).textContent).toContain("plan.pdf");
+
+    addRecipient("To", "boss@example.com", panel());
+    click(buttonByText("Send", panel()));
+    await waitFor(() => api.forwardMail.mock.calls.length === 1);
     expect(api.forwardMail).toHaveBeenCalledWith(
       expect.objectContaining({
         threadId: "thread-1",
         messageId: "message-2",
         to: [{ address: "boss@example.com" }],
         subject: "Fwd: Plans",
+        includeAttachments: true,
       }),
     );
     expect(api.replyToMail).not.toHaveBeenCalled();
   });
 
-  it("never doubles the forward prefix", () => {
-    expect(forwardSubject("Fwd: Plans")).toBe("Fwd: Plans");
-    expect(forwardSubject("FW: Plans")).toBe("FW: Plans");
-    expect(forwardSubject("Re: Plans")).toBe("Fwd: Re: Plans");
+  it("can forward without the original attachments", async () => {
+    await openReply("Forward");
+    const toggle = Array.from(
+      panel().querySelectorAll<HTMLInputElement>('input[type="checkbox"]'),
+    )[0];
+    click(toggle ?? null);
+    addRecipient("To", "boss@example.com", panel());
+    click(buttonByText("Send", panel()));
+    await waitFor(() => api.forwardMail.mock.calls.length === 1);
+    expect(api.forwardMail).toHaveBeenCalledWith(
+      expect.objectContaining({ includeAttachments: false }),
+    );
   });
 });

@@ -92,6 +92,7 @@ export interface MailThreadMessage {
   readonly id: string;
   readonly subject?: string;
   readonly from?: MailApiAddress;
+  readonly replyTo?: readonly MailApiAddress[];
   readonly to: readonly MailApiAddress[];
   readonly cc: readonly MailApiAddress[];
   readonly bcc: readonly MailApiAddress[];
@@ -170,6 +171,8 @@ export interface MailSendInput {
   readonly bcc?: readonly MailApiAddress[];
   readonly subject: string;
   readonly bodyText: string;
+  /** Sanitized HTML alternative; omitted for plain-text messages. */
+  readonly bodyHtml?: string;
   readonly attachments?: readonly MailAttachment[];
   readonly sendAt?: string;
 }
@@ -184,7 +187,7 @@ export interface MailReplyInput extends Omit<MailSendInput, "to" | "subject"> {
   readonly replyAll?: boolean;
 }
 
-export interface MailForwardInput extends Omit<MailSendInput, "draft" | "attachments"> {
+export interface MailForwardInput extends Omit<MailSendInput, "draft"> {
   readonly threadId: string;
   readonly messageId: string;
   readonly includeAttachments?: boolean;
@@ -330,34 +333,38 @@ export async function listMailLabels(
   return output.labels ?? [];
 }
 
+/** Fields every send tool shares: sender, body, attachments, schedule, retry key. */
+function deliveryFields(input: Omit<MailSendInput, "to" | "subject">) {
+  return {
+    ...(input.draft === undefined ? {} : { draft: input.draft }),
+    ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
+    ...(input.from === undefined ? {} : { from: input.from }),
+    cc: input.cc ?? [],
+    bcc: input.bcc ?? [],
+    bodyText: input.bodyText,
+    ...(input.bodyHtml === undefined ? {} : { bodyHtml: input.bodyHtml }),
+    ...(input.sendAt === undefined ? {} : { sendAt: input.sendAt }),
+    ...(input.attachments !== undefined && input.attachments.length > 0
+      ? {
+          attachments: input.attachments.map((attachment) => ({
+            objectId: attachment.objectId,
+            ...(attachment.filename === undefined ? {} : { filename: attachment.filename }),
+            ...(attachment.contentType === undefined
+              ? {}
+              : { contentType: attachment.contentType }),
+          })),
+        }
+      : {}),
+  };
+}
+
 export async function sendMail(
   input: MailSendInput,
   fetchImpl: MailApiFetch = authenticatedFetch,
 ): Promise<MailSendResult> {
   return callMailTool<MailSendResult>(
     "mail.send",
-    {
-      ...(input.draft === undefined ? {} : { draft: input.draft }),
-      ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
-      ...(input.from === undefined ? {} : { from: input.from }),
-      to: input.to,
-      cc: input.cc ?? [],
-      bcc: input.bcc ?? [],
-      subject: input.subject,
-      bodyText: input.bodyText,
-      ...(input.sendAt === undefined ? {} : { sendAt: input.sendAt }),
-      ...(input.attachments !== undefined && input.attachments.length > 0
-        ? {
-            attachments: input.attachments.map((attachment) => ({
-              objectId: attachment.objectId,
-              ...(attachment.filename === undefined ? {} : { filename: attachment.filename }),
-              ...(attachment.contentType === undefined
-                ? {}
-                : { contentType: attachment.contentType }),
-            })),
-          }
-        : {}),
-    },
+    { ...deliveryFields(input), to: input.to, subject: input.subject },
     fetchImpl,
   );
 }
@@ -381,16 +388,12 @@ export async function replyToMail(
   return callMailTool<MailSendResult>(
     "mail.reply",
     {
+      ...deliveryFields(input),
       threadId: input.threadId,
       ...(input.messageId === undefined ? {} : { messageId: input.messageId }),
       ...(input.replyAll === true ? { replyAll: true } : {}),
-      ...(input.from === undefined ? {} : { from: input.from }),
       ...(input.to === undefined ? {} : { to: input.to }),
-      cc: input.cc ?? [],
-      bcc: input.bcc ?? [],
       ...(input.subject === undefined ? {} : { subject: input.subject }),
-      bodyText: input.bodyText,
-      ...(input.sendAt === undefined ? {} : { sendAt: input.sendAt }),
     },
     fetchImpl,
   );
@@ -404,18 +407,14 @@ export async function forwardMail(
   return callMailTool<MailSendResult>(
     "mail.forward",
     {
+      ...deliveryFields(input),
       threadId: input.threadId,
       messageId: input.messageId,
-      ...(input.from === undefined ? {} : { from: input.from }),
       to: input.to,
-      cc: input.cc ?? [],
-      bcc: input.bcc ?? [],
       subject: input.subject,
-      bodyText: input.bodyText,
       ...(input.includeAttachments === undefined
         ? {}
         : { includeAttachments: input.includeAttachments }),
-      ...(input.sendAt === undefined ? {} : { sendAt: input.sendAt }),
     },
     fetchImpl,
   );
@@ -488,15 +487,16 @@ export async function cancelOutboundMail(
   return output.outbound ?? null;
 }
 
-export async function listMailDrafts(
+export async function getMailDraft(
+  id: string,
   fetchImpl: MailApiFetch = authenticatedFetch,
-): Promise<readonly MailDraft[]> {
-  const output = await callMailTool<{ readonly drafts?: readonly MailDraft[] }>(
-    "mail.draft.list",
-    {},
+): Promise<MailDraft | null> {
+  const output = await callMailTool<{ readonly draft?: MailDraft | null }>(
+    "mail.draft.get",
+    { id },
     fetchImpl,
   );
-  return output.drafts ?? [];
+  return output.draft ?? null;
 }
 
 export async function saveMailDraft(

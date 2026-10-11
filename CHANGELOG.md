@@ -128,6 +128,17 @@ All notable changes to Helix Workspace are documented here. This file follows
   `SEQUENCE` updates apply, and `CANCEL` cancels the imported event. The import sends no mail,
   skips spam-routed messages and events the recipient already has, ignores calendars over
   1 MiB or 1,000 VEVENTs, and never fails mail delivery.
+- Mail compose opens as a docked window you can minimize, expand to full size, or stack with
+  other drafts (full screen on phones). It has recipient chips with Cc/Bcc, a formatting
+  toolbar, plain text mode, emoji and links, attachment chips that show upload and malware-scan
+  status, and Send ▾ with Schedule send presets (from your time zone and working hours) or any
+  date and time. Messages autosave to Drafts, and ⌘/Ctrl+Enter sends; ⌘/Ctrl+Shift+C and B add
+  Cc and Bcc.
+- After sending, a snackbar offers Undo (reopens the message) and View message; scheduled sends
+  link to the Scheduled view.
+- Replies open inline at the end of the conversation with "To: …" recipient chips you can edit,
+  a menu to switch between Reply, Reply all and Forward or to edit the subject, and forwards
+  that include the original attachments (or not, if you untick them).
 - Settings → Mail with General, Labels, and Filters and blocked addresses tabs; link to a tab
   with `?settings=mail/<tab>`. General holds conversation view, reading pane, density, the
   signature and the vacation responder (first and last day, subject, message). Labels lists your
@@ -138,9 +149,9 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Changed
 
+- Compose always starts a blank message; drafts are resumed from Drafts.
 - Blocked senders moved from the Mail signature page to Settings → Mail → Filters and blocked
   addresses; the separate Mail signature settings page is gone.
-
 - Every quota (storage, AI tokens and images, actors, outbound webhooks, integration API
   requests per second, export jobs per hour) defaults to unlimited, and agent and AI cost
   budgets have no default for any security tier; an org admin may still set a cap (ADR-0030).

@@ -19,13 +19,12 @@ import type {
   MailThreadsListInput,
 } from "./api";
 import { collectThreadIds, type MailAction } from "./mail-actions";
-import { Compose } from "./mail-compose";
+import { ComposeHost, openCompose } from "./compose";
 import type { MoveTarget } from "./mail-menus";
 import { useMailReadingPane, useMailShowAvatars } from "./mail-preferences";
 import type { ReplyMode } from "./mail-reply-panel";
 import { MailSearchOptions } from "./mail-search-options";
 import "./mail-list.css";
-import "./mail-shell.css";
 import { MailSidebar, type MailDropTarget } from "./mail-sidebar";
 import { ThreadList } from "./mail-thread-list";
 import { ThreadView } from "./mail-thread-view";
@@ -115,7 +114,6 @@ export function MailShell() {
   const [offset, setOffset] = useState(0);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [allMatching, setAllMatching] = useState(false);
-  const [composeOpen, setComposeOpen] = useState(false);
   const [replyIntent, setReplyIntent] = useState<{
     readonly threadId: string;
     readonly mode: ReplyMode;
@@ -233,6 +231,11 @@ export function MailShell() {
 
   const openThread = useCallback(
     (row: MailThreadRow) => {
+      // A saved draft (no sent messages yet) resumes in a compose window.
+      if (row.folder === "drafts" && row.messageCount === 0) {
+        openCompose({ draftId: row.messageId });
+        return;
+      }
       setView({ thread: row.threadId });
       if (row.unread) void run([row.threadId], { kind: "read", unread: false }, { quiet: true });
     },
@@ -291,7 +294,7 @@ export function MailShell() {
     openThreadId: openRow?.threadId ?? null,
     selectedIds,
     onSelectedChange: setSelectedIds,
-    onCompose: () => setComposeOpen(true),
+    onCompose: () => openCompose(),
     onOpen: (threadId) => {
       const row = rows.find((entry) => entry.threadId === threadId);
       if (row !== undefined) openThread(row);
@@ -335,7 +338,7 @@ export function MailShell() {
       onOpen={openThread}
       onRefresh={() => void queryClient.invalidateQueries({ queryKey: ["mail"] })}
       onMarkAllRead={markAllRead}
-      onCompose={() => setComposeOpen(true)}
+      onCompose={() => openCompose()}
       showAvatars={showAvatars}
       onAction={onAction}
       onSnooze={(ids, until) => onAction(ids, { kind: "snooze", until })}
@@ -425,7 +428,7 @@ export function MailShell() {
           onFolder={(next) => goTo({ folder: next })}
           onCategory={(next) => goTo({ tab: next })}
           onLabel={(slug) => goTo({ label: slug })}
-          onCompose={() => setComposeOpen(true)}
+          onCompose={() => openCompose()}
           onDrop={drop}
         />
         <div
@@ -451,12 +454,7 @@ export function MailShell() {
           )}
         </div>
       </SurfaceFrame>
-      {composeOpen ? (
-        <Compose
-          onClose={() => setComposeOpen(false)}
-          onSent={() => void queryClient.invalidateQueries({ queryKey: ["mail"] })}
-        />
-      ) : null}
+      <ComposeHost />
     </>
   );
 }

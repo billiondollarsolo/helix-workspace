@@ -1,12 +1,10 @@
 /* Chat view model — adapts the backend room/message shapes (`api.ts`) onto
-   the view shapes the handoff UI (`chat-shell.tsx`) expects. The handoff was
-   hand-authored against a different shape; rather than force seed shapes onto
-   the backend, we derive a presentation model here.
+   the presentation shapes the Chat surface renders. Rooms are UUID-keyed
+   `ChatRoomRecord`s; messages are flat `ChatMessageRecord`s. Unread counts,
+   presence and read receipts are layered on from `chat.unread.list` and the
+   realtime socket. */
 
-   Backend rooms are UUID-keyed `ChatRoomRecord`s; messages are flat
-   `ChatMessageRecord`s with `actorId`/`body`/`sentAt`. Threading, reactions,
-   and presence are layered on from realtime events and local interaction. */
-
+import type { ChatRoomUnread } from "@helix/contracts";
 import type {
   ChatAttachmentRecord,
   ChatMessageRecord,
@@ -17,9 +15,6 @@ import type {
   ChatRoomRecord,
 } from "./api";
 
-/** Presence state for a sidebar entry — derived from the realtime roster. */
-type ChatPresenceState = "active" | "offline";
-
 /** A reaction pill — emoji glyph plus a running count and whether *you* reacted. */
 export interface ChatReactionView {
   readonly emoji: string;
@@ -27,21 +22,19 @@ export interface ChatReactionView {
   readonly mine: boolean;
 }
 
-/** A space (channel) row in the Spaces sidebar. */
-export interface ChatSpaceView {
+/** One conversation in the sidebar, Home feed and pickers. */
+export interface ChatConversationView {
   readonly id: string;
+  /** `dm` covers one-to-one and group conversations; `space` is a named room. */
+  readonly kind: "dm" | "space";
   readonly name: string;
-  readonly kind: "chat_room" | "chat_dm";
   readonly memberCount: number;
   readonly unread: number;
-}
-
-/** A direct-message peer row in the Direct messages sidebar. */
-export interface ChatDirectView {
-  readonly id: string;
-  readonly name: string;
-  readonly presence: ChatPresenceState;
-  readonly unread: number;
+  readonly mentions: number;
+  readonly lastMessageAt: string | null;
+  /** A one-to-one conversation's other person; null for spaces and groups. */
+  readonly peer: ChatRoomMemberRecord | null;
+  readonly active: boolean;
 }
 
 /** A presentation-ready message row. */
@@ -49,6 +42,7 @@ export interface ChatMessageView {
   readonly id: string;
   readonly actorId: string | null;
   readonly authorName: string;
+  readonly sentAt: string;
   readonly time: string;
   readonly body: string;
   readonly bodyFormat: string;
@@ -58,9 +52,10 @@ export interface ChatMessageView {
   readonly isMine: boolean;
   readonly editedAt: string | null;
   readonly reactions: readonly ChatReactionView[];
+  readonly replyCount: number;
+  readonly lastReplyAt: string | null;
+  readonly pinned: boolean;
   readonly readBy: number;
-  /** Actor ids (others) who have read through this message. */
-  readonly seenByActorIds: readonly string[];
   readonly pending?: boolean;
   readonly failed?: boolean;
   readonly clientMessageId?: string;
@@ -72,14 +67,15 @@ export interface ChatSeenMarker {
   readonly actorIds: readonly string[];
 }
 
-/** A member row for the info panel's Members tab. */
+/** A member row for the details panel and @mention suggestions. */
 export interface ChatMemberView {
   readonly actorId: string;
   readonly name: string;
+  readonly email: string | null;
   readonly role: "owner" | "moderator" | "member";
 }
 
-/** Per-room "about" metadata for the info panel's About tab. */
+/** Per-room "about" metadata for the details panel. */
 export interface ChatAboutView {
   readonly description: string;
   readonly createdBy: string;
@@ -87,113 +83,129 @@ export interface ChatAboutView {
   readonly memberCount: number;
 }
 
-const ISO_TIME = new Intl.DateTimeFormat(undefined, {
-  hour: "numeric",
-  minute: "2-digit",
-});
-
-const ISO_DATE = new Intl.DateTimeFormat(undefined, {
+const TIME_FORMAT = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
+const DATE_FORMAT = new Intl.DateTimeFormat(undefined, {
   month: "short",
   day: "numeric",
   year: "numeric",
 });
 
-export function formatChatTime(iso: string): string {
+function formatChatTime(iso: string): string {
   const parsed = new Date(iso);
-  return Number.isNaN(parsed.getTime()) ? iso : ISO_TIME.format(parsed);
+  return Number.isNaN(parsed.getTime()) ? iso : TIME_FORMAT.format(parsed);
 }
 
 function formatChatDate(iso: string): string {
   const parsed = new Date(iso);
-  return Number.isNaN(parsed.getTime()) ? iso : ISO_DATE.format(parsed);
+  return Number.isNaN(parsed.getTime()) ? iso : DATE_FORMAT.format(parsed);
 }
 
-/** Resolve a room's display name — explicit subject/settings, else a member list. */
-export function roomDisplayName(room: ChatRoomRecord, selfActorId: string | null): string {
+/** "12:40 PM" today, "Mon" this week, "Mar 3" this year, else "Mar 3, 2025". */
+export function formatChatWhen(iso: string, now: Date = new Date()): string {
+  const parsed = new Date(iso);
+  if (Number.isNaN(parsed.getTime())) return "";
+  if (parsed.toDateString() === now.toDateString()) return TIME_FORMAT.format(parsed);
+  const ageDays = (now.getTime() - parsed.getTime()) / 86_400_000;
+  if (ageDays >= 0 && ageDays < 6) {
+    return parsed.toLocaleDateString(undefined, { weekday: "short" });
+  }
+  return parsed.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    ...(parsed.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
+  });
+}
+
+/** A conversation's title: DMs name the other people, spaces use their name. */
+function roomDisplayName(room: ChatRoomRecord, selfActorId: string | null): string {
+  const others = (room.members ?? []).filter((m) => m.actorId !== selfActorId);
+  if (room.kind === "chat_dm") {
+    return others.length > 0 ? joinNames(others.map(memberDisplayName)) : "Direct message";
+  }
   const named = room.settings?.name ?? room.subject;
   if (named !== null && named !== undefined && named.trim().length > 0) {
     return named;
   }
-  const others = (room.members ?? []).filter((m) => m.actorId !== selfActorId);
-  if (others.length > 0) {
-    return others.map((m) => memberDisplayName(m)).join(", ");
-  }
-  return room.kind === "chat_dm" ? "Direct message" : "Untitled space";
+  return others.length > 0 ? joinNames(others.map(memberDisplayName)) : "Untitled space";
 }
 
-function memberDisplayName(member: ChatRoomMemberRecord): string {
+function joinNames(names: readonly string[]): string {
+  return new Intl.ListFormat(undefined, { style: "long", type: "conjunction" }).format(names);
+}
+
+export function memberDisplayName(member: ChatRoomMemberRecord): string {
   if (member.displayName !== null && member.displayName.trim().length > 0) {
     return member.displayName;
   }
   if (member.email !== null && member.email.trim().length > 0) {
     return member.email;
   }
-  return shortActorId(member.actorId);
+  return "Unknown person";
 }
 
-function shortActorId(actorId: string): string {
-  return actorId.length > 8 ? `User ${actorId.slice(0, 6)}` : actorId;
-}
-
-/** Split rooms into channels and DMs for the two sidebar sections. */
-export function partitionRooms(
+/**
+ * Sidebar rows for every room, with unread and mention counts from
+ * `chat.unread.list`. The order follows the server's most-recent-first list.
+ */
+export function conversationViews(
   rooms: readonly ChatRoomRecord[],
   selfActorId: string | null,
+  unread: readonly ChatRoomUnread[],
   presenceByActor: ReadonlyMap<string, boolean>,
-): { readonly spaces: readonly ChatSpaceView[]; readonly directs: readonly ChatDirectView[] } {
-  const spaces: ChatSpaceView[] = [];
-  const directs: ChatDirectView[] = [];
-
-  for (const room of rooms) {
-    if (room.kind === "chat_dm") {
-      const peer = (room.members ?? []).find((m) => m.actorId !== selfActorId);
-      directs.push({
-        id: room.id,
-        name: roomDisplayName(room, selfActorId),
-        presence:
-          peer !== undefined && presenceByActor.get(peer.actorId) === true ? "active" : "offline",
-        unread: 0,
-      });
-    } else {
-      spaces.push({
-        id: room.id,
-        name: roomDisplayName(room, selfActorId),
-        kind: room.kind,
-        memberCount: room.members?.length ?? 0,
-        unread: 0,
-      });
-    }
-  }
-
-  return { spaces, directs };
+): readonly ChatConversationView[] {
+  const unreadById = new Map(unread.map((entry) => [entry.roomId, entry]));
+  return rooms.map((room) => {
+    const others = (room.members ?? []).filter((m) => m.actorId !== selfActorId);
+    const peer = room.kind === "chat_dm" && others.length === 1 ? (others[0] ?? null) : null;
+    const counts = unreadById.get(room.id);
+    return {
+      id: room.id,
+      kind: room.kind === "chat_dm" ? "dm" : "space",
+      name: roomDisplayName(room, selfActorId),
+      memberCount: room.members?.length ?? 0,
+      unread: counts?.unreadCount ?? 0,
+      mentions: counts?.mentionCount ?? 0,
+      lastMessageAt: counts?.lastMessageAt ?? null,
+      peer,
+      active: peer !== null && presenceByActor.get(peer.actorId) === true,
+    };
+  });
 }
 
-/** Build the info panel "about" model from a room record. */
-export function roomAbout(room: ChatRoomRecord | undefined): ChatAboutView {
-  if (room === undefined) {
-    return {
-      description: "A Helix space.",
-      createdBy: "Helix",
-      createdAt: "",
-      memberCount: 0,
-    };
-  }
+/** Home feed order: unread conversations first, then most recently active. */
+export function homeFeed(
+  conversations: readonly ChatConversationView[],
+): readonly ChatConversationView[] {
+  const recency = (view: ChatConversationView) =>
+    view.lastMessageAt === null ? 0 : Date.parse(view.lastMessageAt);
+  return [...conversations].sort(
+    (a, b) => Number(b.unread > 0) - Number(a.unread > 0) || recency(b) - recency(a),
+  );
+}
+
+/** Build the details panel "about" model from a room record. */
+export function roomAbout(room: ChatRoomRecord): ChatAboutView {
   const creator = (room.members ?? []).find((m) => m.actorId === room.createdByActorId);
+  const topic = room.settings?.topic ?? null;
   return {
     description:
-      room.settings?.topic ??
-      (room.kind === "chat_dm" ? "Direct message conversation." : "A Helix chat space."),
-    createdBy: creator !== undefined ? memberDisplayName(creator) : "Helix",
+      topic !== null && topic.trim().length > 0
+        ? topic
+        : room.kind === "chat_dm"
+          ? "Direct message conversation."
+          : "No description yet.",
+    createdBy: creator !== undefined ? memberDisplayName(creator) : "",
     createdAt: formatChatDate(room.createdAt),
     memberCount: room.members?.length ?? 0,
   };
 }
 
-/** Build the Members-tab rows from a room's member list. */
+/** Members of a room for the details panel and @mention suggestions. */
 export function roomMembers(room: ChatRoomRecord | undefined): readonly ChatMemberView[] {
   return (room?.members ?? []).map((m) => ({
     actorId: m.actorId,
     name: memberDisplayName(m),
+    email: m.email,
     role: m.role,
   }));
 }
@@ -204,7 +216,6 @@ export function toMessageView(input: {
   readonly selfActorId: string | null;
   readonly nameForActor: (actorId: string | null) => string;
   readonly readBy: number;
-  readonly seenByActorIds?: readonly string[];
   readonly pending?: boolean;
   readonly failed?: boolean;
   readonly clientMessageId?: string;
@@ -214,6 +225,7 @@ export function toMessageView(input: {
     id: record.id,
     actorId: record.actorId,
     authorName: nameForActor(record.actorId),
+    sentAt: record.sentAt,
     time: formatChatTime(record.sentAt),
     body: record.body,
     bodyFormat: record.bodyFormat,
@@ -223,8 +235,10 @@ export function toMessageView(input: {
     isMine: record.actorId !== null && record.actorId === selfActorId,
     editedAt: record.editedAt,
     reactions: reactionViews(record.reactions ?? [], selfActorId),
+    replyCount: record.replyCount ?? 0,
+    lastReplyAt: record.lastReplyAt ?? null,
+    pinned: record.pin !== null && record.pin !== undefined,
     readBy,
-    seenByActorIds: input.seenByActorIds ?? [],
     ...(input.pending === undefined ? {} : { pending: input.pending }),
     ...(input.failed === undefined ? {} : { failed: input.failed }),
     ...(input.clientMessageId === undefined ? {} : { clientMessageId: input.clientMessageId }),

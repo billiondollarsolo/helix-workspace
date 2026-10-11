@@ -1,199 +1,228 @@
+/* Right-hand panels: the thread panel (a message and its replies, with a
+   reply composer; Esc closes it) and the conversation details panel (about,
+   members and pinned messages), which is closed until the header toggle
+   opens it. */
+
 import { Avatar } from "@/components/ui/avatar";
-import { Pin as PinIcon, X as XIcon } from "lucide-react";
-import { useState } from "react";
-import { ChatComposer, type ChatComposerSubmission } from "./chat-composer";
-import { ChatMessageBody } from "./chat-message-row";
+import { InlineError } from "@/components/ui/inline-error";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Pin as PinIcon, UserPlus as AddPeopleIcon, X as XIcon } from "lucide-react";
+import { useId, type ReactNode } from "react";
+import type { ChatPinRecord } from "./api";
+import { ChatMessageList } from "./chat-message-list";
+import type { ChatMessageActions } from "./chat-message-row";
 import {
-  formatChatTime,
+  formatChatWhen,
   type ChatAboutView,
   type ChatMemberView,
   type ChatMessageView,
 } from "./view-model";
 
-export type InfoTab = "about" | "members" | "files" | "pinned";
-
-/* ----------------------------------------------------------------
-   Thread panel — 360px
-   ---------------------------------------------------------------- */
+export type InfoTab = "about" | "members" | "pinned";
 
 interface ChatThreadPanelProps {
-  readonly roomId: string | undefined;
-  readonly spaceName: string;
+  readonly roomName: string;
   readonly parent: ChatMessageView;
+  readonly replies: readonly ChatMessageView[];
+  readonly status: "loading" | "error" | "ready";
+  readonly onRetry: () => void;
+  readonly actions: ChatMessageActions;
+  readonly composer: ReactNode;
   readonly onClose: () => void;
-  readonly onReply: (submission: ChatComposerSubmission) => void;
-  readonly onTyping: (isTyping: boolean) => void;
 }
 
 export function ChatThreadPanel({
-  roomId,
-  spaceName,
+  roomName,
   parent,
+  replies,
+  status,
+  onRetry,
+  actions,
+  composer,
   onClose,
-  onReply,
-  onTyping,
 }: ChatThreadPanelProps) {
+  const titleId = useId();
   return (
-    <aside className="chat-thread-panel" aria-label="Thread">
-      <header className="chat-thread-header">
-        <div>
-          <div className="chat-thread-title">Thread</div>
-          <div className="chat-thread-sub">in #{spaceName}</div>
+    <aside className="chat-side-panel chat-thread-panel" aria-labelledby={titleId}>
+      <header className="chat-side-header">
+        <div className="chat-side-titles">
+          <h2 id={titleId} className="chat-side-title">
+            Thread
+          </h2>
+          <span className="chat-side-sub">{roomName}</span>
         </div>
-        <button
-          type="button"
-          className="icon-btn chat-thread-close"
-          aria-label="Close thread"
-          onClick={onClose}
-        >
-          <XIcon size={16} />
+        <button type="button" className="icon-btn" aria-label="Close thread" onClick={onClose}>
+          <XIcon size={18} aria-hidden="true" />
         </button>
       </header>
-
-      <div className="chat-thread-body">
-        <div className="chat-thread-parent">
-          <Avatar name={parent.authorName} size={28} />
-          <div className="chat-msg-main">
-            <div className="chat-msg-head">
-              <span className="chat-thread-author">{parent.authorName}</span>
-              <span className="chat-thread-time">{parent.time}</span>
-            </div>
-            <ChatMessageBody className="chat-thread-line" message={parent} />
-          </div>
+      {status === "error" ? (
+        <div className="chat-side-state">
+          <InlineError
+            variant="compact"
+            title="Couldn’t load replies"
+            message="Check your connection and try again."
+            onRetry={onRetry}
+          />
         </div>
-
-        <div className="chat-thread-divider">Reply in #{spaceName}</div>
-      </div>
-
-      <ChatComposer
-        roomId={roomId}
-        placeholder="Reply to thread…"
-        disabled={roomId === undefined}
-        compact
-        onSend={onReply}
-        onTyping={onTyping}
+      ) : null}
+      <ChatMessageList
+        key={parent.id}
+        label="Thread replies"
+        messages={status === "ready" ? [parent, ...replies] : [parent]}
+        actions={actions}
       />
+      {status === "loading" ? <Skeleton variant="text" count={2} label="Loading replies" /> : null}
+      {composer}
     </aside>
   );
 }
 
-/* ----------------------------------------------------------------
-   Info panel — 260px tabbed
-   ---------------------------------------------------------------- */
-
-interface ChatInfoPanelProps {
-  readonly onClose: () => void;
-  readonly tab: InfoTab;
-  readonly onTabChange: (tab: InfoTab) => void;
+interface ChatDetailsPanelProps {
+  readonly id: string;
   readonly about: ChatAboutView;
   readonly members: readonly ChatMemberView[];
-  readonly pins: readonly { readonly messageId: string; readonly createdAt: string }[];
-  readonly onInvite: (raw: string) => void;
+  readonly pins: readonly ChatPinRecord[];
+  readonly messageById: (messageId: string) => ChatMessageView | undefined;
+  readonly tab: InfoTab;
+  readonly onTabChange: (tab: InfoTab) => void;
+  readonly onAddPeople?: (() => void) | undefined;
+  readonly onJumpToMessage: (messageId: string) => void;
+  readonly onClose: () => void;
 }
 
-export function ChatInfoPanel({
-  tab,
-  onTabChange,
+export function ChatDetailsPanel({
+  id,
   about,
   members,
   pins,
-  onInvite,
+  messageById,
+  tab,
+  onTabChange,
+  onAddPeople,
+  onJumpToMessage,
   onClose,
-}: ChatInfoPanelProps) {
-  const [inviteDraft, setInviteDraft] = useState("");
-  const tabs: ReadonlyArray<{ readonly id: InfoTab; readonly label: string }> = [
+}: ChatDetailsPanelProps) {
+  const tabs: readonly { readonly id: InfoTab; readonly label: string }[] = [
     { id: "about", label: "About" },
-    { id: "members", label: `Members · ${String(members.length)}` },
-    { id: "files", label: "Files" },
-    { id: "pinned", label: `Pinned · ${String(pins.length)}` },
+    { id: "members", label: `Members (${String(members.length)})` },
+    { id: "pinned", label: `Pinned (${String(pins.length)})` },
   ];
-
   return (
-    <aside className="chat-info-panel" aria-label="Channel info">
-      <button type="button" className="icon-btn" aria-label="Close channel info" onClick={onClose}>
-        <XIcon size={16} />
-      </button>
-      <div className="chat-info-tabs" role="tablist">
+    <aside id={id} className="chat-side-panel chat-details-panel" aria-labelledby={`${id}-title`}>
+      <header className="chat-side-header">
+        <h2 id={`${id}-title`} className="chat-side-title">
+          Details
+        </h2>
+        <button type="button" className="icon-btn" aria-label="Close details" onClick={onClose}>
+          <XIcon size={18} aria-hidden="true" />
+        </button>
+      </header>
+      <div className="tabs chat-details-tabs" role="tablist" aria-label="Details">
         {tabs.map((item) => (
           <button
             key={item.id}
+            id={`${id}-tab-${item.id}`}
             type="button"
             role="tab"
             aria-selected={tab === item.id}
-            className={`tab chat-info-tab ${tab === item.id ? "active" : ""}`}
-            onClick={() => {
-              onTabChange(item.id);
+            aria-controls={`${id}-panel`}
+            tabIndex={tab === item.id ? 0 : -1}
+            className={`tab ${tab === item.id ? "active" : ""}`}
+            onClick={() => onTabChange(item.id)}
+            onKeyDown={(event) => {
+              if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+              const index = tabs.findIndex((candidate) => candidate.id === tab);
+              const next =
+                tabs[(index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length];
+              if (next === undefined) return;
+              onTabChange(next.id);
+              document.getElementById(`${id}-tab-${next.id}`)?.focus();
             }}
           >
             {item.label}
           </button>
         ))}
       </div>
-
-      <div className="chat-info-body" role="tabpanel">
+      <div
+        id={`${id}-panel`}
+        className="chat-details-body"
+        role="tabpanel"
+        aria-labelledby={`${id}-tab-${tab}`}
+      >
         {tab === "about" ? (
           <>
-            <p className="chat-info-about">{about.description}</p>
-            <p className="chat-info-created">
-              Created by {about.createdBy}
-              {about.createdAt.length > 0 ? ` · ${about.createdAt}` : ""}
-            </p>
+            <p className="chat-details-about">{about.description}</p>
+            {about.createdBy.length > 0 ? (
+              <p className="chat-details-meta">
+                Created by {about.createdBy} · {about.createdAt}
+              </p>
+            ) : (
+              <p className="chat-details-meta">Created {about.createdAt}</p>
+            )}
           </>
         ) : null}
 
         {tab === "members" ? (
           <>
-            <div className="chat-info-invite">
-              <input
-                type="text"
-                aria-label="Invite actor ids"
-                placeholder="Actor UUIDs"
-                value={inviteDraft}
-                onChange={(e) => {
-                  setInviteDraft(e.target.value);
-                }}
-              />
-              <button
-                type="button"
-                className="btn sm"
-                disabled={inviteDraft.trim().length === 0}
-                onClick={() => {
-                  onInvite(inviteDraft);
-                  setInviteDraft("");
-                }}
-              >
+            {onAddPeople === undefined ? null : (
+              <button type="button" className="btn sm chat-details-add" onClick={onAddPeople}>
+                <AddPeopleIcon size={16} aria-hidden="true" />
                 Add people
               </button>
-            </div>
-            {members.length === 0 ? (
-              <p className="chat-info-empty">No members.</p>
-            ) : (
-              members.map((member) => (
-                <div key={member.actorId} className="chat-info-member">
-                  <Avatar name={member.name} size={22} />
-                  <div className="chat-info-member-text">
-                    <div className="chat-info-member-name truncate">{member.name}</div>
-                    <div className="chat-info-member-role truncate">{member.role}</div>
-                  </div>
-                </div>
-              ))
             )}
+            <ul className="chat-member-list" aria-label="Members">
+              {members.map((member) => (
+                <li key={member.actorId} className="chat-member">
+                  <Avatar name={member.name} size={28} />
+                  <span className="chat-member-text">
+                    <span className="chat-member-name">{member.name}</span>
+                    <span className="chat-member-role">
+                      {member.role === "owner"
+                        ? "Owner"
+                        : member.role === "moderator"
+                          ? "Manager"
+                          : (member.email ?? "Member")}
+                    </span>
+                  </span>
+                </li>
+              ))}
+            </ul>
           </>
         ) : null}
 
-        {tab === "files" ? <p className="chat-info-empty">No shared files yet.</p> : null}
-
         {tab === "pinned" ? (
           pins.length === 0 ? (
-            <p className="chat-info-empty">No pinned messages yet.</p>
+            <p className="chat-details-meta">
+              Nothing is pinned yet. Pin a message from its More menu.
+            </p>
           ) : (
-            pins.map((pin) => (
-              <div key={pin.messageId} className="chat-info-pin">
-                <PinIcon size={12} />
-                <span className="truncate">{pin.messageId.slice(0, 8)}…</span>
-                <span className="chat-info-pin-time">{formatChatTime(pin.createdAt)}</span>
-              </div>
-            ))
+            <ul className="chat-pin-list" aria-label="Pinned messages">
+              {pins.map((pin) => {
+                const message = messageById(pin.messageId);
+                return (
+                  <li key={pin.messageId}>
+                    <button
+                      type="button"
+                      className="chat-pin"
+                      onClick={() => onJumpToMessage(pin.messageId)}
+                    >
+                      <PinIcon size={14} aria-hidden="true" />
+                      <span className="chat-pin-text">
+                        <span className="chat-pin-author">
+                          {message?.authorName ?? "Pinned message"}
+                        </span>
+                        <span className="chat-pin-preview">
+                          {message?.body ?? "Open to view this message."}
+                        </span>
+                      </span>
+                      <time className="chat-pin-time" dateTime={pin.createdAt}>
+                        {formatChatWhen(pin.createdAt)}
+                      </time>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
           )
         ) : null}
       </div>

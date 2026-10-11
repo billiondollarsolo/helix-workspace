@@ -225,6 +225,7 @@ describe("Chat durable realtime events", { skip: process.env.DATABASE_URL === un
     expect(history.find(({ id }) => id === root.id)).toMatchObject({
       body: "projection root edited",
       replyCount: 1,
+      lastReplyAt: expect.any(Date),
       reactions: [expect.objectContaining({ actorId: OWNER, emoji: "👍" })],
       pin: expect.objectContaining({ pinnedByActorId: OWNER }),
     });
@@ -257,6 +258,7 @@ describe("Chat durable realtime events", { skip: process.env.DATABASE_URL === un
         id: root.id,
         body: "projection root edited",
         replyCount: 1,
+        lastReplyAt: expect.any(String),
         reactions: [expect.objectContaining({ emoji: "👍" })],
         pin: expect.objectContaining({ messageId: root.id }),
       },

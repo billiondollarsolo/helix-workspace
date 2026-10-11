@@ -1,554 +1,297 @@
+/* Chat surface: navigation (New chat, Home, Mentions, direct messages and
+   spaces), the open view, and the search results panel. On phones the
+   conversation list comes first and a conversation opens full screen. */
+
 import { SurfaceFrame } from "@/components/shell";
+import { useOnline } from "@/components/shell/network-status";
+import { useMobileLayout } from "@/components/shell/use-mobile-layout";
+import { EmptyState } from "@/components/ui/empty-state";
+import { InlineError } from "@/components/ui/inline-error";
+import { Skeleton } from "@/components/ui/skeleton";
+import { ComposeHost } from "@/features/mail/compose";
 import { sessionUserQueryOptions } from "@/lib/auth";
 import { useShortcuts } from "@/lib/shortcuts/use-shortcuts";
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { ChatMention, ChatSearchHit } from "@helix/contracts";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import { MessageCircle as ChatIcon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  createChatRoom,
-  deleteChatMessage,
-  editChatMessage,
-  inviteToRoom,
-  pinChatMessage,
-  reactToChatMessage,
-  replyInThread,
-  sendChatMessage,
-  type ChatMessageRecord,
-  type ChatRoomRecord,
-} from "./api";
-import { ChatComposer, type ChatComposerSubmission } from "./chat-composer";
-import { ChatMessageList } from "./chat-message-list";
-import { ChatTypingIndicator } from "./chat-message-row";
-import { ChatInfoPanel, ChatThreadPanel, type InfoTab } from "./chat-panels";
+import { MessageCircle as ChatIcon, MessagesSquare as ChatsIcon } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { ChatConversation } from "./chat-conversation";
+import { ChatHome, ChatMentions } from "./chat-home";
+import { ChatSearchPanel } from "./chat-search";
 import "./chat-shell.css";
-import { ChatChannelHeader, ChatSidebar } from "./chat-sidebar";
-import {
-  chatMessageListInfiniteQueryOptions,
-  chatPinsQueryOptions,
-  chatQueryKeys,
-  chatRoomListQueryOptions,
-} from "./queries";
+import { ChatSidebar, type ChatView } from "./chat-sidebar";
+import { NewChat } from "./new-chat";
+import { chatQueryKeys, chatRoomListQueryOptions, chatUnreadQueryOptions } from "./queries";
 import { useChatRealtime } from "./use-chat-realtime";
-import {
-  partitionRooms,
-  presenceMap,
-  readCountFor,
-  roomAbout,
-  roomDisplayName,
-  roomMembers,
-  seenByForMessage,
-  toMessageView,
-  type ChatAboutView,
-  type ChatMemberView,
-  type ChatMessageView,
-} from "./view-model";
+import { useDirectMessageHandoff } from "./use-dm-handoff";
+import { conversationViews, memberDisplayName, presenceMap } from "./view-model";
+
+interface ChatRouteSearch {
+  readonly room?: string;
+  readonly thread?: string;
+  readonly message?: string;
+  readonly view?: "mentions";
+  readonly dm?: string;
+}
+
+function viewFromSearch(search: ChatRouteSearch): ChatView {
+  if (search.room !== undefined) return { kind: "room", roomId: search.room };
+  return search.view === "mentions" ? { kind: "mentions" } : { kind: "home" };
+}
 
 export function ChatShell() {
-  const queryClient = useQueryClient();
-  const sessionUser = useQuery(sessionUserQueryOptions()).data;
+  const urlSearch: ChatRouteSearch = useSearch({ strict: false });
   const navigate = useNavigate();
-  const urlSearch: Partial<{ room: string; thread: string; tab: InfoTab }> = useSearch({
-    strict: false,
-  });
-  const [activeRoomId, setActiveRoomId] = useState<string | undefined>(urlSearch.room);
+  const queryClient = useQueryClient();
+  const online = useOnline();
+  const mobile = useMobileLayout();
+  const sessionUser = useQuery(sessionUserQueryOptions()).data;
+  const [view, setView] = useState<ChatView>(() => viewFromSearch(urlSearch));
   const [threadId, setThreadId] = useState<string | null>(urlSearch.thread ?? null);
-  const [infoOpen, setInfoOpen] = useState(
-    () =>
-      typeof window.matchMedia !== "function" || !window.matchMedia("(max-width: 900px)").matches,
-  );
-  const [infoTab, setInfoTab] = useState<InfoTab>(urlSearch.tab ?? "about");
-  const [search, setSearch] = useState("");
+  const [focusMessageId, setFocusMessageId] = useState<string | null>(urlSearch.message ?? null);
+  // Phones show the list until something is opened.
+  const [mobileContent, setMobileContent] = useState(urlSearch.room !== undefined);
+  const [searchDraft, setSearchDraft] = useState("");
+  const [searchQuery, setSearchQuery] = useState<string | null>(null);
+  const [searchScope, setSearchScope] = useState<"all" | "room">("all");
 
   const roomsQuery = useQuery(chatRoomListQueryOptions());
-  const offline = roomsQuery.isError;
-  const rooms = roomsQuery.data ?? [];
-
-  // Realtime owns the WS connection; created once and re-subscribed per room.
+  const unreadQuery = useQuery(chatUnreadQueryOptions());
+  const rooms = useMemo(() => roomsQuery.data ?? [], [roomsQuery.data]);
+  const activeRoomId = view.kind === "room" ? view.roomId : undefined;
   const realtime = useChatRealtime({ roomId: activeRoomId });
-  const selfActorId = realtime.selfActorId;
-
-  // Default the selection to the first room once the list resolves —
-  // unless the URL already pinned a room (deep link).
-  useEffect(() => {
-    if (activeRoomId === undefined && rooms.length > 0) {
-      setActiveRoomId(rooms[0]?.id);
-    }
-  }, [activeRoomId, rooms]);
-
-  // URL sync — every chat state change pushes to the URL so deep links
-  // and the back button work. The URL is canonical; state mirrors it.
-  useEffect(() => {
-    void navigate({
-      to: "/chat",
-      search: {
-        ...(activeRoomId === undefined ? {} : { room: activeRoomId }),
-        ...(threadId === null ? {} : { thread: threadId }),
-        ...(infoTab === "about" ? {} : { tab: infoTab }),
-      },
-      replace: false,
-    });
-  }, [activeRoomId, threadId, infoTab]);
+  const selfActorId = realtime.selfActorId ?? sessionUser?.actorId ?? null;
 
   const presence = useMemo(() => presenceMap(realtime.presence), [realtime.presence]);
-
-  const { spaces, directs } = useMemo(
-    () => partitionRooms(rooms, selfActorId, presence),
-    [rooms, selfActorId, presence],
+  const conversations = useMemo(
+    () => conversationViews(rooms, selfActorId, unreadQuery.data?.rooms ?? [], presence),
+    [rooms, selfActorId, unreadQuery.data, presence],
   );
+  const activeRoom = rooms.find((room) => room.id === activeRoomId);
+  const activeConversation = conversations.find((entry) => entry.id === activeRoomId);
 
-  const activeRoom = useMemo<ChatRoomRecord | undefined>(
-    () => rooms.find((r) => r.id === activeRoomId),
-    [rooms, activeRoomId],
-  );
+  // Keep the URL in step so links, reloads and Back work.
+  useEffect(() => {
+    const next: ChatRouteSearch = {
+      ...(view.kind === "room" ? { room: view.roomId } : {}),
+      ...(view.kind === "mentions" ? { view: "mentions" as const } : {}),
+      ...(view.kind === "room" && threadId !== null ? { thread: threadId } : {}),
+    };
+    if (
+      next.room === urlSearch.room &&
+      next.view === urlSearch.view &&
+      next.thread === urlSearch.thread &&
+      urlSearch.message === undefined &&
+      urlSearch.dm === undefined
+    ) {
+      return;
+    }
+    void navigate({ to: "/chat", search: next, replace: urlSearch.message !== undefined });
+  }, [view, threadId]);
 
-  const messagesQuery = useInfiniteQuery(chatMessageListInfiniteQueryOptions(activeRoomId));
-  const pinsQuery = useQuery(chatPinsQueryOptions(activeRoomId));
+  const openView = useCallback((next: ChatView) => {
+    setView(next);
+    setThreadId(null);
+    setFocusMessageId(null);
+    setMobileContent(true);
+  }, []);
+  const openRoom = useCallback((roomId: string) => openView({ kind: "room", roomId }), [openView]);
 
-  // Name resolver: room members first, presence roster second.
+  useDirectMessageHandoff(urlSearch.dm, openRoom);
+
   const nameForActor = useCallback(
     (actorId: string | null): string => {
-      if (actorId === null) {
-        return "System";
-      }
-      if (actorId === sessionUser?.actorId && sessionUser.name.trim()) {
+      if (actorId === null) return "Helix";
+      if (actorId === sessionUser?.actorId && sessionUser.name.trim())
         return sessionUser.name.trim();
-      }
-      const member = (activeRoom?.members ?? []).find((m) => m.actorId === actorId);
-      if (member?.displayName != null && member.displayName.length > 0) {
-        return member.displayName;
+      for (const room of [activeRoom, ...rooms]) {
+        const member = room?.members?.find((m) => m.actorId === actorId);
+        if (member !== undefined) return memberDisplayName(member);
       }
       const present = realtime.presence.find((p) => p.actorId === actorId);
-      if (present?.displayName != null && present.displayName.length > 0) {
+      if (present?.displayName !== undefined && present.displayName.length > 0) {
         return present.displayName;
       }
-      return actorId === selfActorId ? "You" : `User ${actorId.slice(0, 6)}`;
+      return actorId === selfActorId ? "You" : "Former member";
     },
-    [activeRoom, selfActorId, realtime.presence, sessionUser],
+    [activeRoom, rooms, realtime.presence, selfActorId, sessionUser],
   );
 
-  // History (infinite pages, each newest-first) + live (WS) + pending, oldest-first.
-  const messageRecords = useMemo<readonly ChatMessageRecord[]>(() => {
-    const pages = messagesQuery.data?.pages ?? [];
-    const byId = new Map<string, ChatMessageRecord>();
-    // Pages are oldest-batch-first after reverse of each newest-first page.
-    for (const page of [...pages].reverse()) {
-      for (const record of [...page].reverse()) {
-        byId.set(record.id, record);
-      }
-    }
-    for (const record of realtime.liveMessages) {
-      byId.set(record.id, record);
-    }
-    return [...byId.values()]
-      .filter((m) => m.deletedAt === null && !realtime.deletedMessageIds.has(m.id))
-      .sort((a, b) => Date.parse(a.sentAt) - Date.parse(b.sentAt));
-  }, [messagesQuery.data, realtime.liveMessages, realtime.deletedMessageIds]);
-
-  const orderedIds = useMemo(() => messageRecords.map((m) => m.id), [messageRecords]);
-
-  const messages = useMemo<readonly ChatMessageView[]>(() => {
-    const confirmed = messageRecords.map((record) =>
-      toMessageView({
-        record,
-        selfActorId,
-        nameForActor,
-        readBy: readCountFor(record.id, orderedIds, realtime.receipts, selfActorId),
-        seenByActorIds: seenByForMessage(record.id, orderedIds, realtime.receipts, selfActorId),
-      }),
-    );
-    const pending = realtime.pendingMessages
-      .filter((p) => p.roomId === activeRoomId)
-      .map((p) =>
-        toMessageView({
-          record: {
-            id: `pending:${p.clientMessageId}`,
-            orgId: "",
-            roomId: p.roomId,
-            actorId: selfActorId,
-            body: p.body,
-            bodyFormat: p.bodyFormat,
-            metadata: {},
-            attachmentObjectIds: p.attachmentObjectIds,
-            attachments: p.attachments,
-            sentAt: p.createdAt,
-            editedAt: null,
-            deletedAt: null,
-            createdAt: p.createdAt,
-            updatedAt: p.createdAt,
-            clientMessageId: p.clientMessageId,
-          },
-          selfActorId,
-          nameForActor,
-          readBy: 0,
-          seenByActorIds: [],
-          pending: p.status === "pending",
-          failed: p.status === "failed",
-          clientMessageId: p.clientMessageId,
-        }),
-      );
-    return [...confirmed, ...pending];
-  }, [
-    messageRecords,
-    selfActorId,
-    nameForActor,
-    orderedIds,
-    realtime.receipts,
-    realtime.pendingMessages,
-    activeRoomId,
-  ]);
-
-  // Auto-mark the room read when the newest message changes.
-  const newestId = orderedIds.at(-1);
-  const lastMarkedRef = useRef<string | undefined>(undefined);
-  useEffect(() => {
-    if (newestId !== undefined && newestId !== lastMarkedRef.current) {
-      lastMarkedRef.current = newestId;
-      realtime.markRead(newestId);
-    }
-  }, [newestId, realtime]);
-
-  const about: ChatAboutView = useMemo(() => roomAbout(activeRoom), [activeRoom]);
-  const members: readonly ChatMemberView[] = useMemo(() => roomMembers(activeRoom), [activeRoom]);
-  const roomName = activeRoom ? roomDisplayName(activeRoom, selfActorId) : "Chat";
-  const activeRole = activeRoom?.members.find((member) => member.actorId === selfActorId)?.role;
-  const canPost =
-    activeRoom?.settings?.spaceType !== "announcement" ||
-    activeRole === "owner" ||
-    activeRole === "moderator";
-
-  const threadMessage = threadId ? (messages.find((m) => m.id === threadId) ?? null) : null;
-
-  // --- Mutations -------------------------------------------------------
-
-  const [actionError, setActionError] = useState<string | null>(null);
-  const clearActionError = useCallback(() => {
-    setActionError(null);
-  }, []);
-
-  const invalidateMessages = useCallback(() => {
-    void queryClient.invalidateQueries({
-      queryKey: chatQueryKeys.messagesInfinite(activeRoomId),
-    });
-  }, [queryClient, activeRoomId]);
-
-  const invalidateRooms = useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey: ["chat", "rooms"] });
-  }, [queryClient]);
-
-  const sendMutation = useMutation({
-    mutationFn: (submission: ChatComposerSubmission) => {
-      if (activeRoomId === undefined) {
-        return Promise.reject(new Error("No room selected"));
-      }
-      return sendChatMessage({ roomId: activeRoomId, ...submission });
-    },
-    onMutate: clearActionError,
-    onError: () => {
-      setActionError("Couldn’t send the message. Try again.");
-    },
-    onSuccess: invalidateMessages,
-  });
-
-  const reactMutation = useMutation({
-    mutationFn: (input: {
-      readonly messageId: string;
-      readonly emoji: string;
-      readonly op: "add" | "remove";
-    }) => reactToChatMessage(input),
-    onMutate: clearActionError,
-    onError: () => {
-      setActionError("Couldn’t update the reaction. Try again.");
-    },
-    onSuccess: invalidateMessages,
-  });
-
-  const editMutation = useMutation({
-    mutationFn: (input: { readonly messageId: string; readonly body: string }) =>
-      editChatMessage(input),
-    onMutate: clearActionError,
-    onError: () => {
-      setActionError("Couldn’t edit the message. Try again.");
-    },
-    onSuccess: invalidateMessages,
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: (messageId: string) => deleteChatMessage(messageId),
-    onMutate: clearActionError,
-    onError: () => {
-      setActionError("Couldn’t delete the message. Try again.");
-    },
-    onSuccess: invalidateMessages,
-  });
-
-  const handleSend = useCallback(
-    (submission: ChatComposerSubmission) => {
-      const body = submission.body.trim();
-      if (
-        (body.length === 0 && submission.attachmentObjectIds.length === 0) ||
-        activeRoomId === undefined
-      ) {
+  // Alt+↑/↓ steps through the list; with Shift, only through unread ones.
+  const ordered = useMemo(
+    () => [
+      ...conversations.filter((entry) => entry.kind === "dm"),
+      ...conversations.filter((entry) => entry.kind === "space"),
+    ],
+    [conversations],
+  );
+  const step = (direction: 1 | -1, unreadOnly: boolean) => () => {
+    const index = ordered.findIndex((entry) => entry.id === activeRoomId);
+    for (let i = index + direction; i >= 0 && i < ordered.length; i += direction) {
+      const candidate = ordered[i];
+      if (candidate !== undefined && (!unreadOnly || candidate.unread > 0)) {
+        openRoom(candidate.id);
         return;
       }
-      const message = { ...submission, body };
-      // Prefer the live socket; fall back to the REST tool when it is closed.
-      if (!realtime.sendMessage(message)) {
-        sendMutation.mutate(message);
-      }
-    },
-    [activeRoomId, realtime, sendMutation],
-  );
-
-  const handleReact = useCallback(
-    (messageId: string, emoji: string) => {
-      const mine = messages
-        .find((message) => message.id === messageId)
-        ?.reactions.some((reaction) => reaction.emoji === emoji && reaction.mine);
-      reactMutation.mutate({ messageId, emoji, op: mine === true ? "remove" : "add" });
-    },
-    [messages, reactMutation],
-  );
-
-  const handleEdit = useCallback(
-    (messageId: string, body: string) => {
-      const trimmed = body.trim();
-      if (trimmed.length > 0) {
-        editMutation.mutate({ messageId, body: trimmed });
-      }
-    },
-    [editMutation],
-  );
-
-  const handleDelete = useCallback(
-    (messageId: string) => {
-      deleteMutation.mutate(messageId);
-      if (threadId === messageId) {
-        setThreadId(null);
-      }
-    },
-    [deleteMutation, threadId],
-  );
-
-  const createRoomMutation = useMutation({
-    onMutate: () => undefined,
-    mutationFn: (input: {
-      readonly kind: "chat_room" | "chat_dm";
-      readonly subject?: string;
-      readonly memberActorIds: readonly string[];
-      readonly readReceiptsEnabled: boolean;
-      readonly spaceType?: "conversation" | "announcement" | "project";
-      readonly historyPolicy: "full" | "since_join" | "off";
-      readonly retentionDays: number | null;
-      readonly legalHold: boolean;
-      readonly notificationPolicy: "all" | "mentions" | "none";
-      readonly externalAccess: "internal" | "guests" | "federated";
-    }) =>
-      createChatRoom({
-        kind: input.kind,
-        memberActorIds: [...input.memberActorIds],
-        readReceiptsEnabled: input.readReceiptsEnabled,
-        ...(input.spaceType === undefined ? {} : { spaceType: input.spaceType }),
-        historyPolicy: input.historyPolicy,
-        retentionDays: input.retentionDays,
-        legalHold: input.legalHold,
-        notificationPolicy: input.notificationPolicy,
-        externalAccess: input.externalAccess,
-        ...(input.subject === undefined ? {} : { subject: input.subject }),
-      }),
-    onSuccess: (room) => {
-      invalidateRooms();
-      setActiveRoomId(room.id);
-    },
-    onError: () => {
-      setActionError("Couldn’t create the conversation.");
-    },
-  });
-
-  const inviteMutation = useMutation({
-    onMutate: () => undefined,
-    mutationFn: (actorIds: readonly string[]) => {
-      if (activeRoomId === undefined) {
-        return Promise.reject(new Error("No room"));
-      }
-      return inviteToRoom({ roomId: activeRoomId, actorIds: [...actorIds] });
-    },
-    onSuccess: () => {
-      invalidateRooms();
-    },
-    onError: () => {
-      setActionError("Couldn’t invite people to this room.");
-    },
-  });
-
-  const pinMutation = useMutation({
-    onMutate: () => undefined,
-    onError: () => {
-      setActionError("Couldn’t pin that message.");
-    },
-    mutationFn: (messageId: string) => {
-      if (activeRoomId === undefined) {
-        return Promise.reject(new Error("No room"));
-      }
-      return pinChatMessage({ roomId: activeRoomId, messageId });
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: chatQueryKeys.pins(activeRoomId),
-      });
-    },
-  });
-
-  const handleThreadReply = useCallback(
-    (submission: ChatComposerSubmission) => {
-      if (activeRoomId === undefined || threadId === null) {
-        return;
-      }
-      void replyInThread({
-        roomId: activeRoomId,
-        parentMessageId: threadId,
-        body: submission.body,
-        bodyFormat: submission.bodyFormat,
-        attachmentObjectIds: submission.attachmentObjectIds,
-      }).then(() => {
-        invalidateMessages();
-      });
-    },
-    [activeRoomId, threadId, invalidateMessages],
-  );
-
-  const stepRoom = (step: 1 | -1) => () => {
-    const order = [...spaces, ...directs].map((room) => room.id);
-    const next = order[order.indexOf(activeRoomId ?? "") + step];
-    if (next === undefined) return false;
-    setActiveRoomId(next);
-    setThreadId(null);
+    }
+    return false;
   };
   useShortcuts("chat", {
-    "chat.close-thread": threadMessage === null ? undefined : () => setThreadId(null),
-    "chat.previous-conversation": stepRoom(-1),
-    "chat.next-conversation": stepRoom(1),
+    "chat.previous-conversation": step(-1, false),
+    "chat.next-conversation": step(1, false),
+    "chat.previous-unread-conversation": step(-1, true),
+    "chat.next-unread-conversation": step(1, true),
+    "chat.close-search":
+      searchQuery === null
+        ? undefined
+        : () => {
+            setSearchQuery(null);
+            setSearchDraft("");
+          },
   });
+
+  const status = roomsQuery.isPending ? "loading" : roomsQuery.isError ? "error" : "ready";
+  const joinedRoomIds = useMemo(() => new Set(rooms.map((room) => room.id)), [rooms]);
+
+  const openHit = (hit: ChatSearchHit) => {
+    openView({ kind: "room", roomId: hit.roomId });
+    setFocusMessageId(hit.messageId);
+  };
+  const openMention = (mention: ChatMention) => {
+    openView({ kind: "room", roomId: mention.roomId });
+    setThreadId(mention.parentMessageId);
+    setFocusMessageId(mention.parentMessageId ?? mention.messageId);
+  };
+
+  let content;
+  if (status === "loading") {
+    content = (
+      <div className="chat-feed">
+        <Skeleton variant="row" count={8} label="Loading conversations" />
+      </div>
+    );
+  } else if (status === "error") {
+    content = (
+      <div className="chat-feed chat-feed-state">
+        <InlineError
+          title={online ? "Couldn’t load your conversations" : "You’re offline"}
+          message={
+            online
+              ? "Chat isn’t responding right now. Try again in a moment."
+              : "Chat will load when your connection is back."
+          }
+          onRetry={() => void queryClient.invalidateQueries({ queryKey: chatQueryKeys.rooms() })}
+          retrying={roomsQuery.isFetching}
+        />
+      </div>
+    );
+  } else if (view.kind === "mentions") {
+    content = <ChatMentions onOpenMention={openMention} onBack={() => setMobileContent(false)} />;
+  } else if (view.kind === "room" && activeRoom !== undefined && activeConversation !== undefined) {
+    content = (
+      <ChatConversation
+        key={activeRoom.id}
+        room={activeRoom}
+        conversation={activeConversation}
+        realtime={realtime}
+        unread={unreadQuery.data?.rooms.find((entry) => entry.roomId === activeRoom.id)}
+        nameForActor={nameForActor}
+        threadId={threadId}
+        onThreadChange={setThreadId}
+        focusMessageId={focusMessageId}
+        onFocusMessage={setFocusMessageId}
+        onFocusHandled={() => setFocusMessageId(null)}
+        sidePanelTaken={searchQuery !== null}
+        onBack={() => setMobileContent(false)}
+      />
+    );
+  } else if (view.kind === "room") {
+    content = (
+      <div className="chat-feed chat-feed-state">
+        <EmptyState
+          icon={<ChatsIcon />}
+          title="This conversation isn’t available"
+          body="It may have been deleted, or you are no longer a member."
+          action={
+            <button type="button" className="btn" onClick={() => openView({ kind: "home" })}>
+              Go to Home
+            </button>
+          }
+        />
+      </div>
+    );
+  } else {
+    content = (
+      <ChatHome
+        conversations={conversations}
+        onOpenRoom={openRoom}
+        onBack={() => setMobileContent(false)}
+      />
+    );
+  }
 
   return (
     <SurfaceFrame
       title="Chat"
       icon={<ChatIcon size={16} />}
-      searchPlaceholder="Search messages and spaces"
-      searchValue={search}
-      onSearchChange={setSearch}
+      searchPlaceholder="Search in Chat"
+      searchValue={searchDraft}
+      onSearchChange={(value) => {
+        setSearchDraft(value);
+        if (value.trim().length === 0) setSearchQuery(null);
+      }}
+      onSearchSubmit={(value) => {
+        const query = value.trim();
+        setSearchQuery(query.length === 0 ? null : query);
+        if (query.length > 0) setMobileContent(true);
+      }}
     >
-      <div className="chat-body">
+      <div className="chat-body" data-mobile-pane={mobileContent ? "content" : "list"}>
         <h1 className="sr-only">Chat</h1>
         <ChatSidebar
-          loading={roomsQuery.isLoading}
-          offline={offline}
-          spaces={spaces}
-          directs={directs}
-          activeRoomId={activeRoomId}
-          onSelect={(id) => {
-            setActiveRoomId(id);
-            setThreadId(null);
-          }}
-          onCreateRoom={(input) => {
-            createRoomMutation.mutate(input);
-          }}
+          status={status}
+          conversations={conversations}
+          view={view}
+          totalUnread={unreadQuery.data?.totalUnread ?? 0}
+          totalMentions={unreadQuery.data?.totalMentions ?? 0}
+          onSelect={openView}
+          newChat={
+            <NewChat variant="sidebar" joinedRoomIds={joinedRoomIds} onOpenRoom={openRoom} />
+          }
         />
-
-        <section className="chat-channel" aria-label={`${roomName} channel`}>
-          {realtime.connection === "closed" || realtime.connection === "reconnecting" ? (
-            <div className="chat-banner" role="status">
-              {realtime.connection === "reconnecting"
-                ? "Reconnecting…"
-                : "Realtime disconnected — messages may be delayed."}
-            </div>
-          ) : null}
-          {actionError !== null ? (
-            <div className="chat-banner chat-banner-error" role="alert">
-              {actionError}
-            </div>
-          ) : null}
-
-          <ChatChannelHeader
-            infoOpen={infoOpen}
-            onToggleInfo={() => setInfoOpen((open) => !open)}
-            name={roomName}
-            memberCount={about.memberCount}
-            onInvite={(actorId) => {
-              inviteMutation.mutate([actorId]);
+        <div className="chat-main">{content}</div>
+        {searchQuery === null ? null : (
+          <ChatSearchPanel
+            query={searchQuery}
+            room={
+              activeConversation === undefined
+                ? null
+                : { id: activeConversation.id, name: activeConversation.name }
+            }
+            scope={searchScope}
+            onScopeChange={setSearchScope}
+            roomName={(roomId) =>
+              conversations.find((entry) => entry.id === roomId)?.name ?? "Conversation"
+            }
+            actorName={nameForActor}
+            onOpenHit={(hit) => {
+              openHit(hit);
+              if (mobile) setSearchQuery(null);
             }}
-          />
-
-          <ChatMessageList
-            loading={messagesQuery.isLoading && activeRoomId !== undefined}
-            error={messagesQuery.isError ? messagesQuery.error : null}
-            offline={offline}
-            messages={messages}
-            threadId={threadId}
-            hasOlder={messagesQuery.hasNextPage}
-            loadingOlder={messagesQuery.isFetchingNextPage}
-            onLoadOlder={() => {
-              void messagesQuery.fetchNextPage();
-            }}
-            onRetry={() => {
-              void queryClient.invalidateQueries({
-                queryKey: chatQueryKeys.messagesInfinite(activeRoomId),
-              });
-            }}
-            onOpenThread={setThreadId}
-            onReact={handleReact}
-            onEdit={handleEdit}
-            onDelete={handleDelete}
-            onPin={(messageId) => {
-              pinMutation.mutate(messageId);
-            }}
-            onRetryPending={(clientMessageId) => {
-              realtime.retryPending(clientMessageId);
-            }}
-          />
-
-          <ChatTypingIndicator names={realtime.typingActorIds.map((id) => nameForActor(id))} />
-
-          <ChatComposer
-            roomId={activeRoomId}
-            placeholder={canPost ? `Message #${roomName}` : "Only announcers can post here"}
-            disabled={activeRoomId === undefined || offline || !canPost}
-            onSend={handleSend}
-            onTyping={realtime.setTyping}
-          />
-        </section>
-
-        {threadMessage ? (
-          <ChatThreadPanel
-            roomId={activeRoomId}
-            spaceName={roomName}
-            parent={threadMessage}
             onClose={() => {
-              setThreadId(null);
-            }}
-            onReply={handleThreadReply}
-            onTyping={realtime.setTyping}
-          />
-        ) : infoOpen ? (
-          <ChatInfoPanel
-            onClose={() => setInfoOpen(false)}
-            tab={infoTab}
-            onTabChange={setInfoTab}
-            about={about}
-            members={members}
-            pins={pinsQuery.data ?? []}
-            onInvite={(raw) => {
-              const ids = raw
-                .split(/[,\s]+/u)
-                .map((s) => s.trim())
-                .filter((s) => s.length > 0);
-              if (ids.length > 0) {
-                inviteMutation.mutate(ids);
-              }
+              setSearchQuery(null);
+              setSearchDraft("");
             }}
           />
+        )}
+        {mobile && !mobileContent ? (
+          <div className="chat-fab-wrap">
+            <NewChat variant="fab" joinedRoomIds={joinedRoomIds} onOpenRoom={openRoom} />
+          </div>
         ) : null}
       </div>
+      <ComposeHost />
     </SurfaceFrame>
   );
 }

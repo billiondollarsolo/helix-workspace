@@ -126,7 +126,13 @@ export const SHORTCUT_CATALOG = {
   "chat.close-thread": {
     scope: "chat",
     keys: ["escape"],
-    description: "Close the open thread",
+    description: "Close the open thread or details panel",
+    allowInInput: true,
+  },
+  "chat.close-search": {
+    scope: "chat",
+    keys: ["escape"],
+    description: "Close search results",
     allowInInput: true,
   },
   "chat.previous-conversation": {
@@ -139,6 +145,30 @@ export const SHORTCUT_CATALOG = {
     scope: "chat",
     keys: ["alt+arrowdown"],
     description: "Next space or direct message",
+    allowInInput: true,
+  },
+  "chat.previous-unread-conversation": {
+    scope: "chat",
+    keys: ["alt+shift+arrowup"],
+    description: "Previous conversation with unread messages",
+    allowInInput: true,
+  },
+  "chat.next-unread-conversation": {
+    scope: "chat",
+    keys: ["alt+shift+arrowdown"],
+    description: "Next conversation with unread messages",
+    allowInInput: true,
+  },
+  "chat.jump-first-unread": {
+    scope: "chat",
+    keys: ["ctrl+alt+shift+arrowup"],
+    description: "Jump to the first unread message",
+    allowInInput: true,
+  },
+  "chat.jump-newest": {
+    scope: "chat",
+    keys: ["ctrl+alt+shift+arrowdown"],
+    description: "Jump to the newest message",
     allowInInput: true,
   },
 

@@ -4,31 +4,31 @@ import {
   chatDirectMessageHandoffFromSearch,
   type ChatDirectMessageHandoff,
 } from "@/features/people/handoff";
-import {
-  optionalEnumSearchParam,
-  optionalStringSearchParam,
-  optionalUuidSearchParam,
-} from "@/lib/search-params";
-
-const chatInfoTabs = ["about", "members", "files", "pinned"] as const;
+import { optionalEnumSearchParam, optionalUuidSearchParam } from "@/lib/search-params";
 
 export interface ShellChatRouteSearch extends ChatDirectMessageHandoff {
+  /** The open conversation. */
   readonly room?: string;
+  /** The open thread's parent message. */
   readonly thread?: string;
-  readonly tab?: (typeof chatInfoTabs)[number];
+  /** A message to scroll to and highlight (copied message links). */
+  readonly message?: string;
+  /** The Mentions feed; Home when absent. */
+  readonly view?: "mentions";
 }
 
 export const Route = createFileRoute("/_shell/chat/")({
   component: ChatShell,
   validateSearch: (search): ShellChatRouteSearch => {
-    const room = optionalUuidSearchParam(search.room) ?? optionalStringSearchParam(search.room);
-    const thread =
-      optionalUuidSearchParam(search.thread) ?? optionalStringSearchParam(search.thread);
-    const tab = optionalEnumSearchParam(search.tab, chatInfoTabs);
+    const room = optionalUuidSearchParam(search.room);
+    const thread = optionalUuidSearchParam(search.thread);
+    const message = optionalUuidSearchParam(search.message);
+    const view = optionalEnumSearchParam(search.view, ["mentions"] as const);
     return {
       ...(room === undefined ? {} : { room }),
       ...(thread === undefined ? {} : { thread }),
-      ...(tab === undefined ? {} : { tab }),
+      ...(message === undefined ? {} : { message }),
+      ...(view === undefined ? {} : { view }),
       ...chatDirectMessageHandoffFromSearch(search),
     };
   },

@@ -1,37 +1,72 @@
 import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
-import { listChatMessages, listChatPins, listChatRooms } from "./api";
-
-export interface ChatSearchQueryInput {
-  readonly query?: string;
-  readonly roomId?: string;
-  readonly limit?: number;
-}
-
-const defaultChatSearchInput = {
-  query: "",
-  limit: 50,
-} as const satisfies ChatSearchQueryInput;
+import {
+  discoverChatRooms,
+  listChatMentions,
+  listChatMessages,
+  listChatPins,
+  listChatRooms,
+  listChatUnread,
+  listThreadReplies,
+  searchChat,
+} from "./api";
 
 export const CHAT_MESSAGE_PAGE_SIZE = 50;
+/** Unread counts for rooms the socket is not subscribed to refresh on this cadence. */
+const CHAT_UNREAD_REFRESH_MS = 30_000;
 
 export const chatQueryKeys = {
-  search: (input: ChatSearchQueryInput = defaultChatSearchInput) =>
-    ["chat", "search", input.query ?? "", input.roomId ?? "all", input.limit ?? 50] as const,
-  rooms: (input: Pick<ChatSearchQueryInput, "query" | "limit"> = defaultChatSearchInput) =>
-    ["chat", "rooms", input.query ?? "", input.limit ?? 50] as const,
-  messages: (roomId: string | undefined, limit = CHAT_MESSAGE_PAGE_SIZE) =>
-    ["chat", "messages", roomId ?? "none", limit] as const,
+  rooms: () => ["chat", "rooms"] as const,
+  unread: () => ["chat", "unread"] as const,
+  mentions: () => ["chat", "mentions"] as const,
+  discover: (query: string) => ["chat", "discover", query] as const,
+  search: (query: string, roomId: string | undefined) =>
+    ["chat", "search", query, roomId ?? "all"] as const,
   messagesInfinite: (roomId: string | undefined) =>
     ["chat", "messages", "infinite", roomId ?? "none"] as const,
+  thread: (roomId: string | undefined, parentMessageId: string | null) =>
+    ["chat", "thread", roomId ?? "none", parentMessageId ?? "none"] as const,
   pins: (roomId: string | undefined) => ["chat", "pins", roomId ?? "none"] as const,
 };
 
-export function chatRoomListQueryOptions(
-  input: Pick<ChatSearchQueryInput, "query" | "limit"> = defaultChatSearchInput,
-) {
+export function chatRoomListQueryOptions() {
   return queryOptions({
-    queryKey: chatQueryKeys.rooms(input),
-    queryFn: () => listChatRooms(input),
+    queryKey: chatQueryKeys.rooms(),
+    queryFn: () => listChatRooms({ limit: 100 }),
+    throwOnError: false,
+  });
+}
+
+export function chatUnreadQueryOptions() {
+  return queryOptions({
+    queryKey: chatQueryKeys.unread(),
+    queryFn: () => listChatUnread(),
+    refetchInterval: CHAT_UNREAD_REFRESH_MS,
+    throwOnError: false,
+  });
+}
+
+export function chatMentionsQueryOptions(enabled: boolean) {
+  return queryOptions({
+    queryKey: chatQueryKeys.mentions(),
+    queryFn: () => listChatMentions({ limit: 50 }),
+    enabled,
+    throwOnError: false,
+  });
+}
+
+export function chatDiscoverQueryOptions(query: string) {
+  return queryOptions({
+    queryKey: chatQueryKeys.discover(query),
+    queryFn: () => discoverChatRooms({ query }),
+    throwOnError: false,
+  });
+}
+
+export function chatSearchQueryOptions(query: string, roomId: string | undefined) {
+  return queryOptions({
+    queryKey: chatQueryKeys.search(query, roomId),
+    queryFn: () => searchChat({ query, ...(roomId === undefined ? {} : { roomId }), limit: 50 }),
+    enabled: query.trim().length > 0,
     throwOnError: false,
   });
 }
@@ -62,6 +97,19 @@ export function chatMessageListInfiniteQueryOptions(roomId: string | undefined) 
       return oldest === undefined ? undefined : { sentAt: oldest.sentAt, id: oldest.id };
     },
     enabled: roomId !== undefined,
+    throwOnError: false,
+  });
+}
+
+export function chatThreadQueryOptions(roomId: string | undefined, parentMessageId: string | null) {
+  return queryOptions({
+    queryKey: chatQueryKeys.thread(roomId, parentMessageId),
+    queryFn: async () => {
+      if (roomId === undefined || parentMessageId === null) return [];
+      const replies = await listThreadReplies({ roomId, parentMessageId });
+      return [...replies].reverse();
+    },
+    enabled: roomId !== undefined && parentMessageId !== null,
     throwOnError: false,
   });
 }

@@ -48,6 +48,9 @@ All notable changes to Helix Workspace are documented here. This file follows
   scan, so received attachments show their names.
 - Calendar RSVP links use `HELIX_PUBLIC_URL` like the rest of the app instead of
   `http://localhost:3000` when only that is configured.
+- The Assistant works again for fully scoped members: Meet tools get their own opt-in tool
+  group, so the default groups stay within the 128-tool limit instead of failing every turn
+  with "Too many Assistant tools are selected".
 - CLI mail commands match the mail tools: `send`/`reply` send `bodyText`/`bodyHtml` and an
   idempotency key, `reply` takes `--to` and `--in-reply-to`, `list` calls `mail.threads.list`
   with `--folder`/`--offset`, and `search` sends `labels`.

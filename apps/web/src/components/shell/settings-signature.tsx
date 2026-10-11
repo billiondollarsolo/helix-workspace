@@ -55,8 +55,8 @@ export function SignatureSection() {
   const disabled = settings.isPending || saving;
   return (
     <>
-      <h1 className="[font-size:var(--text-h2)] font-semibold [margin:0_0_4px]">Mail signature</h1>
-      <div className="[font-size:var(--text-body-sm)] text-muted-foreground mb-2">
+      <h1 className="type-h2 font-semibold [margin:0_0_4px]">Mail signature</h1>
+      <div className="type-body-sm text-muted-foreground mb-2">
         Added to every email you send from Helix Mail
       </div>
       <SettingsField label="Signature" controlId="settings-mail-signature">
@@ -64,7 +64,7 @@ export function SignatureSection() {
           id="settings-mail-signature"
           name="mailSignature"
           autoComplete="off"
-          className="input [height:auto] p-2.5 [resize:vertical] [font-family:inherit] [line-height:1.5] [font-size:var(--text-body-sm)]"
+          className="input [height:auto] p-2.5 [resize:vertical] [font-family:inherit] [line-height:1.5] type-body-sm"
           value={signatureText}
           onChange={(event) => setSignatureText(event.target.value)}
           placeholder="For example, Thanks, Morgan…"

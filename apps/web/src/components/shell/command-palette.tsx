@@ -213,7 +213,7 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search apps, files, people, actions…"
             aria-label="Search apps, files, people, actions"
-            className="flex-1 [border:none] outline-none bg-transparent [font-size:var(--text-body)]"
+            className="flex-1 [border:none] outline-none bg-transparent type-body"
           />
           <span className="kbd">esc</span>
         </div>
@@ -229,7 +229,7 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
               <div key={group} role="group" aria-labelledby={groupLabelId}>
                 <div
                   id={groupLabelId}
-                  className="[font-size:var(--text-chip)] text-muted-foreground font-semibold uppercase [letter-spacing:.06em] [padding:8px_12px_4px]"
+                  className="type-chip text-muted-foreground font-semibold uppercase [letter-spacing:.06em] [padding:8px_12px_4px]"
                 >
                   {group}
                 </div>
@@ -265,7 +265,7 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
                       }}
                       onMouseEnter={() => setIndex(myIndex)}
                       className={cn(
-                        "w-full flex items-center gap-2.5 [padding:8px_12px] rounded-md [font-size:var(--text-body-sm)] text-left",
+                        "w-full flex items-center gap-2.5 [padding:8px_12px] rounded-md type-body-sm text-left",
                         active && !disabled ? "[background:var(--accent-soft)]" : "bg-transparent",
                         disabled ? "[opacity:0.72]" : "[opacity:1]",
                         disabled
@@ -281,7 +281,7 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
                       <div className="flex-1 min-w-0">
                         <div className="truncate">{item.title}</div>
                         {item.sub || item.disabledReason ? (
-                          <div className="truncate [font-size:var(--text-caption)] text-muted-foreground">
+                          <div className="truncate type-caption text-muted-foreground">
                             {item.disabledReason ?? item.sub}
                           </div>
                         ) : null}
@@ -301,7 +301,7 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
             </div>
           ) : null}
         </div>
-        <div className="[border-top:1px_solid_var(--border)] [padding:8px_14px] flex gap-4 [font-size:var(--text-caption)] text-muted-foreground">
+        <div className="[border-top:1px_solid_var(--border)] [padding:8px_14px] flex gap-4 type-caption text-muted-foreground">
           <span className="row gap-2">
             <span className="kbd">↑↓</span>navigate
           </span>

@@ -51,7 +51,7 @@ export function AssistantToolActivityList({
         setExpanded(event.currentTarget.open);
       }}
     >
-      <summary className="flex cursor-pointer list-none items-center gap-1 text-[11px] leading-4 text-muted-foreground select-none [&::-webkit-details-marker]:hidden">
+      <summary className="flex cursor-pointer list-none items-center gap-1 type-caption leading-4 text-muted-foreground select-none [&::-webkit-details-marker]:hidden">
         <ChevronRight
           size={12}
           aria-hidden="true"
@@ -72,7 +72,7 @@ export function AssistantToolActivityList({
           const label =
             entry.status === "running" && !streaming ? "Interrupted" : statusLabels[entry.status];
           return (
-            <li key={entry.toolCallId} className="text-[11px] leading-4 text-muted-foreground">
+            <li key={entry.toolCallId} className="type-caption leading-4 text-muted-foreground">
               <div className="flex items-center gap-1.5">
                 <Icon size={12} aria-hidden="true" />
                 <span className="min-w-0 break-words">{toolLabel(entry.toolId)}</span>
@@ -131,7 +131,7 @@ export function AssistantSourceList({
           <li key={source.id}>
             <button
               type="button"
-              className="[font-size:11px] leading-4 text-muted-foreground hover:text-foreground hover:underline"
+              className="type-caption leading-4 text-muted-foreground hover:text-foreground hover:underline"
               onClick={() => {
                 onOpenEvidence(links);
               }}
@@ -143,7 +143,7 @@ export function AssistantSourceList({
       </ul>
       <button
         type="button"
-        className="[font-size:11px] leading-4 text-muted-foreground hover:text-foreground hover:underline"
+        className="type-caption leading-4 text-muted-foreground hover:text-foreground hover:underline"
         onClick={() => {
           onOpenEvidence(links);
         }}
@@ -203,7 +203,7 @@ export function AssistantEvidenceDrawer({
           <X size={16} />
         </button>
       </header>
-      <ol className="m-0 flex-1 list-decimal space-y-3 overflow-y-auto p-4 pl-8 [font-size:var(--text-meta)]">
+      <ol className="m-0 flex-1 list-decimal space-y-3 overflow-y-auto p-4 pl-8 type-meta">
         {sources.map(({ source, url }) => (
           <li key={source.id} className="min-w-0">
             <a

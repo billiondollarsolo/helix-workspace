@@ -356,9 +356,9 @@ export function DriveShell() {
           className={cn(
             "fixed top-5 right-5 [z-index:9999] max-w-105 [padding:12px_16px] rounded-lg [box-shadow:var(--shadow-lg)]",
             uploadScanFailed
-              ? "[border:1px_solid_var(--danger,_#dc2626)]"
+              ? "[border:1px_solid_var(--danger)]"
               : "[border:1px_solid_var(--border)]",
-            uploadScanFailed ? "[background:var(--danger-soft,_#fef2f2)]" : "bg-card",
+            uploadScanFailed ? "[background:var(--danger-soft)]" : "bg-card",
           )}
         >
           <strong>{processingUpload.fileName}</strong>
@@ -368,7 +368,7 @@ export function DriveShell() {
               : (uploadStatusQuery.data?.label ?? "Queued for security scan")}
           </div>
           {uploadScanFailed ? (
-            <div className="mt-1.5 [font-size:var(--text-meta)] [color:var(--danger,_#dc2626)]">
+            <div className="mt-1.5 type-meta [color:var(--danger)]">
               {openDenialMessage(uploadStatusQuery.data?.state)}
             </div>
           ) : null}

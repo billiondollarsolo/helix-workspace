@@ -33,7 +33,7 @@ function DriveBreadcrumb({
         onClick={() => onNavigate(-1)}
         disabled={trail.length === 0}
         className={cn(
-          "[font-size:var(--text-h2)] font-semibold bg-transparent p-0",
+          "type-h2 font-semibold bg-transparent p-0",
           trail.length === 0 ? "text-foreground" : "text-primary",
         )}
       >
@@ -50,7 +50,7 @@ function DriveBreadcrumb({
             onClick={() => onNavigate(index)}
             className={cn(
               "truncate",
-              "[font-size:var(--text-h2)] font-semibold bg-transparent p-0 max-w-55",
+              "type-h2 font-semibold bg-transparent p-0 max-w-55",
               index === trail.length - 1 ? "text-foreground" : "text-primary",
             )}
             disabled={index === trail.length - 1}
@@ -189,7 +189,7 @@ export function DriveMain({
       {uploadError !== null ? (
         <div
           role="alert"
-          className="[font-size:var(--text-meta)] [color:var(--danger,_#dc2626)] bg-muted [border:1px_solid_var(--border)] rounded-md [padding:8px_12px] mb-3"
+          className="type-meta [color:var(--danger)] bg-muted [border:1px_solid_var(--border)] rounded-md [padding:8px_12px] mb-3"
         >
           Upload failed: {uploadError.message}
         </div>
@@ -222,10 +222,8 @@ export function DriveMain({
                     >
                       <FolderIcon size={16} />
                       <div className="min-w-0 flex-1">
-                        <div className="truncate [font-size:var(--text-meta)] font-medium">
-                          {folder.name}
-                        </div>
-                        <div className="[font-size:var(--text-chip)] text-muted-foreground">
+                        <div className="truncate type-meta font-medium">{folder.name}</div>
+                        <div className="type-chip text-muted-foreground">
                           {folder.itemCount > 0
                             ? `${String(folder.itemCount)} items`
                             : "Open folder"}
@@ -251,7 +249,7 @@ export function DriveMain({
 
           <div className="section-label [padding:0_0_8px]">Files</div>
           {gridFiles.length === 0 && view === "grid" ? (
-            <div className="[font-size:var(--text-meta)] text-muted-foreground [padding:8px_0]">
+            <div className="type-meta text-muted-foreground [padding:8px_0]">
               No files here yet.
             </div>
           ) : view === "grid" ? (
@@ -268,7 +266,7 @@ export function DriveMain({
             </div>
           ) : (
             <div className="panel">
-              <div className="grid [grid-template-columns:1fr_160px_120px_90px_32px] [padding:0_16px] h-8 items-center [font-size:var(--text-caption)] text-muted-foreground font-semibold uppercase [letter-spacing:.06em] [border-bottom:1px_solid_var(--border)] bg-muted">
+              <div className="grid [grid-template-columns:1fr_160px_120px_90px_32px] [padding:0_16px] h-8 items-center type-caption text-muted-foreground font-semibold uppercase [letter-spacing:.06em] [border-bottom:1px_solid_var(--border)] bg-muted">
                 <span>Name</span>
                 <span>Owner</span>
                 <span>Modified</span>
@@ -347,7 +345,7 @@ function DriveLoadingState() {
     <div
       role="status"
       aria-live="polite"
-      className="[font-size:var(--text-meta)] text-muted-foreground [padding:32px_0]"
+      className="type-meta text-muted-foreground [padding:32px_0]"
     >
       Loading Drive…
     </div>
@@ -363,8 +361,8 @@ function DriveErrorState({
 }) {
   return (
     <div role="alert" className="flex flex-col items-start gap-2.5 [padding:32px_0]">
-      <div className="[font-size:var(--text-body-sm)] font-semibold">Couldn’t load Drive</div>
-      <div className="[font-size:var(--text-meta)] text-muted-foreground">{message}</div>
+      <div className="type-body-sm font-semibold">Couldn’t load Drive</div>
+      <div className="type-meta text-muted-foreground">{message}</div>
       <button type="button" className="btn sm" onClick={onRetry}>
         Try again
       </button>
@@ -391,7 +389,7 @@ function DriveEmptyState({
   return (
     <div className="flex flex-col items-center gap-3 [padding:48px_0] text-muted-foreground">
       <DriveIcon size={40} />
-      <div className="[font-size:var(--text-body-sm)]">{copy[scope]}</div>
+      <div className="type-body-sm">{copy[scope]}</div>
       {scope === "my" ? (
         <button type="button" className="btn sm primary" onClick={onUpload}>
           <UploadIcon size={16} />

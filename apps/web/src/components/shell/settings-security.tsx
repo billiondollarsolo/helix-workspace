@@ -57,8 +57,8 @@ export function SecuritySection() {
 
   return (
     <>
-      <h1 className="[font-size:var(--text-h2)] font-semibold [margin:0_0_4px]">Security</h1>
-      <div className="[font-size:var(--text-body-sm)] text-muted-foreground mb-2">
+      <h1 className="type-h2 font-semibold [margin:0_0_4px]">Security</h1>
+      <div className="type-body-sm text-muted-foreground mb-2">
         Passkeys, authenticator apps, and one-time recovery codes
       </div>
       <SettingsField label="Passkeys" hint="Preferred: phishing-resistant WebAuthn credentials">

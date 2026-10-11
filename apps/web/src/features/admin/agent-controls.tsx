@@ -15,7 +15,7 @@ import {
   setAgentOperationalControls,
 } from "./agent-controls-api";
 
-const NOTE_CLASS = "m-0 text-[0.7rem] text-muted-foreground";
+const NOTE_CLASS = "m-0 type-caption text-muted-foreground";
 
 /* The first two posture cards read the same way — a term, the chip that answers
    it, and one line saying what the answer costs — so they are one component
@@ -132,7 +132,7 @@ export function AgentControlsManagement() {
               {disabledOrgs.length === 0 ? (
                 <p className={NOTE_CLASS}>No per-org overrides.</p>
               ) : (
-                <ul className="m-0 list-none space-y-1 p-0 text-[0.7rem] text-muted-foreground">
+                <ul className="m-0 list-none space-y-1 p-0 type-caption text-muted-foreground">
                   {disabledOrgs.map((id) => (
                     <li key={id}>
                       <code className="break-all">{id}</code>

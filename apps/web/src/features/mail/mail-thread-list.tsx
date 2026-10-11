@@ -44,7 +44,7 @@ function EmptyState({
   return (
     <div className="empty p-16">
       {icon}
-      <div className="[font-size:var(--text-body)] font-medium text-foreground">{title}</div>
+      <div className="type-body font-medium text-foreground">{title}</div>
       <div>{body}</div>
       {children}
     </div>
@@ -402,7 +402,7 @@ export function ThreadList({
                 <RefreshIcon size={16} /> Refresh
               </button>
               {query.trim() !== "" && (
-                <span className="ml-1 [font-size:var(--text-caption)] flex items-center gap-1.5">
+                <span className="ml-1 type-caption flex items-center gap-1.5">
                   <span>Filtering by</span>
                   <span className="chip accent inline-flex items-center gap-1">
                     {query}
@@ -686,7 +686,7 @@ export function ThreadList({
 
       <div className="flex-1 overflow-y-auto">
         {isError && (
-          <div className="[margin:8px_16px_0] [font-size:var(--text-caption)] text-destructive">
+          <div className="[margin:8px_16px_0] type-caption text-destructive">
             Could not load mail. Select Refresh to try again.
           </div>
         )}

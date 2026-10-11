@@ -137,7 +137,7 @@ for (const width of [390, 768, 1440])
         (theme) =>
           localStorage.setItem(
             "helix-appearance",
-            JSON.stringify({ theme, density: "compact", accent: "#7c3aed", fontScale: "default" }),
+            JSON.stringify({ theme, density: "compact", accent: "violet", fontScale: "default" }),
           ),
         theme,
       );

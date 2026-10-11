@@ -80,7 +80,7 @@ async function prepareTheme(context, theme) {
       JSON.stringify({
         theme: nextTheme,
         density: "compact",
-        accent: "#7c3aed",
+        accent: "violet",
         fontScale: "default",
       }),
     );

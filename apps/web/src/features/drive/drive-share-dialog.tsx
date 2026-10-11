@@ -185,8 +185,8 @@ export function DriveShareDialog({
       >
         <div className="flex items-start gap-3 [padding:16px_18px] [border-bottom:1px_solid_var(--border)]">
           <div className="min-w-0">
-            <h2 className="m-0 [font-size:var(--text-lg)] [line-height:1.2]">Share</h2>
-            <div className="mt-1 text-muted-foreground [font-size:var(--text-body-sm)] [overflow-wrap:anywhere]">
+            <h2 className="m-0 type-h2 [line-height:1.2]">Share</h2>
+            <div className="mt-1 text-muted-foreground type-body-sm [overflow-wrap:anywhere]">
               {objectName}
             </div>
           </div>
@@ -204,7 +204,7 @@ export function DriveShareDialog({
 
         <div className="grid gap-2.5 [padding:14px_18px] [border-bottom:1px_solid_var(--border)]">
           <label
-            className="[font-size:var(--text-caption)] font-bold [color:var(--text-2)]"
+            className="type-caption font-bold [color:var(--text-2)]"
             htmlFor={`share-targets-${objectId}`}
           >
             Add people
@@ -245,15 +245,12 @@ export function DriveShareDialog({
             Share
           </button>
           {shareMutation.isSuccess ? (
-            <div className="[color:var(--success,_var(--accent))] [font-size:var(--text-caption)]">
+            <div className="[color:var(--success,_var(--accent))] type-caption">
               Access granted.
             </div>
           ) : null}
           {error !== null ? (
-            <div
-              role="alert"
-              className="[color:var(--danger,_#dc2626)] [font-size:var(--text-caption)]"
-            >
+            <div role="alert" className="[color:var(--danger)] type-caption">
               {error instanceof Error ? error.message : "Sharing failed."}
             </div>
           ) : null}
@@ -277,7 +274,7 @@ export function DriveShareDialog({
           <>
             <details className="grid gap-2.5 [padding:14px_18px] [border-bottom:1px_solid_var(--border)]">
               <summary>Public link settings</summary>
-              <p className="text-muted-foreground [font-size:var(--text-caption)]">
+              <p className="text-muted-foreground type-caption">
                 Public links are view-only and can be revoked at any time.
               </p>
               <input
@@ -358,15 +355,12 @@ export function DriveShareDialog({
                 Create public link
               </button>
               {copied ? (
-                <span className="[color:var(--success,_var(--accent))] [font-size:var(--text-caption)]">
+                <span className="[color:var(--success,_var(--accent))] type-caption">
                   Link copied.
                 </span>
               ) : null}
               {publicLinkError === null ? null : (
-                <span
-                  role="alert"
-                  className="[color:var(--danger,_#dc2626)] [font-size:var(--text-caption)]"
-                >
+                <span role="alert" className="[color:var(--danger)] type-caption">
                   {publicLinkError}
                 </span>
               )}
@@ -399,9 +393,7 @@ function AccessList({
     ownerActorId === null || (currentActorId !== null && ownerActorId === currentActorId);
 
   if (loading) {
-    return (
-      <div className="text-muted-foreground [font-size:var(--text-caption)]">Loading access...</div>
-    );
+    return <div className="text-muted-foreground type-caption">Loading access...</div>;
   }
 
   return (
@@ -409,13 +401,11 @@ function AccessList({
       className="grid gap-2.5 [padding:14px_18px] [border-bottom:1px_solid_var(--border)]"
       aria-label="People with access"
     >
-      <div className="[font-size:var(--text-caption)] font-bold [color:var(--text-2)] uppercase [letter-spacing:0]">
+      <div className="type-caption font-bold [color:var(--text-2)] uppercase [letter-spacing:0]">
         People with access
       </div>
       {grants.length === 0 ? (
-        <div className="text-muted-foreground [font-size:var(--text-caption)]">
-          Only the owner has access.
-        </div>
+        <div className="text-muted-foreground type-caption">Only the owner has access.</div>
       ) : (
         <div className="grid gap-2">
           {grants.map((grant) => {
@@ -423,17 +413,14 @@ function AccessList({
             const canRemove =
               canManageAll || (currentActorId !== null && grant.actorId === currentActorId);
             return (
-              <div
-                key={grant.actorId}
-                className="flex items-center gap-2 min-w-0 [font-size:var(--text-body-sm)]"
-              >
+              <div key={grant.actorId} className="flex items-center gap-2 min-w-0 type-body-sm">
                 <Avatar name={label} />
                 <span className="flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
                   {label}
                 </span>
                 {canManageAll ? (
                   <select
-                    className="input w-31 h-7.5 [font-size:var(--text-caption)]"
+                    className="input w-31 h-7.5 type-caption"
                     aria-label={`Access role for ${label}`}
                     value={driveAccessRoleValue(grant.role)}
                     disabled={busy}
@@ -448,7 +435,7 @@ function AccessList({
                     ))}
                   </select>
                 ) : (
-                  <span className="text-muted-foreground [font-size:var(--text-caption)]">
+                  <span className="text-muted-foreground type-caption">
                     {driveAccessRoleLabel(grant.role)}
                   </span>
                 )}
@@ -478,7 +465,7 @@ function Avatar({ name }: { readonly name: string }) {
   return (
     <span
       aria-hidden="true"
-      className="w-6 h-6 rounded-full [display:inline-grid] [place-items:center] shrink-0 [background:var(--accent-soft)] text-primary [font-size:var(--text-caption)] font-bold"
+      className="w-6 h-6 rounded-full [display:inline-grid] [place-items:center] shrink-0 [background:var(--accent-soft)] text-primary type-caption font-bold"
     >
       {initials(name)}
     </span>

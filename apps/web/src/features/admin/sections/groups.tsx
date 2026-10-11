@@ -278,9 +278,7 @@ function GroupMembershipPanel({ group }: { group: Group }) {
     <div className="panel mb-3 p-4">
       {/* h2, under the section's one h1: this panel is a sub-view of the
           directory below it. */}
-      <h2 className="mb-2 font-semibold [font-size:var(--text-body-sm)]">
-        Members of {group.name}
-      </h2>
+      <h2 className="mb-2 font-semibold type-body-sm">Members of {group.name}</h2>
       {membersFailure !== null ? (
         /* Panel-level: the directory table below is still live, so this retry
            must not outrank it. */

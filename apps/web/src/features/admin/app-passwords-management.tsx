@@ -161,7 +161,7 @@ export function AppPasswordsManagement() {
         cell: ({ row }) => {
           const label = actorLabels.get(row.original.actorId);
           return label === undefined ? (
-            <code className="block max-w-[18rem] truncate text-[0.6875rem] text-muted-foreground">
+            <code className="block max-w-[18rem] truncate type-caption text-muted-foreground">
               {row.original.actorId}
             </code>
           ) : (
@@ -176,7 +176,7 @@ export function AppPasswordsManagement() {
           <div className="flex max-w-md flex-wrap gap-1">
             {row.original.scopes.map((scope) => (
               <span
-                className="rounded border border-border bg-background px-1.5 py-0.5 text-[0.6875rem]"
+                className="rounded border border-border bg-background px-1.5 py-0.5 type-caption"
                 key={scope}
               >
                 {scope}

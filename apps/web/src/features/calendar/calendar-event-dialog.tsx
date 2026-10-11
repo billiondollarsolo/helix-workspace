@@ -92,7 +92,7 @@ export function CalendarEventDialog({
         className="w-95 bg-card [border:1px_solid_var(--border)] [border-radius:12px] [box-shadow:var(--shadow-lg)] p-4 flex flex-col gap-2.5"
       >
         <div className="flex items-center">
-          <span className="[font-size:var(--text-body-lg)] font-semibold">
+          <span className="type-body-lg font-semibold">
             {draft.mode === "create" ? "Create event" : "Edit event"}
           </span>
           <button aria-label="Close" className="icon-btn ml-auto" type="button" onClick={onClose}>
@@ -100,7 +100,7 @@ export function CalendarEventDialog({
           </button>
         </div>
 
-        <label className="flex flex-col gap-1 [font-size:var(--text-meta)]">
+        <label className="flex flex-col gap-1 type-meta">
           <span>Title</span>
           <input
             autoFocus
@@ -109,12 +109,12 @@ export function CalendarEventDialog({
               setValue((current) => ({ ...current, title: domEvent.target.value }))
             }
             placeholder="Event title"
-            className="[border:1px_solid_var(--border)] rounded-md bg-muted text-foreground [padding:6px_8px] [font-size:var(--text-meta)] outline-none"
+            className="[border:1px_solid_var(--border)] rounded-md bg-muted text-foreground [padding:6px_8px] type-meta outline-none"
             type="text"
           />
         </label>
 
-        <label className="flex flex-col gap-1 [font-size:var(--text-meta)]">
+        <label className="flex flex-col gap-1 type-meta">
           <span>Attendees</span>
           <input
             value={value.attendeeEmails}
@@ -122,13 +122,13 @@ export function CalendarEventDialog({
               setValue((current) => ({ ...current, attendeeEmails: domEvent.target.value }))
             }
             placeholder="name@example.com, teammate@example.com"
-            className="[border:1px_solid_var(--border)] rounded-md bg-muted text-foreground [padding:6px_8px] [font-size:var(--text-meta)] outline-none"
+            className="[border:1px_solid_var(--border)] rounded-md bg-muted text-foreground [padding:6px_8px] type-meta outline-none"
             type="text"
             aria-invalid={!attendeesValid}
           />
         </label>
 
-        <label className="flex flex-col gap-1 [font-size:var(--text-meta)]">
+        <label className="flex flex-col gap-1 type-meta">
           <span>Repeat rule</span>
           <input
             value={value.recurrenceRule}
@@ -136,12 +136,12 @@ export function CalendarEventDialog({
               setValue((current) => ({ ...current, recurrenceRule: domEvent.target.value }))
             }
             placeholder="FREQ=WEEKLY;BYDAY=MO"
-            className="[border:1px_solid_var(--border)] rounded-md bg-muted text-foreground [padding:6px_8px] [font-size:var(--text-meta)] outline-none"
+            className="[border:1px_solid_var(--border)] rounded-md bg-muted text-foreground [padding:6px_8px] type-meta outline-none"
             type="text"
           />
         </label>
 
-        <label className="flex flex-col gap-1 [font-size:var(--text-meta)]">
+        <label className="flex flex-col gap-1 type-meta">
           <span>Reminder (minutes before)</span>
           <input
             value={value.reminderMinutes}
@@ -150,24 +150,24 @@ export function CalendarEventDialog({
             }
             min="0"
             max="40320"
-            className="[border:1px_solid_var(--border)] rounded-md bg-muted text-foreground [padding:6px_8px] [font-size:var(--text-meta)] outline-none"
+            className="[border:1px_solid_var(--border)] rounded-md bg-muted text-foreground [padding:6px_8px] type-meta outline-none"
             type="number"
           />
         </label>
 
-        <label className="flex flex-col gap-1 [font-size:var(--text-meta)]">
+        <label className="flex flex-col gap-1 type-meta">
           <span>Date</span>
           <input
             value={value.date}
             onChange={(domEvent) =>
               setValue((current) => ({ ...current, date: domEvent.target.value }))
             }
-            className="[border:1px_solid_var(--border)] rounded-md bg-muted text-foreground [padding:6px_8px] [font-size:var(--text-meta)] outline-none"
+            className="[border:1px_solid_var(--border)] rounded-md bg-muted text-foreground [padding:6px_8px] type-meta outline-none"
             type="date"
           />
         </label>
 
-        <label className="flex gap-1.5 items-center [font-size:var(--text-meta)]">
+        <label className="flex gap-1.5 items-center type-meta">
           <input
             checked={value.allDay}
             onChange={(domEvent) =>
@@ -184,7 +184,7 @@ export function CalendarEventDialog({
 
         {!value.allDay && (
           <div className="flex gap-2">
-            <label className="flex flex-col gap-1 [font-size:var(--text-meta)] flex-1">
+            <label className="flex flex-col gap-1 type-meta flex-1">
               <span>Start</span>
               <input
                 value={decimalHourToClock(value.start)}
@@ -194,11 +194,11 @@ export function CalendarEventDialog({
                     start: clockToDecimalHour(domEvent.target.value, current.start),
                   }))
                 }
-                className="[border:1px_solid_var(--border)] rounded-md bg-muted text-foreground [padding:6px_8px] [font-size:var(--text-meta)] outline-none"
+                className="[border:1px_solid_var(--border)] rounded-md bg-muted text-foreground [padding:6px_8px] type-meta outline-none"
                 type="time"
               />
             </label>
-            <label className="flex flex-col gap-1 [font-size:var(--text-meta)] flex-1">
+            <label className="flex flex-col gap-1 type-meta flex-1">
               <span>End</span>
               <input
                 value={decimalHourToClock(value.end)}
@@ -208,7 +208,7 @@ export function CalendarEventDialog({
                     end: clockToDecimalHour(domEvent.target.value, current.end),
                   }))
                 }
-                className="[border:1px_solid_var(--border)] rounded-md bg-muted text-foreground [padding:6px_8px] [font-size:var(--text-meta)] outline-none"
+                className="[border:1px_solid_var(--border)] rounded-md bg-muted text-foreground [padding:6px_8px] type-meta outline-none"
                 type="time"
               />
             </label>
@@ -216,7 +216,7 @@ export function CalendarEventDialog({
         )}
 
         {!value.allDay && (
-          <label className="flex flex-col gap-1 [font-size:var(--text-meta)]">
+          <label className="flex flex-col gap-1 type-meta">
             <span>Time behavior</span>
             <select
               value={value.timeSemantics}
@@ -226,7 +226,7 @@ export function CalendarEventDialog({
                   timeSemantics: domEvent.target.value as "zoned" | "floating",
                 }))
               }
-              className="[border:1px_solid_var(--border)] rounded-md bg-muted text-foreground [padding:6px_8px] [font-size:var(--text-meta)] outline-none"
+              className="[border:1px_solid_var(--border)] rounded-md bg-muted text-foreground [padding:6px_8px] type-meta outline-none"
             >
               <option value="zoned">Fixed time zone</option>
               <option value="floating">Floating (same local time)</option>
@@ -235,14 +235,14 @@ export function CalendarEventDialog({
         )}
 
         {value.timeSemantics === "zoned" && (
-          <label className="flex flex-col gap-1 [font-size:var(--text-meta)]">
+          <label className="flex flex-col gap-1 type-meta">
             <span>Time zone</span>
             <select
               value={value.timezone}
               onChange={(domEvent) =>
                 setValue((current) => ({ ...current, timezone: domEvent.target.value }))
               }
-              className="[border:1px_solid_var(--border)] rounded-md bg-muted text-foreground [padding:6px_8px] [font-size:var(--text-meta)] outline-none"
+              className="[border:1px_solid_var(--border)] rounded-md bg-muted text-foreground [padding:6px_8px] type-meta outline-none"
             >
               {timeZones.map((timeZone) => (
                 <option key={timeZone} value={timeZone}>
@@ -253,7 +253,7 @@ export function CalendarEventDialog({
           </label>
         )}
 
-        <label className="flex flex-col gap-1 [font-size:var(--text-meta)]">
+        <label className="flex flex-col gap-1 type-meta">
           <span>Location</span>
           <input
             value={value.location}
@@ -261,13 +261,13 @@ export function CalendarEventDialog({
               setValue((current) => ({ ...current, location: domEvent.target.value }))
             }
             placeholder="Optional"
-            className="[border:1px_solid_var(--border)] rounded-md bg-muted text-foreground [padding:6px_8px] [font-size:var(--text-meta)] outline-none"
+            className="[border:1px_solid_var(--border)] rounded-md bg-muted text-foreground [padding:6px_8px] type-meta outline-none"
             type="text"
           />
         </label>
 
         {writableCalendars.length > 0 && (
-          <label className="flex flex-col gap-1 [font-size:var(--text-meta)]">
+          <label className="flex flex-col gap-1 type-meta">
             <span>Calendar</span>
             <select
               value={value.calendarId ?? ""}
@@ -285,7 +285,7 @@ export function CalendarEventDialog({
                     : {}),
                 }))
               }
-              className="[border:1px_solid_var(--border)] rounded-md bg-muted text-foreground [padding:6px_8px] [font-size:var(--text-meta)] outline-none"
+              className="[border:1px_solid_var(--border)] rounded-md bg-muted text-foreground [padding:6px_8px] type-meta outline-none"
             >
               {writableCalendars.map((calendar) => (
                 <option key={calendar.id} value={calendar.id}>
@@ -296,7 +296,7 @@ export function CalendarEventDialog({
           </label>
         )}
 
-        <label className="flex flex-col gap-1 [font-size:var(--text-meta)]">
+        <label className="flex flex-col gap-1 type-meta">
           <span>Description</span>
           <textarea
             value={value.description}
@@ -304,7 +304,7 @@ export function CalendarEventDialog({
               setValue((current) => ({ ...current, description: domEvent.target.value }))
             }
             rows={3}
-            className="[border:1px_solid_var(--border)] rounded-md bg-muted text-foreground [padding:6px_8px] [font-size:var(--text-meta)] outline-none [resize:vertical]"
+            className="[border:1px_solid_var(--border)] rounded-md bg-muted text-foreground [padding:6px_8px] type-meta outline-none [resize:vertical]"
           />
         </label>
 

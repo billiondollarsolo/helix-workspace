@@ -9,7 +9,7 @@ import {
   createWebPlatformHost,
   useColorMode,
 } from "@helix/sdk-web";
-import { Toaster } from "sonner";
+import { AppToaster } from "@/components/ui/toast";
 import { QUERY_RETRY_DEFAULTS } from "@/lib/query-retry";
 import { routeTree } from "./routeTree.gen";
 import "./styles.css";
@@ -61,7 +61,7 @@ function AppProviders() {
           <DialogProvider>
             <QueryClientProvider client={queryClient}>
               <RouterProvider router={router} />
-              <Toaster richColors closeButton />
+              <AppToaster />
             </QueryClientProvider>
           </DialogProvider>
         </WebPlatformProvider>

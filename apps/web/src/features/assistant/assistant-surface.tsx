@@ -544,7 +544,7 @@ export function AssistantSurface() {
         {notice !== null && (
           <div
             role="status"
-            className="flex items-center justify-between gap-3 [padding:8px_32px] [font-size:var(--text-meta)] [color:var(--text-2)] bg-muted [border-bottom:1px_solid_var(--border)]"
+            className="flex items-center justify-between gap-3 [padding:8px_32px] type-meta [color:var(--text-2)] bg-muted [border-bottom:1px_solid_var(--border)]"
           >
             <span>{notice}</span>
             <button
@@ -845,16 +845,14 @@ function VirtualizedThreadList({
   if (loading && pinned.length === 0 && recent.length === 0) {
     return (
       <div className="flex-1 overflow-y-auto [padding:4px_8px]" data-testid="assistant-thread-list">
-        <div className="[padding:12px_6px] [font-size:var(--text-meta)] text-muted-foreground">
-          Loading chats…
-        </div>
+        <div className="[padding:12px_6px] type-meta text-muted-foreground">Loading chats…</div>
       </div>
     );
   }
   if (errored && pinned.length === 0 && recent.length === 0) {
     return (
       <div className="flex-1 overflow-y-auto [padding:4px_8px]" data-testid="assistant-thread-list">
-        <div className="[padding:12px_6px] [font-size:var(--text-meta)] text-muted-foreground">
+        <div className="[padding:12px_6px] type-meta text-muted-foreground">
           Chats unavailable — try again later.
         </div>
       </div>
@@ -863,7 +861,7 @@ function VirtualizedThreadList({
   if (!loading && pinned.length === 0 && recent.length === 0) {
     return (
       <div className="flex-1 overflow-y-auto [padding:4px_8px]" data-testid="assistant-thread-list">
-        <div className="[padding:12px_6px] [font-size:var(--text-meta)] text-muted-foreground">
+        <div className="[padding:12px_6px] type-meta text-muted-foreground">
           {search.trim().length > 0
             ? `No chats match “${search.trim()}”.`
             : "No chats yet — start a new one."}
@@ -980,17 +978,11 @@ function ThreadItem({
           }
         }}
       >
-        <span
-          className={cn(
-            "truncate",
-            "[font-size:var(--text-meta)]",
-            active ? "font-semibold" : "font-medium",
-          )}
-        >
+        <span className={cn("truncate", "type-meta", active ? "font-semibold" : "font-medium")}>
           {thread.pinned === true ? "📌 " : ""}
           {thread.title}
         </span>
-        <span className="[font-size:var(--text-caption)] text-muted-foreground">{thread.time}</span>
+        <span className="type-caption text-muted-foreground">{thread.time}</span>
       </button>
       <button
         type="button"
@@ -1014,7 +1006,7 @@ function ThreadItem({
           <button
             type="button"
             role="menuitem"
-            className="menu-item flex items-center gap-2 w-full [padding:6px_8px] rounded-md [font-size:var(--text-meta)] text-left bg-transparent"
+            className="menu-item flex items-center gap-2 w-full [padding:6px_8px] rounded-md type-meta text-left bg-transparent"
 
             onClick={(event) => {
               event.stopPropagation();
@@ -1027,7 +1019,7 @@ function ThreadItem({
           <button
             type="button"
             role="menuitem"
-            className="menu-item flex items-center gap-2 w-full [padding:6px_8px] rounded-md [font-size:var(--text-meta)] text-left bg-transparent"
+            className="menu-item flex items-center gap-2 w-full [padding:6px_8px] rounded-md type-meta text-left bg-transparent"
 
             onClick={(event) => {
               event.stopPropagation();
@@ -1040,7 +1032,7 @@ function ThreadItem({
           <button
             type="button"
             role="menuitem"
-            className="menu-item flex items-center gap-2 w-full [padding:6px_8px] rounded-md [font-size:var(--text-meta)] text-left bg-transparent [color:var(--danger,_#dc2626)]"
+            className="menu-item flex items-center gap-2 w-full [padding:6px_8px] rounded-md type-meta text-left bg-transparent [color:var(--danger)]"
 
             onClick={(event) => {
               event.stopPropagation();
@@ -1090,7 +1082,7 @@ function RenameDialog({ thread, pending, onCancel, onSubmit }: RenameDialogProps
         </>
       }
     >
-      <label className="block [font-size:var(--text-meta)] mb-1.5">Chat title</label>
+      <label className="block type-meta mb-1.5">Chat title</label>
       <input
         className="input w-full"
         aria-label="Chat title"
@@ -1132,7 +1124,7 @@ function DeleteDialog({ thread, pending, onCancel, onConfirm }: DeleteDialogProp
         </>
       }
     >
-      <p className="[font-size:var(--text-body-sm)] m-0">
+      <p className="type-body-sm m-0">
         Archive <strong>{thread.title}</strong>? It will disappear from your thread list. The
         conversation history is retained server-side.
       </p>
@@ -1151,7 +1143,7 @@ function AssistantHero({ onPrompt, userName }: AssistantHeroProps) {
         <div className="w-14 h-14 [border-radius:14px] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] grid [place-items:center] [color:white] mb-5 [box-shadow:var(--shadow-md)]">
           <SparklesIcon size={28} />
         </div>
-        <h1 className="[font-size:var(--text-display)] font-bold [letter-spacing:-0.02em] [margin:0_0_8px] [line-height:1.1]">
+        <h1 className="type-display font-bold [letter-spacing:-0.02em] [margin:0_0_8px] [line-height:1.1]">
           What can I help you with
           {userName && (
             <>
@@ -1160,7 +1152,7 @@ function AssistantHero({ onPrompt, userName }: AssistantHeroProps) {
           )}
           ?
         </h1>
-        <p className="[font-size:var(--text-body-lg)] [color:var(--text-2)] [margin:0_0_32px]">
+        <p className="type-body-lg [color:var(--text-2)] [margin:0_0_32px]">
           {"Connected to Mail, Drive, and Chat. Ask about your workspace or pick a prompt below."}
         </p>
         <div className="grid [grid-template-columns:repeat(2,_1fr)] gap-2.5">
@@ -1188,10 +1180,8 @@ function AssistantHero({ onPrompt, userName }: AssistantHeroProps) {
                   <PromptIcon size={16} />
                 </span>
                 <span>
-                  <span className="block [font-size:var(--text-body-sm)] font-semibold">
-                    {prompt.title}
-                  </span>
-                  <span className="block [font-size:var(--text-caption)] text-muted-foreground mt-0.5">
+                  <span className="block type-body-sm font-semibold">{prompt.title}</span>
+                  <span className="block type-caption text-muted-foreground mt-0.5">
                     {prompt.sub}
                   </span>
                 </span>

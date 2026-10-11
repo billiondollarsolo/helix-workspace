@@ -61,7 +61,7 @@ export function MailHtmlBody({ html, source, plainBody, remoteContentBlocked }: 
         ))}
       </div>
       {remoteContentBlocked && view === "html" && (
-        <p role="note" className="text-[length:var(--text-caption)] text-[var(--text-3)]">
+        <p role="note" className="type-caption text-[var(--text-3)]">
           External images are blocked to prevent sender tracking.
         </p>
       )}
@@ -84,7 +84,7 @@ export function MailHtmlBody({ html, source, plainBody, remoteContentBlocked }: 
         </pre>
       )}
       {pendingLink !== null && (
-        <div role="alert" className="mt-2 text-[length:var(--text-caption)]">
+        <div role="alert" className="mt-2 type-caption">
           This link opens outside Helix. Verify the sender before continuing: {pendingLink}
           <div className="mt-1 flex gap-1">
             <a

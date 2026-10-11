@@ -118,12 +118,10 @@ export function PendingApprovalsPanel({
     <section
       aria-label="Pending tool approvals"
       data-testid="pending-approvals-panel"
-      className="[margin:12px_0] p-3 [border:1px_solid_var(--border)] rounded-lg [background:var(--surface-2,_var(--bg-elevated,_#f8fafc))]"
+      className="[margin:12px_0] p-3 [border:1px_solid_var(--border)] rounded-lg [background:var(--surface-2)]"
     >
-      <h3 className="[margin:0_0_8px] [font-size:var(--text-body-sm)] font-semibold">
-        Pending approvals
-      </h3>
-      <p className="[margin:0_0_12px] [font-size:var(--text-meta)] [color:var(--text-secondary)]">
+      <h3 className="[margin:0_0_8px] type-body-sm font-semibold">Pending approvals</h3>
+      <p className="[margin:0_0_12px] type-meta [color:var(--text-2)]">
         Review each tool before it runs. Deny cancels the pending action.
       </p>
       <ul className="[list-style:none] m-0 p-0 grid gap-2">
@@ -138,11 +136,11 @@ export function PendingApprovalsPanel({
               className="flex flex-wrap items-center gap-2 justify-between"
             >
               <div className="grid gap-2 min-w-[12rem] flex-1">
-                <div className="font-semibold [font-size:var(--text-meta)]">
+                <div className="font-semibold type-meta">
                   {item.toolId === "ask.user" && question.length > 0 ? question : item.toolId}
                 </div>
                 {fields.map((field) => (
-                  <label key={field.id} className="grid gap-1 [font-size:var(--text-meta)]">
+                  <label key={field.id} className="grid gap-1 type-meta">
                     {field.label}
                     {field.type === "select" ? (
                       <select
@@ -195,7 +193,7 @@ export function PendingApprovalsPanel({
                   </label>
                 ))}
                 {item.error !== undefined && item.error.length > 0 ? (
-                  <div role="alert" className="text-destructive [font-size:var(--text-meta)]">
+                  <div role="alert" className="text-destructive type-meta">
                     {item.error}
                   </div>
                 ) : null}

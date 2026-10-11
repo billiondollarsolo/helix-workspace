@@ -174,7 +174,7 @@ function EventCard({
         }
       }}
       className={cn(
-        "absolute left-1 right-1 [color:#ffffff] rounded [padding:4px_6px] [font-size:var(--text-caption)] [line-height:1.3] overflow-hidden [border-left:3px_solid_rgba(0,_0,_0,_0.2)] text-left",
+        "absolute left-1 right-1 [color:#ffffff] rounded [padding:4px_6px] type-caption [line-height:1.3] overflow-hidden [border-left:3px_solid_rgba(0,_0,_0,_0.2)] text-left",
         movable ? "[cursor:grab]" : "cursor-pointer",
         dragOffset !== 0 ? "[z-index:3]" : "",
       )}
@@ -189,7 +189,7 @@ function EventCard({
       type="button"
     >
       <div className="font-semibold">{event.title}</div>
-      <div className="[opacity:0.85] [font-size:var(--text-chip)]">
+      <div className="[opacity:0.85] type-chip">
         {formatCardTime(event.start)}
         {event.location !== undefined && ` · ${event.location}`}
       </div>

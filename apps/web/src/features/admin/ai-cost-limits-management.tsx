@@ -85,7 +85,7 @@ export function AICostLimitsManagement() {
         accessorKey: "actorId",
         header: "Actor",
         cell: ({ row }) => (
-          <code className="block max-w-[18rem] truncate text-[0.6875rem] text-muted-foreground">
+          <code className="block max-w-[18rem] truncate type-caption text-muted-foreground">
             {row.original.actorId}
           </code>
         ),

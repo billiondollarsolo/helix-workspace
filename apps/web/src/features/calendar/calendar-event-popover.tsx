@@ -113,14 +113,12 @@ export function CalendarEventPopover({
         style={{ borderLeft: `4px solid ${event.color}` }}
       >
         <div className="flex-1 min-w-0">
-          <div className="[font-size:var(--text-body-lg)] font-semibold mb-1 [line-height:1.3]">
-            {event.title}
-          </div>
-          <div className="[font-size:var(--text-meta)] [color:var(--text-2)]">
+          <div className="type-body-lg font-semibold mb-1 [line-height:1.3]">{event.title}</div>
+          <div className="type-meta [color:var(--text-2)]">
             {formatEventDateLabel(event.date)} · {formatHour(event.start)} - {formatHour(event.end)}
           </div>
           {event.location !== undefined && (
-            <div className="[font-size:var(--text-meta)] [color:var(--text-2)] mt-1 flex items-center gap-1.5">
+            <div className="type-meta [color:var(--text-2)] mt-1 flex items-center gap-1.5">
               {conferenceUrl === null ? <PinIcon size={14} /> : <VideoIcon size={14} />}
               {event.location}
             </div>
@@ -158,7 +156,7 @@ export function CalendarEventPopover({
       </div>
 
       {confirmingDelete && canDelete && (
-        <div className="[padding:8px_14px] bg-muted [border-top:1px_solid_var(--border)] flex items-center gap-2 [font-size:var(--text-meta)]">
+        <div className="[padding:8px_14px] bg-muted [border-top:1px_solid_var(--border)] flex items-center gap-2 type-meta">
           <span>Delete this event?</span>
           <div className="ml-auto flex gap-1.5">
             <button className="btn sm" type="button" onClick={() => setConfirmingDelete(false)}>
@@ -185,7 +183,7 @@ export function CalendarEventPopover({
           ? apiAttendees.map((attendee) => (
               <div
                 key={attendee.id ?? attendee.email}
-                className="flex items-center gap-2 [padding:4px_0] [font-size:var(--text-meta)]"
+                className="flex items-center gap-2 [padding:4px_0] type-meta"
               >
                 <Avatar name={attendee.displayName ?? attendee.email} size={22} />
                 <span>{attendee.displayName ?? attendee.email}</span>
@@ -195,10 +193,7 @@ export function CalendarEventPopover({
               </div>
             ))
           : event.attendees.map((name) => (
-              <div
-                key={name}
-                className="flex items-center gap-2 [padding:4px_0] [font-size:var(--text-meta)]"
-              >
+              <div key={name} className="flex items-center gap-2 [padding:4px_0] type-meta">
                 <Avatar name={name} size={22} />
                 <span>{name}</span>
               </div>

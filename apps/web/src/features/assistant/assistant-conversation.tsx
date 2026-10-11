@@ -172,7 +172,7 @@ function ChatMessage({
     return (
       <div className="flex gap-3 mb-5 justify-end">
         <div className="min-w-0 max-w-130">
-          <div className="[background:var(--accent-soft)] text-foreground [padding:10px_14px] [border-radius:12px] max-w-130 [font-size:var(--text-body-sm)] [line-height:1.55] [border:1px_solid_var(--accent-soft-border)] whitespace-pre-wrap">
+          <div className="[background:var(--accent-soft)] text-foreground [padding:10px_14px] [border-radius:12px] max-w-130 type-body-sm [line-height:1.55] [border:1px_solid_var(--accent-soft-border)] whitespace-pre-wrap">
             {message.text}
             {message.attachments?.length ? (
               <ul aria-label="Message attachments" className="mt-2 space-y-1">
@@ -260,8 +260,8 @@ function MessageBlock({ block, onNavigate }: MessageBlockProps) {
   if (block.kind === "list") {
     return (
       <div className="bg-card [border:1px_solid_var(--border)] rounded-lg [padding:12px_14px] mb-2">
-        <div className="font-semibold [font-size:var(--text-body-sm)] mb-2">{block.title}</div>
-        <ul className="m-0 pl-4.5 [font-size:var(--text-meta)] [line-height:1.6]">
+        <div className="font-semibold type-body-sm mb-2">{block.title}</div>
+        <ul className="m-0 pl-4.5 type-meta [line-height:1.6]">
           {block.items.map((item, index) => (
             <li key={index} className="mb-1">
               {item}
@@ -274,12 +274,12 @@ function MessageBlock({ block, onNavigate }: MessageBlockProps) {
   if (block.kind === "draft") {
     return (
       <div className="bg-card [border:1px_solid_var(--border)] rounded-lg mb-2 overflow-hidden">
-        <div className="bg-muted [padding:8px_14px] [border-bottom:1px_solid_var(--border)] flex items-center gap-1.5 [font-size:var(--text-meta)]">
+        <div className="bg-muted [padding:8px_14px] [border-bottom:1px_solid_var(--border)] flex items-center gap-1.5 type-meta">
           <EditPenIcon size={16} />
           <span className="font-semibold">{block.title}</span>
           <span className="chip accent ml-auto">Draft</span>
         </div>
-        <div className="[padding:12px_14px] whitespace-pre-wrap [font-size:var(--text-meta)] [line-height:1.6]">
+        <div className="[padding:12px_14px] whitespace-pre-wrap type-meta [line-height:1.6]">
           {block.body}
         </div>
       </div>

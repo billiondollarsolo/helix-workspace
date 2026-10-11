@@ -115,12 +115,10 @@ function PageHeading({
   return (
     <div className={cn(subtitle ? "mb-5" : "mb-4")}>
       <div className="flex items-center">
-        <h1 className="[font-size:var(--text-h2)] font-semibold m-0">{title}</h1>
+        <h1 className="type-h2 font-semibold m-0">{title}</h1>
         {actions ? <div className="ml-auto flex gap-2">{actions}</div> : null}
       </div>
-      {subtitle ? (
-        <div className="[font-size:var(--text-body-sm)] text-muted-foreground mt-1">{subtitle}</div>
-      ) : null}
+      {subtitle ? <div className="type-body-sm text-muted-foreground mt-1">{subtitle}</div> : null}
     </div>
   );
 }
@@ -130,7 +128,7 @@ function StateBanner({ kind, children }: { kind: "loading" | "error"; children: 
     <div
       role={kind === "error" ? "alert" : "status"}
       className={cn(
-        "[padding:10px_12px] rounded-md [font-size:var(--text-meta)] mb-3 [border:1px_solid_var(--border)]",
+        "[padding:10px_12px] rounded-md type-meta mb-3 [border:1px_solid_var(--border)]",
         kind === "error" ? "[background:var(--danger-soft,_var(--surface-2))]" : "bg-muted",
         kind === "error" ? "text-destructive" : "[color:var(--text-2)]",
       )}
@@ -141,11 +139,7 @@ function StateBanner({ kind, children }: { kind: "loading" | "error"; children: 
 }
 
 function EmptyRow({ children }: { children: ReactNode }) {
-  return (
-    <div className="p-8 text-center [font-size:var(--text-body-sm)] text-muted-foreground">
-      {children}
-    </div>
-  );
+  return <div className="p-8 text-center type-body-sm text-muted-foreground">{children}</div>;
 }
 
 const EMPTY_PROVIDER_CONFIG: MailProviderConfig = {
@@ -203,25 +197,25 @@ function ProviderForm({ onCancel, onSubmit, pending }: ProviderFormProps) {
         onSubmit({ name: name.trim(), kind, config });
       }}
     >
-      <div className="font-semibold [font-size:var(--text-body-sm)]">Add outbound provider</div>
+      <div className="font-semibold type-body-sm">Add outbound provider</div>
       <div className="grid [grid-template-columns:1fr_1fr] gap-2.5">
         <label>
-          <span className="[font-size:var(--text-caption)] text-muted-foreground block">Name</span>
+          <span className="type-caption text-muted-foreground block">Name</span>
           <input
             aria-label="Provider name"
             value={name}
             onChange={(event) => setName(event.target.value)}
             placeholder="Primary SES"
-            className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] [font-size:var(--text-meta)] w-full"
+            className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] type-meta w-full"
           />
         </label>
         <label>
-          <span className="[font-size:var(--text-caption)] text-muted-foreground block">Kind</span>
+          <span className="type-caption text-muted-foreground block">Kind</span>
           <select
             aria-label="Provider kind"
             value={kind}
             onChange={(event) => setKind(event.target.value as MailProviderKind)}
-            className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] [font-size:var(--text-meta)] w-full"
+            className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] type-meta w-full"
           >
             {MAIL_PROVIDER_KINDS.map((value) => (
               <option key={value} value={value}>
@@ -236,71 +230,61 @@ function ProviderForm({ onCancel, onSubmit, pending }: ProviderFormProps) {
       <div className="grid [grid-template-columns:1fr_1fr] gap-2.5">
         {(kind === "ses" || kind === "mailgun" || kind === "postmark") && (
           <label>
-            <span className="[font-size:var(--text-caption)] text-muted-foreground block">
-              API key (env ref)
-            </span>
+            <span className="type-caption text-muted-foreground block">API key (env ref)</span>
             <input
               aria-label="API key env ref"
               value={config.apiKeyRef ?? ""}
               onChange={(event) => setField("apiKeyRef", event.target.value)}
               placeholder="env:MAIL_API_KEY"
-              className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] [font-size:var(--text-meta)] w-full"
+              className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] type-meta w-full"
             />
           </label>
         )}
         {kind === "ses" && (
           <label>
-            <span className="[font-size:var(--text-caption)] text-muted-foreground block">
-              Region
-            </span>
+            <span className="type-caption text-muted-foreground block">Region</span>
             <input
               aria-label="Region"
               value={config.region ?? ""}
               onChange={(event) => setField("region", event.target.value)}
               placeholder="us-east-1"
-              className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] [font-size:var(--text-meta)] w-full"
+              className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] type-meta w-full"
             />
           </label>
         )}
         {kind === "mailgun" && (
           <label>
-            <span className="[font-size:var(--text-caption)] text-muted-foreground block">
-              Domain
-            </span>
+            <span className="type-caption text-muted-foreground block">Domain</span>
             <input
               aria-label="Mailgun domain"
               value={config.domain ?? ""}
               onChange={(event) => setField("domain", event.target.value)}
               placeholder="mg.helix.io"
-              className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] [font-size:var(--text-meta)] w-full"
+              className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] type-meta w-full"
             />
           </label>
         )}
         {kind === "smtp" && (
           <>
             <label>
-              <span className="[font-size:var(--text-caption)] text-muted-foreground block">
-                Host
-              </span>
+              <span className="type-caption text-muted-foreground block">Host</span>
               <input
                 aria-label="SMTP host"
                 value={config.host ?? ""}
                 onChange={(event) => setField("host", event.target.value)}
                 placeholder="smtp.relay.example"
-                className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] [font-size:var(--text-meta)] w-full"
+                className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] type-meta w-full"
               />
             </label>
             <label>
-              <span className="[font-size:var(--text-caption)] text-muted-foreground block">
-                Port
-              </span>
+              <span className="type-caption text-muted-foreground block">Port</span>
               <input
                 aria-label="SMTP port"
                 type="number"
                 value={config.port ?? ""}
                 onChange={(event) => setField("port", event.target.value)}
                 placeholder="587"
-                className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] [font-size:var(--text-meta)] w-full"
+                className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] type-meta w-full"
               />
             </label>
           </>
@@ -386,7 +370,7 @@ function MailProviders() {
       ) : null}
 
       <div className="panel overflow-hidden">
-        <div className="grid [grid-template-columns:1fr_130px_1.6fr_90px_110px] [padding:0_12px] h-8 items-center [border-bottom:1px_solid_var(--border)] bg-muted [font-size:var(--text-caption)] text-muted-foreground font-semibold uppercase [letter-spacing:.06em]">
+        <div className="grid [grid-template-columns:1fr_130px_1.6fr_90px_110px] [padding:0_12px] h-8 items-center [border-bottom:1px_solid_var(--border)] bg-muted type-caption text-muted-foreground font-semibold uppercase [letter-spacing:.06em]">
           <span>Name</span>
           <span>Kind</span>
           <span>Config</span>
@@ -401,7 +385,7 @@ function MailProviders() {
           providers.map((provider) => (
             <div
               key={provider.id}
-              className="grid [grid-template-columns:1fr_130px_1.6fr_90px_110px] [padding:0_12px] [height:var(--rd-list-row-h)] items-center [font-size:var(--rd-row-fs)] [border-bottom:1px_solid_var(--border)]"
+              className="grid [grid-template-columns:1fr_130px_1.6fr_90px_110px] [padding:0_12px] [height:var(--rd-list-row-h)] items-center type-row [border-bottom:1px_solid_var(--border)]"
             >
               <span className="font-medium">
                 {provider.name}
@@ -410,7 +394,7 @@ function MailProviders() {
               <span>
                 <span className="chip">{mailProviderKindLabels[provider.kind]}</span>
               </span>
-              <span className="mono truncate [font-size:var(--text-caption)] [color:var(--text-2)]">
+              <span className="mono truncate type-caption [color:var(--text-2)]">
                 {configSummary(provider.kind, provider.config)}
               </span>
               <span>
@@ -500,7 +484,7 @@ function MailDomains() {
               <span className="text-muted-foreground">
                 <GlobeIcon size={16} />
               </span>
-              <span className="[font-size:var(--text-body)] font-semibold">{domain.domain}</span>
+              <span className="type-body font-semibold">{domain.domain}</span>
               {domain.isPrimary ? <span className="chip success">Primary</span> : null}
               <button
                 type="button"
@@ -515,7 +499,7 @@ function MailDomains() {
             </div>
 
             <div className="mt-3 flex items-center mb-2">
-              <span className="[font-size:var(--text-caption)] text-muted-foreground font-semibold uppercase [letter-spacing:.06em]">
+              <span className="type-caption text-muted-foreground font-semibold uppercase [letter-spacing:.06em]">
                 DKIM keys
               </span>
               <button
@@ -531,16 +515,16 @@ function MailDomains() {
             </div>
 
             {domain.dkimKeys.length === 0 ? (
-              <div className="[font-size:var(--text-meta)] text-muted-foreground [padding:4px_0]">
+              <div className="type-meta text-muted-foreground [padding:4px_0]">
                 No DKIM keys — generate one to start signing mail.
               </div>
             ) : (
               domain.dkimKeys.map((key) => (
                 <div
                   key={key.id}
-                  className="grid [grid-template-columns:1fr_120px] items-center h-7.5 [font-size:var(--text-meta)] [border-top:1px_solid_var(--border)]"
+                  className="grid [grid-template-columns:1fr_120px] items-center h-7.5 type-meta [border-top:1px_solid_var(--border)]"
                 >
-                  <span className="mono [font-size:var(--text-caption)]">{key.selector}</span>
+                  <span className="mono type-caption">{key.selector}</span>
                   <span className="[justify-self:flex-end]">
                     <span className={`chip ${dkimStatusVariant(key.status)}`.trim()}>
                       <span className="chip-dot" />
@@ -604,19 +588,17 @@ function Deliverability() {
         <div className="grid [grid-template-columns:repeat(3,_1fr)] gap-3 mb-4">
           {rateCards.map((card) => (
             <div key={card.label} className="panel p-4">
-              <span className="[font-size:var(--text-caption)] text-muted-foreground font-semibold uppercase [letter-spacing:.06em]">
+              <span className="type-caption text-muted-foreground font-semibold uppercase [letter-spacing:.06em]">
                 {card.label}
               </span>
-              <div className="[font-size:var(--text-h1)] font-bold [letter-spacing:-0.02em] mt-2">
-                {card.value}
-              </div>
+              <div className="type-h1 font-bold [letter-spacing:-0.02em] mt-2">{card.value}</div>
             </div>
           ))}
         </div>
       ) : null}
 
       <div className="panel overflow-hidden">
-        <div className="grid [grid-template-columns:1fr_1fr_1.4fr_90px_90px_90px] [padding:0_12px] h-8 items-center [border-bottom:1px_solid_var(--border)] bg-muted [font-size:var(--text-caption)] text-muted-foreground font-semibold uppercase [letter-spacing:.06em]">
+        <div className="grid [grid-template-columns:1fr_1fr_1.4fr_90px_90px_90px] [padding:0_12px] h-8 items-center [border-bottom:1px_solid_var(--border)] bg-muted type-caption text-muted-foreground font-semibold uppercase [letter-spacing:.06em]">
           <span>Reporter</span>
           <span>Domain</span>
           <span>Window</span>
@@ -632,11 +614,11 @@ function Deliverability() {
           reports.map((report) => (
             <div
               key={report.id}
-              className="grid [grid-template-columns:1fr_1fr_1.4fr_90px_90px_90px] [padding:0_12px] [height:var(--rd-list-row-h)] items-center [font-size:var(--rd-row-fs)] [border-bottom:1px_solid_var(--border)]"
+              className="grid [grid-template-columns:1fr_1fr_1.4fr_90px_90px_90px] [padding:0_12px] [height:var(--rd-list-row-h)] items-center type-row [border-bottom:1px_solid_var(--border)]"
             >
               <span className="font-medium">{report.reporter}</span>
               <span className="[color:var(--text-2)]">{report.domain}</span>
-              <span className="mono [font-size:var(--text-caption)] text-muted-foreground">
+              <span className="mono type-caption text-muted-foreground">
                 {report.rangeStart} → {report.rangeEnd}
               </span>
               <span>{report.total}</span>
@@ -712,39 +694,35 @@ function RoutingForm({ onCancel, onSubmit, pending }: RoutingFormProps) {
         });
       }}
     >
-      <div className="font-semibold [font-size:var(--text-body-sm)]">Add inbound routing rule</div>
+      <div className="font-semibold type-body-sm">Add inbound routing rule</div>
       <div className="grid [grid-template-columns:1fr_1.4fr_1fr_1.4fr_80px] gap-2.5">
         <label>
-          <span className="[font-size:var(--text-caption)] text-muted-foreground block">Name</span>
+          <span className="type-caption text-muted-foreground block">Name</span>
           <input
             aria-label="Rule name"
             value={name}
             onChange={(event) => setName(event.target.value)}
             placeholder="Support catch-all"
-            className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] [font-size:var(--text-meta)] w-full"
+            className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] type-meta w-full"
           />
         </label>
         <label>
-          <span className="[font-size:var(--text-caption)] text-muted-foreground block">
-            Recipient pattern
-          </span>
+          <span className="type-caption text-muted-foreground block">Recipient pattern</span>
           <input
             aria-label="Recipient pattern"
             value={recipientPattern}
             onChange={(event) => setRecipientPattern(event.target.value)}
             placeholder="*@support.helix.io"
-            className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] [font-size:var(--text-meta)] w-full"
+            className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] type-meta w-full"
           />
         </label>
         <label>
-          <span className="[font-size:var(--text-caption)] text-muted-foreground block">
-            Action
-          </span>
+          <span className="type-caption text-muted-foreground block">Action</span>
           <select
             aria-label="Routing action"
             value={action}
             onChange={(event) => setAction(event.target.value as RoutingAction)}
-            className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] [font-size:var(--text-meta)] w-full"
+            className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] type-meta w-full"
           >
             {ROUTING_ACTIONS.map((value) => (
               <option key={value} value={value}>
@@ -754,9 +732,7 @@ function RoutingForm({ onCancel, onSubmit, pending }: RoutingFormProps) {
           </select>
         </label>
         <label>
-          <span className="[font-size:var(--text-caption)] text-muted-foreground block">
-            Destination
-          </span>
+          <span className="type-caption text-muted-foreground block">Destination</span>
           <input
             aria-label="Destination"
             value={destination}
@@ -769,67 +745,57 @@ function RoutingForm({ onCancel, onSubmit, pending }: RoutingFormProps) {
                   ? "Tag"
                   : "Mailbox or forwarding address"
             }
-            className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] [font-size:var(--text-meta)] w-full"
+            className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] type-meta w-full"
           />
         </label>
         <label>
-          <span className="[font-size:var(--text-caption)] text-muted-foreground block">
-            Priority
-          </span>
+          <span className="type-caption text-muted-foreground block">Priority</span>
           <input
             aria-label="Priority"
             type="number"
             value={priority}
             onChange={(event) => setPriority(event.target.value)}
-            className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] [font-size:var(--text-meta)] w-full"
+            className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] type-meta w-full"
           />
         </label>
       </div>
       <div className="grid [grid-template-columns:1fr_1fr_1fr_1fr_auto] gap-2.5">
         <label>
-          <span className="[font-size:var(--text-caption)] text-muted-foreground block">
-            Sender pattern
-          </span>
+          <span className="type-caption text-muted-foreground block">Sender pattern</span>
           <input
             aria-label="Sender pattern"
             value={senderPattern}
             onChange={(event) => setSenderPattern(event.target.value)}
             placeholder="*@customer.example"
-            className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] [font-size:var(--text-meta)] w-full"
+            className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] type-meta w-full"
           />
         </label>
         <label>
-          <span className="[font-size:var(--text-caption)] text-muted-foreground block">
-            Subject contains
-          </span>
+          <span className="type-caption text-muted-foreground block">Subject contains</span>
           <input
             aria-label="Subject contains"
             value={subjectContains}
             onChange={(event) => setSubjectContains(event.target.value)}
-            className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] [font-size:var(--text-meta)] w-full"
+            className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] type-meta w-full"
           />
         </label>
         <label>
-          <span className="[font-size:var(--text-caption)] text-muted-foreground block">
-            Header name
-          </span>
+          <span className="type-caption text-muted-foreground block">Header name</span>
           <input
             aria-label="Header name"
             value={headerName}
             onChange={(event) => setHeaderName(event.target.value)}
             placeholder="X-Project"
-            className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] [font-size:var(--text-meta)] w-full"
+            className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] type-meta w-full"
           />
         </label>
         <label>
-          <span className="[font-size:var(--text-caption)] text-muted-foreground block">
-            Header contains
-          </span>
+          <span className="type-caption text-muted-foreground block">Header contains</span>
           <input
             aria-label="Header contains"
             value={headerContains}
             onChange={(event) => setHeaderContains(event.target.value)}
-            className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] [font-size:var(--text-meta)] w-full"
+            className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] type-meta w-full"
           />
         </label>
         <label className="flex [align-items:end] gap-1.5 pb-2">
@@ -965,7 +931,7 @@ function RoutingRules() {
       ) : null}
 
       <div className="panel overflow-hidden">
-        <div className="grid [grid-template-columns:60px_1.4fr_130px_1.4fr_90px_150px] [padding:0_12px] h-8 items-center [border-bottom:1px_solid_var(--border)] bg-muted [font-size:var(--text-caption)] text-muted-foreground font-semibold uppercase [letter-spacing:.06em]">
+        <div className="grid [grid-template-columns:60px_1.4fr_130px_1.4fr_90px_150px] [padding:0_12px] h-8 items-center [border-bottom:1px_solid_var(--border)] bg-muted type-caption text-muted-foreground font-semibold uppercase [letter-spacing:.06em]">
           <span>Priority</span>
           <span>Match</span>
           <span>Action</span>
@@ -981,14 +947,10 @@ function RoutingRules() {
           rules.map((rule) => (
             <div
               key={rule.id}
-              className="grid [grid-template-columns:60px_1.4fr_130px_1.4fr_90px_150px] [padding:0_12px] [height:var(--rd-list-row-h)] items-center [font-size:var(--rd-row-fs)] [border-bottom:1px_solid_var(--border)]"
+              className="grid [grid-template-columns:60px_1.4fr_130px_1.4fr_90px_150px] [padding:0_12px] [height:var(--rd-list-row-h)] items-center type-row [border-bottom:1px_solid_var(--border)]"
             >
-              <span className="mono [font-size:var(--text-caption)] text-muted-foreground">
-                {rule.priority}
-              </span>
-              <span className="mono truncate [font-size:var(--text-caption)]">
-                {routingRuleMatch(rule)}
-              </span>
+              <span className="mono type-caption text-muted-foreground">{rule.priority}</span>
+              <span className="mono truncate type-caption">{routingRuleMatch(rule)}</span>
               <span>
                 <span className="chip">{routingActionLabels[rule.actionKind]}</span>
               </span>
@@ -1065,8 +1027,8 @@ function SpamFiltering() {
               <ShieldIcon size={16} />
             </span>
             <div className="flex-1">
-              <div className="[font-size:var(--text-body)] font-semibold">spamd daemon</div>
-              <div className="[font-size:var(--text-meta)] [color:var(--text-2)]">
+              <div className="type-body font-semibold">spamd daemon</div>
+              <div className="type-meta [color:var(--text-2)]">
                 Ruleset {settings.rulesetVersion ?? "—"}
               </div>
             </div>
@@ -1082,39 +1044,37 @@ function SpamFiltering() {
 
           <div className="grid [grid-template-columns:repeat(3,_1fr)] gap-3">
             <div className="panel p-4">
-              <span className="[font-size:var(--text-caption)] text-muted-foreground font-semibold uppercase [letter-spacing:.06em]">
+              <span className="type-caption text-muted-foreground font-semibold uppercase [letter-spacing:.06em]">
                 Spam threshold
               </span>
-              <div className="[font-size:var(--text-h1)] font-bold mt-2">
-                {settings.threshold.toFixed(1)}
-              </div>
-              <div className="[font-size:var(--text-caption)] text-muted-foreground mt-1">
+              <div className="type-h1 font-bold mt-2">{settings.threshold.toFixed(1)}</div>
+              <div className="type-caption text-muted-foreground mt-1">
                 Score above which mail is tagged as spam
               </div>
             </div>
             <div className="panel p-4">
-              <span className="[font-size:var(--text-caption)] text-muted-foreground font-semibold uppercase [letter-spacing:.06em]">
+              <span className="type-caption text-muted-foreground font-semibold uppercase [letter-spacing:.06em]">
                 Reject threshold
               </span>
-              <div className="[font-size:var(--text-h1)] font-bold mt-2">
+              <div className="type-h1 font-bold mt-2">
                 {settings.rejectThreshold === null || settings.rejectThreshold === undefined
                   ? "—"
                   : settings.rejectThreshold.toFixed(1)}
               </div>
-              <div className="[font-size:var(--text-caption)] text-muted-foreground mt-1">
+              <div className="type-caption text-muted-foreground mt-1">
                 Score above which mail is rejected outright
               </div>
             </div>
             <div className="panel p-4">
-              <span className="[font-size:var(--text-caption)] text-muted-foreground font-semibold uppercase [letter-spacing:.06em]">
+              <span className="type-caption text-muted-foreground font-semibold uppercase [letter-spacing:.06em]">
                 Tagged (24h)
               </span>
-              <div className="[font-size:var(--text-h1)] font-bold mt-2">
+              <div className="type-h1 font-bold mt-2">
                 {settings.taggedLast24h === null || settings.taggedLast24h === undefined
                   ? "—"
                   : new Intl.NumberFormat("en-US").format(settings.taggedLast24h)}
               </div>
-              <div className="[font-size:var(--text-caption)] text-muted-foreground mt-1">
+              <div className="type-caption text-muted-foreground mt-1">
                 Messages flagged as spam in the last day
               </div>
             </div>
@@ -1166,7 +1126,7 @@ function JournalSettings({
         </span>
       </label>
       <label>
-        <span className="[font-size:var(--text-caption)] text-muted-foreground font-semibold uppercase [letter-spacing:.06em]">
+        <span className="type-caption text-muted-foreground font-semibold uppercase [letter-spacing:.06em]">
           Retention days
         </span>
         <input
@@ -1176,7 +1136,7 @@ function JournalSettings({
           max={36_500}
           value={retentionDays}
           onChange={(event) => setRetentionDays(event.target.value)}
-          className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] [font-size:var(--text-meta)] w-35"
+          className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] type-meta w-35"
         />
       </label>
       <button type="submit" className="btn primary" disabled={pending}>
@@ -1221,13 +1181,13 @@ function MailOperations() {
       />
       <label
         htmlFor="mail-operation-reason"
-        className="[font-size:var(--text-caption)] text-muted-foreground font-semibold uppercase [letter-spacing:.06em]"
+        className="type-caption text-muted-foreground font-semibold uppercase [letter-spacing:.06em]"
       >
         Reason for recovery action
       </label>
       <input
         id="mail-operation-reason"
-        className="input h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] [font-size:var(--text-meta)] w-full [margin:8px_0_16px]"
+        className="input h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] type-meta w-full [margin:8px_0_16px]"
         value={reason}
         maxLength={500}
         onChange={(event) => setReason(event.target.value)}

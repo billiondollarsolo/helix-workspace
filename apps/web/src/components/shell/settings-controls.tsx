@@ -18,16 +18,14 @@ export function SettingsField({
     <div className="grid [grid-template-columns:200px_1fr] gap-6 [padding:16px_0] [border-top:1px_solid_var(--border)] items-start">
       <div>
         {controlId === undefined ? (
-          <div className="[font-size:var(--text-body-sm)] font-medium">{label}</div>
+          <div className="type-body-sm font-medium">{label}</div>
         ) : (
-          <label htmlFor={controlId} className="block [font-size:var(--text-body-sm)] font-medium">
+          <label htmlFor={controlId} className="block type-body-sm font-medium">
             {label}
           </label>
         )}
         {hint ? (
-          <div className="[font-size:var(--text-caption)] text-muted-foreground mt-0.5 [line-height:1.5]">
-            {hint}
-          </div>
+          <div className="type-caption text-muted-foreground mt-0.5 [line-height:1.5]">{hint}</div>
         ) : null}
       </div>
       <div>{children}</div>
@@ -72,7 +70,7 @@ export function SegmentedControl<TValue extends string>({
             onClick={() => onSelect(option.value)}
             aria-pressed={selected}
             className={cn(
-              "h-7 [padding:0_16px] rounded [font-size:var(--text-meta)]",
+              "h-7 [padding:0_16px] rounded type-meta",
               selected ? "bg-card" : "bg-transparent",
               selected ? "text-foreground" : "[color:var(--text-2)]",
               selected ? "font-semibold" : "font-normal",

@@ -633,7 +633,7 @@ export function AdminOverview() {
       ))}
 
       {/* A real h2 rather than a jump from the page h1 to the card h3s. */}
-      <h2 className="mt-4 mb-2 [font-size:var(--text-caption)] text-muted-foreground font-semibold uppercase [letter-spacing:.06em]">
+      <h2 className="mt-4 mb-2 type-caption text-muted-foreground font-semibold uppercase [letter-spacing:.06em]">
         Checks
       </h2>
       {/* 200px lands five cards on one row at the console's 1280px cap, so the
@@ -646,7 +646,7 @@ export function AdminOverview() {
 
       {/* Enterprise detail bands reuse the same five query payloads — no extra
           rps. Partial / failed queries stay labeled unavailable, never green. */}
-      <h2 className="mt-6 mb-2 [font-size:var(--text-caption)] text-muted-foreground font-semibold uppercase [letter-spacing:.06em]">
+      <h2 className="mt-6 mb-2 type-caption text-muted-foreground font-semibold uppercase [letter-spacing:.06em]">
         Operational detail
       </h2>
       <div className="grid gap-3 lg:grid-cols-2">
@@ -711,7 +711,7 @@ export function AdminOverview() {
           provenance. An operator who distrusts a figure needs exactly this. */}
       <details className="admin-disclosure mt-4">
         <summary>Where these five figures come from, and what they do not cover</summary>
-        <ul className="[margin:8px_0_0] [padding-inline-start:20px] [font-size:var(--text-meta)] [color:var(--text-2)] grid gap-1">
+        <ul className="[margin:8px_0_0] [padding-inline-start:20px] type-meta [color:var(--text-2)] grid gap-1">
           <li>
             Domains counts verification status per registered domain. It does not check individual
             DNS records — open Domains for the MX/SPF/DKIM/DMARC detail.

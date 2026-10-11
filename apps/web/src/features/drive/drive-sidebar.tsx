@@ -156,7 +156,7 @@ function DriveQuotaMeter() {
       : `${formatDriveBytes(used)} of ${formatDriveBytes(limit ?? 0)}`;
   return (
     <div className="mb-3 [padding:8px_10px] rounded-md [border:1px_solid_var(--border)]">
-      <div className="[font-size:var(--text-caption)] font-semibold mb-1">Storage</div>
+      <div className="type-caption font-semibold mb-1">Storage</div>
       {limit !== null && quota.data?.unlimited !== true ? (
         <div
           className="h-1.5 rounded-full mb-1.5 [background:var(--border)] overflow-hidden"
@@ -168,7 +168,7 @@ function DriveQuotaMeter() {
           />
         </div>
       ) : null}
-      <div className="[font-size:var(--text-caption)] text-muted-foreground">{label}</div>
+      <div className="type-caption text-muted-foreground">{label}</div>
     </div>
   );
 }

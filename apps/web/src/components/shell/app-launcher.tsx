@@ -65,7 +65,7 @@ export function AppLauncher({ open, onClose }: AppLauncherProps) {
     >
       <div
         id="app-launcher-title"
-        className="[font-size:var(--text-caption)] text-muted-foreground font-semibold uppercase [letter-spacing:.06em] [padding:4px_6px_8px]"
+        className="type-caption text-muted-foreground font-semibold uppercase [letter-spacing:.06em] [padding:4px_6px_8px]"
       >
         Helix apps
       </div>

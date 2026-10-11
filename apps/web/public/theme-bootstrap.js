@@ -3,25 +3,27 @@
 // src/components/settings-store.ts; that store re-applies on hydration.
 (() => {
   const ACCENT_HUE = {
-    "#7c3aed": 290,
-    "#2563eb": 250,
-    "#0891b2": 220,
-    "#059669": 150,
-    "#dc2626": 25,
-    "#ea580c": 50,
-    "#db2777": 350,
-    "#475569": 260,
+    violet: 290,
+    blue: 250,
+    cyan: 220,
+    emerald: 150,
+    red: 25,
+    orange: 50,
+    pink: 350,
+    teal: 185,
   };
-  let theme = "light";
-  let density = "compact";
-  let accent = "#7c3aed";
+  let mode = "system";
+  let density = "default";
+  let accent = "violet";
   let fontScale = "default";
   try {
     const raw = localStorage.getItem("helix-appearance");
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (parsed.theme === "dark") theme = "dark";
-      if (parsed.density === "comfortable") density = "comfortable";
+      if (["system", "light", "dark"].includes(parsed.theme)) mode = parsed.theme;
+      if (["default", "comfortable", "compact"].includes(parsed.density)) {
+        density = parsed.density;
+      }
       if (["small", "default", "large", "xl"].includes(parsed.fontScale)) {
         fontScale = parsed.fontScale;
       }
@@ -32,6 +34,9 @@
   } catch (_) {
     /* localStorage unavailable — fall back to defaults */
   }
+  const prefersDark =
+    typeof matchMedia === "function" && matchMedia("(prefers-color-scheme: dark)").matches;
+  const theme = mode === "system" ? (prefersDark ? "dark" : "light") : mode;
   const root = document.documentElement;
   root.setAttribute("data-theme", theme);
   root.setAttribute("data-density", density);

@@ -54,6 +54,61 @@
 }
 
 /* ============================================================
+   Semantic type utilities
+
+   `type-<role>` sets font-size from the semantic ramp below, so it follows
+   `--font-scale`. Use these instead of arbitrary `[font-size:...]` classes;
+   the web lint rule `helix-web/design-tokens` rejects new arbitrary sizes.
+   They are named `type-*`, not `text-*`, so tailwind-merge never confuses a
+   size with a `text-<color>` utility.
+   ============================================================ */
+@utility type-display {
+  font-size: var(--text-display);
+}
+@utility type-h1 {
+  font-size: var(--text-h1);
+}
+@utility type-h2 {
+  font-size: var(--text-h2);
+}
+@utility type-h3 {
+  font-size: var(--text-h3);
+}
+@utility type-body-lg {
+  font-size: var(--text-body-lg);
+}
+@utility type-body {
+  font-size: var(--text-body);
+}
+@utility type-body-sm {
+  font-size: var(--text-body-sm);
+}
+@utility type-meta {
+  font-size: var(--text-meta);
+}
+@utility type-caption {
+  font-size: var(--text-caption);
+}
+@utility type-chip {
+  font-size: var(--text-chip);
+}
+@utility type-overline {
+  font-size: var(--text-overline);
+}
+/* Density-aware list-row text. */
+@utility type-row {
+  font-size: var(--rd-row-fs);
+}
+
+/* Keyboard focus ring from the focus tokens. */
+@utility focus-ring {
+  &:focus-visible {
+    outline: var(--focus-ring-width) solid var(--focus-ring-color);
+    outline-offset: var(--focus-ring-offset);
+  }
+}
+
+/* ============================================================
    Tokens — light theme + base density
    ============================================================ */
 /* Components precede utilities; responsive !important overrides still win. */
@@ -141,6 +196,122 @@
     --section-label-py: 12px;
     --section-label-mt: 4px;
     --section-label-mb: 4px;
+
+    /* Spacing scale (4px grid). Tailwind spacing utilities already follow it;
+     these name the steps for CSS rules and calc() expressions. */
+    --space-0: 0;
+    --space-px: 1px;
+    --space-0-5: 2px;
+    --space-1: 4px;
+    --space-1-5: 6px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 20px;
+    --space-6: 24px;
+    --space-8: 32px;
+    --space-10: 40px;
+    --space-12: 48px;
+    --space-16: 64px;
+
+    /* Focus ring: one keyboard-focus treatment for every primitive. */
+    --focus-ring-color: var(--accent);
+    --focus-ring-width: 2px;
+    --focus-ring-offset: 2px;
+    --focus-ring:
+      0 0 0 var(--focus-ring-offset) var(--bg),
+      0 0 0 calc(var(--focus-ring-offset) + var(--focus-ring-width)) var(--focus-ring-color);
+
+    /* Starred and important markers (3:1 against the light surfaces). */
+    --star: oklch(64% 0.15 70);
+    --important: oklch(66% 0.15 75);
+
+    /* Snackbar: an inverted surface so toasts stand apart from the page. */
+    --snackbar-bg: #322f2d;
+    --snackbar-fg: #f5f5f4;
+    --snackbar-accent: oklch(80% 0.12 var(--accent-h));
+
+    /* Label and event palette. Every `--label-<name>` is a solid fill that
+     keeps 4.5:1 with `--label-on` text; `--label-<name>-soft` is the tinted
+     chip background that keeps 4.5:1 with `--text`. Lightness and chroma
+     switch per theme, so one name works in light and dark. */
+    --label-l: 50%;
+    --label-c: 0.15;
+    --label-soft-l: 93%;
+    --label-soft-c: 0.05;
+    --label-on: #ffffff;
+    --label-red: oklch(var(--label-l) var(--label-c) 25);
+    --label-red-soft: oklch(var(--label-soft-l) var(--label-soft-c) 25);
+    --label-coral: oklch(var(--label-l) var(--label-c) 38);
+    --label-coral-soft: oklch(var(--label-soft-l) var(--label-soft-c) 38);
+    --label-orange: oklch(var(--label-l) var(--label-c) 55);
+    --label-orange-soft: oklch(var(--label-soft-l) var(--label-soft-c) 55);
+    --label-amber: oklch(var(--label-l) var(--label-c) 75);
+    --label-amber-soft: oklch(var(--label-soft-l) var(--label-soft-c) 75);
+    --label-yellow: oklch(var(--label-l) var(--label-c) 95);
+    --label-yellow-soft: oklch(var(--label-soft-l) var(--label-soft-c) 95);
+    --label-olive: oklch(var(--label-l) var(--label-c) 110);
+    --label-olive-soft: oklch(var(--label-soft-l) var(--label-soft-c) 110);
+    --label-lime: oklch(var(--label-l) var(--label-c) 130);
+    --label-lime-soft: oklch(var(--label-soft-l) var(--label-soft-c) 130);
+    --label-green: oklch(var(--label-l) var(--label-c) 150);
+    --label-green-soft: oklch(var(--label-soft-l) var(--label-soft-c) 150);
+    --label-emerald: oklch(var(--label-l) var(--label-c) 165);
+    --label-emerald-soft: oklch(var(--label-soft-l) var(--label-soft-c) 165);
+    --label-mint: oklch(var(--label-l) var(--label-c) 178);
+    --label-mint-soft: oklch(var(--label-soft-l) var(--label-soft-c) 178);
+    --label-teal: oklch(var(--label-l) var(--label-c) 190);
+    --label-teal-soft: oklch(var(--label-soft-l) var(--label-soft-c) 190);
+    --label-cyan: oklch(var(--label-l) var(--label-c) 210);
+    --label-cyan-soft: oklch(var(--label-soft-l) var(--label-soft-c) 210);
+    --label-sky: oklch(var(--label-l) var(--label-c) 230);
+    --label-sky-soft: oklch(var(--label-soft-l) var(--label-soft-c) 230);
+    --label-blue: oklch(var(--label-l) var(--label-c) 255);
+    --label-blue-soft: oklch(var(--label-soft-l) var(--label-soft-c) 255);
+    --label-indigo: oklch(var(--label-l) var(--label-c) 275);
+    --label-indigo-soft: oklch(var(--label-soft-l) var(--label-soft-c) 275);
+    --label-violet: oklch(var(--label-l) var(--label-c) 295);
+    --label-violet-soft: oklch(var(--label-soft-l) var(--label-soft-c) 295);
+    --label-purple: oklch(var(--label-l) var(--label-c) 310);
+    --label-purple-soft: oklch(var(--label-soft-l) var(--label-soft-c) 310);
+    --label-plum: oklch(var(--label-l) var(--label-c) 325);
+    --label-plum-soft: oklch(var(--label-soft-l) var(--label-soft-c) 325);
+    --label-fuchsia: oklch(var(--label-l) var(--label-c) 335);
+    --label-fuchsia-soft: oklch(var(--label-soft-l) var(--label-soft-c) 335);
+    --label-pink: oklch(var(--label-l) var(--label-c) 350);
+    --label-pink-soft: oklch(var(--label-soft-l) var(--label-soft-c) 350);
+    --label-rose: oklch(var(--label-l) var(--label-c) 10);
+    --label-rose-soft: oklch(var(--label-soft-l) var(--label-soft-c) 10);
+    --label-brown: oklch(var(--label-l) calc(var(--label-c) * 0.55) 50);
+    --label-brown-soft: oklch(var(--label-soft-l) calc(var(--label-soft-c) * 0.6) 50);
+    --label-slate: oklch(var(--label-l) calc(var(--label-c) * 0.3) 250);
+    --label-slate-soft: oklch(var(--label-soft-l) calc(var(--label-soft-c) * 0.35) 250);
+    --label-gray: oklch(var(--label-l) 0 0);
+    --label-gray-soft: oklch(var(--label-soft-l) 0 0);
+
+    /* Calendar */
+    --cal-hour-h: 48px;
+    --cal-gutter-w: 56px;
+    --cal-grid-line: var(--border);
+    --cal-grid-line-half: color-mix(in srgb, var(--border) 50%, transparent);
+    --cal-weekend-bg: color-mix(in srgb, var(--surface-2) 50%, transparent);
+    --cal-today-bg: var(--accent);
+    --cal-today-fg: var(--accent-fg);
+    --cal-now: var(--danger);
+    --cal-event-default: var(--label-blue);
+    --cal-event-fg: var(--label-on);
+    --cal-event-radius: 4px;
+    --cal-outside-month-fg: var(--text-3);
+
+    /* Motion. Durations collapse to zero under prefers-reduced-motion. */
+    --motion-duration-instant: 50ms;
+    --motion-duration-fast: 100ms;
+    --motion-duration-base: 160ms;
+    --motion-duration-slow: 240ms;
+    --motion-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+    --motion-ease-enter: cubic-bezier(0, 0, 0, 1);
+    --motion-ease-exit: cubic-bezier(0.3, 0, 1, 1);
+    --motion-shimmer-duration: 1.4s;
   }
 
   [data-theme="dark"] {
@@ -184,22 +355,29 @@
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.04);
     --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.04);
     --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.06);
+
+    --star: oklch(82% 0.15 85);
+    --important: oklch(82% 0.14 85);
+
+    --snackbar-bg: #e7e5e4;
+    --snackbar-fg: #1c1917;
+    --snackbar-accent: oklch(48% 0.2 var(--accent-h));
+
+    --label-l: 74%;
+    --label-c: 0.13;
+    --label-soft-l: 32%;
+    --label-soft-c: 0.07;
+    --label-on: #0a0a0b;
   }
 
-  [data-density="comfortable"] {
-    --row-h: 38px;
-    --row-h-tight: 34px;
-    --gap: 16px;
-    --gap-sm: 12px;
-  }
-
-  /* Density-aware spacing tokens for inline styles. Font sizes route
- * through `--text-N` so they pick up `--font-scale` automatically — no
- * more "compact density looks tiny no matter what font-scale I pick". */
+  /* Density: data-density="default|comfortable|compact", named after the
+   familiar mail-client settings. Default and Comfortable share row metrics;
+   Comfortable drops inline extras such as attachment chips (mark them with
+   `.density-rich`). Compact tightens rows, nav items, and avatars. Font sizes
+   route through `--text-N`, so they still follow `--font-scale`. */
   :root,
-  [data-theme="light"],
-  [data-theme="dark"],
-  [data-density="compact"] {
+  [data-density="default"],
+  [data-density="comfortable"] {
     --rd-row-py: 8px;
     --rd-row-px: 12px;
     --rd-row-fs: var(--text-body);
@@ -208,96 +386,62 @@
     --rd-avatar: 20px;
     --rd-avatar-lg: 32px;
   }
-  [data-density="comfortable"] {
-    --rd-row-py: 12px;
-    --rd-row-px: 16px;
-    --rd-row-fs: var(--text-body-lg);
-    --rd-row-gap: 4px;
-    --rd-list-row-h: 44px;
-    --rd-avatar: 24px;
-    --rd-avatar-lg: 36px;
+  [data-density="compact"] {
+    --row-h: 26px;
+    --row-h-tight: 22px;
+    --gap: 10px;
+    --gap-sm: 6px;
+    --nav-row-h: 28px;
+    --rd-row-py: 4px;
+    --rd-row-px: 10px;
+    --rd-row-fs: var(--text-body);
+    --rd-row-gap: 1px;
+    --rd-list-row-h: 30px;
+    --rd-avatar: 18px;
+    --rd-avatar-lg: 28px;
+  }
+  [data-density="comfortable"] .density-rich,
+  [data-density="compact"] .density-rich {
+    display: none;
   }
 
-  /* === Density-responsive overrides ===
-   Compact (default) keeps the original Linear/Gmail-tight metrics.
-   Roomy bumps every shared chrome dimension up proportionally. */
-  [data-density="comfortable"] body {
-    font-size: var(--text-body-lg);
+  /* Motion tokens collapse for users who ask for less movement. */
+  @media (prefers-reduced-motion: reduce) {
+    :root {
+      --motion-duration-instant: 0ms;
+      --motion-duration-fast: 0ms;
+      --motion-duration-base: 0ms;
+      --motion-duration-slow: 0ms;
+      --motion-shimmer-duration: 0ms;
+    }
   }
-  [data-density="comfortable"] .topbar {
-    height: 56px;
+
+  /* Motion shared by components/ui primitives. Durations come from the
+   motion tokens, so reduced motion turns these into instant changes. */
+  @keyframes ui-pop-in {
+    from {
+      opacity: 0;
+      transform: scale(0.97);
+    }
   }
-  [data-density="comfortable"] .search {
-    height: 36px;
-    padding: 0 12px;
+  @keyframes ui-fade-in {
+    from {
+      opacity: 0;
+    }
   }
-  [data-density="comfortable"] .search input {
-    font-size: var(--text-body-lg);
+  @keyframes ui-sheet-in {
+    from {
+      transform: translateX(100%);
+    }
   }
-  [data-density="comfortable"] .input,
-  [data-density="comfortable"] .select {
-    height: 34px;
-    font-size: var(--text-body-lg);
+  @keyframes ui-shimmer {
+    50% {
+      opacity: 0.45;
+    }
   }
-  [data-density="comfortable"] .btn {
-    min-height: 32px;
-    height: auto;
-    padding: 4px 14px;
-    font-size: var(--text-body);
-  }
-  [data-density="comfortable"] .btn.sm {
-    min-height: 28px;
-    height: auto;
-    padding: 3px 10px;
-    font-size: var(--text-body-sm);
-  }
-  [data-density="comfortable"] .btn.lg {
-    min-height: 40px;
-    height: auto;
-    padding: 6px 18px;
-    font-size: var(--text-body-lg);
-  }
-  [data-density="comfortable"] .btn.icon {
-    width: 32px;
-    padding: 0;
-  }
-  [data-density="comfortable"] .icon-btn {
-    width: 32px;
-    height: 32px;
-  }
-  [data-density="comfortable"] .tab {
-    height: 44px;
-    padding: 0 16px;
-    font-size: var(--text-body);
-  }
-  [data-density="comfortable"] .chip {
-    min-height: 22px;
-    height: auto;
-    padding: 2px 8px;
-    font-size: var(--text-meta);
-  }
-  [data-density="comfortable"] .section-label {
-    padding: 12px 14px 6px;
-    font-size: var(--text-caption);
-  }
-  [data-density="comfortable"] .list-row {
-    min-height: var(--row-h);
-    height: auto;
-    padding: 6px 16px;
-    font-size: var(--text-body-lg);
-  }
-  [data-density="comfortable"] .compose {
-    width: 580px;
-  }
-  [data-density="comfortable"] .slash-menu {
-    width: 320px;
-  }
-  [data-density="comfortable"] .slash-item {
-    padding: 8px 10px;
-    font-size: var(--text-body);
-  }
-  [data-density="comfortable"] .panel {
-    border-radius: 10px;
+  .ui-skeleton-bar {
+    background: var(--surface-3);
+    animation: ui-shimmer var(--motion-shimmer-duration) ease-in-out infinite;
   }
 
   /* ============================================================
@@ -391,12 +535,6 @@
     --leading-normal: 1.5;
     --leading-relaxed: 1.65;
   }
-
-  /* `--rd-row-fs` is defined upstream as `var(--text-body)` / `var(--text-body-lg)`
- * for compact / comfortable density. Those tokens already scale with
- * --font-scale, so no per-scale override is needed here. (An older
- * pre-token override that lived here was masking the variable — removed
- * to let the cascade flow correctly.) */
 
   /* Chrome heights → min-height at large/xl to prevent clip */
   [data-font-scale="large"] .topbar,
@@ -1023,7 +1161,7 @@
     place-items: center;
     font-weight: 600;
     font-size: var(--text-caption);
-    color: white;
+    color: var(--label-on);
     flex-shrink: 0;
     user-select: none;
     background-size: cover;
@@ -2615,9 +2753,8 @@
    Admin console — grouped sidebar navigation
    ============================================================ */
 
-  /* Nineteen sections plus six group headings will not fit every viewport —
-   `[data-density="comfortable"]` alone puts the rows at 44px. The nav scrolls
-   rather than pretending otherwise; the spacing below is tuned so the default
+  /* Nineteen sections plus six group headings will not fit every viewport. The
+   nav scrolls rather than pretending otherwise; the spacing below is tuned so the default
    density fits a standard laptop without one. */
   .admin-nav {
     width: 232px;
@@ -3152,7 +3289,7 @@
     text-align: right;
   }
   /* The one row height, from the density token — so a row is the same height in
-   Users as in Domains, and both grow under [data-density="comfortable"]. Five
+   Users as in Domains, and both tighten under [data-density="compact"]. Five
    sections previously hardcoded five different heights. */
   .admin-table-cell {
     height: var(--rd-list-row-h);

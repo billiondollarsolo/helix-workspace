@@ -14,8 +14,8 @@ export function ProfileSection() {
   const profile = profileQuery.data;
   return (
     <>
-      <h1 className="[font-size:var(--text-h2)] font-semibold [margin:0_0_4px]">Profile</h1>
-      <div className="[font-size:var(--text-body-sm)] text-muted-foreground mb-4">
+      <h1 className="type-h2 font-semibold [margin:0_0_4px]">Profile</h1>
+      <div className="type-body-sm text-muted-foreground mb-4">
         How you appear across the workspace
       </div>
       {profile ? (
@@ -70,10 +70,8 @@ export function ProfileSection() {
 export function LanguageSection() {
   return (
     <>
-      <h1 className="[font-size:var(--text-h2)] font-semibold [margin:0_0_4px]">
-        Language &amp; region
-      </h1>
-      <div className="[font-size:var(--text-body-sm)] text-muted-foreground mb-2">
+      <h1 className="type-h2 font-semibold [margin:0_0_4px]">Language &amp; region</h1>
+      <div className="type-body-sm text-muted-foreground mb-2">
         How dates, times, and language are formatted
       </div>
       <SettingsField label="Language" controlId="settings-language">
@@ -140,7 +138,7 @@ export function LanguageSection() {
 
             {...UNAVAILABLE_CONTROL_PROPS}
           />
-          <span className="text-muted-foreground [font-size:var(--text-meta)]">Mon–Fri</span>
+          <span className="text-muted-foreground type-meta">Mon–Fri</span>
         </div>
       </SettingsField>
     </>
@@ -176,9 +174,7 @@ export function ShortcutsSection() {
   ];
   return (
     <>
-      <h1 className="[font-size:var(--text-h2)] font-semibold [margin:0_0_16px]">
-        Keyboard shortcuts
-      </h1>
+      <h1 className="type-h2 font-semibold [margin:0_0_16px]">Keyboard shortcuts</h1>
       {groups.map((group) => (
         <div key={group.name} className="mb-6">
           <div className="section-label [padding:0_0_8px]">{group.name}</div>
@@ -187,7 +183,7 @@ export function ShortcutsSection() {
               <div
                 key={desc}
                 className={cn(
-                  "flex items-center [padding:8px_14px] [font-size:var(--text-meta)]",
+                  "flex items-center [padding:8px_14px] type-meta",
                   index ? "[border-top:1px_solid_var(--border)]" : "[border-top:none]",
                 )}
               >

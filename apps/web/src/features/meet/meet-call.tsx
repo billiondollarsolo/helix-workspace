@@ -154,10 +154,8 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
             REC
           </span>
         ) : null}
-        <span className="[font-size:var(--text-meta)] [color:#a1a1aa]">
-          helix.meet/{session.code}
-        </span>
-        <div className="ml-auto flex items-center gap-2 [color:#a1a1aa] [font-size:var(--text-meta)]">
+        <span className="type-meta [color:#a1a1aa]">helix.meet/{session.code}</span>
+        <div className="ml-auto flex items-center gap-2 [color:#a1a1aa] type-meta">
           <span className="[font-variant-numeric:tabular-nums]" aria-label="Elapsed time">
             {formatElapsed(elapsed)}
           </span>
@@ -295,7 +293,7 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
                 </ParticipantRow>
               ))}
               {call.participants.length === 0 && call.isJoined ? (
-                <li className="[padding:12px_16px] [color:#71717a] [font-size:var(--text-meta)]">
+                <li className="[padding:12px_16px] [color:#71717a] type-meta">
                   No one else has joined yet.
                 </li>
               ) : null}
@@ -581,7 +579,7 @@ function CallOptionsPanel({
         ) : null}
         {call.capabilities.breakoutRooms && canModerate ? (
           <section aria-label="Breakout rooms" className="grid gap-2 mt-2">
-            <strong className="[font-size:var(--text-body-sm)]">Breakout rooms</strong>
+            <strong className="type-body-sm">Breakout rooms</strong>
             <PolicyButton label="Add breakout room" onClick={commands.addBreakoutRoom} />
             <PolicyButton
               label="Auto-assign participants"
@@ -597,7 +595,7 @@ function CallOptionsPanel({
             ) : null}
             {breakoutRooms.map((room) => (
               <div key={room.id} className="grid gap-1.5 p-2 [border:1px_solid_#27272d]">
-                <span className="[font-size:var(--text-meta)]">
+                <span className="type-meta">
                   {room.name} ({String(room.participantCount)})
                 </span>
                 <div className="flex gap-1.5">
@@ -647,7 +645,7 @@ function Overlay({
     <div
       role="status"
       className={cn(
-        "absolute inset-0 grid [place-items:center] [font-size:var(--text-body-sm)] pointer-events-none",
+        "absolute inset-0 grid [place-items:center] type-body-sm pointer-events-none",
         tone === "error" ? "[background:rgba(127,29,29,0.4)]" : "[background:rgba(0,0,0,0.65)]",
         tone === "error" ? "[color:#fecaca]" : "[color:#a1a1aa]",
       )}
@@ -677,7 +675,7 @@ function SidePanel({
     >
       <div className="[padding:12px_16px] flex items-center gap-2 [border-bottom:1px_solid_#27272d]">
         {icon}
-        <span className="font-semibold [font-size:var(--text-body-sm)]">{title}</span>
+        <span className="font-semibold type-body-sm">{title}</span>
         <button
           className="icon-btn ml-auto"
 
@@ -706,13 +704,13 @@ function ParticipantRow({
     <li className="[padding:10px_16px] flex items-center gap-2.5 [border-bottom:1px_solid_#27272d]">
       <span
         aria-hidden="true"
-        className="w-7 h-7 [border-radius:999px] [background:#3f3f46] grid [place-items:center] [color:#ededee] [font-size:12px]"
+        className="w-7 h-7 [border-radius:999px] [background:#3f3f46] grid [place-items:center] [color:#ededee] type-meta"
       >
         {initials(name)}
       </span>
-      <span className="flex-1 [font-size:var(--text-body-sm)]">{name}</span>
+      <span className="flex-1 type-body-sm">{name}</span>
       {badge !== undefined && badge !== null ? (
-        <span className="[font-size:var(--text-caption)] [color:#f87171]">{badge}</span>
+        <span className="type-caption [color:#f87171]">{badge}</span>
       ) : null}
       {children}
     </li>
@@ -765,7 +763,7 @@ function ChatPanel({
     <SidePanel title="In-call messages" icon={<ChatIcon size={16} />} onClose={onClose}>
       <div className="p-3 flex flex-col gap-2">
         {messages.length === 0 ? (
-          <p className="m-0 [color:#71717a] [font-size:var(--text-meta)] text-center [padding:24px_0]">
+          <p className="m-0 [color:#71717a] type-meta text-center [padding:24px_0]">
             No messages yet. Say hi.
           </p>
         ) : (
@@ -779,7 +777,7 @@ function ChatPanel({
             >
               <span
                 className={cn(
-                  "[font-size:var(--text-caption)] [color:#71717a]",
+                  "type-caption [color:#71717a]",
                   m.isLocal ? "text-right" : "text-left",
                 )}
               >
@@ -787,7 +785,7 @@ function ChatPanel({
               </span>
               <span
                 className={cn(
-                  "[color:white] [padding:6px_10px] [border-radius:10px] [font-size:var(--text-body-sm)] whitespace-pre-wrap [word-break:break-word]",
+                  "[color:white] [padding:6px_10px] [border-radius:10px] type-body-sm whitespace-pre-wrap [word-break:break-word]",
                   m.isLocal ? "[background:var(--accent)]" : "[background:#27272d]",
                 )}
               >
@@ -813,7 +811,7 @@ function ChatPanel({
           onChange={(event) => {
             setDraft(event.target.value);
           }}
-          className="flex-1 h-7.5 [padding:0_10px] rounded-md [background:#0a0a0b] [color:#ededee] outline-none [font-size:var(--text-meta)] [border:1px_solid_#27272d]"
+          className="flex-1 h-7.5 [padding:0_10px] rounded-md [background:#0a0a0b] [color:#ededee] outline-none type-meta [border:1px_solid_#27272d]"
         />
         <button
           type="submit"
@@ -875,7 +873,7 @@ function CallControl({
       {badge !== undefined && badge !== null && badge > 0 ? (
         <span
           aria-hidden="true"
-          className="absolute [top:-2px] [right:-2px] min-w-4 h-4 [padding:0_4px] [border-radius:999px] [background:#dc2626] [color:white] [font-size:10px] font-semibold grid [place-items:center]"
+          className="absolute [top:-2px] [right:-2px] min-w-4 h-4 [padding:0_4px] [border-radius:999px] [background:#dc2626] [color:white] type-chip font-semibold grid [place-items:center]"
         >
           {badge > 99 ? "99+" : badge}
         </span>

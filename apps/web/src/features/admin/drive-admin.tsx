@@ -141,10 +141,10 @@ export function DriveAdminSection() {
       {formError !== null ? <StateBanner kind="error">{formError}</StateBanner> : null}
 
       <section className={PANEL} aria-labelledby="drive-quota-heading">
-        <h2 id="drive-quota-heading" className="m-0 text-[var(--text-h3)] font-semibold">
+        <h2 id="drive-quota-heading" className="m-0 type-h3 font-semibold">
           Storage usage
         </h2>
-        <p className="m-0 text-[var(--text-3)] [font-size:var(--text-meta)]">
+        <p className="m-0 text-[var(--text-3)] type-meta">
           Live usage against the effective <code>storage_bytes_limit</code>. Change the limit in
           Workspace settings → Quotas.
         </p>
@@ -152,17 +152,15 @@ export function DriveAdminSection() {
       </section>
 
       <section className={PANEL} aria-labelledby="drive-lifecycle-heading">
-        <h2 id="drive-lifecycle-heading" className="m-0 text-[var(--text-h3)] font-semibold">
+        <h2 id="drive-lifecycle-heading" className="m-0 type-h3 font-semibold">
           Lifecycle policy
         </h2>
-        <p className="m-0 text-[var(--text-3)] [font-size:var(--text-meta)]">
+        <p className="m-0 text-[var(--text-3)] type-meta">
           Controls how long trashed files are retained before hard-delete eligibility, and how long
           orphaned uploads wait before garbage collection.
         </p>
         {policy !== undefined ? (
-          <p className="m-0 text-[var(--text-2)] [font-size:var(--text-meta)]">
-            {formatLifecycleSummary(policy)}
-          </p>
+          <p className="m-0 text-[var(--text-2)] type-meta">{formatLifecycleSummary(policy)}</p>
         ) : null}
         <div className="grid gap-3 sm:grid-cols-2">
           <AdminField label="Trash retention (days)">
@@ -229,17 +227,13 @@ function QuotaPanel({
 }) {
   if (loading && usage === undefined) {
     return (
-      <p className="m-0 text-[var(--text-3)] [font-size:var(--text-meta)]" role="status">
+      <p className="m-0 text-[var(--text-3)] type-meta" role="status">
         Loading storage usage…
       </p>
     );
   }
   if (usage === undefined) {
-    return (
-      <p className="m-0 text-[var(--text-3)] [font-size:var(--text-meta)]">
-        Storage usage is unavailable.
-      </p>
-    );
+    return <p className="m-0 text-[var(--text-3)] type-meta">Storage usage is unavailable.</p>;
   }
   const pct = usage.percentUsed ?? 0;
   const barWidth = usage.unlimited ? 0 : Math.min(100, pct);
@@ -254,9 +248,7 @@ function QuotaPanel({
           <div
             className={cn(
               "h-full",
-              pct >= 90
-                ? "[background:var(--danger,_#dc2626)]"
-                : "[background:var(--accent,_#2563eb)]",
+              pct >= 90 ? "[background:var(--danger)]" : "[background:var(--accent)]",
             )}
             style={{ width: `${String(barWidth)}%` }}
           />

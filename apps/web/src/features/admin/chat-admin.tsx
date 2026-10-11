@@ -254,12 +254,12 @@ export function ChatAdminSection() {
           <h2 className="text-sm font-semibold" id="chat-retention-heading">
             Retention policy
           </h2>
-          <p className="text-[var(--text-3)] [font-size:var(--text-caption)]">
+          <p className="text-[var(--text-3)] type-caption">
             {policySummary ??
               "Platform default is 2555 days (~7 years) with 24-hour edit/delete windows until you set an organization policy."}
           </p>
           {controlsDisabled && unavailableReason !== null ? (
-            <p className="admin-unavailable-reason text-[var(--text-3)] [font-size:var(--text-caption)]">
+            <p className="admin-unavailable-reason text-[var(--text-3)] type-caption">
               Controls disabled: {unavailableReason}
             </p>
           ) : null}
@@ -356,12 +356,12 @@ export function ChatAdminSection() {
           <h2 className="text-sm font-semibold" id="chat-export-heading">
             Organization export
           </h2>
-          <p className="text-[var(--text-3)] [font-size:var(--text-caption)]">
+          <p className="text-[var(--text-3)] type-caption">
             Exports stored Chat messages for this organization. Rate-limited (2/hour, 4/day).
             Deleted bodies are redacted; the export is audited.
           </p>
           {controlsDisabled && unavailableReason !== null ? (
-            <p className="admin-unavailable-reason text-[var(--text-3)] [font-size:var(--text-caption)]">
+            <p className="admin-unavailable-reason text-[var(--text-3)] type-caption">
               Export disabled: {unavailableReason}
             </p>
           ) : null}
@@ -425,7 +425,7 @@ export function ChatAdminSection() {
             Run organization export
           </Button>
           {lastExport !== null ? (
-            <span className="text-[var(--text-3)] [font-size:var(--text-caption)]">
+            <span className="text-[var(--text-3)] type-caption">
               Last export {lastExport.exportId}: {String(lastExport.messages.length)} messages
               {lastExport.truncated ? " (truncated)" : ""}
             </span>

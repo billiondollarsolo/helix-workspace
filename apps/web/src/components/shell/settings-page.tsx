@@ -110,7 +110,7 @@ export function SettingsPage({ open, section, onSectionChange, onClose }: Settin
         <button type="button" className="icon-btn" onClick={onClose} aria-label="Back">
           <ArrowLeftIcon size={16} />
         </button>
-        <span id="settings-title" className="[font-size:var(--text-body)] font-semibold">
+        <span id="settings-title" className="type-body font-semibold">
           Settings
         </span>
         <div className="ml-auto">
@@ -134,7 +134,7 @@ export function SettingsPage({ open, section, onSectionChange, onClose }: Settin
                 onClick={() => onSectionChange(entry.id)}
                 aria-current={selected ? "page" : undefined}
                 className={cn(
-                  "w-full flex items-center gap-2.5 h-8 [padding:0_10px] rounded-md [font-size:var(--text-body-sm)] text-left",
+                  "w-full flex items-center gap-2.5 h-8 [padding:0_10px] rounded-md type-body-sm text-left",
                   selected ? "[background:var(--accent-soft)]" : "bg-transparent",
                   selected ? "text-primary" : "text-foreground",
                   selected ? "font-semibold" : "font-normal",

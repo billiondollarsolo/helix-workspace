@@ -133,9 +133,8 @@ function matchesFilter(label: string, needle: string): boolean {
  * group headings need the vertical space more than a third label does.
  *
  * Those 19 sections still do not fit a laptop viewport — 882px of content in
- * an 843px nav at compact density, and ~190px over at
- * `[data-density="comfortable"]`, whose 44px rows are a density token we do
- * not get to shrink. Three things share the load, in this order:
+ * an 843px nav at the default density. Three things share the load, in this
+ * order:
  *
  *   1. The overflow is signposted. A sticky gradient at whichever edge has
  *      content past it, plus a permanently visible scrollbar, so "more below"
@@ -224,7 +223,7 @@ export function AdminSidebar({
     const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
     observer?.observe(nav);
     /* The nav's own box also has to be watched from the inside: switching to
-       `[data-density="comfortable"]` grows every row from 36px to 44px without
+       `[data-density="compact"]` shrinks every row from 36px to 30px without
        changing the nav's width or height, so observing only the container
        leaves the affordance reporting the old content height. */
     for (const child of nav.children) {

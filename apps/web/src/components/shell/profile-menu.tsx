@@ -2,6 +2,7 @@ import { cn } from "@/lib/utils";
 import {
   ArrowLeft as ArrowLeftIcon,
   CircleHelp as HelpIcon,
+  Monitor as MonitorIcon,
   Moon as MoonIcon,
   Settings as SettingsIcon,
   Shield as ShieldIcon,
@@ -12,7 +13,15 @@ import {
    handoff (shell.jsx → ProfileMenu). User card + appearance controls
    (mode / density / accent) + account actions. */
 
-import { ACCENT_OPTIONS, setAppearance, useAppearance } from "@/components/settings-store";
+import {
+  ACCENT_OPTIONS,
+  DENSITY_OPTIONS,
+  THEME_OPTIONS,
+  accentSwatch,
+  setAppearance,
+  useAppearance,
+  type ThemeMode,
+} from "@/components/settings-store";
 import type { SettingsSectionId } from "@/components/shell/overlay-context";
 import { Avatar } from "@/components/ui/avatar";
 import { sessionUserQueryOptions, signOut } from "@/lib/auth";
@@ -31,21 +40,24 @@ export interface ProfileMenuProps {
 }
 
 function AccentSwatch({
-  color,
+  label,
+  hue,
   selected,
   onClick,
 }: {
-  color: string;
+  label: string;
+  hue: number;
   selected: boolean;
   onClick: () => void;
 }) {
+  const color = accentSwatch(hue);
   return (
     <button
       type="button"
       onClick={onClick}
-      aria-label={`Accent ${color}`}
+      aria-label={`Accent ${label}`}
       aria-pressed={selected}
-      title={color}
+      title={label}
       className="w-6 h-6 rounded-md p-0 [border:none] cursor-pointer shrink-0 [transition:box-shadow_0.1s]"
       style={{
         background: color,
@@ -57,15 +69,19 @@ function AccentSwatch({
   );
 }
 
-const MODE_OPTIONS: readonly { v: "light" | "dark"; label: string; icon: IconComponent }[] = [
-  { v: "light", label: "Light", icon: SunIcon },
-  { v: "dark", label: "Dark", icon: MoonIcon },
-];
+const MODE_ICONS: Readonly<Record<ThemeMode, IconComponent>> = {
+  system: MonitorIcon,
+  light: SunIcon,
+  dark: MoonIcon,
+};
 
-const DENSITY_OPTIONS: readonly { v: "compact" | "comfortable"; label: string }[] = [
-  { v: "compact", label: "Compact" },
-  { v: "comfortable", label: "Roomy" },
-];
+const MODE_OPTIONS = THEME_OPTIONS.map((option) => ({
+  v: option.value,
+  label: option.label,
+  icon: MODE_ICONS[option.value],
+}));
+
+const DENSITY_CHOICES = DENSITY_OPTIONS.map((option) => ({ v: option.value, label: option.label }));
 
 /** Labelled segmented control used for both Mode and Density. */
 function SegmentedGroup<TValue extends string>({
@@ -83,7 +99,7 @@ function SegmentedGroup<TValue extends string>({
 }) {
   return (
     <div className="mb-2.5">
-      <div id={labelId} className="[font-size:var(--text-caption)] [color:var(--text-2)] mb-1">
+      <div id={labelId} className="type-caption [color:var(--text-2)] mb-1">
         {label}
       </div>
       <div className="flex gap-1 p-0.5 bg-muted rounded-md" role="group" aria-labelledby={labelId}>
@@ -96,7 +112,7 @@ function SegmentedGroup<TValue extends string>({
               type="button"
               onClick={() => onSelect(option.v)}
               aria-pressed={selected}
-              className="flex-1 h-7 rounded [font-size:var(--text-meta)] flex items-center justify-center gap-1.5 bg-transparent [color:var(--text-2)] font-normal aria-pressed:bg-card aria-pressed:text-foreground aria-pressed:font-semibold aria-pressed:[box-shadow:var(--shadow-sm)]"
+              className="flex-1 h-7 rounded type-meta flex items-center justify-center gap-1.5 bg-transparent [color:var(--text-2)] font-normal aria-pressed:bg-card aria-pressed:text-foreground aria-pressed:font-semibold aria-pressed:[box-shadow:var(--shadow-sm)]"
             >
               {Ico ? (
                 <>
@@ -232,16 +248,14 @@ export function ProfileMenu({ open, onClose, anchorRef, openSettings }: ProfileM
       <div className="[padding:14px_14px_12px] flex items-center gap-2.5 [border-bottom:1px_solid_var(--border)]">
         <Avatar name={displayName} size={36} />
         <div className="min-w-0 flex-1">
-          <div className="font-semibold [font-size:var(--text-body-sm)]">{displayName}</div>
-          <div className="truncate [font-size:var(--text-caption)] text-muted-foreground">
-            {displayEmail}
-          </div>
+          <div className="font-semibold type-body-sm">{displayName}</div>
+          <div className="truncate type-caption text-muted-foreground">{displayEmail}</div>
         </div>
       </div>
 
       {/* Appearance */}
       <div className="[padding:8px_12px_10px]">
-        <div className="[font-size:var(--text-chip)] font-semibold uppercase [letter-spacing:.06em] text-muted-foreground [padding:4px_2px_8px]">
+        <div className="type-chip font-semibold uppercase [letter-spacing:.06em] text-muted-foreground [padding:4px_2px_8px]">
           Appearance
         </div>
 
@@ -258,26 +272,24 @@ export function ProfileMenu({ open, onClose, anchorRef, openSettings }: ProfileM
         <SegmentedGroup
           labelId="profile-density-label"
           label="Density"
-          options={DENSITY_OPTIONS}
+          options={DENSITY_CHOICES}
           value={density}
           onSelect={(next) => setAppearance("density", next)}
         />
 
         {/* Accent */}
         <div>
-          <div
-            id="profile-accent-label"
-            className="[font-size:var(--text-caption)] [color:var(--text-2)] mb-1 mb-1.5"
-          >
+          <div id="profile-accent-label" className="type-caption [color:var(--text-2)] mb-1 mb-1.5">
             Accent color
           </div>
           <div className="flex gap-2 flex-wrap" role="group" aria-labelledby="profile-accent-label">
-            {ACCENT_OPTIONS.map((color) => (
+            {ACCENT_OPTIONS.map((option) => (
               <AccentSwatch
-                key={color}
-                color={color}
-                selected={accent === color}
-                onClick={() => setAppearance("accent", color)}
+                key={option.value}
+                label={option.label}
+                hue={option.hue}
+                selected={accent === option.value}
+                onClick={() => setAppearance("accent", option.value)}
               />
             ))}
           </div>
@@ -294,7 +306,7 @@ export function ProfileMenu({ open, onClose, anchorRef, openSettings }: ProfileM
               type="button"
               role="menuitem"
               onClick={item.action}
-              className="profile-menu-action w-full h-8.5 [padding:0_14px] flex items-center gap-2.5 [font-size:var(--text-meta)] text-left text-foreground"
+              className="profile-menu-action w-full h-8.5 [padding:0_14px] flex items-center gap-2.5 type-meta text-left text-foreground"
             >
               <Ico size={16} />
               {item.label}
@@ -312,7 +324,7 @@ export function ProfileMenu({ open, onClose, anchorRef, openSettings }: ProfileM
 
           className={cn(
             "profile-menu-action",
-            "w-full h-8.5 [padding:0_14px] flex items-center gap-2.5 [font-size:var(--text-meta)] text-left text-destructive",
+            "w-full h-8.5 [padding:0_14px] flex items-center gap-2.5 type-meta text-left text-destructive",
             signingOut ? "cursor-default" : "cursor-pointer",
             signingOut ? "[opacity:0.6]" : "[opacity:1]",
           )}

@@ -47,10 +47,7 @@ export function UserDetail({
   readonly copyState: { key: string; ok: boolean } | null;
 }) {
   return (
-    <div
-      id={detailRowId(user.id)}
-      className="grid gap-2 py-2 pl-7 whitespace-normal [font-size:var(--text-meta)]"
-    >
+    <div id={detailRowId(user.id)} className="grid gap-2 py-2 pl-7 whitespace-normal type-meta">
       <div className="row flex-wrap items-center gap-2">
         <span className="text-[var(--text-3)]">Actor ID</span>
         <code className="mono">{user.id}</code>

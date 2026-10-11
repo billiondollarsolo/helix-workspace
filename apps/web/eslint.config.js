@@ -6,6 +6,7 @@ import {
   helixTestRules,
 } from "@helix/config/eslint";
 import tseslint from "typescript-eslint";
+import { helixWebPlugin } from "./eslint-rules/design-tokens.js";
 
 export default tseslint.config(
   ...fileSizeConfigs,
@@ -23,9 +24,11 @@ export default tseslint.config(
     },
     plugins: {
       helix: helixBrowserPlugin,
+      "helix-web": helixWebPlugin,
     },
     rules: {
       ...helixBrowserRules,
+      "helix-web/design-tokens": "error",
       // Measured geometry, transforms, and values from user data stay inline.
       // Static declarations belong in the token-backed stylesheet or utilities.
       "no-restricted-syntax": [
@@ -53,8 +56,10 @@ export default tseslint.config(
       "**/*.spec.tsx",
       "tests/**/*.ts",
       "tests/**/*.tsx",
+      "src/test/**/*.ts",
+      "src/test/**/*.tsx",
     ],
-    rules: helixTestRules,
+    rules: { ...helixTestRules, "helix-web/design-tokens": "off" },
   },
   {
     // Playwright E2E specs live outside the app tsconfig's `include`. Point the

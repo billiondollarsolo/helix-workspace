@@ -91,11 +91,11 @@ export function RecordingDrawer({ meeting, onClose }: RecordingDrawerProps) {
           <div className="flex-1 min-w-0">
             <h2
               id={titleId}
-              className="m-0 font-semibold [font-size:var(--text-body-sm)] text-foreground overflow-hidden text-ellipsis whitespace-nowrap"
+              className="m-0 font-semibold type-body-sm text-foreground overflow-hidden text-ellipsis whitespace-nowrap"
             >
               Recordings
             </h2>
-            <div className="[font-size:var(--text-meta)] text-muted-foreground overflow-hidden text-ellipsis whitespace-nowrap">
+            <div className="type-meta text-muted-foreground overflow-hidden text-ellipsis whitespace-nowrap">
               {meeting.title || meeting.subject}
             </div>
           </div>
@@ -133,10 +133,7 @@ export function RecordingDrawer({ meeting, onClose }: RecordingDrawerProps) {
 
 function EmptyState({ recorded }: { readonly recorded: boolean }) {
   return (
-    <div
-      role="status"
-      className="[padding:48px_16px] text-center text-muted-foreground [font-size:var(--text-meta)]"
-    >
+    <div role="status" className="[padding:48px_16px] text-center text-muted-foreground type-meta">
       {recorded
         ? "This meeting was recorded, but the upload hasn't been received yet. Recordings appear here after Jibri finishes uploading."
         : "No recordings for this meeting."}
@@ -159,25 +156,25 @@ function RecordingCard({
   const duration = formatDurationFromRange(artifact.startedAt, artifact.endedAt);
   return (
     <article className="[border:1px_solid_var(--border)] [border-radius:10px] bg-muted overflow-hidden">
-      <div className="[background:#000]">
+      <div className="bg-black">
         <video
           aria-label={`Recording ${String(index + 1)} of ${String(total)}`}
           controls
           preload="metadata"
           src={src}
-          className="w-full block max-h-80 [background:#000]"
+          className="w-full block max-h-80 bg-black"
         />
       </div>
       <div className="[padding:12px_14px] flex flex-col gap-1.5">
         <div className="flex [align-items:baseline] justify-between gap-2">
-          <span className="font-semibold [font-size:var(--text-body-sm)]">
+          <span className="font-semibold type-body-sm">
             {total > 1 ? `Recording ${String(index + 1)} of ${String(total)}` : "Recording"}
           </span>
-          <span className="[font-size:var(--text-caption)] text-muted-foreground">
+          <span className="type-caption text-muted-foreground">
             {formatBytes(artifact.byteSize)}
           </span>
         </div>
-        <dl className="m-0 grid [grid-template-columns:auto_1fr] [gap:2px_12px] [font-size:var(--text-meta)] [color:var(--text-2)]">
+        <dl className="m-0 grid [grid-template-columns:auto_1fr] [gap:2px_12px] type-meta [color:var(--text-2)]">
           <dt className="text-muted-foreground">Captured</dt>
           <dd className="m-0">{formatTimestamp(captured)}</dd>
           {duration !== null ? (
@@ -199,9 +196,7 @@ function RecordingCard({
               Download
             </a>
           ) : (
-            <span className="text-muted-foreground [font-size:var(--text-meta)]">
-              Download disabled
-            </span>
+            <span className="text-muted-foreground type-meta">Download disabled</span>
           )}
           <a className="btn sm inline-flex items-center gap-1.5" href={driveHref}>
             Open in Drive

@@ -496,7 +496,7 @@ export function AdminUsers() {
             <Avatar name={row.user.name} size={22} />
             <div className="min-w-0">
               <div className="truncate font-medium">{row.user.name}</div>
-              <div className="truncate text-[var(--text-3)] [font-size:var(--text-caption)]">
+              <div className="truncate text-[var(--text-3)] type-caption">
                 {/* Agent and service actors have no address. An em dash
                     reads as unknown; "—" must never be a value that
                     search or selection can match. */}
@@ -615,7 +615,7 @@ export function AdminUsers() {
         title="Users"
         subtitle="Every actor in this workspace — people, agents, and service identities."
         meta={
-          <span className="ml-2 text-[var(--text-3)] [font-size:var(--text-meta)]">
+          <span className="ml-2 text-[var(--text-3)] type-meta">
             {directoryCountLabel({
               counted,
               failed: failure !== null,
@@ -747,7 +747,7 @@ export function AdminUsers() {
         <AdminBulkBar label="Bulk actions for selected users">
           {/* Every id in the set is a row on screen (see the pruning effect), so
               this number is the whole of what an action here would affect. */}
-          <span className="font-medium [font-size:var(--text-meta)]">
+          <span className="font-medium type-meta">
             {selectedVisible.length} selected
             {hasMorePages ? " — from the loaded rows only" : ""}
           </span>
@@ -776,7 +776,7 @@ export function AdminUsers() {
           {/* Destructive and role-changing actions sit one level in, and are
               disabled with the reason rather than pretending to be live. */}
           <details className="ml-auto">
-            <summary className="cursor-pointer text-[var(--text-3)] [font-size:var(--text-meta)]">
+            <summary className="cursor-pointer text-[var(--text-3)] type-meta">
               Change role, suspend…
             </summary>
             <div className="row mt-2 flex-wrap items-center gap-2">
@@ -800,10 +800,7 @@ export function AdminUsers() {
               >
                 Suspend
               </Button>
-              <span
-                id="users-read-only-reason"
-                className="text-[var(--text-3)] [font-size:var(--text-caption)]"
-              >
+              <span id="users-read-only-reason" className="text-[var(--text-3)] type-caption">
                 {ACCOUNT_ACTIONS_REASON}
               </span>
             </div>
@@ -855,7 +852,7 @@ export function AdminUsers() {
             >
               {usersQuery.isFetchingNextPage ? "Loading…" : "Load more"}
             </Button>
-            <span className="text-[var(--text-3)] [font-size:var(--text-caption)]">
+            <span className="text-[var(--text-3)] type-caption">
               {directory.length} loaded — up to {DIRECTORY_PAGE_SIZE} more per press. The server has
               not said how many remain.
             </span>
@@ -868,7 +865,7 @@ export function AdminUsers() {
           the honest reading; a live-looking "Invite users" button that did
           nothing was not. */}
       <details className="mt-3">
-        <summary className="cursor-pointer [font-size:var(--text-meta)]">
+        <summary className="cursor-pointer type-meta">
           Adding accounts (unavailable in this build)
         </summary>
         <div className="row mt-2 flex-wrap items-center gap-2">
@@ -892,10 +889,7 @@ export function AdminUsers() {
           >
             <PlusIcon size={16} /> Invite users
           </Button>
-          <span
-            id="users-add-reason"
-            className="text-[var(--text-3)] [font-size:var(--text-caption)]"
-          >
+          <span id="users-add-reason" className="text-[var(--text-3)] type-caption">
             {ACCOUNT_ACTIONS_REASON}
           </span>
         </div>

@@ -176,7 +176,7 @@ export function DriveDetailsPanel({
       className="w-80 shrink-0 [border-left:1px_solid_var(--border)] bg-card flex flex-col"
     >
       <div className="[padding:10px_14px] flex items-center [border-bottom:1px_solid_var(--border)]">
-        <span className="truncate [font-size:var(--text-body-sm)] font-semibold">Details</span>
+        <span className="truncate type-body-sm font-semibold">Details</span>
         <button
           type="button"
           aria-label="Close details"
@@ -197,7 +197,7 @@ export function DriveDetailsPanel({
         <div className="[padding:12px_14px]">
           <div className="flex gap-1.5 mb-1">
             <input
-              className="input flex-1 min-w-0 [font-size:var(--text-body-sm)]"
+              className="input flex-1 min-w-0 type-body-sm"
               value={renameValue}
               aria-label="File name"
               onChange={(event) => setRenameValue(event.target.value)}
@@ -220,7 +220,7 @@ export function DriveDetailsPanel({
             success={renameMutation.isSuccess ? "Renamed." : null}
             error={renameMutation.error}
           />
-          <div className="row gap-2 [font-size:var(--text-caption)] text-muted-foreground mb-3">
+          <div className="row gap-2 type-caption text-muted-foreground mb-3">
             <span className="uppercase">{file.type}</span>
             <span>·</span>
             <span>{file.size}</span>
@@ -231,7 +231,7 @@ export function DriveDetailsPanel({
               role="status"
               data-testid="drive-details-unavailable"
               data-upload-state={statusView.state}
-              className="drive-upload-tone [font-size:var(--text-caption)] mb-2.5 [padding:8px_10px] rounded-md"
+              className="drive-upload-tone type-caption mb-2.5 [padding:8px_10px] rounded-md"
               data-tone={statusView.tone}
             >
               {openDenialMessage(statusView.state)}
@@ -239,10 +239,7 @@ export function DriveDetailsPanel({
           ) : null}
 
           {actionError !== null ? (
-            <div
-              role="alert"
-              className="[font-size:var(--text-caption)] [color:var(--danger,_#dc2626)] mb-2.5"
-            >
+            <div role="alert" className="type-caption [color:var(--danger)] mb-2.5">
               {actionError.message}
             </div>
           ) : null}
@@ -295,7 +292,7 @@ export function DriveDetailsPanel({
               </button>
               <button
                 type="button"
-                className="btn sm flex-1 [color:var(--danger,_#dc2626)]"
+                className="btn sm flex-1 [color:var(--danger)]"
 
                 disabled={busy}
                 onClick={() => onDelete(file.id)}
@@ -320,7 +317,7 @@ export function DriveDetailsPanel({
               ) : null}
               <button
                 type="button"
-                className="btn sm flex-1 [color:var(--danger,_#dc2626)]"
+                className="btn sm flex-1 [color:var(--danger)]"
 
                 disabled={busy}
                 onClick={() => onTrash(file.id)}
@@ -332,12 +329,12 @@ export function DriveDetailsPanel({
           )}
 
           <div className="section-label [padding:8px_0_4px]">Owner</div>
-          <div className="flex items-center gap-2 [font-size:var(--text-meta)] mb-3">
+          <div className="flex items-center gap-2 type-meta mb-3">
             <Avatar name={ownerLabel} size={24} />
             <span className="truncate">{ownerLabel}</span>
           </div>
           <div className="section-label [padding:8px_0_4px]">Modified</div>
-          <div className="[font-size:var(--text-meta)] [color:var(--text-2)] mb-3">
+          <div className="type-meta [color:var(--text-2)] mb-3">
             {entry !== null ? formatModified(entry.updatedAt) : file.modified}
           </div>
 
@@ -355,14 +352,14 @@ export function DriveDetailsPanel({
               </button>
               <div className="flex gap-1.5 mb-1.5">
                 <input
-                  className="input flex-1 min-w-0 [font-size:var(--text-meta)]"
+                  className="input flex-1 min-w-0 type-meta"
                   aria-label="Share with"
                   value={shareInput}
                   onChange={(event) => setShareInput(event.target.value)}
                   placeholder="Email, name, or actor ID"
                 />
                 <select
-                  className="input w-28 [font-size:var(--text-meta)]"
+                  className="input w-28 type-meta"
                   aria-label="Share role"
                   value={shareRole}
                   onChange={(event) => setShareRole(event.target.value as DriveAccessRole)}
@@ -385,9 +382,7 @@ export function DriveDetailsPanel({
                 Share
               </button>
               {shareDone ? (
-                <div className="[font-size:var(--text-caption)] text-muted-foreground mt-1.5">
-                  Access granted.
-                </div>
+                <div className="type-caption text-muted-foreground mt-1.5">Access granted.</div>
               ) : null}
               <AccessList
                 grants={accessQuery.data ?? []}
@@ -405,7 +400,7 @@ export function DriveDetailsPanel({
                     {(versionsQuery.data ?? []).slice(0, 8).map((version, index) => (
                       <li
                         key={String(version.versionNumber)}
-                        className="flex items-center gap-2 [font-size:var(--text-caption)]"
+                        className="flex items-center gap-2 type-caption"
                       >
                         <span className="flex-1 min-w-0 truncate">
                           v{String(version.versionNumber)}
@@ -470,7 +465,7 @@ export function DriveDetailsPanel({
           {activity.map((item) => (
             <div
               key={`${item.who}-${item.what}-${item.time}`}
-              className="flex items-center gap-2 [padding:4px_0] [font-size:var(--text-caption)]"
+              className="flex items-center gap-2 [padding:4px_0] type-caption"
             >
               <Avatar name={item.who} size={18} />
               <span className="truncate">
@@ -504,11 +499,7 @@ function AccessList({
 }) {
   const canManageAll = currentActorId !== null && ownerActorId === currentActorId;
   if (loading) {
-    return (
-      <div className="[font-size:var(--text-caption)] text-muted-foreground mt-2">
-        Loading access...
-      </div>
-    );
+    return <div className="type-caption text-muted-foreground mt-2">Loading access...</div>;
   }
   if (grants.length === 0) {
     return null;
@@ -522,15 +513,12 @@ function AccessList({
           const canRemove =
             canManageAll || (currentActorId !== null && grant.actorId === currentActorId);
           return (
-            <div
-              key={grant.actorId}
-              className="row gap-2 min-w-0 [font-size:var(--text-caption)] [padding:4px_0]"
-            >
+            <div key={grant.actorId} className="row gap-2 min-w-0 type-caption [padding:4px_0]">
               <Avatar name={label} size={18} />
               <span className="truncate min-w-0">{label}</span>
               {canManageAll ? (
                 <select
-                  className="input w-28 h-7 [font-size:var(--text-caption)]"
+                  className="input w-28 h-7 type-caption"
                   aria-label={`Access role for ${label}`}
                   value={driveAccessRoleValue(grant.role)}
                   disabled={busy}

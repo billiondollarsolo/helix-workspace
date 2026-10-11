@@ -166,7 +166,7 @@ export function AdminApps() {
       header: "App",
       cell: (app) => (
         <div className="row gap-2">
-          <div className="grid size-6 place-items-center rounded-[5px] border border-[var(--border)] bg-[var(--surface-2)] text-[length:var(--text-caption)] font-semibold">
+          <div className="grid size-6 place-items-center rounded-[5px] border border-[var(--border)] bg-[var(--surface-2)] type-caption font-semibold">
             {app.name[0]}
           </div>
           <span className="font-medium">{app.name}</span>

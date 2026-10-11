@@ -20,7 +20,11 @@ LABEL org.opencontainers.image.title="helix-spamassassin" \
       org.opencontainers.image.version="4.0.2"
 
 RUN apk update \
-    && apk add --no-cache --upgrade c-ares=1.34.8-r0 \
+    && apk add --no-cache --upgrade \
+      c-ares=1.34.8-r0 \
+      libcrypto3=3.5.9-r0 \
+      libssl3=3.5.9-r0 \
+      perl=5.42.2-r1 \
     && rm -rf /var/cache/apk/*
 
 RUN rules_archive=/tmp/Mail-SpamAssassin-rules-4.0.2.r1928015.tgz \

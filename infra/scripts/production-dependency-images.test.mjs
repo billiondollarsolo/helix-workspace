@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 const dockerfiles = Object.fromEntries(
-  ["postgres", "nats", "meilisearch", "cerbos", "spamassassin"].map((name) => [
+  ["postgres", "nats", "meilisearch", "cerbos", "spamassassin", "clamav"].map((name) => [
     name,
     readFileSync(resolve(`infra/${name}/Dockerfile`), "utf8"),
   ]),
@@ -42,25 +42,27 @@ describe("production dependency image build contracts", () => {
     expect(dockerfiles.postgres).toContain(
       "PGVECTOR_COMMIT=159b79aaad5983fb7459c1e3df2897fbb2d11788",
     );
-    expect(dockerfiles.nats).toContain("go get golang.org/x/crypto@v0.52.0");
-    expect(dockerfiles.cerbos).toContain("go get google.golang.org/grpc@v1.82.1");
+    expect(dockerfiles.nats).toContain("go get golang.org/x/crypto@v0.55.0");
+    expect(dockerfiles.cerbos).toContain(
+      "go get google.golang.org/grpc@v1.83.2 golang.org/x/net@v0.60.0",
+    );
   });
   it("pins data-plane validation clients to the production service lines", () => {
     expect(dataPlaneFixture).toContain("natsio/nats-box:0.19.7@sha256:");
-    expect(dataPlaneFixture).toContain("postgres:18.4-alpine3.24@sha256:");
-    expect(dataPlaneFixture).toContain("redis:8.8.1-alpine@sha256:");
+    expect(dataPlaneFixture).toContain("postgres:18.6-alpine3.24@sha256:");
+    expect(dataPlaneFixture).toContain("redis:8.8.3-alpine@sha256:");
     expect(dataPlaneFixture).not.toMatch(/(?:postgres|redis):(?:17|7)-alpine/u);
   });
   it("repackages Meilisearch into a minimal patched runtime from an immutable source image", () => {
     expect(dockerfiles.meilisearch).toContain("SOURCE_IMAGE=getmeili/meilisearch:v1.51.0@sha256:");
-    expect(dockerfiles.meilisearch).toContain("RUNTIME_BASE=alpine:3.24.1@sha256:");
+    expect(dockerfiles.meilisearch).toContain("RUNTIME_BASE=alpine:3.24.2@sha256:");
     expect(dockerfiles.meilisearch).toContain("COPY --from=source /bin/meilisearch");
     expect(dockerfiles.meilisearch).not.toContain("getmeili/meilisearch:v1.10");
   });
   it("installs the exact Alpine packages that close current high-severity advisories", () => {
     for (const dockerfile of [dockerfiles.nats, dockerfiles.meilisearch, workspaceDockerfile]) {
-      expect(dockerfile).toContain("libcrypto3=3.5.7-r0");
-      expect(dockerfile).toContain("libssl3=3.5.7-r0");
+      expect(dockerfile).toContain("libcrypto3=3.5.9-r0");
+      expect(dockerfile).toContain("libssl3=3.5.9-r0");
     }
     expect(dockerfiles.postgres).toContain("c-ares=1.34.8-r0");
   });
@@ -86,5 +88,12 @@ describe("production dependency image build contracts", () => {
     );
     expect(spamassassinEntrypoint).toContain('cp -a "${baked_rules}/." "${active_rules}/"');
     expect(dockerfiles.spamassassin).toContain("c-ares=1.34.8-r0");
+  });
+  it("rebuilds ClamAV on its pinned upstream image with patched pcre2", () => {
+    expect(dockerfiles.clamav).toMatch(
+      new RegExp(`^ARG SOURCE_IMAGE=clamav/clamav:1\\.5\\.4@sha256:${SHA256}$`, "mu"),
+    );
+    expect(dockerfiles.clamav).toContain("apk add --no-cache --upgrade pcre2=10.49-r0");
+    expect(dockerfiles.clamav).not.toMatch(/^(?:ENTRYPOINT|CMD|USER) /mu);
   });
 });

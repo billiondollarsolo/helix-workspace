@@ -10,8 +10,9 @@ export async function seedLocalTeamDomain(
   actorId: string,
 ) {
   for (const [index, domain] of LOCAL_TEAM_DOMAINS.entries()) {
-    const existing =
-      await sql<{ id: string }[]>`select id from admin_domains where org_id = ${orgId} and domain = ${domain} and status <> 'released'`;
+    const existing = await sql<
+      { id: string }[]
+    >`select id from admin_domains where org_id = ${orgId} and domain = ${domain} and status <> 'released'`;
     const domainId =
       existing[0]?.id ??
       (await ensureAdminDomain(sql, {

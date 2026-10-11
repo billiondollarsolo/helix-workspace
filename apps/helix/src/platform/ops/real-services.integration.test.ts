@@ -74,8 +74,10 @@ describe.runIf(enabled)("mandatory real-service contracts", () => {
     ).resolves.toMatchObject({ hits: [] });
 
     const scanner = createClamAvVirusScanner({ host: clamavHost, port: clamavPort });
-    await expect(scanner.scan(Buffer.from("ordinary workspace file"))).resolves.toEqual({
+    await expect(scanner.scan(Buffer.from("ordinary workspace file"))).resolves.toMatchObject({
       clean: true,
+      disposition: "allow",
+      securityScan: { state: "clean", evidence: { scannerName: "clamav" } },
     });
     await expect(
       scanner.scan(
@@ -103,7 +105,8 @@ describe.runIf(enabled)("mandatory real-service contracts", () => {
     };
     await expect(policy.can(actor, "drive.read", resource)).resolves.toBe(true);
     await expect(policy.can({ ...actor, scopes: [] }, "drive.read", resource)).resolves.toBe(false);
-  });
+    // Indexing, two clamd scans, and spamd's first rule load exceed Vitest's 5s default.
+  }, 60_000);
 });
 
 function timeout(milliseconds: number): Promise<never> {

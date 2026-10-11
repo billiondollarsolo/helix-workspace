@@ -80,6 +80,8 @@ function productionFixture(): Record<string, string> {
       "ghcr.io/billiondollarsolo/helix-workspace-cerbos@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
     HELIX_SPAMD_IMAGE:
       "ghcr.io/billiondollarsolo/helix-workspace-spamassassin@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    HELIX_CLAMAV_IMAGE:
+      "ghcr.io/billiondollarsolo/helix-workspace-clamav@sha256:2222222222222222222222222222222222222222222222222222222222222222",
     HELIX_APPS: "mail,drive,chat,assistant",
     HELIX_CONFIG_JSON: JSON.stringify({
       modules: {

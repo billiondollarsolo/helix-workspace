@@ -164,8 +164,9 @@ describe("PostgresDriveStore query shape", () => {
   });
   it("updates access roles only for owner-managed object grants in the request org", async () => {
     const now = new Date("2026-05-20T12:00:00.000Z");
-    // Object visibility, authoritative effective role, then the update CTE.
+    // Folder lookup (not a folder), object visibility, authoritative effective role, then the update CTE.
     const recording = createRecordingSql([
+      [],
       [
         {
           id: objectId,

@@ -16,7 +16,7 @@ export const LOCAL_TEAM_ADMIN = {
 } as const;
 
 /** Actor IDs stay on the original reserved UUIDs so existing logins are not duplicated. */
-export function teamActorId(index: number): string {
+function teamActorId(index: number): string {
   return `10000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
 }
 

@@ -179,6 +179,7 @@ const migrationEnvSchema = envSchema.pick({
   HELIX_MEILISEARCH_IMAGE: true,
   HELIX_CERBOS_IMAGE: true,
   HELIX_SPAMD_IMAGE: true,
+  HELIX_CLAMAV_IMAGE: true,
 });
 export type MigrationEnv = z.infer<typeof migrationEnvSchema>;
 const MIGRATION_FILE_BACKED_ENV = {

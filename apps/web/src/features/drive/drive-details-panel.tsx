@@ -24,6 +24,7 @@ import {
   type DriveApiEntry,
 } from "./api";
 import { DRIVE_FILE_META, formatModified, type DriveFileItem } from "./drive-data";
+import { DriveMutationFeedback } from "./drive-mutation-feedback";
 import { DriveWorkflows } from "./drive-workflows";
 import { driveAccessQueryOptions, driveQueryKeys, driveVersionsQueryOptions } from "./queries";
 import {
@@ -76,6 +77,7 @@ export function DriveDetailsPanel({
   const [shareInput, setShareInput] = useState("");
   const [shareRole, setShareRole] = useState<DriveAccessRole>("reader");
   const [renameValue, setRenameValue] = useState(file.name);
+  const [confirmVersion, setConfirmVersion] = useState<number | null>(null);
   const openable = canOpenDriveObject({
     uploadState: file.uploadState ?? entry?.uploadState,
     available: file.available ?? entry?.available,
@@ -134,7 +136,8 @@ export function DriveDetailsPanel({
     onError: () => undefined,
     mutationFn: (versionNumber: number) => revertDriveVersion(file.id, versionNumber),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["drive", "versions", file.id] });
+      setConfirmVersion(null);
+      void queryClient.invalidateQueries({ queryKey: driveQueryKeys.versions(file.id) });
       void queryClient.invalidateQueries({ queryKey: driveQueryKeys.all });
     },
   });
@@ -213,6 +216,10 @@ export function DriveDetailsPanel({
               Rename
             </button>
           </div>
+          <DriveMutationFeedback
+            success={renameMutation.isSuccess ? "Renamed." : null}
+            error={renameMutation.error}
+          />
           <div className="row gap-2 [font-size:var(--text-caption)] text-muted-foreground mb-3">
             <span className="uppercase">{file.type}</span>
             <span>·</span>
@@ -349,6 +356,7 @@ export function DriveDetailsPanel({
               <div className="flex gap-1.5 mb-1.5">
                 <input
                   className="input flex-1 min-w-0 [font-size:var(--text-meta)]"
+                  aria-label="Share with"
                   value={shareInput}
                   onChange={(event) => setShareInput(event.target.value)}
                   placeholder="Email, name, or actor ID"
@@ -391,10 +399,10 @@ export function DriveDetailsPanel({
                 onRoleChange={(actorId, role) => updateAccessMutation.mutate({ actorId, role })}
               />
               {(versionsQuery.data ?? []).length > 0 ? (
-                <>
+                <section aria-label="Version history">
                   <div className="section-label [padding:12px_0_6px]">Version history</div>
-                  <ul className="grid gap-1.5 mb-3 [padding:0] [list-style:none]">
-                    {(versionsQuery.data ?? []).slice(0, 8).map((version) => (
+                  <ul className="grid gap-1.5 mb-1.5 [padding:0] [list-style:none]">
+                    {(versionsQuery.data ?? []).slice(0, 8).map((version, index) => (
                       <li
                         key={String(version.versionNumber)}
                         className="flex items-center gap-2 [font-size:var(--text-caption)]"
@@ -403,18 +411,50 @@ export function DriveDetailsPanel({
                           v{String(version.versionNumber)}
                           {version.createdAt ? ` · ${formatModified(version.createdAt)}` : ""}
                         </span>
-                        <button
-                          type="button"
-                          className="btn sm"
-                          disabled={busy || revertMutation.isPending}
-                          onClick={() => revertMutation.mutate(version.versionNumber)}
-                        >
-                          Restore
-                        </button>
+                        {index === 0 ? (
+                          <span className="text-muted-foreground">Current</span>
+                        ) : confirmVersion === version.versionNumber ? (
+                          <>
+                            <button
+                              type="button"
+                              className="btn sm primary"
+                              aria-label={`Confirm restore of version ${String(version.versionNumber)}`}
+                              disabled={busy || revertMutation.isPending}
+                              onClick={() => revertMutation.mutate(version.versionNumber)}
+                            >
+                              Confirm
+                            </button>
+                            <button
+                              type="button"
+                              className="btn sm"
+                              disabled={revertMutation.isPending}
+                              onClick={() => setConfirmVersion(null)}
+                            >
+                              Cancel
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            type="button"
+                            className="btn sm"
+                            aria-label={`Restore version ${String(version.versionNumber)}`}
+                            disabled={busy || revertMutation.isPending}
+                            onClick={() => {
+                              revertMutation.reset();
+                              setConfirmVersion(version.versionNumber);
+                            }}
+                          >
+                            Restore
+                          </button>
+                        )}
                       </li>
                     ))}
                   </ul>
-                </>
+                  <DriveMutationFeedback
+                    success={revertMutation.isSuccess ? "Version restored." : null}
+                    error={revertMutation.error}
+                  />
+                </section>
               ) : null}
             </>
           ) : null}

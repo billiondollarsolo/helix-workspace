@@ -117,7 +117,7 @@ export async function seedTeamContent(sql: Sql, orgId: string, anchorDate: strin
 
 async function replaceStaleTeamContent(sql: Sql, orgId: string): Promise<void> {
   const expectedFolder = teamFolderFixtures()[0];
-  const expectedMessage = teamChildId(LOCAL_TEAM_ROOMS[0]?.id ?? teamId(3, 1), 0);
+  const expectedMessage = teamChildId(LOCAL_TEAM_ROOMS[0].id, 0);
   const stale = await sql<
     { folders: number; expected_folder: number; expected_message: number }[]
   >`select
@@ -146,10 +146,11 @@ async function replaceStaleTeamContent(sql: Sql, orgId: string): Promise<void> {
   await sql`delete from threads where org_id = ${orgId} and metadata->>'source' = ${LOCAL_TEAM_SOURCE}`;
   await sql`delete from assistant_conversations where org_id = ${orgId} and metadata->>'source' = ${LOCAL_TEAM_SOURCE}`;
   await sql`delete from cal_calendars where org_id = ${orgId} and metadata->>'source' = ${LOCAL_TEAM_SOURCE}`;
-  await sql`delete from mail_drafts where org_id = ${orgId} and actor_id in ${sql([
+  const draftActorIds: string[] = [
     ...LOCAL_TEAM_PEOPLE.map((person) => person.actorId),
     LOCAL_TEAM_ADMIN.actorId,
-  ])}`;
+  ];
+  await sql`delete from mail_drafts where org_id = ${orgId} and actor_id in ${sql(draftActorIds)}`;
   await sql`delete from admin_groups where org_id = ${orgId} and id::text ~ ${"^1[0-9]{7}-0000-4000-8000-[0-9]{12}$"}`;
 }
 

@@ -5,7 +5,7 @@ import { loadSeedEnv } from "../config/env.js";
 import type { Permission } from "../platform/permissions/scope-catalog.js";
 import { withTenantPostgresContext } from "../platform/tenancy/postgres-roles.js";
 import { createSqlClient } from "./client.js";
-import { DEFAULT_LOCAL_OAUTH_ORG_ID } from "./seed-local-oauth.js";
+import { DEFAULT_LOCAL_OAUTH_ORG_ID, ensureLocalSeedOrg } from "./seed-local-oauth.js";
 
 /**
  * Seeds two real email/password login accounts for the web app.
@@ -137,6 +137,7 @@ export async function seedLoginAccounts(
     const passwordHash = await hashPassword(spec.password);
     const betterAuthUserId = `login-${spec.actorId}`;
     await withTenantPostgresContext(sql, { orgId }, async (tx) => {
+      await ensureLocalSeedOrg(tx, orgId);
       await upsertActor(tx, orgId, spec);
       await repairOrphanedBetterAuthUsers(tx, spec.email, betterAuthUserId);
       await upsertBetterAuthUser(tx, betterAuthUserId, spec);

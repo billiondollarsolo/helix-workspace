@@ -20,11 +20,12 @@ the runtime from being misreported as shipped dependencies. The gate fails close
 Exceptions live in `infra/security/pnpm-audit-exceptions.json`. Each exception must identify one
 GHSA and package, enumerate exact allowed versions, name an owner, explain the risk decision, and
 expire. No exceptions are currently approved. The production dependency overrides force every
-reachable `brace-expansion` path to `5.0.8`; older 1.x and 2.x backports address a different
-advisory and are not accepted for the unbounded-expansion-length vulnerability. The lockfile
-applies narrow compatibility patches to legacy `minimatch@3.1.5` and `minimatch@5.1.9` consumers
-so they can call the fixed package's CommonJS export. Every audit run exercises both patched
-consumers and verifies that `brace-expansion@5.0.8` bounds adversarial output.
+reachable `brace-expansion` path to `5.0.11`; older 1.x and 2.x backports address a different
+advisory and are not accepted for the unbounded-expansion-length or recursion vulnerabilities.
+`minimatch@9` (used by `glob@10`) imports the 2.x default export, so it is overridden to
+`minimatch@10.2.6`, which uses the bounded 5.x API. Every audit run loads each `minimatch` in the
+production tree, checks that it still matches brace globs, and verifies that the pinned
+`brace-expansion` bounds adversarial output.
 
 Run the same gate locally:
 
@@ -38,13 +39,15 @@ The Supply Chain Security workflow scans complete Git history with the official 
 container pinned by its immutable multi-platform digest. A new finding fails every pull request,
 main push, manual run, and scheduled run.
 
-`.gitleaksignore` contains exact commit/path/rule/line fingerprints for the 36 reviewed historical
-findings; it contains no detector-wide or path-wide exclusions. Thirty-one are synthetic values in
-tests or generated formatting baselines. Five are self-signed `meet.localhost` development fixture
-keys introduced in commit `b7758ad`. Meet is disabled in the production MVP, and the production
-runtime images do not copy `infra/meet`. Changing any baselined content produces a different
-fingerprint and fails the scan. A suspected real credential must still be revoked before any
-history remediation; never add a fingerprint merely to make CI green.
+`.gitleaksignore` contains 70 exact commit/path/rule/line fingerprints for reviewed historical
+findings; it contains no detector-wide or path-wide exclusions. Most are synthetic values in tests
+or generated formatting baselines. Five are self-signed `meet.localhost` development fixture keys
+introduced in commit `b7758ad`; Meet is disabled in the production MVP, and the production runtime
+images do not copy `infra/meet`. Five, from commit `29b1575`, are labelled synthetic test secrets
+and a Prometheus SLO recording-rule name that match the generic API key pattern. Changing any
+baselined content produces a different fingerprint and fails the scan. A suspected real credential
+must still be revoked before any history remediation; never add a fingerprint merely to make CI
+green.
 
 ## Image evidence
 
@@ -55,8 +58,8 @@ complete their scans and SBOM inventory before any image is published. Successfu
 the exact locally reviewed images as checksummed Docker image archives; the aggregate
 publication job verifies the workflow revision, archive checksum, and loaded image ID before
 pushing those same bits by immutable commit tag. It never rebuilds an image. Only the application,
-web, PostgreSQL, NATS, Meilisearch, Cerbos, and SpamAssassin images are published; digest-pinned
-Redis, RustFS, and ClamAV remain pull-and-scan inventory. GitHub then creates Sigstore-backed
+web, PostgreSQL, NATS, Meilisearch, Cerbos, SpamAssassin, and ClamAV images are published;
+digest-pinned Redis and RustFS remain pull-and-scan inventory. GitHub then creates Sigstore-backed
 provenance and SBOM attestations for each exact registry digest. The raw SBOMs and signed
 attestation bundles are retained together as workflow supply-chain evidence. Application and web
 artifacts bind the exact workspace commit SHA. Their pushed digests receive an additional signed
@@ -72,6 +75,6 @@ After each Helix-built image has its pushed registry digest, CI derives a separa
 document that preserves the discovered package inventory and adds one `CONTAINER` package binding
 the exact repository subject and digest. The normalized document has a single `documentDescribes`
 root, unique SPDX identifiers, supported `creationInfo` fields, and a SHA-256 sidecar; that exact
-file is used for the SBOM attestation. The pull-only Redis, RustFS, and ClamAV documents are
+file is used for the SBOM attestation. The pull-only Redis and RustFS documents are
 normalized the same way against their checked-in Docker Hub subjects and pinned digests before
 evidence upload.

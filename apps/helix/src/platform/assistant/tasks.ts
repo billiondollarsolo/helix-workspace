@@ -6,7 +6,7 @@ import { defineTool } from "../tools/define-tool.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 
-export const taskStatuses = ["pending", "in_progress", "completed", "cancelled"] as const;
+const taskStatuses = ["pending", "in_progress", "completed", "cancelled"] as const;
 export type TaskStatus = (typeof taskStatuses)[number];
 
 export interface ConversationTask {
@@ -38,7 +38,10 @@ export function createTasks(
     .map((title) => ({ id: randomUUID(), title: title.slice(0, 200), status: "pending" as const }));
   if (created.length === 0) throw new BadRequestError("Provide at least one task title.");
   const tasks = [...existing, ...created].slice(0, 40);
-  return { tasks, metadata: { ...metadata, tasks: JSON.parse(JSON.stringify(tasks)) as JsonObject } };
+  return {
+    tasks,
+    metadata: { ...metadata, tasks: JSON.parse(JSON.stringify(tasks)) as JsonObject },
+  };
 }
 
 export function updateTask(

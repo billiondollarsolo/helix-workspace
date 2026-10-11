@@ -479,12 +479,28 @@ export async function rename(
     if (name.length === 0) {
       throw new BadRequestError("Drive rename requires a non-empty name.");
     }
-    const object = await tx<
+    const folder = await tx<
       { id: string }[]
-    >`select id from objects where id = ${input.objectId} and org_id = ${input.orgId} and kind in ('file', 'recording') and deleted_at is null`;
-    if (object[0] !== undefined) {
-      await requireReadyObjectRole(tx, input.orgId, input.actorId, input.objectId, "editor");
+    >`select id from drive_folders where id = ${input.objectId} and org_id = ${input.orgId} and deleted_at is null`;
+    if (folder[0] !== undefined) {
+      await requireFolderRole(tx, input.orgId, input.actorId, input.objectId, "editor");
+      const folderRows = await tx<DriveFolderRow[]>`
+        update drive_folders
+        set name = ${name}, updated_at = now()
+        where id = ${input.objectId} and org_id = ${input.orgId} and deleted_at is null
+        returning *
+      `;
+      if (folderRows[0] === undefined) return null;
+      await appendDriveActivity(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        verb: "drive.folder.renamed",
+        objectId: input.objectId,
+        payload: { name },
+      });
+      return mapFolderEntry(folderRows[0]);
     }
+    await requireReadyObjectRole(tx, input.orgId, input.actorId, input.objectId, "editor");
     const rows = await tx<DriveSearchRow[]>`
         update objects
         set metadata = metadata || ${tx.json(toSqlJson({ name }))}::jsonb,
@@ -503,24 +519,8 @@ export async function rename(
         objectId: input.objectId,
         payload: { name },
       });
-      return mapObjectEntry(rows[0]);
     }
-    await requireFolderRole(tx, input.orgId, input.actorId, input.objectId, "editor");
-    const folderRows = await tx<DriveFolderRow[]>`
-      update drive_folders
-      set name = ${name}, updated_at = now()
-      where id = ${input.objectId} and org_id = ${input.orgId} and deleted_at is null
-      returning *
-    `;
-    if (folderRows[0] === undefined) return null;
-    await appendDriveActivity(tx, {
-      orgId: input.orgId,
-      actorId: input.actorId,
-      verb: "drive.folder.renamed",
-      objectId: input.objectId,
-      payload: { name },
-    });
-    return mapFolderEntry(folderRows[0]);
+    return rows[0] === undefined ? null : mapObjectEntry(rows[0]);
   });
 }
 

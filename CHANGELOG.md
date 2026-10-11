@@ -40,6 +40,10 @@ All notable changes to Helix Workspace are documented here. This file follows
   fresh install.
 - Approved sends from API credentials keep the actor's email, so the default From address is
   the sender's mailbox instead of `<actor-id>@localhost`.
+- Approved mail sends from the CLI and other API callers succeed: the compose tools accept the
+  request `Idempotency-Key` header (kept across approval) as the send's idempotency key.
+- `helix mail reply` takes `--to`, which API and agent replies must set so the approval shows
+  who receives the reply.
 - Outbound mail with inline attachments, including calendar invitations, is delivered: dispatch
   read staged mail attachments through Drive access checks, which never cover them.
 - Staged mail attachments keep their filename and Content-ID on the object and record a clean

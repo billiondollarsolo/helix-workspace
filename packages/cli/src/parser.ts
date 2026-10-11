@@ -597,6 +597,8 @@ const mailSendOptions = {
 
 const mailReplyOptions = {
   arrays: new Map([
+    // API and agent replies must name recipients so the approval shows who receives it.
+    ["--to", "to"],
     ["--cc", "cc"],
     ["--bcc", "bcc"],
   ]),

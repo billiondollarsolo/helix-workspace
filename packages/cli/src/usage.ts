@@ -7,7 +7,7 @@ export const usage = `Usage:
   helix search <query>
   helix search --query <text> [--type <mail|chat|drive|calendar>] [--limit <number>] [--json [JSON]]
   helix mail send [--to <email>] [--cc <email>] [--bcc <email>] [--from <email>] [--subject <text>] [--body <text>] [--html <html>] [--json [JSON]]
-  helix mail reply [--thread-id <id>] [--message-id <id>] [--body <text>] [--html <html>] [--cc <email>] [--bcc <email>] [--json [JSON]]
+  helix mail reply [--thread-id <id>] [--message-id <id>] [--to <email>] [--cc <email>] [--bcc <email>] [--body <text>] [--html <html>] [--json [JSON]]
   helix mail forward [--thread-id <id>] [--message-id <id>] [--to <email>] [--cc <email>] [--bcc <email>] [--subject <text>] [--body <text>] [--json [JSON]]
   helix mail list [--folder <inbox|starred|snoozed|sent|drafts|archive|spam|trash>] [--tab <primary|updates|promotions|social>] [--label <label>] [--query <text>] [--limit <number>] [--offset <number>] [--mailbox-actor-id <id>] [--json [JSON]]
   helix mail search [--query <text>] [--label <label>] [--limit <number>] [--mailbox-actor-id <id>] [--json [JSON]]

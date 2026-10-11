@@ -113,7 +113,7 @@ const securityTierValues = ["personal", "business", "enterprise", "sovereign"] a
 
 const mailActionFlags: Record<string, readonly string[]> = {
   send: ["--to", "--cc", "--bcc", "--from", "--subject", "--body", "--html", "--json"],
-  reply: ["--thread-id", "--message-id", "--body", "--html", "--cc", "--bcc", "--json"],
+  reply: "--thread-id --message-id --to --cc --bcc --body --html --json".split(" "),
   forward: "--thread-id --message-id --to --cc --bcc --subject --body --json".split(" "),
   list: "--folder --tab --label --query --limit --offset --mailbox-actor-id --json".split(" "),
   search: ["--query", "--label", "--limit", "--mailbox-actor-id", "--json"],

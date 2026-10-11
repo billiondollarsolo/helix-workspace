@@ -46,6 +46,7 @@ describe.skipIf(process.env.DATABASE_URL === undefined)("Drive trash retention p
         await tx`delete from objects where org_id = ${orgId}`;
         await tx`delete from drive_folders where org_id = ${orgId}`;
         await tx`delete from drive_lifecycle_policies where org_id = ${orgId}`;
+        await tx`delete from organization_memberships where org_id = ${orgId}`;
         await tx`delete from actors where org_id = ${orgId}`;
         await tx`delete from orgs where id = ${orgId}`;
       }

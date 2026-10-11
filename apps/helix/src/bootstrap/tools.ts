@@ -298,8 +298,7 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
 
   const featureFlags = new TenantConfigFeatureFlagProvider({
     environment: bootEnv.NODE_ENV,
-    loadTenantConfig: ({ orgId }) =>
-      loadEffectiveTenantConfig({ orgs: orgStore }, orgId),
+    loadTenantConfig: ({ orgId }) => loadEffectiveTenantConfig({ orgs: orgStore }, orgId),
   });
 
   const runtimeFeatureFlags = {

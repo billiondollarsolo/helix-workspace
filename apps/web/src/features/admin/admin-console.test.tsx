@@ -118,14 +118,6 @@ function setInputValue(input: HTMLInputElement, value: string): void {
   input.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
-function setSelectValue(select: HTMLSelectElement, value: string): void {
-  Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value")?.set?.call(
-    select,
-    value,
-  );
-  select.dispatchEvent(new Event("change", { bubbles: true }));
-}
-
 async function waitFor(assertion: () => void, timeout = 1000): Promise<void> {
   const start = Date.now();
   let lastError: unknown;
@@ -336,32 +328,6 @@ describe("AdminConsole", () => {
       throw new Error("Admin nav not rendered");
     }
     return nav;
-  }
-
-  /** A rendered button by its visible label, ignoring any leading icon. */
-  function findButton(label: string): HTMLButtonElement {
-    const match = [...container.querySelectorAll("button")].find(
-      (element) => element.textContent?.trim() === label,
-    );
-    if (!match) {
-      throw new Error(`Button "${label}" not found`);
-    }
-    return match;
-  }
-
-  /** `HTMLElement.click()` is a no-op on a disabled control, so this doubles as
-   *  the check that a disabled button cannot fire its handler. */
-  function clickButton(label: string): Promise<void> {
-    const button = findButton(label);
-    return act(() => {
-      button.click();
-      return Promise.resolve();
-    });
-  }
-
-  /** Error banners rendered inside the admin page body. */
-  function pageAlerts(): readonly Element[] {
-    return [...container.querySelectorAll('.admin-page [role="alert"]')];
   }
 
   beforeEach(() => {
@@ -855,13 +821,3 @@ describe("AdminConsole", () => {
     expect(container.textContent).toContain("Suspend");
   });
 });
-
-function requestUrl(input: RequestInfo | URL): string {
-  return typeof input === "string"
-    ? input
-    : input instanceof URL
-      ? input.href
-      : input instanceof Request
-        ? input.url
-        : "";
-}

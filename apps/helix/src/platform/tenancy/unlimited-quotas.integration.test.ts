@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { cleanupTestTenants } from "../../test-support/cleanup-tenants.js";
 import { skipUnlessLiveDatabase } from "../../test-support/live-suite.js";
 import { TenantEnvelopeCipher } from "../secrets/envelope.js";
-import { PostgresWebhookStore } from "../webhooks/store.js";
+import { PostgresWebhookStore } from "../webhooks/index.js";
 
 const databaseUrl = process.env.HELIX_MIGRATION_DATABASE_URL ?? process.env.DATABASE_URL;
 const unlimitedOrgId = "d5720000-0000-4000-8000-000000000001";

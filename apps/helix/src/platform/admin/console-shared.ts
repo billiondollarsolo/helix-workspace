@@ -122,7 +122,7 @@ export interface KeysetCursor {
 }
 
 /** Encode a `(createdAt, id)` keyset cursor. */
-export function encodeCursor(record: { readonly createdAt: string; readonly id: string }): string {
+function encodeCursor(record: { readonly createdAt: string; readonly id: string }): string {
   return Buffer.from(
     JSON.stringify({ createdAt: record.createdAt, id: record.id }),
     "utf8",

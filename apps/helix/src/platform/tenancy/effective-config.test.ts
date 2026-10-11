@@ -7,10 +7,12 @@ describe("buildEffectiveTenantConfig", () => {
     const effective = buildEffectiveTenantConfig({ org: org({}) });
 
     for (const [key, value] of Object.entries(effective.features)) {
-      if (typeof value === "boolean") {
+      // Calendar invitation import is an admin opt-in policy, not an entitlement.
+      if (typeof value === "boolean" && key !== "calendar_import_invitations") {
         expect({ key, value }).toEqual({ key, value: true });
       }
     }
+    expect(effective.features.calendar_import_invitations).toBe(false);
     expect(effective.features.dlp_enforcement).toBe("off");
     expect(effective.features.watermark).toBe("off");
     expect(Object.keys(effective.quotas).length).toBeGreaterThan(0);

@@ -88,34 +88,3 @@ export function AdminInput({ className, ...props }: React.ComponentProps<"input"
 export function AdminSelect({ className, ...props }: React.ComponentProps<"select">) {
   return <select {...props} className={joinClass("admin-control", className)} />;
 }
-
-/** A figure with its caption. `value` is a string, never a number, so a caller
- *  physically cannot pass `0` for "we could not read it" — the console's
- *  recurring bug is a refused request rendered as a zero. Pass "—". */
-export function AdminStatTile({
-  label,
-  value,
-  note,
-  tone,
-}: {
-  readonly label: string;
-  readonly value: string;
-  readonly note?: ReactNode;
-  /** Colours the figure. Omit for a neutral reading — and never pass `success`
-   *  for data that did not arrive. */
-  readonly tone?: "success" | "warning" | "danger";
-}) {
-  return (
-    <div className="panel admin-stat" data-tone={tone}>
-      <span className="admin-stat-label">{label}</span>
-      <strong className="admin-stat-value">{value}</strong>
-      {note === undefined ? null : <span className="admin-stat-note">{note}</span>}
-    </div>
-  );
-}
-
-/** Auto-fitting row of `AdminStatTile`s. One breakpoint for the whole console,
- *  replacing the four that existed. */
-export function AdminStatRow({ children }: { readonly children: ReactNode }) {
-  return <div className="admin-stat-row">{children}</div>;
-}

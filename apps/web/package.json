@@ -24,7 +24,6 @@
     "@fontsource-variable/geist": "5.3.0",
     "@fontsource-variable/geist-mono": "5.3.0",
     "@helix/contracts": "workspace:*",
-    "@helix/sdk-types": "workspace:*",
     "@helix/sdk-web": "workspace:*",
     "@tanstack/pacer": "0.21.1",
     "@tanstack/react-form": "1.33.3",

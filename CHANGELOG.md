@@ -135,6 +135,28 @@ All notable changes to Helix Workspace are documented here. This file follows
   `SEQUENCE` updates apply, and `CANCEL` cancels the imported event. The import sends no mail,
   skips spam-routed messages and events the recipient already has, ignores calendars over
   1 MiB or 1,000 VEVENTs, and never fails mail delivery.
+- Drive works the way long-time Drive users expect: sort by name, last modified, last modified by
+  me, last opened by me or file size (folders stay on top); Type, People and Modified filter chips;
+  a list/grid switch; checkbox selection with Shift ranges and a selection toolbar ("2 selected").
+- Drive right-click menus (also Shift+F10 and each item's ⋮) with Download, Share, Copy link,
+  Rename, Move, star, File information and Move to trash, applied to the whole selection.
+- Drag files and folders onto a folder, a breadcrumb or My Drive to move them, or use Move to pick
+  a folder with the keyboard. The current folder's name opens a menu with its actions.
+- Drive's New menu offers New folder, File upload and Folder upload (folders keep their
+  structure), with a floating New button on phones. A bottom-right panel shows each upload's
+  progress, its security scan ("Scanning…"), a clear message when a file is blocked, Cancel and
+  Retry, and "N uploads complete".
+- Sharing in Drive: add people by name or email with Viewer, Commenter or Editor, change or remove
+  access, and set general access to Restricted, Anyone at your organization's domain, or Anyone
+  with the link. Copy link and Done close it out.
+- Drive's details panel has Details and Activity tabs: type, size, location, owner, dates, who
+  has access and version history.
+- Drive Trash has Restore, Delete forever and Empty trash (all confirmed), and a banner with the
+  real retention period. Trash now lists trashed files from every folder.
+- Trash, move and rename show Undo. Drive shortcuts add `a` (details), `s` (star), Enter
+  (open or download), F2 (rename), Shift+I (folder upload) and Shift+F10 (actions).
+- The Drive sidebar shows how much storage you use, and the organization limit when an admin set
+  one.
 - Mail compose opens as a docked window you can minimize, expand to full size, or stack with
   other drafts (full screen on phones). It has recipient chips with Cc/Bcc, a formatting
   toolbar, plain text mode, emoji and links, attachment chips that show upload and malware-scan
@@ -212,6 +234,9 @@ All notable changes to Helix Workspace are documented here. This file follows
   closed. A live test now keeps the database catalog equal to the app's scope catalog.
 
 ### Fixed
+
+- Drive trash now keeps items for the retention period an admin set (30 days by default) instead
+  of always 30 days. Items already in trash keep at least their original recovery window.
 
 - Mail search no longer looks only in the Inbox's Primary tab, the Label button no longer toggles
   just the first label, Spam uses a report icon, the empty pager no longer says "No results", and

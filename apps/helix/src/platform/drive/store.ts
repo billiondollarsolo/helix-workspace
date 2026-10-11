@@ -52,6 +52,9 @@ export class PostgresDriveStore
   getStorageQuotaUsage(input: Parameters<typeof quotas.getStorageQuotaUsage>[1]) {
     return quotas.getStorageQuotaUsage(this.context, input);
   }
+  getMemberStorageUsage(input: Parameters<typeof quotas.getMemberStorageUsage>[1]) {
+    return quotas.getMemberStorageUsage(this.context, input);
+  }
   getLifecyclePolicy(input: Parameters<typeof quotas.getLifecyclePolicy>[1]) {
     return quotas.getLifecyclePolicy(this.context, input);
   }

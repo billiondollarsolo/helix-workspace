@@ -1,5 +1,6 @@
 import { type DriveScope } from "./queries";
 
+/** Sidebar and breadcrumb names, in sentence case. */
 export const SCOPE_TITLE: Record<DriveScope, string> = {
   home: "Home",
   my: "My Drive",
@@ -9,9 +10,3 @@ export const SCOPE_TITLE: Record<DriveScope, string> = {
   recordings: "Recordings",
   trash: "Trash",
 };
-
-/** A folder in the breadcrumb trail. `null` id is the scope root. */
-export interface DriveCrumb {
-  readonly id: string | null;
-  readonly name: string;
-}

@@ -1,555 +1,328 @@
-import { iconMap as Icons } from "@/components/icon-map";
-import { Avatar } from "@/components/ui/avatar";
-import { cn } from "@/lib/utils";
+/* Right-hand details panel with Details and Activity tabs. Shows facts about
+   the selected file or folder; actions live in the menus and toolbar. */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  ArrowLeft as ArrowLeftIcon,
-  Download as DownloadIcon,
-  History as HistoryIcon,
-  Star as StarIcon,
-  Trash2 as TrashIcon,
-  Users as UsersIcon,
-  X as XIcon,
-} from "lucide-react";
-import { useMemo, useState } from "react";
-import {
-  driveDownloadResult,
-  driveRawDownloadUrl,
-  removeDriveAccess,
-  renameDriveObject,
-  revertDriveVersion,
-  updateDriveAccessRole,
-  type DriveAccessGrant,
-  type DriveAccessRole,
-  type DriveApiEntry,
-} from "./api";
-import { DRIVE_FILE_META, formatModified, type DriveFileItem } from "./drive-data";
-import { DriveMutationFeedback } from "./drive-mutation-feedback";
-import { DriveWorkflows } from "./drive-workflows";
+import { X as CloseIcon } from "lucide-react";
+import { useId, useRef, useState, type KeyboardEvent } from "react";
+import { Avatar } from "@/components/ui/avatar";
+import { EmptyState } from "@/components/ui/empty-state";
+import { revertDriveVersion, type DriveAccessGrant, type DriveVersion } from "./api";
+import { formatByteSize, formatDateTime, formatModified, type DriveItem } from "./drive-data";
+import { DriveTypeIcon, DRIVE_TYPE_META } from "./drive-type-icon";
 import { driveAccessQueryOptions, driveQueryKeys, driveVersionsQueryOptions } from "./queries";
-import {
-  DRIVE_ACCESS_ROLE_OPTIONS,
-  driveAccessRoleLabel,
-  driveAccessRoleValue,
-} from "./share-access";
-import { canOpenDriveObject, driveUploadStatusView, openDenialMessage } from "./upload-status-ui";
+import { driveAccessRoleLabel } from "./share-access";
+import { driveUploadStatusView, openDenialMessage } from "./upload-status-ui";
 
-export function DriveDetailsPanel({
-  file,
-  entry,
-  ownerName,
-  currentActorId,
-  isTrash,
-  inSubfolder,
-  busy,
-  actionError,
-  onClose,
-  onTrash,
-  onRestore,
-  onDelete,
-  onMoveToParent,
-  onSetStarred,
-  onShare,
-  shareDone,
-  onOpenShare,
-}: {
-  readonly file: DriveFileItem;
-  readonly entry: DriveApiEntry | null;
-  readonly ownerName: string;
-  readonly currentActorId: string | null;
-  readonly isTrash: boolean;
-  readonly inSubfolder: boolean;
-  readonly busy: boolean;
-  readonly actionError: Error | null;
-  readonly onClose: () => void;
-  readonly onTrash: (id: string) => void;
-  readonly onRestore: (id: string) => void;
-  readonly onDelete: (id: string) => void;
+type DetailsTab = "details" | "activity";
+const TABS: readonly { readonly id: DetailsTab; readonly label: string }[] = [
+  { id: "details", label: "Details" },
+  { id: "activity", label: "Activity" },
+];
 
-  readonly onMoveToParent: (id: string) => void;
-  readonly onSetStarred: (id: string, starred: boolean) => void;
-  readonly onShare: (id: string, targets: readonly string[], role: DriveAccessRole) => void;
-  readonly shareDone: boolean;
-  readonly onOpenShare: () => void;
-}) {
-  const meta = DRIVE_FILE_META[file.type];
-  const FileIcon = Icons[meta.icon];
-  const [shareInput, setShareInput] = useState("");
-  const [shareRole, setShareRole] = useState<DriveAccessRole>("reader");
-  const [renameValue, setRenameValue] = useState(file.name);
-  const [confirmVersion, setConfirmVersion] = useState<number | null>(null);
-  const openable = canOpenDriveObject({
-    uploadState: file.uploadState ?? entry?.uploadState,
-    available: file.available ?? entry?.available,
-  });
-  const statusView = driveUploadStatusView(file.uploadState ?? entry?.uploadState);
-  // Owner label: when the entry is owned by the current actor, show the
-  // session display name. Otherwise prefer the server-resolved display
-  // name (via `entry.ownerDisplayName`) and fall back to file.owner
-  // which already projects from the same field via fileItemFromEntry.
-  const ownerLabel =
-    entry?.ownerActorId === null || entry?.ownerActorId === currentActorId
-      ? ownerName
-      : (entry?.ownerDisplayName ?? entry?.ownerEmail ?? file.owner);
-  // Recent activity from real entry timestamps.
-  const activity = useMemo<
-    ReadonlyArray<{
-      readonly who: string;
-      readonly what: string;
-      readonly time: string;
-    }>
-  >(() => {
-    if (entry === null) {
-      return [{ who: file.owner, what: "edited", time: file.modified }];
-    }
-    const items: Array<{
-      who: string;
-      what: string;
-      time: string;
-    }> = [
-      { who: ownerLabel, what: "edited", time: formatModified(entry.updatedAt) },
-      { who: ownerLabel, what: "created", time: formatModified(entry.createdAt) },
-    ];
-    if (entry.deletedAt !== null) {
-      items.unshift({
-        who: ownerLabel,
-        what: "moved to trash",
-        time: formatModified(entry.deletedAt),
-      });
-    }
-    return items;
-  }, [entry, ownerLabel, file.owner, file.modified]);
-  const download = entry === null ? null : driveDownloadResult(entry);
-  const queryClient = useQueryClient();
-  const accessQuery = useQuery(driveAccessQueryOptions(file.id, entry !== null && !isTrash));
-  const versionsQuery = useQuery(driveVersionsQueryOptions(file.id, entry !== null && !isTrash));
-  const renameMutation = useMutation({
-    onMutate: () => undefined,
-    onError: () => undefined,
-    mutationFn: (name: string) => renameDriveObject({ objectId: file.id, name }),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: driveQueryKeys.all });
-    },
-  });
-  const revertMutation = useMutation({
-    onMutate: () => undefined,
-    onError: () => undefined,
-    mutationFn: (versionNumber: number) => revertDriveVersion(file.id, versionNumber),
-    onSuccess: () => {
-      setConfirmVersion(null);
-      void queryClient.invalidateQueries({ queryKey: driveQueryKeys.versions(file.id) });
-      void queryClient.invalidateQueries({ queryKey: driveQueryKeys.all });
-    },
-  });
-  const removeAccessMutation = useMutation({
-    onMutate: () => undefined,
-    onError: () => undefined,
-    mutationFn: (actorId: string) => removeDriveAccess(file.id, actorId),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: driveQueryKeys.access(file.id) });
-      void queryClient.invalidateQueries({ queryKey: driveQueryKeys.all });
-    },
-  });
-  const updateAccessMutation = useMutation({
-    onMutate: () => undefined,
-    onError: () => undefined,
-    mutationFn: (input: { readonly actorId: string; readonly role: DriveAccessRole }) =>
-      updateDriveAccessRole(file.id, input.actorId, input.role),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: driveQueryKeys.access(file.id) });
-      void queryClient.invalidateQueries({ queryKey: driveQueryKeys.all });
-    },
-  });
-  const onShareSubmit = () => {
-    const ids = shareInput
-      .split(/[\s,]+/)
-      .map((value) => value.trim())
-      .filter((value) => value.length > 0);
-    if (ids.length > 0) {
-      onShare(file.id, ids, shareRole);
-      setShareInput("");
-    }
-  };
+interface ActivityEvent {
+  readonly key: string;
+  readonly who: string;
+  readonly what: string;
+  readonly at: string;
+}
+
+/** Newest-first activity derived from the item, its versions and its grants. */
+function driveActivityEvents(
+  item: DriveItem,
+  ownerLabel: string,
+  versions: readonly DriveVersion[],
+  grants: readonly DriveAccessGrant[],
+  nameForActor: (actorId: string | null) => string,
+): ActivityEvent[] {
+  const noun = item.kind === "folder" ? "folder" : "file";
+  const events: ActivityEvent[] = [
+    { key: "created", who: ownerLabel, what: `created this ${noun}`, at: item.createdAt },
+  ];
+  for (const version of versions) {
+    if (version.versionNumber === 1) continue;
+    events.push({
+      key: `version-${String(version.versionNumber)}`,
+      who: nameForActor(version.createdByActorId),
+      what: `uploaded version ${String(version.versionNumber)}`,
+      at: version.createdAt,
+    });
+  }
+  for (const grant of grants) {
+    if (grant.role === "owner") continue;
+    events.push({
+      key: `grant-${grant.actorId}`,
+      who: nameForActor(grant.grantedByActorId),
+      what: `shared with ${grant.displayName ?? grant.email ?? "a member"} as ${driveAccessRoleLabel(grant.role).toLowerCase()}`,
+      at: grant.createdAt,
+    });
+  }
+  if (versions.length === 0 && item.updatedAt !== item.createdAt) {
+    events.push({ key: "modified", who: ownerLabel, what: "made changes", at: item.updatedAt });
+  }
+  if (item.deletedAt !== null) {
+    events.push({
+      key: "trashed",
+      who: "Someone",
+      what: "moved this to trash",
+      at: item.deletedAt,
+    });
+  }
+  return events.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
+}
+
+function DetailRow({ label, value }: { readonly label: string; readonly value: string }) {
   return (
-    <aside
-      aria-label="File details"
-      className="w-80 shrink-0 [border-left:1px_solid_var(--border)] bg-card flex flex-col"
-    >
-      <div className="[padding:10px_14px] flex items-center [border-bottom:1px_solid_var(--border)]">
-        <span className="truncate type-body-sm font-semibold">Details</span>
-        <button
-          type="button"
-          aria-label="Close details"
-          className="icon-btn ml-auto"
-
-          onClick={onClose}
-        >
-          <XIcon size={16} />
-        </button>
-      </div>
-      <div className="overflow-y-auto flex-1">
-        <div
-          className="[aspect-ratio:4_/_3] bg-muted grid [place-items:center] [border-bottom:1px_solid_var(--border)]"
-          style={{ color: meta.color }}
-        >
-          {<FileIcon size={56} />}
-        </div>
-        <div className="[padding:12px_14px]">
-          <div className="flex gap-1.5 mb-1">
-            <input
-              className="input flex-1 min-w-0 type-body-sm"
-              value={renameValue}
-              aria-label="File name"
-              onChange={(event) => setRenameValue(event.target.value)}
-            />
-            <button
-              type="button"
-              className="btn sm"
-              disabled={
-                busy ||
-                renameMutation.isPending ||
-                renameValue.trim().length === 0 ||
-                renameValue.trim() === file.name
-              }
-              onClick={() => renameMutation.mutate(renameValue.trim())}
-            >
-              Rename
-            </button>
-          </div>
-          <DriveMutationFeedback
-            success={renameMutation.isSuccess ? "Renamed." : null}
-            error={renameMutation.error}
-          />
-          <div className="row gap-2 type-caption text-muted-foreground mb-3">
-            <span className="uppercase">{file.type}</span>
-            <span>·</span>
-            <span>{file.size}</span>
-          </div>
-
-          {!openable && statusView !== null ? (
-            <div
-              role="status"
-              data-testid="drive-details-unavailable"
-              data-upload-state={statusView.state}
-              className="drive-upload-tone type-caption mb-2.5 [padding:8px_10px] rounded-md"
-              data-tone={statusView.tone}
-            >
-              {openDenialMessage(statusView.state)}
-            </div>
-          ) : null}
-
-          {actionError !== null ? (
-            <div role="alert" className="type-caption [color:var(--danger)] mb-2.5">
-              {actionError.message}
-            </div>
-          ) : null}
-
-          <div className="flex gap-1.5 mb-4">
-            <button
-              type="button"
-              className="btn sm flex-1 justify-center"
-              disabled={busy || entry === null || isTrash || !openable}
-              onClick={() => onSetStarred(file.id, !file.starred)}
-              aria-pressed={file.starred}
-            >
-              <StarIcon size={16} fill={file.starred ? "currentColor" : "none"} />
-              {file.starred ? "Unstar" : "Star"}
-            </button>
-
-            <a
-              className={cn(
-                "btn sm primary",
-                "flex-1 justify-center",
-                openable && entry !== null ? "pointer-events-auto" : "pointer-events-none",
-                openable && entry !== null ? "[opacity:1]" : "[opacity:0.5]",
-              )}
-              href={!openable || entry === null ? undefined : driveRawDownloadUrl(entry)}
-              download={openable ? (entry?.name ?? download?.name) : undefined}
-              aria-disabled={!openable || entry === null}
-              title={openable ? "Download file" : openDenialMessage(statusView?.state)}
-              onClick={(event) => {
-                if (!openable || entry === null) {
-                  event.preventDefault();
-                }
-              }}
-            >
-              <DownloadIcon size={16} />
-              Download
-            </a>
-          </div>
-
-          {isTrash ? (
-            <div className="flex gap-1.5 mb-4">
-              <button
-                type="button"
-                className="btn sm flex-1"
-
-                disabled={busy}
-                onClick={() => onRestore(file.id)}
-              >
-                <HistoryIcon size={16} />
-                Restore
-              </button>
-              <button
-                type="button"
-                className="btn sm flex-1 [color:var(--danger)]"
-
-                disabled={busy}
-                onClick={() => onDelete(file.id)}
-              >
-                <TrashIcon size={16} />
-                Delete forever
-              </button>
-            </div>
-          ) : (
-            <div className="flex gap-1.5 mb-4">
-              {inSubfolder ? (
-                <button
-                  type="button"
-                  className="btn sm flex-1"
-
-                  disabled={busy}
-                  onClick={() => onMoveToParent(file.id)}
-                >
-                  <ArrowLeftIcon size={16} />
-                  Move up
-                </button>
-              ) : null}
-              <button
-                type="button"
-                className="btn sm flex-1 [color:var(--danger)]"
-
-                disabled={busy}
-                onClick={() => onTrash(file.id)}
-              >
-                <TrashIcon size={16} />
-                Move to trash
-              </button>
-            </div>
-          )}
-
-          <div className="section-label [padding:8px_0_4px]">Owner</div>
-          <div className="flex items-center gap-2 type-meta mb-3">
-            <Avatar name={ownerLabel} size={24} />
-            <span className="truncate">{ownerLabel}</span>
-          </div>
-          <div className="section-label [padding:8px_0_4px]">Modified</div>
-          <div className="type-meta [color:var(--text-2)] mb-3">
-            {entry !== null ? formatModified(entry.updatedAt) : file.modified}
-          </div>
-
-          {!isTrash ? (
-            <>
-              <div className="section-label [padding:8px_0_6px]">Share</div>
-              <button
-                type="button"
-                className="btn sm w-full mb-1.5"
-                disabled={busy}
-                onClick={onOpenShare}
-              >
-                <UsersIcon size={16} />
-                Share & links
-              </button>
-              <div className="flex gap-1.5 mb-1.5">
-                <input
-                  className="input flex-1 min-w-0 type-meta"
-                  aria-label="Share with"
-                  value={shareInput}
-                  onChange={(event) => setShareInput(event.target.value)}
-                  placeholder="Email, name, or actor ID"
-                />
-                <select
-                  className="input w-28 type-meta"
-                  aria-label="Share role"
-                  value={shareRole}
-                  onChange={(event) => setShareRole(event.target.value as DriveAccessRole)}
-                >
-                  {DRIVE_ACCESS_ROLE_OPTIONS.map((option) => (
-                    <option key={option.role} value={option.role}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <button
-                type="button"
-                className="btn sm w-full"
-
-                disabled={busy || shareInput.trim().length === 0}
-                onClick={onShareSubmit}
-              >
-                <UsersIcon size={16} />
-                Share
-              </button>
-              {shareDone ? (
-                <div className="type-caption text-muted-foreground mt-1.5">Access granted.</div>
-              ) : null}
-              <AccessList
-                grants={accessQuery.data ?? []}
-                loading={accessQuery.isLoading}
-                currentActorId={currentActorId}
-                ownerActorId={entry?.ownerActorId ?? null}
-                busy={removeAccessMutation.isPending || updateAccessMutation.isPending}
-                onRemove={(actorId) => removeAccessMutation.mutate(actorId)}
-                onRoleChange={(actorId, role) => updateAccessMutation.mutate({ actorId, role })}
-              />
-              {(versionsQuery.data ?? []).length > 0 ? (
-                <section aria-label="Version history">
-                  <div className="section-label [padding:12px_0_6px]">Version history</div>
-                  <ul className="grid gap-1.5 mb-1.5 [padding:0] [list-style:none]">
-                    {(versionsQuery.data ?? []).slice(0, 8).map((version, index) => (
-                      <li
-                        key={String(version.versionNumber)}
-                        className="flex items-center gap-2 type-caption"
-                      >
-                        <span className="flex-1 min-w-0 truncate">
-                          v{String(version.versionNumber)}
-                          {version.createdAt ? ` · ${formatModified(version.createdAt)}` : ""}
-                        </span>
-                        {index === 0 ? (
-                          <span className="text-muted-foreground">Current</span>
-                        ) : confirmVersion === version.versionNumber ? (
-                          <>
-                            <button
-                              type="button"
-                              className="btn sm primary"
-                              aria-label={`Confirm restore of version ${String(version.versionNumber)}`}
-                              disabled={busy || revertMutation.isPending}
-                              onClick={() => revertMutation.mutate(version.versionNumber)}
-                            >
-                              Confirm
-                            </button>
-                            <button
-                              type="button"
-                              className="btn sm"
-                              disabled={revertMutation.isPending}
-                              onClick={() => setConfirmVersion(null)}
-                            >
-                              Cancel
-                            </button>
-                          </>
-                        ) : (
-                          <button
-                            type="button"
-                            className="btn sm"
-                            aria-label={`Restore version ${String(version.versionNumber)}`}
-                            disabled={busy || revertMutation.isPending}
-                            onClick={() => {
-                              revertMutation.reset();
-                              setConfirmVersion(version.versionNumber);
-                            }}
-                          >
-                            Restore
-                          </button>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                  <DriveMutationFeedback
-                    success={revertMutation.isSuccess ? "Version restored." : null}
-                    error={revertMutation.error}
-                  />
-                </section>
-              ) : null}
-            </>
-          ) : null}
-
-          {!isTrash && entry !== null ? (
-            <DriveWorkflows
-              resourceId={entry.id}
-              resourceType={entry.type === "folder" ? "folder" : "object"}
-            />
-          ) : null}
-
-          <div className="section-label [padding:16px_0_6px]">Recent activity</div>
-          {activity.map((item) => (
-            <div
-              key={`${item.who}-${item.what}-${item.time}`}
-              className="flex items-center gap-2 [padding:4px_0] type-caption"
-            >
-              <Avatar name={item.who} size={18} />
-              <span className="truncate">
-                <b className="font-medium">{item.who}</b> {item.what}
-              </span>
-              <span className="ml-auto text-muted-foreground">{item.time}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-    </aside>
+    <div className="drive-detail-row">
+      <dt>{label}</dt>
+      <dd>{value}</dd>
+    </div>
   );
 }
 
-function AccessList({
-  grants,
-  loading,
-  currentActorId,
-  ownerActorId,
-  busy,
-  onRemove,
-  onRoleChange,
-}: {
-  readonly grants: readonly DriveAccessGrant[];
-  readonly loading: boolean;
-  readonly currentActorId: string | null;
-  readonly ownerActorId: string | null;
-  readonly busy: boolean;
-  readonly onRemove: (actorId: string) => void;
-  readonly onRoleChange: (actorId: string, role: DriveAccessRole) => void;
-}) {
-  const canManageAll = currentActorId !== null && ownerActorId === currentActorId;
-  if (loading) {
-    return <div className="type-caption text-muted-foreground mt-2">Loading access...</div>;
-  }
-  if (grants.length === 0) {
-    return null;
-  }
+function VersionHistory({ item, busy }: { readonly item: DriveItem; readonly busy: boolean }) {
+  const queryClient = useQueryClient();
+  const [confirming, setConfirming] = useState<number | null>(null);
+  const versions = useQuery(driveVersionsQueryOptions(item.id, item.kind === "file"));
+  const revert = useMutation({
+    onMutate: () => undefined,
+    onError: () => undefined,
+    mutationFn: (versionNumber: number) => revertDriveVersion(item.id, versionNumber),
+    onSuccess: () => {
+      setConfirming(null);
+      void queryClient.invalidateQueries({ queryKey: driveQueryKeys.all });
+    },
+  });
+  const list = versions.data ?? [];
+  if (list.length === 0) return null;
   return (
-    <div className="mt-2.5">
-      <div className="section-label [padding:4px_0_6px]">People with access</div>
-      <div className="grid gap-1.5">
-        {grants.map((grant) => {
-          const label = grant.displayName ?? grant.email ?? grant.actorId;
-          const canRemove =
-            canManageAll || (currentActorId !== null && grant.actorId === currentActorId);
-          return (
-            <div key={grant.actorId} className="row gap-2 min-w-0 type-caption [padding:4px_0]">
-              <Avatar name={label} size={18} />
-              <span className="truncate min-w-0">{label}</span>
-              {canManageAll ? (
-                <select
-                  className="input w-28 h-7 type-caption"
-                  aria-label={`Access role for ${label}`}
-                  value={driveAccessRoleValue(grant.role)}
-                  disabled={busy}
-                  onChange={(event) =>
-                    onRoleChange(grant.actorId, event.target.value as DriveAccessRole)
-                  }
-                >
-                  {DRIVE_ACCESS_ROLE_OPTIONS.map((option) => (
-                    <option key={option.role} value={option.role}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <span className="text-muted-foreground">{driveAccessRoleLabel(grant.role)}</span>
-              )}
-              {canRemove ? (
+    <section aria-label="Version history" className="mt-4">
+      <h3 className="type-body-sm font-semibold m-0 mb-2">Version history</h3>
+      <ul className="grid gap-1.5 p-0 m-0 list-none">
+        {list.slice(0, 10).map((version, index) => (
+          <li key={version.versionNumber} className="flex items-center gap-2 type-caption">
+            <span className="min-w-0 flex-1 truncate">
+              Version {String(version.versionNumber)} · {formatByteSize(version.byteSize)} ·{" "}
+              {formatModified(version.createdAt)}
+            </span>
+            {index === 0 ? (
+              <span className="text-muted-foreground">Current</span>
+            ) : confirming === version.versionNumber ? (
+              <>
                 <button
                   type="button"
-                  className="icon-btn"
-                  aria-label={`Remove access for ${label}`}
-                  disabled={busy}
-                  onClick={() => onRemove(grant.actorId)}
+                  className="btn sm primary"
+                  aria-label={`Confirm restore of version ${String(version.versionNumber)}`}
+                  disabled={busy || revert.isPending}
+                  onClick={() => revert.mutate(version.versionNumber)}
                 >
-                  <XIcon size={16} />
+                  Restore
                 </button>
-              ) : null}
-            </div>
-          );
-        })}
+                <button type="button" className="btn sm" onClick={() => setConfirming(null)}>
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                className="btn sm"
+                aria-label={`Restore version ${String(version.versionNumber)}`}
+                disabled={busy || revert.isPending}
+                onClick={() => {
+                  revert.reset();
+                  setConfirming(version.versionNumber);
+                }}
+              >
+                Restore
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+      {revert.error === null ? null : (
+        <p role="alert" className="type-caption text-[var(--danger)] mt-1 mb-0">
+          {revert.error.message}
+        </p>
+      )}
+    </section>
+  );
+}
+
+export function DriveDetailsPanel({
+  item,
+  ownerLabel,
+  location,
+  isTrash,
+  busy,
+  currentActorId,
+  onClose,
+  onManageAccess,
+}: {
+  readonly item: DriveItem | null;
+  readonly ownerLabel: string;
+  readonly location: string;
+  readonly isTrash: boolean;
+  readonly busy: boolean;
+  readonly currentActorId: string | null;
+  readonly onClose: () => void;
+  readonly onManageAccess: () => void;
+}) {
+  const baseId = useId();
+  const [tab, setTab] = useState<DetailsTab>("details");
+  const tabRefs = useRef(new Map<DetailsTab, HTMLButtonElement>());
+  const readable = item !== null && !isTrash;
+  const access = useQuery(driveAccessQueryOptions(item?.id ?? "", readable));
+  const versions = useQuery(
+    driveVersionsQueryOptions(item?.id ?? "", readable && item.kind === "file"),
+  );
+  const grants = (access.data ?? []).filter((grant) => grant.role !== "owner");
+
+  const onTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    const next: DetailsTab = tab === "details" ? "activity" : "details";
+    setTab(next);
+    tabRefs.current.get(next)?.focus();
+  };
+
+  const nameForActor = (actorId: string | null) => {
+    if (actorId === null) return "Someone";
+    if (actorId === currentActorId) return "You";
+    if (actorId === item?.ownerActorId) return item.owner;
+    const grant = access.data?.find((candidate) => candidate.actorId === actorId);
+    return grant?.displayName ?? grant?.email ?? "A member";
+  };
+
+  const status = item === null ? null : driveUploadStatusView(item.uploadState);
+
+  return (
+    <aside aria-label="Details" className="drive-details" data-testid="drive-details-panel">
+      <div className="drive-details-header">
+        {item === null ? null : <DriveTypeIcon type={item.type} size={22} />}
+        <h2 className="type-body m-0 font-semibold truncate flex-1" title={item?.name}>
+          {item?.name ?? location}
+        </h2>
+        <button type="button" className="icon-btn" aria-label="Close details" onClick={onClose}>
+          <CloseIcon size={18} />
+        </button>
       </div>
-    </div>
+      <div role="tablist" aria-label="Details panel" className="drive-details-tabs">
+        {TABS.map((entry) => (
+          <button
+            key={entry.id}
+            ref={(node) => {
+              if (node) tabRefs.current.set(entry.id, node);
+            }}
+            type="button"
+            role="tab"
+            id={`${baseId}-tab-${entry.id}`}
+            aria-selected={tab === entry.id}
+            aria-controls={`${baseId}-panel-${entry.id}`}
+            tabIndex={tab === entry.id ? 0 : -1}
+            className="drive-details-tab"
+            onClick={() => setTab(entry.id)}
+            onKeyDown={onTabKeyDown}
+          >
+            {entry.label}
+          </button>
+        ))}
+      </div>
+      <div
+        role="tabpanel"
+        id={`${baseId}-panel-${tab}`}
+        aria-labelledby={`${baseId}-tab-${tab}`}
+        className="drive-details-body"
+      >
+        {item === null ? (
+          <EmptyState
+            size="inline"
+            headingLevel={3}
+            icon={<DriveTypeIcon type="folder" size={28} />}
+            title="Select a file or folder"
+            body="Its details and activity show up here."
+          />
+        ) : tab === "details" ? (
+          <>
+            <div className="drive-details-hero" aria-hidden="true">
+              <DriveTypeIcon type={item.type} size={64} />
+            </div>
+            {status !== null && !status.available ? (
+              <p
+                role="status"
+                className="drive-upload-tone type-caption rounded-md px-2.5 py-2 mb-3"
+                data-tone={status.tone}
+              >
+                {openDenialMessage(status.state)}
+              </p>
+            ) : null}
+            {readable ? (
+              <section aria-label="Who has access" className="mb-4">
+                <h3 className="type-body-sm font-semibold m-0 mb-2">Who has access</h3>
+                <div className="flex items-center gap-1 mb-2">
+                  <Avatar name={item.owner} size={28} />
+                  {grants.slice(0, 5).map((grant) => (
+                    <Avatar
+                      key={grant.actorId}
+                      name={grant.displayName ?? grant.email ?? "Member"}
+                      size={28}
+                    />
+                  ))}
+                  {grants.length > 5 ? (
+                    <span className="type-caption text-muted-foreground">
+                      +{String(grants.length - 5)}
+                    </span>
+                  ) : null}
+                </div>
+                <p className="type-caption text-muted-foreground m-0 mb-2">
+                  {grants.length === 0
+                    ? "Private to the owner"
+                    : `Owned by ${ownerLabel}. Shared with ${String(grants.length)} ${grants.length === 1 ? "person" : "people"}.`}
+                </p>
+                <button type="button" className="btn sm" onClick={onManageAccess}>
+                  Manage access
+                </button>
+              </section>
+            ) : null}
+            <h3 className="type-body-sm font-semibold m-0 mb-1">
+              {item.kind === "folder" ? "Folder details" : "File details"}
+            </h3>
+            <dl className="drive-detail-list">
+              <DetailRow label="Type" value={DRIVE_TYPE_META[item.type].label} />
+              {item.kind === "file" ? (
+                <DetailRow label="Size" value={formatByteSize(item.byteSize)} />
+              ) : null}
+              <DetailRow label="Location" value={location} />
+              <DetailRow label="Owner" value={ownerLabel} />
+              <DetailRow label="Modified" value={formatDateTime(item.updatedAt)} />
+              <DetailRow label="Created" value={formatDateTime(item.createdAt)} />
+              {item.deletedAt === null ? null : (
+                <DetailRow label="Moved to trash" value={formatDateTime(item.deletedAt)} />
+              )}
+            </dl>
+            {readable && item.kind === "file" ? <VersionHistory item={item} busy={busy} /> : null}
+          </>
+        ) : (
+          <ul className="drive-activity">
+            {driveActivityEvents(
+              item,
+              ownerLabel === "me" ? "You" : ownerLabel,
+              versions.data ?? [],
+              grants,
+              nameForActor,
+            ).map((event) => (
+              <li key={event.key} className="drive-activity-row">
+                <Avatar name={event.who === "You" ? item.owner : event.who} size={24} />
+                <div className="min-w-0 flex-1">
+                  <p className="type-body-sm m-0">
+                    <span className="font-semibold">{event.who}</span> {event.what}
+                  </p>
+                  <p className="type-caption text-muted-foreground m-0">
+                    {formatDateTime(event.at)}
+                  </p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </aside>
   );
 }

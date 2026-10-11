@@ -92,6 +92,7 @@ export function mapDriveListEntry(row: DriveListRow): DriveEntryRecord {
       ownerActorId: row.owner_actor_id,
       metadata: row.metadata,
       deletedAt: row.deleted_at,
+      trashPurgeAfter: row.trash_purge_after,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
@@ -99,7 +100,7 @@ export function mapDriveListEntry(row: DriveListRow): DriveEntryRecord {
   if (row.storage_key === null || row.mime_type === null || row.byte_size === null) {
     throw new Error("Drive list returned an incomplete file row.");
   }
-  return mapObjectEntry({
+  const entry = mapObjectEntry({
     id: row.id,
     org_id: "",
     owner_actor_id: row.owner_actor_id,
@@ -119,6 +120,7 @@ export function mapDriveListEntry(row: DriveListRow): DriveEntryRecord {
     shared_count: row.shared_count,
     starred: row.starred,
   });
+  return { ...entry, trashPurgeAfter: row.trash_purge_after };
 }
 
 export function missingFolderRow(): DriveFolderRow {

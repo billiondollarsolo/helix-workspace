@@ -37,6 +37,8 @@ export const driveEntrySchema = z.object({
   available: z.boolean().optional(),
   metadata: jsonObjectSchema.default({}),
   deletedAt: z.string().nullable(),
+  /** When a trashed entry leaves its recovery window and can be deleted forever. */
+  trashPurgeAfter: z.string().nullable().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });

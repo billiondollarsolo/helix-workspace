@@ -1,18 +1,20 @@
 import { describe, expect, it } from "vitest";
 import type { DriveApiEntry } from "./api";
 import {
-  fileItemFromEntry,
-  fileTypeFromEntry,
-  folderItemFromEntry,
+  canDeleteForever,
+  driveItemFromEntry,
+  fileTypeFromName,
   formatByteSize,
+  trashRetentionDays,
 } from "./drive-data";
+
 function makeEntry(
   overrides: Partial<DriveApiEntry> & Pick<DriveApiEntry, "id" | "type">,
 ): DriveApiEntry {
   return {
     name: `entry-${overrides.id}`,
     folderId: null,
-    ownerActorId: "Alex Park",
+    ownerActorId: "11111111-1111-4111-8111-111111111111",
     metadata: {},
     deletedAt: null,
     createdAt: "2026-01-01T00:00:00.000Z",
@@ -20,9 +22,11 @@ function makeEntry(
     ...overrides,
   };
 }
+
 describe("formatByteSize", () => {
   it("returns an em dash for missing or zero sizes", () => {
     expect(formatByteSize(undefined)).toBe("—");
+    expect(formatByteSize(null)).toBe("—");
     expect(formatByteSize(0)).toBe("—");
   });
   it("scales bytes into the largest fitting unit", () => {
@@ -31,79 +35,78 @@ describe("formatByteSize", () => {
     expect(formatByteSize(4 * 1024 * 1024)).toBe("4 MB");
   });
 });
-describe("fileTypeFromEntry", () => {
-  it("classifies folders", () => {
-    expect(fileTypeFromEntry(makeEntry({ id: "1", type: "folder" }))).toBe("folder");
-  });
-  it("infers types from mime and name", () => {
-    expect(
-      fileTypeFromEntry(makeEntry({ id: "2", type: "file", mimeType: "application/pdf" })),
-    ).toBe("pdf");
-    expect(fileTypeFromEntry(makeEntry({ id: "3", type: "file", name: "deck.fig" }))).toBe(
-      "design",
-    );
-    expect(fileTypeFromEntry(makeEntry({ id: "4", type: "file", mimeType: "video/mp4" }))).toBe(
-      "video",
-    );
-    expect(fileTypeFromEntry(makeEntry({ id: "5", type: "file", name: "notes.txt" }))).toBe("doc");
-    expect(fileTypeFromEntry(makeEntry({ id: "6", type: "file", name: "pitch.pptx" }))).toBe(
-      "slides",
-    );
-    expect(
-      fileTypeFromEntry(
-        makeEntry({
-          id: "7",
-          type: "file",
-          mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        }),
-      ),
-    ).toBe("slides");
-    expect(fileTypeFromEntry(makeEntry({ id: "8", type: "file", name: "pitch.odp" }))).toBe(
-      "slides",
-    );
+
+describe("fileTypeFromName", () => {
+  it.each([
+    ["photo.png", "image/png", "image"],
+    ["scan.heic", null, "image"],
+    ["song.mp3", null, "audio"],
+    ["talk.mov", null, "video"],
+    ["report.pdf", "application/pdf", "pdf"],
+    ["notes.txt", "text/plain", "doc"],
+    ["letter.docx", null, "doc"],
+    ["budget.xlsx", null, "sheet"],
+    ["data.csv", "text/csv", "sheet"],
+    ["pitch.pptx", null, "slides"],
+    ["memo.m4a", "audio/mp4", "audio"],
+    ["clip.mp4", "video/mp4", "video"],
+    ["backup.zip", "application/zip", "archive"],
+    ["main.ts", null, "code"],
+    ["config.json", "application/json", "code"],
+    ["mystery.bin", "application/octet-stream", "other"],
+  ] as const)("%s (%s) is a %s", (name, mime, type) => {
+    expect(fileTypeFromName(name, mime)).toBe(type);
   });
 });
-describe("entry adapters", () => {
-  it("maps a folder entry with an item count from metadata", () => {
-    const folder = folderItemFromEntry(
-      makeEntry({ id: "f1", type: "folder", name: "Design", metadata: { itemCount: 12 } }),
-    );
-    expect(folder).toMatchObject({ id: "f1", name: "Design", itemCount: 12 });
+
+describe("driveItemFromEntry", () => {
+  it("maps folders as always-available folder items", () => {
+    const item = driveItemFromEntry(makeEntry({ id: "f", type: "folder", name: "Plans" }));
+    expect(item).toMatchObject({ kind: "folder", type: "folder", available: true, byteSize: null });
   });
-  it("maps a file entry into a card model", () => {
-    const file = fileItemFromEntry(
+
+  it("keeps a file unavailable until its scan is clean", () => {
+    const scanning = driveItemFromEntry(
+      makeEntry({ id: "a", type: "file", name: "a.pdf", uploadState: "scanning" }),
+    );
+    expect(scanning).toMatchObject({ available: false, uploadStatusLabel: "Scanning for malware" });
+    const clean = driveItemFromEntry(
       makeEntry({
-        id: "x1",
+        id: "b",
         type: "file",
-        name: "Q3-Forecast.xlsx",
-        mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        byteSize: 184 * 1024,
-        ownerActorId: "Naveen Iyer",
+        name: "b.pdf",
+        uploadState: "active",
+        metadata: { starred: true },
+        byteSize: 2048,
       }),
     );
-    expect(file).toMatchObject({
-      id: "x1",
-      name: "Q3-Forecast.xlsx",
-      type: "sheet",
-      owner: "Naveen Iyer",
-      size: "184 KB",
-      mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    });
+    expect(clean).toMatchObject({ available: true, starred: true, type: "pdf", byteSize: 2048 });
   });
-  it("falls back to a placeholder owner when none is set", () => {
-    const file = fileItemFromEntry(makeEntry({ id: "x2", type: "file", ownerActorId: null }));
-    expect(file.owner).toBe("Unknown owner");
-  });
-  it("prefers resolved owner names over raw actor ids", () => {
-    const file = fileItemFromEntry(
-      makeEntry({
-        id: "x3",
-        type: "file",
-        ownerActorId: "11111111-1111-4111-8111-111111111111",
-        ownerDisplayName: "Maya Chen",
-        ownerEmail: "maya@helix.local",
-      }),
+
+  it("prefers the owner's display name", () => {
+    const item = driveItemFromEntry(
+      makeEntry({ id: "c", type: "file", ownerDisplayName: "Avery Park" }),
     );
-    expect(file.owner).toBe("Maya Chen");
+    expect(item.owner).toBe("Avery Park");
+  });
+});
+
+describe("trash retention", () => {
+  const trashed = (deletedAt: string, trashPurgeAfter: string | null) =>
+    driveItemFromEntry(makeEntry({ id: deletedAt, type: "file", deletedAt, trashPurgeAfter }));
+
+  it("reads the retention period from the server's purge deadlines", () => {
+    expect(
+      trashRetentionDays([trashed("2026-03-01T00:00:00.000Z", "2026-03-15T00:00:00.000Z")]),
+    ).toBe(14);
+    expect(trashRetentionDays([trashed("2026-03-01T00:00:00.000Z", null)])).toBeNull();
+    expect(trashRetentionDays([])).toBeNull();
+  });
+
+  it("allows delete forever only after the recovery window", () => {
+    const item = trashed("2026-03-01T00:00:00.000Z", "2026-03-31T00:00:00.000Z");
+    expect(canDeleteForever(item, Date.parse("2026-03-30T00:00:00.000Z"))).toBe(false);
+    expect(canDeleteForever(item, Date.parse("2026-03-31T00:00:00.000Z"))).toBe(true);
+    expect(canDeleteForever(trashed("2026-03-01T00:00:00.000Z", null))).toBe(false);
   });
 });

@@ -1,4 +1,5 @@
 import type { JsonValue } from "@helix/sdk-types";
+import { withTenantPostgresContext } from "../../tenancy/postgres-roles.js";
 import { bytesFromDatabase } from "../core/mappers.js";
 import {
   DriveConflictError,
@@ -9,6 +10,7 @@ import { appendDriveActivity } from "./activity.js";
 import { type DriveStoreContext } from "./context.js";
 import {
   type DriveLifecyclePolicyRecord,
+  type DriveMemberStorageUsageRecord,
   type DriveStorageQuotaUsageRecord,
   type StorageQuotaExceededEvent,
 } from "./contracts.js";
@@ -98,6 +100,48 @@ export async function getStorageQuotaUsage(
     limitBytes,
     unlimited,
     percentUsed,
+  };
+}
+
+/**
+ * Storage a member sees in Drive: bytes of the files they own (trash included,
+ * since trashed files still take space), plus the organization's pooled usage
+ * when an admin has set a storage limit. Helix storage is unlimited by default.
+ */
+export async function getMemberStorageUsage(
+  context: DriveStoreContext,
+  input: {
+    readonly orgId: string;
+    readonly actorId: string;
+  },
+): Promise<DriveMemberStorageUsageRecord> {
+  const rows = await withTenantPostgresContext(
+    context.sql,
+    { orgId: input.orgId, actorId: input.actorId },
+    async (tx) =>
+      await tx<readonly (DriveStorageQuotaRow & { readonly member_used_bytes: string | number })[]>`
+        select
+          o.quotas -> 'storage_bytes_limit' as storage_bytes_limit,
+          helix_storage_usage_bytes(${input.orgId}) as storage_used_bytes,
+          (
+            select coalesce(sum(object.byte_size), 0)
+            from objects object
+            where object.org_id = ${input.orgId}
+              and object.owner_actor_id = ${input.actorId}
+              and object.kind in ('file', 'recording')
+          ) as member_used_bytes
+        from orgs o
+        where o.id = ${input.orgId}
+        limit 1
+      `,
+  );
+  const row = rows[0];
+  if (row === undefined) throw new DriveNotFoundError("Unknown Drive tenant.");
+  const limitBytes = storageLimitFromJson(row.storage_bytes_limit);
+  return {
+    usedBytes: bytesFromDatabase(row.member_used_bytes),
+    limitBytes,
+    organizationUsedBytes: limitBytes === null ? null : bytesFromDatabase(row.storage_used_bytes),
   };
 }
 

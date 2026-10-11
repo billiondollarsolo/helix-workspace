@@ -1,55 +1,54 @@
-/* Drive — view-model types, file-type icon metadata, and mapping helpers
-   from the backend `DriveApiEntry` shape onto the rows the shell renders.
-   No fabricated seed data lives here. */
+/* Drive view model: one `DriveItem` shape for files and folders, the type
+   categories behind the type icons, and formatting helpers. Everything maps
+   from the backend `DriveApiEntry`; no seed data lives here. */
 import type { DriveUploadState } from "@helix/contracts";
 import type { DriveApiEntry } from "./api";
 import { canOpenDriveObject, driveUploadStatusView } from "./upload-status-ui";
-/** A file's visual category — drives the type-colored icon. */
-export type DriveFileType = "doc" | "sheet" | "slides" | "pdf" | "design" | "video" | "folder";
-/** A folder tile in the Folders section. */
-export interface DriveFolderItem {
+
+/** A file's category, shown as a colored type icon. Drive never previews content. */
+export type DriveFileType =
+  | "folder"
+  | "image"
+  | "pdf"
+  | "doc"
+  | "sheet"
+  | "slides"
+  | "audio"
+  | "video"
+  | "archive"
+  | "code"
+  | "other";
+
+/** A file or folder row/card. */
+export interface DriveItem {
   readonly id: string;
-  readonly name: string;
-  readonly itemCount: number;
-}
-/** A file card / row in the Files section. */
-export interface DriveFileItem {
-  readonly id: string;
+  readonly kind: "file" | "folder";
   readonly name: string;
   readonly type: DriveFileType;
+  readonly folderId: string | null;
+  readonly ownerActorId: string | null;
+  /** Owner display label ("Ada Park"); the shell swaps in "me" for the viewer. */
   readonly owner: string;
-  readonly modified: string;
-  readonly size: string;
-  readonly mimeType?: string | undefined;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly byteSize: number | null;
+  readonly mimeType: string | null;
   readonly starred: boolean;
-  /** Short uppercase format label for the per-row chip (e.g. "DOCX", "PDF", "MD"). */
-  readonly formatLabel: string;
-  /** Upload/scan lifecycle (D8). Absent on folders and legacy entries. */
-  readonly uploadState?: DriveUploadState | undefined;
-  readonly uploadStatusLabel?: string | undefined;
-  /** False while processing/quarantined; open/share/download must be denied. */
-  readonly available?: boolean | undefined;
+  readonly deletedAt: string | null;
+  /** When a trashed item can be deleted forever (end of its recovery window). */
+  readonly trashPurgeAfter: string | null;
+  /** Upload/scan lifecycle. Absent on folders. */
+  readonly uploadState: DriveUploadState | null;
+  readonly uploadStatusLabel: string | null;
+  /** Folders are always available; files only once their scan is clean. */
+  readonly available: boolean;
 }
-/** Type-colored icon metadata, keyed by file type. */
-export const DRIVE_FILE_META: Record<
-  DriveFileType,
-  {
-    readonly icon: "Doc" | "Sheet" | "Image" | "Video" | "Folder";
-    readonly color: string;
-  }
-> = {
-  doc: { icon: "Doc", color: "#2563eb" },
-  sheet: { icon: "Sheet", color: "#059669" },
-  slides: { icon: "Image", color: "#ea580c" },
-  pdf: { icon: "Doc", color: "#dc2626" },
-  design: { icon: "Image", color: "#ea580c" },
-  video: { icon: "Video", color: "#0891b2" },
-  folder: { icon: "Folder", color: "#7c3aed" },
-};
+
 const BYTE_UNITS = ["B", "KB", "MB", "GB", "TB"] as const;
-/** Format a byte size into a short, human label (e.g. "184 KB"). */
-export function formatByteSize(bytes: number | undefined): string {
-  if (bytes === undefined || bytes <= 0) {
+
+/** Format a byte size into a short label, e.g. "184 KB". */
+export function formatByteSize(bytes: number | null | undefined): string {
+  if (bytes === null || bytes === undefined || bytes <= 0) {
     return "—";
   }
   let value = bytes;
@@ -61,14 +60,15 @@ export function formatByteSize(bytes: number | undefined): string {
   const rounded = value >= 10 || unit === 0 ? Math.round(value) : Math.round(value * 10) / 10;
   return `${String(rounded)} ${BYTE_UNITS[unit]}`;
 }
-/** Format an ISO timestamp into a short relative-ish label. */
-export function formatModified(iso: string): string {
+
+/** Short "last modified" label: "5 min ago", "Yesterday", "Mar 4". */
+export function formatModified(iso: string, now: number = Date.now()): string {
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) {
     return "—";
   }
-  const diffMs = Date.now() - then;
-  const minute = 60000;
+  const diffMs = now - then;
+  const minute = 60_000;
   const hour = 60 * minute;
   const day = 24 * hour;
   if (diffMs < hour) {
@@ -82,118 +82,117 @@ export function formatModified(iso: string): string {
   if (diffMs < 2 * day) {
     return "Yesterday";
   }
-  if (diffMs < 7 * day) {
-    return new Date(then).toLocaleDateString(undefined, { weekday: "long" });
-  }
-  return new Date(then).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const sameYear = new Date(then).getFullYear() === new Date(now).getFullYear();
+  return new Date(then).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    ...(sameYear ? {} : { year: "numeric" }),
+  });
 }
-/** Extract the trailing extension from a filename. Returns the segment after
- *  the final dot, lowercased, or null when there is no useful extension. */
-function extensionFromName(name: string): string | null {
-  const dot = name.lastIndexOf(".");
-  if (dot < 0 || dot === name.length - 1) {
-    return null;
-  }
-  const ext = name.slice(dot + 1).toLowerCase();
-  if (ext.length === 0 || ext.length > 6 || !/^[a-z0-9]+$/i.test(ext)) {
-    return null;
-  }
-  return ext;
+
+/** Full date and time for the details panel, e.g. "Mar 4, 2026, 9:12 AM". */
+export function formatDateTime(iso: string): string {
+  const time = new Date(iso);
+  if (Number.isNaN(time.getTime())) return "—";
+  return time.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
-const MIME_TO_LABEL: ReadonlyArray<readonly [RegExp, string]> = [
-  [/application\/pdf/i, "PDF"],
-  [/officedocument\.spreadsheetml/i, "XLSX"],
-  [/officedocument\.wordprocessingml/i, "DOCX"],
-  [/officedocument\.presentationml/i, "PPTX"],
-  [/csv/i, "CSV"],
-  [/markdown/i, "MD"],
-  [/json/i, "JSON"],
-  [/zip|x-zip-compressed/i, "ZIP"],
-  [/jpeg|jpg/i, "JPG"],
-  [/png/i, "PNG"],
-  [/gif/i, "GIF"],
-  [/svg/i, "SVG"],
-  [/mp4|quicktime/i, "VIDEO"],
-  [/text\/plain/i, "TXT"],
+
+const TYPE_BY_EXTENSION: Readonly<Record<string, DriveFileType>> = {
+  png: "image",
+  jpg: "image",
+  jpeg: "image",
+  gif: "image",
+  webp: "image",
+  svg: "image",
+  heic: "image",
+  bmp: "image",
+  tif: "image",
+  tiff: "image",
+  mp3: "audio",
+  wav: "audio",
+  m4a: "audio",
+  flac: "audio",
+  ogg: "audio",
+  aac: "audio",
+  mp4: "video",
+  mov: "video",
+  m4v: "video",
+  avi: "video",
+  mkv: "video",
+  webm: "video",
+  pdf: "pdf",
+  doc: "doc",
+  docx: "doc",
+  odt: "doc",
+  rtf: "doc",
+  txt: "doc",
+  md: "doc",
+  pages: "doc",
+  xls: "sheet",
+  xlsx: "sheet",
+  ods: "sheet",
+  csv: "sheet",
+  tsv: "sheet",
+  numbers: "sheet",
+  ppt: "slides",
+  pptx: "slides",
+  odp: "slides",
+  key: "slides",
+  zip: "archive",
+  rar: "archive",
+  "7z": "archive",
+  tar: "archive",
+  gz: "archive",
+  tgz: "archive",
+  bz2: "archive",
+  xz: "archive",
+  js: "code",
+  jsx: "code",
+  ts: "code",
+  tsx: "code",
+  json: "code",
+  html: "code",
+  css: "code",
+  py: "code",
+  rb: "code",
+  go: "code",
+  rs: "code",
+  java: "code",
+  c: "code",
+  h: "code",
+  cpp: "code",
+  cs: "code",
+  sh: "code",
+  sql: "code",
+  yaml: "code",
+  yml: "code",
+  xml: "code",
+  toml: "code",
+};
+
+const TYPE_BY_MIME: ReadonlyArray<readonly [RegExp, DriveFileType]> = [
+  [/^image\//u, "image"],
+  [/^audio\//u, "audio"],
+  [/^video\//u, "video"],
+  [/^application\/pdf$/u, "pdf"],
+  [/spreadsheet|excel|csv/u, "sheet"],
+  [/presentation|powerpoint/u, "slides"],
+  [/wordprocessing|msword|opendocument\.text|^text\/(plain|markdown|rtf)/u, "doc"],
+  [/zip|compressed|x-tar|gzip|x-7z|x-rar|x-bzip/u, "archive"],
+  [/json|javascript|typescript|x-python|x-sh|xml|yaml|^text\/(html|css|x-)/u, "code"],
 ];
-/** Compute the per-row chip label (e.g. "DOCX") from the entry's metadata.
- *  Prefers `metadata.originalFormat` (the format the file was *imported* from)
- *  when present, falls back to the filename extension, then mime type, then
- *  the app key, then a generic "FILE". Always uppercase, max 6 chars. */
-function formatLabelFromEntry(entry: DriveApiEntry): string {
-  if (entry.type === "folder") {
-    return "";
+
+/** Infer the type icon category from a file's name and MIME type. */
+export function fileTypeFromName(name: string, mimeType: string | null | undefined): DriveFileType {
+  const mime = mimeType?.toLowerCase() ?? "";
+  for (const [pattern, type] of TYPE_BY_MIME) {
+    if (pattern.test(mime)) return type;
   }
-  const meta = entry.metadata ?? {};
-  const original = typeof meta.originalFormat === "string" ? meta.originalFormat : null;
-  if (original && original.length > 0) {
-    return original.toUpperCase().slice(0, 6);
-  }
-  const fromName = extensionFromName(entry.name);
-  if (
-    fromName !== null &&
-    fromName !== "helixdoc" &&
-    fromName !== "helixsheet" &&
-    fromName !== "helixdeck" &&
-    fromName !== "sheet" &&
-    fromName !== "slide"
-  ) {
-    return fromName.toUpperCase();
-  }
-  const mime = entry.mimeType ?? "";
-  for (const [pattern, label] of MIME_TO_LABEL) {
-    if (pattern.test(mime)) {
-      return label;
-    }
-  }
-  return "FILE";
+  const dot = name.lastIndexOf(".");
+  const extension = dot < 0 ? "" : name.slice(dot + 1).toLowerCase();
+  return TYPE_BY_EXTENSION[extension] ?? "other";
 }
-/** Infer a file type category from a backend entry. */
-export function fileTypeFromEntry(entry: DriveApiEntry): DriveFileType {
-  if (entry.type === "folder") {
-    return "folder";
-  }
-  const name = entry.name.toLowerCase();
-  const mime = entry.mimeType?.toLowerCase() ?? "";
-  if (/\.(xlsx?|ods|csv|tsv)$/.test(name) || mime.includes("spreadsheet")) return "sheet";
-  if (/\.(pptx?|odp)$/.test(name) || mime.includes("presentation")) return "slides";
-  if (name.endsWith(".pdf") || mime === "application/pdf") return "pdf";
-  if (mime.startsWith("image/")) return "design";
-  if (mime.startsWith("audio/") || mime.startsWith("video/")) return "video";
-  if (mime.includes("figma") || name.endsWith(".fig") || name.endsWith(".sketch")) {
-    return "design";
-  }
-  return "doc";
-}
-/** Adapt a backend folder entry into a folder tile. */
-export function folderItemFromEntry(entry: DriveApiEntry): DriveFolderItem {
-  const count =
-    entry.metadata && typeof entry.metadata.itemCount === "number" ? entry.metadata.itemCount : 0;
-  return { id: entry.id, name: entry.name, itemCount: count };
-}
-/** Adapt a backend file entry into a file card / row model. */
-export function fileItemFromEntry(entry: DriveApiEntry): DriveFileItem {
-  const uploadState = entry.uploadState;
-  const status = uploadState === undefined ? null : driveUploadStatusView(uploadState);
-  const available =
-    entry.available ??
-    (uploadState === undefined ? undefined : canOpenDriveObject({ uploadState }));
-  const uploadStatusLabel = entry.uploadStatusLabel ?? status?.label;
-  return {
-    id: entry.id,
-    name: entry.name,
-    type: fileTypeFromEntry(entry),
-    owner: ownerLabelFromEntry(entry),
-    modified: formatModified(entry.updatedAt),
-    size: formatByteSize(entry.byteSize),
-    ...(entry.mimeType === undefined ? {} : { mimeType: entry.mimeType }),
-    starred: entry.metadata?.starred === true,
-    formatLabel: formatLabelFromEntry(entry),
-    ...(uploadState === undefined ? {} : { uploadState }),
-    ...(uploadStatusLabel === undefined ? {} : { uploadStatusLabel }),
-    ...(available === undefined ? {} : { available }),
-  };
-}
+
 function ownerLabelFromEntry(entry: DriveApiEntry): string {
   return (
     entry.ownerDisplayName?.trim() ||
@@ -201,4 +200,48 @@ function ownerLabelFromEntry(entry: DriveApiEntry): string {
     entry.ownerActorId?.trim() ||
     "Unknown owner"
   );
+}
+
+/** Adapt a backend entry (file or folder) into the shared row/card model. */
+export function driveItemFromEntry(entry: DriveApiEntry): DriveItem {
+  const folder = entry.type === "folder";
+  const uploadState = folder ? null : (entry.uploadState ?? null);
+  const status = driveUploadStatusView(uploadState);
+  return {
+    id: entry.id,
+    kind: folder ? "folder" : "file",
+    name: entry.name,
+    type: folder ? "folder" : fileTypeFromName(entry.name, entry.mimeType),
+    folderId: entry.folderId,
+    ownerActorId: entry.ownerActorId,
+    owner: ownerLabelFromEntry(entry),
+    createdAt: entry.createdAt,
+    updatedAt: entry.updatedAt,
+    byteSize: folder ? null : (entry.byteSize ?? null),
+    mimeType: folder ? null : (entry.mimeType ?? null),
+    starred: entry.metadata.starred === true,
+    deletedAt: entry.deletedAt,
+    trashPurgeAfter: entry.trashPurgeAfter ?? null,
+    uploadState,
+    uploadStatusLabel: entry.uploadStatusLabel ?? status?.label ?? null,
+    available:
+      folder || (entry.available ?? canOpenDriveObject({ uploadState: entry.uploadState })),
+  };
+}
+
+/** Trashed items can be deleted forever once their recovery window ends. */
+export function canDeleteForever(item: Pick<DriveItem, "trashPurgeAfter">, now = Date.now()) {
+  return item.trashPurgeAfter !== null && new Date(item.trashPurgeAfter).getTime() <= now;
+}
+
+/** Whole days between trashing and permanent deletion, read from the server deadlines. */
+export function trashRetentionDays(items: readonly DriveItem[]): number | null {
+  for (const item of items) {
+    if (item.deletedAt === null || item.trashPurgeAfter === null) continue;
+    const days = Math.round(
+      (new Date(item.trashPurgeAfter).getTime() - new Date(item.deletedAt).getTime()) / 86_400_000,
+    );
+    if (Number.isFinite(days) && days > 0) return days;
+  }
+  return null;
 }

@@ -26,7 +26,7 @@ describe("Drive drag payloads", () => {
     });
 
     expect(dataTransfer.dropEffect).toBe("copy");
-    expect(dataTransfer.effectAllowed).toBe("copyLink");
+    expect(dataTransfer.effectAllowed).toBe("copyMove");
     expect(data.get("text/uri-list")).toMatch(/\/open\/file-1$/u);
     expect(data.get("text/plain")).toBe('Board update "Q4".pptx');
     expect(data.get("text/html")).toContain("Board update &quot;Q4&quot;.pptx");

@@ -149,20 +149,27 @@ export interface CreateCalendarToolDefinitionsOptions {
 }
 
 async function createConference(
-  provider: CalendarConferenceProvider | undefined,
+  options: Pick<CreateCalendarToolDefinitionsOptions, "conference" | "store">,
   actor: { readonly id: string; readonly orgId: string },
   input: {
     readonly title: string;
     readonly startsAt: string;
     readonly endsAt: string;
-    readonly attendees: readonly { readonly actorId?: string | null | undefined }[];
+    readonly attendees: readonly CalendarAttendeeInput[];
   },
 ): Promise<JsonObject> {
+  const provider = options.conference;
   if (provider === undefined) {
     throw new BadRequestError(
       "Video conferencing is unavailable because Meet is not configured for this workspace.",
     );
   }
+  // Members invited by address (API, CLI, typed addresses) join the room too,
+  // not only those picked from the directory with an actor id.
+  const attendees =
+    options.store.resolveAttendees === undefined
+      ? input.attendees
+      : await options.store.resolveAttendees({ orgId: actor.orgId, attendees: input.attendees });
   const room = await provider.createRoom({
     orgId: actor.orgId,
     actorId: actor.id,
@@ -171,7 +178,7 @@ async function createConference(
     endsAt: new Date(input.endsAt),
     participantActorIds: [
       ...new Set(
-        input.attendees.flatMap((attendee) =>
+        attendees.flatMap((attendee) =>
           typeof attendee.actorId === "string" && attendee.actorId !== actor.id
             ? [attendee.actorId]
             : [],
@@ -246,7 +253,10 @@ export function createCalendarToolDefinitions(
         const conference =
           input.conference === undefined
             ? undefined
-            : await createConference(options.conference, ctx.actor, input);
+            : await createConference(options, ctx.actor, {
+                ...input,
+                attendees: attendeeInputs(input.attendees),
+              });
         const event = await options.store.createEvent({
           orgId: ctx.actor.orgId,
           actorId: ctx.actor.id,
@@ -296,11 +306,12 @@ export function createCalendarToolDefinitions(
           const metadata = patch.metadata ?? current.metadata;
           // Adding conferencing twice keeps the existing room instead of creating another.
           if (metadata.conference === undefined) {
-            const room = await createConference(options.conference, ctx.actor, {
+            const room = await createConference(options, ctx.actor, {
               title: patch.title ?? current.title,
               startsAt: patch.startsAt ?? current.startsAt.toISOString(),
               endsAt: patch.endsAt ?? current.endsAt.toISOString(),
-              attendees: patch.attendees ?? current.attendees,
+              attendees:
+                patch.attendees === undefined ? current.attendees : attendeeInputs(patch.attendees),
             });
             patch = { ...patch, metadata: { ...metadata, conference: room } };
           }

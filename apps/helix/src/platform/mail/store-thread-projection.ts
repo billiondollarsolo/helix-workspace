@@ -45,6 +45,7 @@ export interface MailThreadListRow {
   readonly subject: string | null;
   readonly message_id: string;
   readonly body: string;
+  readonly body_format: string;
   readonly metadata: JsonObject;
   readonly sent_at: Date;
   readonly message_count: number;
@@ -55,6 +56,37 @@ export interface MailThreadListRow {
   readonly category: string | null;
   readonly snoozed_until: Date | null;
   readonly participants: readonly MailThreadParticipant[];
+}
+
+const PREVIEW_LENGTH = 240;
+
+/**
+ * List and search previews are plain text. An HTML message previews its text
+ * part, or its markup reduced to text, never raw tags or styles.
+ */
+export function mailPreviewText(message: {
+  readonly body: string;
+  readonly bodyFormat: string;
+  readonly plainBody?: unknown;
+}): string {
+  if (message.bodyFormat !== "html") return message.body.slice(0, PREVIEW_LENGTH);
+  const text =
+    typeof message.plainBody === "string" && message.plainBody.trim() !== ""
+      ? message.plainBody
+      : htmlPreviewText(message.body);
+  return text.replace(/\s+/gu, " ").trim().slice(0, PREVIEW_LENGTH);
+}
+
+function htmlPreviewText(html: string): string {
+  return html
+    .replace(/<(style|script|head|title)\b[^>]*>[\s\S]*?<\/\1\s*>/giu, " ")
+    .replace(/<[^>]*>/gu, " ")
+    .replaceAll("&nbsp;", " ")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&#39;", "'")
+    .replaceAll("&amp;", "&");
 }
 
 export function mapThreadRow(row: MailThreadListRow, folder: MailFolderId): MailThreadRowRecord {
@@ -91,7 +123,11 @@ export function mapThreadRow(row: MailThreadListRow, folder: MailFolderId): Mail
     subject: row.subject ?? "",
     from: from?.name ?? fromAddress,
     fromEmail: fromAddress,
-    preview: row.body.slice(0, 240),
+    preview: mailPreviewText({
+      body: row.body,
+      bodyFormat: row.body_format,
+      plainBody: row.metadata.plainBody,
+    }),
     time: row.sent_at.toISOString(),
     unread: row.read_at === null || row.read_at < row.sent_at,
     starred: row.starred ?? false,
@@ -140,7 +176,7 @@ export function mapThreadDetail(rows: readonly MailThreadRow[]): MailThreadDetai
   return {
     id: first.thread_id,
     subject: first.subject ?? "",
-    preview: last?.body.slice(0, 240) ?? "",
+    preview: last === undefined ? "" : mailPreviewText(last),
     participants,
     messages,
     labels: first.labels ?? [],

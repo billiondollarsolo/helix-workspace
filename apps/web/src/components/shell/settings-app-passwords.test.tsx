@@ -134,6 +134,10 @@ describe("app password purposes", () => {
       ["calendar", ["calendar.read"]],
       ["files", ["webdav"]],
     ]);
+    // Every member holds contacts.* through their role, so contacts sync is offered.
+    expect(
+      grantablePurposes(["contacts.read", "contacts.write"]).map((purpose) => purpose.id),
+    ).toEqual(["contacts"]);
     expect(setupHints(purposes, "https://helix.example").map((hint) => hint.server)).toEqual([
       "https://helix.example/v1/dav/cal/",
       "https://helix.example/v1/dav/files/",

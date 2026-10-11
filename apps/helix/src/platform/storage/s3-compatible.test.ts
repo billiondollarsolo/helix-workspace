@@ -206,6 +206,21 @@ describe("S3-compatible storage", () => {
     });
   });
 
+  it("never forwards Expect: 100-continue, which fetch rejects, on large puts", async () => {
+    const fetchStub = createFetchStub();
+
+    await storage(fetchStub.fetch).put({
+      key: "org-1/large.bin",
+      body: new Uint8Array(2 * 1024 * 1024),
+      contentType: "application/octet-stream",
+    });
+
+    expect(fetchStub.calls).toHaveLength(1);
+    const headers = requestHeaders(firstUrlCall(fetchStub)[1]);
+    expect(headers).not.toHaveProperty("expect");
+    expect(headers.authorization).not.toContain("expect");
+  });
+
   it("treats already-owned buckets as ready", async () => {
     const fetchStub = createFetchStub(() => {
       return new Response("<Error><Code>BucketAlreadyOwnedByYou</Code></Error>", {

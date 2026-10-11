@@ -1,6 +1,6 @@
 /* What an app password is for, in the words people use, mapped to the scopes
    Helix checks. Each protocol endpoint accepts its product scopes or its
-   protocol alias (smtp, caldav, webdav); a purpose is offered only when the
+   protocol alias (smtp, caldav, carddav, webdav); a purpose is offered only when the
    person holds at least one of its scopes. */
 
 import { apiPath } from "@/lib/auth";
@@ -29,7 +29,7 @@ const APP_PASSWORD_PURPOSES: readonly AppPasswordPurpose[] = [
     id: "contacts",
     label: "Sync your contacts",
     protocol: "CardDAV",
-    scopes: ["carddav.read", "carddav.write"],
+    scopes: ["contacts.read", "contacts.write", "carddav.read", "carddav.write"],
   },
   {
     id: "files",

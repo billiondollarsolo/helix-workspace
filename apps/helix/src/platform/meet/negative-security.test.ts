@@ -86,7 +86,39 @@ describe("Meet negative-security / tenant isolation (MT.5 / MT.6)", () => {
     if (result.ok) {
       throw new Error("expected denial");
     }
-    expect(result.error).toBe("Tool invocation failed.");
+    // The same actionable 404 as a room that does not exist; nothing about the room leaks.
+    expect(result).toMatchObject({ statusCode: 404, error: `Unknown Meet room: ${room.id}` });
+    expect(result).not.toHaveProperty("output");
+  });
+
+  it("refuses an uninvited member joining by code with a 404, not a server error", async () => {
+    const store = new InMemoryMeetStore();
+    const room = await store.createRoom({
+      orgId,
+      actorId,
+      subject: "Invite-only",
+      jitsiDomain: "meet.helix.test",
+    });
+    const registry = createToolRegistry();
+    registerMeetTools(registry, { store, jwtSecret: "test-secret" });
+    const outsider: Actor = {
+      id: outsiderId,
+      orgId,
+      type: "user",
+      scopes: ["meet.read", "meet.write"],
+    };
+
+    const result = await registry.invoke(
+      "meet.join-by-code",
+      { code: room.joinCode, ...joinConsent, joinGrantId: randomUUID() },
+      { actor: outsider },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      statusCode: 404,
+      error: "Unknown active meeting.",
+    });
     expect(result).not.toHaveProperty("output");
   });
 

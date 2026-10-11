@@ -4,6 +4,7 @@ import { z } from "zod";
 import { ForbiddenError } from "../../api/api-error.js";
 import { actorHasScope } from "../../api/scopes.js";
 import { getCryptoProvider } from "../crypto/index.js";
+import { parseActorRoleBindings } from "../permissions/roles.js";
 import { appPasswordScopeCatalog, validatedPermissions } from "../permissions/scope-catalog.js";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { defineTool } from "../tools/define-tool.js";
@@ -280,6 +281,7 @@ export class PostgresAppPasswordStore implements AppPasswordStore, AppPasswordAu
         a.email,
         a.display_name,
         a.scopes as actor_scopes,
+        helix_actor_role_bindings(a.org_id, a.id) as role_bindings,
         p.id as password_id,
         p.hash,
         p.scopes as password_scopes
@@ -300,6 +302,7 @@ export class PostgresAppPasswordStore implements AppPasswordStore, AppPasswordAu
           displayName: row.display_name,
           scopes: row.actor_scopes,
           ...(row.email === null ? {} : { email: row.email }),
+          ...roleBindingsOf(row.role_bindings),
         },
         row.password_scopes,
         input,
@@ -532,6 +535,7 @@ interface AppPasswordAuthRow {
   readonly email: string | null;
   readonly display_name: string;
   readonly actor_scopes: readonly string[];
+  readonly role_bindings: unknown;
   readonly password_id: string;
   readonly hash: string;
   readonly password_scopes: readonly string[];
@@ -569,7 +573,15 @@ export function restrictAppPasswordActor(
   ) {
     return null;
   }
-  return { ...actor, scopes };
+  // Role bindings only prove the actor's authority above; the session is
+  // limited to the password's own grant.
+  const { roleBindings: _roleBindings, ...grantee } = actor;
+  return { ...grantee, scopes };
+}
+
+function roleBindingsOf(value: unknown): Pick<Actor, "roleBindings"> {
+  const roleBindings = parseActorRoleBindings(value);
+  return roleBindings.length === 0 ? {} : { roleBindings };
 }
 
 const allowedAppPasswordScopes = new Set<string>(appPasswordScopeCatalog);

@@ -217,12 +217,12 @@ const scopeCatalog = [
   {
     scope: "contacts.read",
     description: "Read your contacts, contact labels and the organization directory.",
-    surfaces: ["agent"],
+    surfaces: ["agent", "app_password"],
   },
   {
     scope: "contacts.write",
     description: "Create, edit, label, import, merge and delete your contacts.",
-    surfaces: ["agent"],
+    surfaces: ["agent", "app_password"],
   },
 
   // Meet.

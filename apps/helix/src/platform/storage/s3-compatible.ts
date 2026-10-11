@@ -572,10 +572,10 @@ class GuardedFetchHandler implements RequestHandler<HttpRequest, HttpResponse, H
     const signal = callerSignal ?? new AbortController().signal;
     try {
       const body = await requestBody(request.body);
-      const headers = new Headers();
-      for (const [name, value] of Object.entries(request.headers)) {
-        headers.set(name, value);
-      }
+      // fetch rejects the SDK's unsigned `Expect: 100-continue` (sent over 1 MiB).
+      const headers = new Headers(
+        Object.entries(request.headers).filter(([name]) => name.toLowerCase() !== "expect"),
+      );
       const response = await this.fetchImpl(url, {
         method: request.method,
         headers,

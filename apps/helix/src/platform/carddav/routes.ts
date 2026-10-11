@@ -62,8 +62,8 @@ export async function registerCardDavRoutes(
         request,
         options.appPasswords,
         method === "PUT" || method === "DELETE" || method === "MKCOL" || method === "ACL"
-          ? "carddav.write"
-          : "carddav.read",
+          ? "write"
+          : "read",
       );
       if (actor === null) {
         return reply
@@ -320,19 +320,19 @@ export async function registerCardDavRoutes(
   });
 }
 
+/** Like CalDAV: the members' product scope (contacts.*) or the carddav.* alias. */
 async function authenticateCardDav(
   request: FastifyRequest,
   authenticator: AppPasswordAuthenticator,
-  requiredScope: "carddav.read" | "carddav.write",
+  access: "read" | "write",
 ): Promise<Actor | null> {
   const credentials = parseBasicAuthorization(request.headers.authorization);
-  if (credentials === null) {
-    return null;
-  }
+  if (credentials === null) return null;
   return authenticator.authenticateAppPassword({
     username: credentials.username,
     password: credentials.password,
-    requiredScope,
+    requiredScope: `contacts.${access}`,
+    compatibilityScope: `carddav.${access}`,
   });
 }
 

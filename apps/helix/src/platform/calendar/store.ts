@@ -33,6 +33,7 @@ import type {
   CalendarSearchProjectionStore,
   CalendarSearchRecord,
 } from "./types.js";
+import { resolveCalendarAttendees } from "./attendee-identities.js";
 
 export interface CalendarAttendeeInput {
   readonly actorId?: string | null | undefined;
@@ -107,6 +108,11 @@ export interface CalendarSyncPage {
 
 export interface CalendarStore {
   createEvent(input: CreateCalendarEventInput): Promise<CalendarEventRecord>;
+  /** Attendees with the organization's active people matched by address (or actor id). */
+  resolveAttendees?(input: {
+    readonly orgId: string;
+    readonly attendees: readonly CalendarAttendeeInput[];
+  }): Promise<readonly CalendarAttendeeInput[]>;
   updateEvent(input: UpdateCalendarEventInput): Promise<CalendarEventRecord | null>;
   deleteEvent(input: {
     readonly orgId: string;
@@ -309,6 +315,13 @@ type SqlLike = postgres.Sql | postgres.TransactionSql;
 
 export class PostgresCalendarStore implements CalendarStore, CalendarSearchProjectionStore {
   constructor(private readonly sql: postgres.Sql) {}
+
+  async resolveAttendees(input: {
+    readonly orgId: string;
+    readonly attendees: readonly CalendarAttendeeInput[];
+  }): Promise<readonly CalendarAttendeeInput[]> {
+    return resolveCalendarAttendees(this.sql, input.orgId, input.attendees);
+  }
 
   async createEvent(input: CreateCalendarEventInput): Promise<CalendarEventRecord> {
     validateTimeRange(input.startsAt, input.endsAt);
@@ -1557,69 +1570,6 @@ async function syncAttendees(
       where id = ${removed.id} and org_id = ${event.orgId} and event_id = ${event.id}
     `;
   }
-}
-
-interface CalendarIdentityRow {
-  readonly id: string;
-  readonly email: string | null;
-  readonly display_name: string;
-  readonly disabled_at: Date | null;
-}
-
-async function resolveCalendarAttendees(
-  sql: SqlLike,
-  orgId: string,
-  attendees: readonly CalendarAttendeeInput[],
-): Promise<readonly CalendarAttendeeInput[]> {
-  if (attendees.length === 0) {
-    return [];
-  }
-  const actorIds = [...new Set(attendees.flatMap((attendee) => attendee.actorId ?? []))];
-  const emails = [...new Set(attendees.map((attendee) => attendee.email.trim().toLowerCase()))];
-  const rows = await sql<CalendarIdentityRow[]>`
-    select actor.id, actor.email, actor.display_name, actor.disabled_at
-    from actors actor
-    join orgs org on org.id = actor.org_id and org.status = 'active'
-    where actor.org_id = ${orgId}
-      and (
-        actor.id = any(${sql.array(actorIds)}::uuid[])
-        or lower(actor.email) = any(${sql.array(emails)}::text[])
-      )
-  `;
-  const byId = new Map(rows.map((row) => [row.id, row]));
-  const byEmail = new Map(
-    rows.flatMap((row) => (row.email === null ? [] : [[row.email.toLowerCase(), row] as const])),
-  );
-  return attendees.map((attendee) => {
-    const email = attendee.email.trim().toLowerCase();
-    const identity = attendee.actorId == null ? byEmail.get(email) : byId.get(attendee.actorId);
-    if (identity !== undefined && identity.disabled_at !== null) {
-      throw new Error(`Calendar attendee is disabled: ${email}`);
-    }
-    if (attendee.actorId != null && identity === undefined) {
-      throw new Error(
-        `Calendar attendee actor is not active in this organization: ${attendee.actorId}`,
-      );
-    }
-    if (
-      attendee.actorId != null &&
-      (identity?.email === null || identity?.email.toLowerCase() !== email)
-    ) {
-      throw new Error(`Calendar attendee email does not match actor: ${attendee.actorId}`);
-    }
-    if (identity === undefined) {
-      return { ...attendee, actorId: null, email };
-    }
-    if (identity.email === null) {
-      throw new Error(`Calendar attendee actor has no verified address: ${identity.id}`);
-    }
-    return {
-      ...attendee,
-      actorId: identity.id,
-      email: identity.email.toLowerCase(),
-      displayName: identity.display_name,
-    };
-  });
 }
 
 async function requireActiveCalendarActor(

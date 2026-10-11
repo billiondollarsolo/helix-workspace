@@ -169,6 +169,52 @@ describe("calendar tools", () => {
     ).toMatchObject({ ok: false, statusCode: 400 });
   });
 
+  it("lets members invited by address into the event's Meet room", async () => {
+    const memberId = "77777777-7777-4777-8777-777777777777";
+    const store = new FakeCalendarStore();
+    const resolved = Object.assign(store, {
+      // The organization's directory: only maya is a member.
+      resolveAttendees: async (input: {
+        readonly attendees: readonly { readonly email: string }[];
+      }) =>
+        input.attendees.map((attendee) =>
+          attendee.email === "maya@example.com"
+            ? { ...attendee, actorId: memberId }
+            : { ...attendee, actorId: null },
+        ),
+    });
+    const rooms: { readonly participantActorIds: readonly string[] }[] = [];
+    const registry = createToolRegistry();
+    registerCalendarTools(registry, {
+      store: resolved,
+      conference: {
+        async createRoom(input) {
+          rooms.push(input);
+          return {
+            roomId: "55555555-5555-4555-8555-555555555555",
+            joinCode: "abc-defg-hij",
+            joinUrl: "https://helix.example.com/meet?code=abc-defg-hij",
+          };
+        },
+      },
+    });
+
+    const created = await registry.invoke(
+      "calendar.event.create",
+      {
+        title: "Standup",
+        startsAt: "2026-05-20T13:00:00.000Z",
+        endsAt: "2026-05-20T13:15:00.000Z",
+        attendees: [{ email: "maya@example.com" }, { email: "guest@partner.example" }],
+        conference: "meet",
+      },
+      { actor: { id: actorId, orgId, type: "user", scopes: ["calendar.write", "meet.write"] } },
+    );
+
+    expect(created.ok).toBe(true);
+    expect(rooms.map((room) => room.participantActorIds)).toEqual([[memberId]]);
+  });
+
   it("adds video conferencing to an existing event once", async () => {
     const store = new FakeCalendarStore();
     const rooms: unknown[] = [];

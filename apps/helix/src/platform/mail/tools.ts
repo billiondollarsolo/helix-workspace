@@ -403,11 +403,16 @@ export function createMailToolDefinitions(
       inputSchema: zodToolSchema(labelApplySchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(mailLabelApplyOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
+        const mailbox = { orgId: ctx.actor.orgId, actorId: input.mailboxActorId ?? ctx.actor.id };
+        const slugFor = labelSlugResolver(await options.store.listLabels(mailbox));
         await options.store.updateThreadState({
-          orgId: ctx.actor.orgId,
-          actorId: input.mailboxActorId ?? ctx.actor.id,
+          ...mailbox,
           threadId: input.threadId,
-          patch: { addLabels: input.add, removeLabels: input.remove },
+          patch: {
+            addLabels: input.add.map(slugFor),
+            // Also drop the value as given, for threads labelled before names resolved.
+            removeLabels: [...new Set([...input.remove, ...input.remove.map(slugFor)])],
+          },
         });
         return { ok: true, threadId: input.threadId };
       },
@@ -1423,4 +1428,20 @@ function serializeThread(
     snoozedUntil: thread.snoozedUntil?.toISOString() ?? null,
     lastActivity: thread.lastActivity.toISOString(),
   };
+}
+
+/**
+ * Threads carry label slugs (the web app applies slugs). Callers may name a
+ * label by its id, slug, or display name; anything else is kept as given.
+ */
+function labelSlugResolver(
+  labels: readonly { readonly id: string; readonly slug: string; readonly name: string }[],
+): (value: string) => string {
+  const slugs = new Map<string, string>();
+  for (const label of labels) {
+    for (const key of [label.name, label.slug, label.id]) {
+      if (!slugs.has(key.toLowerCase())) slugs.set(key.toLowerCase(), label.slug);
+    }
+  }
+  return (value) => slugs.get(value.trim().toLowerCase()) ?? value;
 }

@@ -2,7 +2,10 @@ import type { Actor, JsonObject, StorageClient } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { DlpGuard } from "../../dlp.js";
 import type { TenantContext } from "../../tenancy/context.js";
-import { setTenantPostgresActorId } from "../../tenancy/postgres-roles.js";
+import {
+  detachedFromTenantPostgresContext,
+  setTenantPostgresActorId,
+} from "../../tenancy/postgres-roles.js";
 import { createWebDavRateLimiter, type WebDavRateLimiter } from "../webdav-security.js";
 import type { DriveS3AccessKeyRecord, DriveS3AccessKeyStore } from "./access-keys.js";
 import { DRIVE_S3_BUCKETS, resolveDriveS3Bucket } from "./buckets.js";
@@ -50,6 +53,11 @@ export interface DriveS3GatewayOptions {
   readonly requireTls?: boolean;
   readonly rateLimiter?: WebDavRateLimiter;
   readonly now?: () => Date;
+  /** Runs work in a fresh, committed tenant transaction for the actor (see DriveS3Access). */
+  readonly inOwnTenantTransaction?: <T>(
+    input: { readonly orgId: string; readonly actorId: string },
+    work: () => Promise<T>,
+  ) => Promise<T>;
 }
 
 const DEFAULT_LIMITS: DriveS3Limits = {
@@ -85,7 +93,7 @@ export async function registerDriveS3Gateway(
       done(null, payload);
     });
     s3.setErrorHandler(async (error, request, reply) => {
-      sendS3Error(request, reply, toS3Error(error));
+      await sendS3Error(request, reply, toS3Error(error));
     });
     const handler = (request: FastifyRequest, reply: FastifyReply) =>
       handleDriveS3Request(request, reply, resolved);
@@ -112,7 +120,16 @@ function requestTenant(request: FastifyRequest): TenantContext | null {
   return (request as { readonly tenant?: TenantContext | null }).tenant ?? null;
 }
 
-function sendS3Error(request: FastifyRequest, reply: FastifyReply, error: S3Error): void {
+/**
+ * Waits for the reply: an async route handler that resolves before a slow
+ * onSend hook (the tenant transaction commit) finishes would otherwise make
+ * Fastify send again with no payload and drop the XML error body.
+ */
+async function sendS3Error(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  error: S3Error,
+): Promise<void> {
   if (reply.sent) return;
   if (error.retryAfterSeconds !== undefined) {
     reply.header("retry-after", String(error.retryAfterSeconds));
@@ -122,11 +139,11 @@ function sendS3Error(request: FastifyRequest, reply: FastifyReply, error: S3Erro
     .header("x-amz-request-id", request.id)
     .header("x-amz-error-code", error.code);
   if (request.method === "HEAD") {
-    void reply.send();
+    await reply.send();
     return;
   }
   const resource = (request.url.split("?")[0] ?? "").slice(DRIVE_S3_ROUTE_PREFIX.length) || "/";
-  void reply.type("application/xml").send(s3ErrorXml(error, resource, request.id));
+  await reply.type("application/xml").send(s3ErrorXml(error, resource, request.id));
 }
 
 async function handleDriveS3Request(
@@ -188,9 +205,10 @@ async function handleDriveS3Request(
       region: options.region,
       multipart: options.multipart,
       resolveStorage: options.resolveStorage,
+      inOwnTransaction: ownTransactionFor(options, actor),
     };
     const result = await operation.run(context, orgSlug);
-    await audit(options, request, {
+    await audit(options, request, reply, {
       key,
       actorId: actor.id,
       operation,
@@ -207,7 +225,7 @@ async function handleDriveS3Request(
       request.log.error({ err: error }, "Drive S3 gateway request failed");
     }
     if (key !== undefined && operation !== undefined && target !== undefined) {
-      await audit(options, request, {
+      await audit(options, request, reply, {
         key,
         actorId: actor?.id ?? key.actorId,
         operation,
@@ -218,13 +236,23 @@ async function handleDriveS3Request(
         request.log.error({ err: auditError }, "Drive S3 gateway audit failed");
       });
     }
-    sendS3Error(request, reply, s3Error);
+    await sendS3Error(request, reply, s3Error);
   }
+}
+
+function ownTransactionFor(
+  options: ResolvedOptions,
+  actor: Actor,
+): DriveS3Context["inOwnTransaction"] {
+  const run = options.inOwnTenantTransaction;
+  if (run === undefined) return undefined;
+  return (work) => run({ orgId: actor.orgId, actorId: actor.id }, work);
 }
 
 async function audit(
   options: ResolvedOptions,
   request: FastifyRequest,
+  reply: FastifyReply,
   input: {
     readonly key: DriveS3AccessKeyRecord;
     readonly actorId: string;
@@ -235,7 +263,7 @@ async function audit(
     readonly detail?: JsonObject;
   },
 ): Promise<void> {
-  await options.audit.append({
+  const record = {
     orgId: input.key.orgId,
     actorId: input.actorId,
     verb: `drive.s3.${input.operation.verb}${input.outcome === "success" ? "" : ".denied"}`,
@@ -251,5 +279,19 @@ async function audit(
       ip: request.ip,
       ...(input.detail ?? {}),
     },
-  });
+  };
+  await afterReplySafe(reply, () => options.audit.append(record));
+}
+
+/**
+ * Operations send their own reply, and sending commits the request's tenant
+ * transaction (the tenancy onSend hook). Work that runs after that must not
+ * reuse the finished transaction, so it runs on its own connection; the audit
+ * store sets its own tenant context.
+ */
+export function afterReplySafe<T>(
+  reply: Pick<FastifyReply, "sent">,
+  work: () => Promise<T>,
+): Promise<T> {
+  return reply.sent ? detachedFromTenantPostgresContext(work) : work();
 }

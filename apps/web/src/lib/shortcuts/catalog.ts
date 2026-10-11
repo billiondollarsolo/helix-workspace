@@ -94,14 +94,26 @@ export const SHORTCUT_CATALOG = {
   "mail.thread.forward": { scope: "mail.thread", keys: ["f"], description: "Forward" },
 
   "calendar.view-day": { scope: "calendar", keys: ["d"], description: "Day view" },
+  "calendar.view-3day": { scope: "calendar", keys: ["x"], description: "3-day view" },
   "calendar.view-week": { scope: "calendar", keys: ["w"], description: "Week view" },
   "calendar.view-month": { scope: "calendar", keys: ["m"], description: "Month view" },
-  "calendar.view-agenda": { scope: "calendar", keys: ["a"], description: "Agenda view" },
+  "calendar.view-schedule": { scope: "calendar", keys: ["a"], description: "Schedule view" },
   "calendar.today": { scope: "calendar", keys: ["t"], description: "Jump to today" },
   "calendar.next": { scope: "calendar", keys: ["j", "n"], description: "Next period" },
   "calendar.previous": { scope: "calendar", keys: ["k", "p"], description: "Previous period" },
   "calendar.create": { scope: "calendar", keys: ["c"], description: "Create an event" },
   "calendar.edit": { scope: "calendar", keys: ["e"], description: "Edit the open event" },
+  "calendar.delete": {
+    scope: "calendar",
+    keys: ["delete", "backspace"],
+    description: "Delete the open event",
+  },
+  "calendar.close": {
+    scope: "calendar",
+    keys: ["escape"],
+    description: "Close the open event or editor",
+    allowInInput: true,
+  },
 
   "drive.new-folder": { scope: "drive", keys: ["n"], description: "New folder" },
   "drive.upload": { scope: "drive", keys: ["shift+u"], description: "Upload a file" },

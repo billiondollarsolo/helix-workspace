@@ -331,6 +331,77 @@ describe("calendar tools", () => {
     ]);
   });
 
+  it("returns merged busy blocks without event details through calendar.free-busy", async () => {
+    const otherActorId = "55555555-5555-4555-8555-555555555555";
+    const freeBusyInputs: unknown[] = [];
+    const store = Object.assign(new FakeCalendarStore(), {
+      listCalendarFreeBusyEvents: async (input: unknown) => {
+        freeBusyInputs.push(input);
+        return [
+          {
+            eventId,
+            actorId: otherActorId,
+            startsAt: new Date("2026-05-20T13:00:00.000Z"),
+            endsAt: new Date("2026-05-20T14:00:00.000Z"),
+            status: "confirmed" as const,
+          },
+          {
+            eventId: calendarId,
+            actorId: otherActorId,
+            startsAt: new Date("2026-05-20T13:30:00.000Z"),
+            endsAt: new Date("2026-05-20T15:00:00.000Z"),
+            status: "confirmed" as const,
+          },
+          {
+            eventId,
+            actorId,
+            startsAt: new Date("2026-05-20T16:00:00.000Z"),
+            endsAt: new Date("2026-05-20T17:00:00.000Z"),
+            status: "confirmed" as const,
+            transparency: "transparent" as const,
+          },
+        ];
+      },
+    });
+    const registry = createToolRegistry();
+    registerCalendarTools(registry, { store });
+    expect(registry.get("calendar.free-busy")).toMatchObject({
+      permission: "calendar.read:freebusy",
+      sideEffects: "read",
+    });
+    const actor: Actor = { id: actorId, orgId, type: "user", scopes: ["calendar.read:freebusy"] };
+
+    const result = await registry.invoke<{ readonly busy: readonly unknown[] }>(
+      "calendar.free-busy",
+      {
+        actorIds: [actorId, otherActorId, otherActorId],
+        windowStartsAt: "2026-05-20T00:00:00.000Z",
+        windowEndsAt: "2026-05-21T00:00:00.000Z",
+      },
+      { actor },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(freeBusyInputs[0]).toMatchObject({ orgId, actorIds: [actorId, otherActorId] });
+    expect(result.ok ? result.output.busy : []).toEqual([
+      {
+        actorId: otherActorId,
+        startsAt: "2026-05-20T13:00:00.000Z",
+        endsAt: "2026-05-20T15:00:00.000Z",
+      },
+    ]);
+    const tooWide = await registry.invoke(
+      "calendar.free-busy",
+      {
+        actorIds: [actorId],
+        windowStartsAt: "2026-05-01T00:00:00.000Z",
+        windowEndsAt: "2026-05-30T00:00:00.000Z",
+      },
+      { actor },
+    );
+    expect(tooWide.ok).toBe(false);
+  });
+
   it("exposes membership changes only through the calendar.manage permission", () => {
     const definitions = createCalendarToolDefinitions({ store: new FakeCalendarStore() });
     expect(

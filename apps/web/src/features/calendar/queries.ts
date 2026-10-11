@@ -1,84 +1,19 @@
-import { queryOptions } from "@tanstack/react-query";
+import { keepPreviousData, queryOptions } from "@tanstack/react-query";
 import {
+  findCalendarTime,
   listCalendarEvents,
+  listCalendarFreeBusy,
+  listCalendarMemberships,
   listCalendars,
   type CalendarFindTimeInput,
+  type CalendarFreeBusyInput,
   type CalendarListEventsInput,
 } from "./api";
-import {
-  calendarEventsInputFromRouteSearch,
-  calendarEventsInputFromRouteState,
-  calendarRouteSearchFromState,
-  calendarRouteStateFromSearch,
-  defaultCalendarRouteState,
-  todayIso,
-  validateCalendarRouteSearch,
-  type CalendarRouteState,
-  type CalendarRouteView,
-} from "./route-state";
-
-export {
-  calendarEventsInputFromRouteSearch,
-  calendarEventsInputFromRouteState,
-  calendarRouteSearchFromState,
-  calendarRouteStateFromSearch,
-  defaultCalendarRouteState,
-  validateCalendarRouteSearch,
-};
-export type { CalendarRouteState, CalendarRouteView };
-
-/** Compute the Monday of the current week (ISO yyyy-mm-dd). */
-function currentWeekStartIso(): string {
-  const today = new Date();
-  const dow = today.getDay(); // Sun=0..Sat=6
-  const mondayOffset = dow === 0 ? -6 : 1 - dow;
-  const monday = new Date(today);
-  monday.setDate(today.getDate() + mondayOffset);
-  return monday.toISOString().slice(0, 10);
-}
-
-/** Compute the Sunday of the current week (ISO yyyy-mm-dd). */
-function currentWeekEndIso(): string {
-  const today = new Date();
-  const dow = today.getDay();
-  const sundayOffset = dow === 0 ? 0 : 7 - dow;
-  const sunday = new Date(today);
-  sunday.setDate(today.getDate() + sundayOffset);
-  return sunday.toISOString().slice(0, 10);
-}
-
-const defaultCalendarFindTimeInput: CalendarFindTimeInput = {
-  attendeeEmails: [],
-  windowStartsAt: `${todayIso()}T13:00:00.000Z`,
-  windowEndsAt: `${currentWeekEndIso()}T22:00:00.000Z`,
-  durationMinutes: 30,
-  stepMinutes: 30,
-  limit: 3,
-};
-
-const defaultCalendarEventsInput: CalendarListEventsInput = {
-  startsAt: `${currentWeekStartIso()}T00:00:00.000Z`,
-  endsAt: `${currentWeekEndIso()}T23:59:59.999Z`,
-  limit: 100,
-};
 
 export const calendarQueryKeys = {
-  /** Stable prefix for invalidating every events window query at once. */
+  /** Prefix shared by every events window, for invalidation after writes. */
   eventsRoot: ["calendar", "events"] as const,
-  calendars: ["calendar", "calendars"] as const,
-  findTime: (input: CalendarFindTimeInput = defaultCalendarFindTimeInput) =>
-    [
-      "calendar",
-      "find-time",
-      [...(input.attendeeActorIds ?? [])].sort().join(","),
-      [...(input.attendeeEmails ?? [])].sort().join(","),
-      input.windowStartsAt,
-      input.windowEndsAt,
-      input.durationMinutes,
-      input.stepMinutes ?? 15,
-      input.limit ?? 10,
-    ] as const,
-  events: (input: CalendarListEventsInput = defaultCalendarEventsInput) =>
+  events: (input: CalendarListEventsInput) =>
     [
       "calendar",
       "events",
@@ -87,14 +22,34 @@ export const calendarQueryKeys = {
       input.endsAt ?? "",
       input.limit ?? 100,
     ] as const,
+  calendars: ["calendar", "calendars"] as const,
+  memberships: (calendarId: string) => ["calendar", "memberships", calendarId] as const,
+  freeBusy: (input: CalendarFreeBusyInput) =>
+    [
+      "calendar",
+      "free-busy",
+      [...input.actorIds].sort().join(","),
+      input.windowStartsAt,
+      input.windowEndsAt,
+    ] as const,
+  findTime: (input: CalendarFindTimeInput) =>
+    [
+      "calendar",
+      "find-time",
+      [...(input.attendeeActorIds ?? [])].sort().join(","),
+      [...(input.attendeeEmails ?? [])].sort().join(","),
+      input.windowStartsAt,
+      input.windowEndsAt,
+      input.durationMinutes,
+    ] as const,
 };
 
-export function calendarEventsQueryOptions(
-  input: CalendarListEventsInput = defaultCalendarEventsInput,
-) {
+export function calendarEventsQueryOptions(input: CalendarListEventsInput) {
   return queryOptions({
     queryKey: calendarQueryKeys.events(input),
     queryFn: () => listCalendarEvents(input),
+    // Keep the current events on screen while the next period loads.
+    placeholderData: keepPreviousData,
     throwOnError: false,
   });
 }
@@ -103,6 +58,31 @@ export function calendarCalendarsQueryOptions() {
   return queryOptions({
     queryKey: calendarQueryKeys.calendars,
     queryFn: () => listCalendars(),
+    throwOnError: false,
+  });
+}
+
+export function calendarMembershipsQueryOptions(calendarId: string) {
+  return queryOptions({
+    queryKey: calendarQueryKeys.memberships(calendarId),
+    queryFn: () => listCalendarMemberships(calendarId),
+    throwOnError: false,
+  });
+}
+
+export function calendarFreeBusyQueryOptions(input: CalendarFreeBusyInput) {
+  return queryOptions({
+    queryKey: calendarQueryKeys.freeBusy(input),
+    queryFn: () => listCalendarFreeBusy(input),
+    enabled: input.actorIds.length > 0,
+    throwOnError: false,
+  });
+}
+
+export function calendarFindTimeQueryOptions(input: CalendarFindTimeInput) {
+  return queryOptions({
+    queryKey: calendarQueryKeys.findTime(input),
+    queryFn: () => findCalendarTime(input),
     throwOnError: false,
   });
 }

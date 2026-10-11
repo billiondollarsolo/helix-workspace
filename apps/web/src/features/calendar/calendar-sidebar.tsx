@@ -1,111 +1,189 @@
-import { Plus as PlusIcon, Search as SearchIcon } from "lucide-react";
-import { type CalendarSidebarEntry } from "./data";
+import { MoreVertical, Plus } from "lucide-react";
+import { useId, type CSSProperties } from "react";
+import { Button } from "@/components/ui/button";
+import { DateTimePicker } from "@/components/ui/date-time-picker";
+import { InlineError } from "@/components/ui/inline-error";
+import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
+import { Skeleton } from "@/components/ui/skeleton";
+import { labelFill } from "./colors";
+import type { WeekStartDay } from "./date-math";
+import type { CalendarSource } from "./event-model";
 
-/* ------------------------------------------------------------------ sidebar */
+function isoToLocalDate(iso: string): Date {
+  return new Date(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)) - 1, Number(iso.slice(8, 10)));
+}
+
+function localDateToIso(date: Date): string {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${String(date.getFullYear())}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+/** Owners and managers may change who a calendar is shared with. */
+function canManageCalendar(calendar: CalendarSource): boolean {
+  return calendar.role === "owner" || calendar.role === "manager";
+}
 
 export function CalendarSidebar({
-  query,
-  onSearchChange,
+  anchor,
+  weekStartsOn,
   calendars,
-  calendarsLoading,
-  calendarsError,
-  visibility,
-  onToggleCalendar,
+  loading,
+  error,
+  retrying,
+  hidden,
   onCreate,
+  onPickDate,
+  onToggleCalendar,
+  onShowOnly,
+  onOpenSettings,
+  onRetry,
 }: {
-  readonly query: string;
-  readonly onSearchChange: (value: string) => void;
-  readonly calendars: readonly CalendarSidebarEntry[];
-  readonly calendarsLoading: boolean;
-  readonly calendarsError: boolean;
-  readonly visibility: Readonly<Record<string, boolean>>;
-  readonly onToggleCalendar: (id: string) => void;
+  readonly anchor: string;
+  readonly weekStartsOn: WeekStartDay;
+  readonly calendars: readonly CalendarSource[];
+  readonly loading: boolean;
+  readonly error: boolean;
+  readonly retrying: boolean;
+  readonly hidden: ReadonlySet<string>;
   readonly onCreate: () => void;
+  readonly onPickDate: (iso: string) => void;
+  readonly onToggleCalendar: (id: string) => void;
+  readonly onShowOnly: (id: string) => void;
+  readonly onOpenSettings: (calendar: CalendarSource) => void;
+  readonly onRetry: () => void;
 }) {
-  const mineSources = calendars.filter((source) => source.group === "mine");
-  const teamSources = calendars.filter((source) => source.group === "team");
-
-  const renderGroup = (
-    label: string,
-    entries: readonly CalendarSidebarEntry[],
-    className: string,
-  ) => (
-    <>
-      <div className={`section-label ${className}`}>{label}</div>
-      {entries.map((source) => (
-        <CalendarCheck
-          key={source.id}
-          checked={visibility[source.id] ?? source.visible}
-          color={source.color}
-          name={source.name}
-          onToggle={() => onToggleCalendar(source.id)}
-        />
-      ))}
-      {entries.length === 0 && (
-        <div className="type-caption text-muted-foreground [padding:4px_0]">No calendars</div>
-      )}
-    </>
-  );
+  const mine = calendars.filter((calendar) => calendar.group === "mine");
+  const other = calendars.filter((calendar) => calendar.group === "team");
 
   return (
-    <aside aria-label="Calendar navigation" className="surf-sidebar">
-      <button
-        className="btn primary lg w-full mb-4"
-
-        type="button"
-        onClick={onCreate}
-      >
-        <PlusIcon size={16} />
+    <aside aria-label="Calendar navigation" className="surf-sidebar cal-sidebar">
+      <Button size="lg" className="w-fit rounded-full pr-6" onClick={onCreate}>
+        <Plus aria-hidden="true" />
         Create
-      </button>
+      </Button>
 
-      <label className="row gap-2 mb-4 [padding:0_8px] h-7.5 rounded-md [border:1px_solid_var(--border)] bg-muted">
-        <SearchIcon size={14} />
-        <span className="sr-only">Search events</span>
-        <input
-          onChange={(event) => onSearchChange(event.target.value)}
-          placeholder="Search events"
-          className="[border:none] bg-transparent outline-none type-body w-full text-foreground"
-          type="search"
-          value={query}
+      <DateTimePicker
+        key={anchor.slice(0, 7)}
+        mode="date"
+        label="Go to date"
+        value={isoToLocalDate(anchor)}
+        weekStartsOn={weekStartsOn}
+        onChange={(date) => onPickDate(localDateToIso(date))}
+      />
+
+      {loading ? <Skeleton variant="text" count={3} label="Loading calendars" /> : null}
+      {error && !loading ? (
+        <InlineError
+          variant="compact"
+          title="Couldn't load your calendars"
+          message="Events from every calendar still show; try again to filter them."
+          onRetry={onRetry}
+          retrying={retrying}
         />
-      </label>
-
-      {calendarsLoading && (
-        <div className="type-meta text-muted-foreground [padding:8px_0]">Loading calendars…</div>
-      )}
-
-      {calendarsError && !calendarsLoading && (
-        <div role="alert" className="type-caption text-destructive [padding:4px_0_8px]">
-          Calendars unavailable — try again later.
-        </div>
-      )}
-
-      {!calendarsLoading && !calendarsError && (
+      ) : null}
+      {!loading && !error ? (
         <>
-          {renderGroup("My calendars", mineSources, "[padding:8px_0_4px]")}
-          {renderGroup("Team", teamSources, "[padding:12px_0_4px]")}
+          <CalendarGroup
+            title="My calendars"
+            calendars={mine}
+            hidden={hidden}
+            onToggle={onToggleCalendar}
+            onShowOnly={onShowOnly}
+            onOpenSettings={onOpenSettings}
+          />
+          {other.length > 0 ? (
+            <CalendarGroup
+              title="Other calendars"
+              calendars={other}
+              hidden={hidden}
+              onToggle={onToggleCalendar}
+              onShowOnly={onShowOnly}
+              onOpenSettings={onOpenSettings}
+            />
+          ) : null}
         </>
-      )}
+      ) : null}
     </aside>
   );
 }
 
-function CalendarCheck({
-  checked,
-  color,
-  name,
+function CalendarGroup({
+  title,
+  calendars,
+  hidden,
   onToggle,
+  onShowOnly,
+  onOpenSettings,
 }: {
-  readonly checked: boolean;
-  readonly color: string;
-  readonly name: string;
-  readonly onToggle: () => void;
+  readonly title: string;
+  readonly calendars: readonly CalendarSource[];
+  readonly hidden: ReadonlySet<string>;
+  readonly onToggle: (id: string) => void;
+  readonly onShowOnly: (id: string) => void;
+  readonly onOpenSettings: (calendar: CalendarSource) => void;
 }) {
+  const headingId = useId();
   return (
-    <label className="flex items-center gap-2 [padding:4px_0] type-body cursor-pointer">
-      <input checked={checked} onChange={onToggle} style={{ accentColor: color }} type="checkbox" />
-      <span>{name}</span>
-    </label>
+    <section aria-labelledby={headingId}>
+      <h2 id={headingId} className="section-label m-0 py-1">
+        {title}
+      </h2>
+      {calendars.length === 0 ? (
+        <p className="type-caption text-muted-foreground m-0 px-1">No calendars yet.</p>
+      ) : (
+        <ul className="m-0 p-0 list-none">
+          {calendars.map((calendar) => (
+            <CalendarRow
+              key={calendar.id}
+              calendar={calendar}
+              checked={!hidden.has(calendar.id)}
+              onToggle={() => onToggle(calendar.id)}
+              onShowOnly={() => onShowOnly(calendar.id)}
+              onOpenSettings={() => onOpenSettings(calendar)}
+            />
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function CalendarRow({
+  calendar,
+  checked,
+  onToggle,
+  onShowOnly,
+  onOpenSettings,
+}: {
+  readonly calendar: CalendarSource;
+  readonly checked: boolean;
+  readonly onToggle: () => void;
+  readonly onShowOnly: () => void;
+  readonly onOpenSettings: () => void;
+}) {
+  const id = useId();
+  return (
+    <li
+      className="cal-calendar-row"
+      style={{ "--swatch": labelFill(calendar.label) } as CSSProperties}
+    >
+      <input id={id} type="checkbox" checked={checked} onChange={onToggle} className="focus-ring" />
+      <label htmlFor={id} className="flex-1 min-w-0 truncate type-body-sm cursor-pointer">
+        {calendar.name}
+      </label>
+      <Menu>
+        <MenuTrigger asChild>
+          <Button variant="ghost" size="icon-xs" aria-label={`Options for ${calendar.name}`}>
+            <MoreVertical aria-hidden="true" />
+          </Button>
+        </MenuTrigger>
+        <MenuContent align="end">
+          <MenuItem onSelect={onShowOnly}>Display this only</MenuItem>
+          {canManageCalendar(calendar) ? (
+            <MenuItem onSelect={onOpenSettings}>Settings and sharing</MenuItem>
+          ) : null}
+        </MenuContent>
+      </Menu>
+    </li>
   );
 }

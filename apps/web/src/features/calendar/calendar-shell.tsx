@@ -1,476 +1,517 @@
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useDebouncedCallback } from "@tanstack/react-pacer/debouncer";
+import { Plus } from "lucide-react";
 import {
-  instantToLocalDateTime,
-  localDateTimeToFloatingInstant,
-  localDateTimeToInstant,
-} from "@helix/contracts";
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent,
+} from "react";
+import { Button } from "@/components/ui/button";
+import { InlineError } from "@/components/ui/inline-error";
+import { Skeleton } from "@/components/ui/skeleton";
+import { notify } from "@/components/ui/toast";
+import { parseAddressList } from "@/features/people/person-ref";
+import { sessionUserQueryOptions } from "@/lib/auth";
 import { useShortcuts } from "@/lib/shortcuts/use-shortcuts";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  createCalendarEvent,
-  deleteCalendarEvent,
-  respondToCalendarEvent,
-  updateCalendarEvent,
-  type CalendarApiResponseStatus,
-  type CalendarCreateEventInput,
-  type CalendarDeleteEventInput,
-  type CalendarRespondInput,
-  type CalendarUpdateEventInput,
-} from "./api";
-import { draftInstants, formatWindowLabel, shiftIsoDate } from "./calendar-date-helpers";
-import {
-  attendeeInputs,
-  CalendarEventDialog,
-  calendarReminderMetadata,
-  calendarReminderMinutes,
-  clockToDecimalHour,
-  decimalHourToClock,
-  type EventDraft,
-} from "./calendar-event-dialog";
+import { AnchoredPopover, anchorRectOf, type AnchorRect } from "./anchored-popover";
+import { CalendarSettingsSheet } from "./calendar-settings-sheet";
 import { CalendarSidebar } from "./calendar-sidebar";
-import { CalendarWeek } from "./calendar-week";
+import { CalendarToolbar, VIEW_LABELS } from "./calendar-toolbar";
+import type { ConferenceProvider } from "./conference";
 import {
-  eventQueryWindowForTimeZone,
-  gridEventFromApiEvent,
-  sidebarEntryFromApiCalendar,
-  todayDayIndex,
-  todayIso,
-  type CalendarGridEvent,
-  type CalendarSidebarEntry,
-} from "./data";
+  formatRangeTitle,
+  formatZoneLabel,
+  gridDays,
+  nowHourInZone,
+  shiftAnchor,
+  todayInZone,
+  type CalendarView,
+} from "./date-math";
+import { EventDetails } from "./event-details";
+import { draftFromEvent, newEventDraft, type EventDraft } from "./event-draft";
+import { EventEditor } from "./event-editor";
+import { selfAttendee, type CalendarOccurrence, type CalendarSource } from "./event-model";
+import { MonthView } from "./month-view";
 import {
-  calendarCalendarsQueryOptions,
-  calendarEventsInputFromRouteState,
-  calendarEventsQueryOptions,
-  calendarQueryKeys,
-  defaultCalendarRouteState,
-  type CalendarRouteState,
-} from "./queries";
+  browserCalendarPreferences,
+  useCalendarPreferences,
+  type CalendarPreferencesSource,
+} from "./preferences";
+import { calendarQueryKeys } from "./queries";
+import { QuickCreate } from "./quick-create";
+import { defaultCalendarRouteState, type CalendarRouteState } from "./route-state";
+import { ScheduleView } from "./schedule-view";
+import { TimeGrid } from "./time-grid";
+import { useCalendarData } from "./use-calendar-data";
+import { useEventActions } from "./use-event-actions";
+import "./calendar.css";
 
-/** Props let the route own URL search state; all are optional for standalone use. */
+const DESKTOP_VIEWS: readonly CalendarView[] = ["day", "week", "month", "schedule", "3day"];
+const COMPACT_VIEWS: readonly CalendarView[] = ["day", "3day", "month", "schedule"];
+const COMPACT_QUERY = "(max-width: 640px)";
+
+function useCompactLayout(): boolean {
+  const [compact, setCompact] = useState(
+    () => typeof window.matchMedia === "function" && window.matchMedia(COMPACT_QUERY).matches,
+  );
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const query = window.matchMedia(COMPACT_QUERY);
+    const update = () => setCompact(query.matches);
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+  return compact;
+}
+
+/** The current time, refreshed every minute so "now" and "today" stay true. */
+function useNow(): Date {
+  const [now, setNow] = useState(() => new Date());
+  const scheduleTick = useDebouncedCallback(() => setNow(new Date()), { wait: 60_000 });
+  useEffect(() => {
+    scheduleTick();
+  }, [now, scheduleTick]);
+  return now;
+}
+
+/** Prefilled "new event" intent from another app, e.g. a person's "Schedule a meeting". */
+export interface CalendarCreateIntent {
+  readonly attendees: readonly string[];
+}
+
 export interface CalendarShellProps {
   readonly routeState?: CalendarRouteState;
   readonly onRouteStateChange?: (state: CalendarRouteState) => void;
+  readonly createIntent?: CalendarCreateIntent | null;
+  readonly onCreateIntentHandled?: () => void;
+  readonly onEmailGuests?: (emails: readonly string[]) => void;
+  readonly onOpenLink?: (url: string, event: MouseEvent<HTMLAnchorElement>) => void;
+  readonly preferencesSource?: CalendarPreferencesSource;
+  readonly conferenceProvider?: ConferenceProvider;
 }
 
-export function CalendarShell({ routeState, onRouteStateChange }: CalendarShellProps = {}) {
+interface QuickCreateState {
+  readonly draft: EventDraft;
+  readonly anchor: AnchorRect;
+}
+
+export function CalendarShell({
+  routeState,
+  onRouteStateChange,
+  createIntent = null,
+  onCreateIntentHandled,
+  onEmailGuests,
+  onOpenLink,
+  preferencesSource = browserCalendarPreferences,
+  conferenceProvider,
+}: CalendarShellProps = {}) {
   const queryClient = useQueryClient();
-  const viewerTimeZone = useMemo(
-    () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-    [],
-  );
-  const [localState, setLocalState] = useState<CalendarRouteState>(
-    routeState ?? defaultCalendarRouteState,
-  );
+  const [localState, setLocalState] = useState(routeState ?? defaultCalendarRouteState);
   const state = routeState ?? localState;
-
-  const updateState = (patch: Partial<CalendarRouteState>) => {
-    const next: CalendarRouteState = { ...state, ...patch };
-    setLocalState(next);
-    onRouteStateChange?.(next);
-  };
-
-  /** Jump the visible window to today. */
-  const goToday = () => {
-    updateState({ date: todayIso() });
-  };
-
-  /** Shift the visible window by one view-sized step (day/week/month). */
-  const shiftWindow = (direction: -1 | 1) => {
-    updateState({ date: shiftIsoDate(state.date, state.view, direction) });
-  };
-
-  const displayWindowInput = useMemo(
-    () => calendarEventsInputFromRouteState({ date: state.date, view: state.view }),
-    [state.date, state.view],
-  );
-  const eventsInput = useMemo(
-    () => eventQueryWindowForTimeZone(displayWindowInput, viewerTimeZone),
-    [displayWindowInput, viewerTimeZone],
-  );
-  /** Human label for the visible window header, e.g. "May 18 – 24, 2026". */
-  const windowLabel = useMemo(
-    () => formatWindowLabel(displayWindowInput.startsAt, displayWindowInput.endsAt),
-    [displayWindowInput.startsAt, displayWindowInput.endsAt],
-  );
-  const eventsQuery = useQuery(calendarEventsQueryOptions(eventsInput));
-  const calendarsQuery = useQuery(calendarCalendarsQueryOptions());
-
-  /** Sidebar calendars from the backend, mapped to the checklist shape. */
-  const calendars = useMemo<readonly CalendarSidebarEntry[]>(
-    () => (calendarsQuery.data ?? []).map(sidebarEntryFromApiCalendar),
-    [calendarsQuery.data],
+  const updateState = useCallback(
+    (patch: Partial<CalendarRouteState>) => {
+      const next = { ...state, ...patch };
+      setLocalState(next);
+      onRouteStateChange?.(next);
+    },
+    [onRouteStateChange, state],
   );
 
-  /** Per-calendar visible toggles — seeded from the backend `visible` flag. */
-  const [visibility, setVisibility] = useState<Readonly<Record<string, boolean>>>({});
+  const { preferences, setShowWeekends } = useCalendarPreferences(preferencesSource);
+  const compact = useCompactLayout();
+  const view: CalendarView = compact && state.view === "week" ? "3day" : state.view;
+  const now = useNow();
+  const today = todayInZone(preferences.timeZone, now);
+  const session = useQuery(sessionUserQueryOptions()).data;
+  const viewer = useMemo(
+    () => ({ actorId: session?.actorId ?? null, email: session?.email ?? null }),
+    [session?.actorId, session?.email],
+  );
+  const [announcement, setAnnouncement] = useState("");
+  const actions = useEventActions({
+    announce: setAnnouncement,
+    ...(conferenceProvider === undefined ? {} : { conferenceProvider }),
+  });
+  const data = useCalendarData({
+    view,
+    anchor: state.date,
+    preferences,
+    viewer,
+    query: state.query,
+    hiddenEventIds: actions.hiddenEventIds,
+  });
+
+  const [selected, setSelected] = useState<{ key: string; anchor: AnchorRect } | null>(null);
+  const [quickCreate, setQuickCreate] = useState<QuickCreateState | null>(null);
+  const [editor, setEditor] = useState<{ draft: EventDraft; id: number } | null>(null);
+  const [settingsFor, setSettingsFor] = useState<CalendarSource | null>(null);
+
+  const selectedOccurrence = useMemo<CalendarOccurrence | null>(() => {
+    if (state.eventId === "") return null;
+    return (
+      data.occurrences.find((occurrence) => occurrence.key === selected?.key) ??
+      data.occurrences.find((occurrence) => occurrence.event.id === state.eventId) ??
+      null
+    );
+  }, [data.occurrences, selected?.key, state.eventId]);
+
+  // A deep link (?event=…) has no clicked chip; anchor on the drawn chip, or the centre.
+  useLayoutEffect(() => {
+    if (selectedOccurrence === null || selected?.key === selectedOccurrence.key) return;
+    const chip = document.querySelector(
+      `[data-occurrence-key="${CSS.escape(selectedOccurrence.key)}"]`,
+    );
+    setSelected({
+      key: selectedOccurrence.key,
+      anchor:
+        chip === null
+          ? { left: window.innerWidth / 2 - 200, top: 120, width: 0, height: 0 }
+          : anchorRectOf(chip),
+    });
+  }, [selected?.key, selectedOccurrence]);
+
+  const writableCalendar = data.calendars.find((calendar) => calendar.writable) ?? null;
+  const canModify = useCallback(
+    (occurrence: CalendarOccurrence) =>
+      data.calendarsById.get(occurrence.event.calendarId)?.writable === true,
+    [data.calendarsById],
+  );
+
+  const closeEvent = useCallback(() => {
+    setSelected(null);
+    if (state.eventId !== "") updateState({ eventId: "" });
+  }, [state.eventId, updateState]);
+
+  const openOccurrence = useCallback(
+    (occurrence: CalendarOccurrence, target: HTMLElement) => {
+      setQuickCreate(null);
+      setSelected({ key: occurrence.key, anchor: anchorRectOf(target) });
+      updateState({ eventId: occurrence.event.id });
+    },
+    [updateState],
+  );
+
+  const draftFor = useCallback(
+    (seed: {
+      date: string;
+      start?: number;
+      end?: number;
+      allDay?: boolean;
+      guests?: EventDraft["guests"];
+    }) =>
+      newEventDraft({
+        ...seed,
+        calendarId: writableCalendar?.id ?? null,
+        timeZone: preferences.timeZone,
+      }),
+    [preferences.timeZone, writableCalendar?.id],
+  );
+
+  const openEditor = useCallback(
+    (draft: EventDraft) => {
+      setQuickCreate(null);
+      closeEvent();
+      setEditor({ draft, id: Date.now() });
+    },
+    [closeEvent],
+  );
+
+  /** "Create" and the c key: the next whole hour today, or 9am on the shown day. */
+  const createNew = useCallback(() => {
+    const date = view === "month" || view === "schedule" ? today : state.date;
+    const start =
+      date === today ? Math.min(23, Math.floor(nowHourInZone(preferences.timeZone, now)) + 1) : 9;
+    openEditor(draftFor({ date, start }));
+  }, [draftFor, now, openEditor, preferences.timeZone, state.date, today, view]);
+
+  const handledIntent = useRef<CalendarCreateIntent | null>(null);
   useEffect(() => {
-    if (calendars.length === 0) {
-      return;
-    }
-    setVisibility((current) => {
-      const next: Record<string, boolean> = {};
-      let changed = false;
-      for (const calendar of calendars) {
-        next[calendar.id] = current[calendar.id] ?? calendar.visible;
-        if (current[calendar.id] === undefined) {
-          changed = true;
+    if (createIntent === null || handledIntent.current === createIntent) return;
+    handledIntent.current = createIntent;
+    const guests = parseAddressList(createIntent.attendees.join(","));
+    openEditor(draftFor({ date: today, start: 9, guests }));
+    onCreateIntentHandled?.();
+  }, [createIntent, draftFor, onCreateIntentHandled, openEditor, today]);
+
+  const startQuickCreate = useCallback(
+    (draft: EventDraft, anchor: AnchorRect) => {
+      closeEvent();
+      if (compact) {
+        openEditor(draft);
+        return;
+      }
+      setQuickCreate({ draft, anchor });
+    },
+    [closeEvent, compact, openEditor],
+  );
+
+  const saveDraft = (draft: EventDraft, after: () => void) => {
+    actions.save.mutate(draft, {
+      onSuccess: after,
+      onError: (error) => {
+        if (quickCreate !== null) {
+          notify({
+            tone: "error",
+            message: "Couldn't create the event",
+            description: error instanceof Error ? error.message : "Try again.",
+          });
         }
-      }
-      return changed || Object.keys(current).length !== calendars.length ? next : current;
-    });
-  }, [calendars]);
-
-  const toggleCalendar = (id: string) => {
-    setVisibility((current) => ({ ...current, [id]: !(current[id] ?? true) }));
-  };
-
-  /** Calendar id -> colour, for tinting backend events to match their source. */
-  const calendarColors = useMemo<ReadonlyMap<string, string>>(
-    () => new Map(calendars.map((calendar) => [calendar.id, calendar.color])),
-    [calendars],
-  );
-
-  /** Backend events normalized for the selected view and filtered by calendar. */
-  const backendEvents = useMemo<readonly CalendarGridEvent[]>(() => {
-    const data = eventsQuery.data;
-    if (data === undefined) {
-      return [];
-    }
-    return data.map((event) => gridEventFromApiEvent(event, calendarColors, viewerTimeZone));
-  }, [eventsQuery.data, calendarColors, viewerTimeZone]);
-
-  /** True when the backend events request failed — drives the error banner. */
-  const eventsFailed = eventsQuery.isError;
-
-  /** Events the grid renders: backend data only. */
-  const sourceEvents = backendEvents;
-
-  /** Hide events that belong to a calendar toggled off in the sidebar. */
-  const visibleEvents = useMemo<readonly CalendarGridEvent[]>(() => {
-    if (calendars.length === 0) {
-      return sourceEvents;
-    }
-    return sourceEvents.filter(
-      (event) => event.calendarId === undefined || (visibility[event.calendarId] ?? true),
-    );
-  }, [sourceEvents, calendars.length, visibility]);
-
-  const query = state.query.trim().toLowerCase();
-  const events = useMemo<readonly CalendarGridEvent[]>(() => {
-    if (query.length === 0) {
-      return visibleEvents;
-    }
-    return visibleEvents.filter((event) =>
-      `${event.title} ${event.location ?? ""} ${event.attendees.join(" ")}`
-        .toLowerCase()
-        .includes(query),
-    );
-  }, [visibleEvents, query]);
-
-  const selectedEvent =
-    state.eventId.length > 0 ? (events.find((event) => event.id === state.eventId) ?? null) : null;
-
-  /* ----------------------------------------------------------- mutations */
-
-  const [actionError, setActionError] = useState<string | null>(null);
-  const clearError = useCallback(() => {
-    setActionError(null);
-  }, []);
-
-  /** Invalidate every events window plus the calendars list after a write. */
-  const invalidateCalendarData = useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey: calendarQueryKeys.eventsRoot });
-    void queryClient.invalidateQueries({ queryKey: calendarQueryKeys.calendars });
-  }, [queryClient]);
-
-  const createMutation = useMutation({
-    mutationFn: (input: CalendarCreateEventInput) => createCalendarEvent(input),
-    onMutate: clearError,
-    onError: (error: unknown) => {
-      setActionError(error instanceof Error ? error.message : "Could not create the event.");
-    },
-    onSuccess: invalidateCalendarData,
-  });
-
-  const updateMutation = useMutation({
-    mutationFn: (input: CalendarUpdateEventInput) => updateCalendarEvent(input),
-    onMutate: clearError,
-    onError: (error: unknown) => {
-      setActionError(error instanceof Error ? error.message : "Could not update the event.");
-    },
-    onSuccess: invalidateCalendarData,
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: (input: CalendarDeleteEventInput) => deleteCalendarEvent(input),
-    onMutate: clearError,
-    onError: () => {
-      setActionError("Could not delete the event. Try again.");
-    },
-    onSuccess: () => {
-      invalidateCalendarData();
-      updateState({ eventId: "" });
-    },
-  });
-
-  const respondMutation = useMutation({
-    mutationFn: (input: CalendarRespondInput) => respondToCalendarEvent(input),
-    onMutate: clearError,
-    onError: () => {
-      setActionError("Could not send your RSVP. Try again.");
-    },
-    onSuccess: invalidateCalendarData,
-  });
-
-  /** First writable calendar id -- the default target for new events. */
-  const defaultCalendarId = useMemo<string | null>(
-    () => calendars.find((calendar) => calendar.writable)?.id ?? null,
-    [calendars],
-  );
-
-  /* ------------------------------------------------------------ dialog */
-
-  const [draft, setDraft] = useState<EventDraft | null>(null);
-  /** Monday of the visible window — anchors drag-create/move ISO dates. */
-  const weekStartIso = (displayWindowInput.startsAt ?? "2026-05-18").slice(0, 10);
-
-  /** ISO date for a Monday-relative day index in the visible window. */
-  const isoDateForWeekDay = useCallback(
-    (dayIndex: number): string => {
-      if (state.view === "day") return state.date;
-      const base = new Date(`${weekStartIso}T00:00:00.000Z`);
-      base.setUTCDate(base.getUTCDate() + dayIndex);
-      return base.toISOString().slice(0, 10);
-    },
-    [state.date, state.view, weekStartIso],
-  );
-
-  const openCreateDialog = (seed?: { date: string; start: number; end: number }) => {
-    clearError();
-    const timezone =
-      calendars.find((calendar) => calendar.id === defaultCalendarId)?.timezone ?? viewerTimeZone;
-    setDraft({
-      mode: "create",
-      calendarId: defaultCalendarId,
-      title: "",
-      description: "",
-      location: "",
-      attendeeEmails: "",
-      recurrenceRule: "",
-      reminderMinutes: "",
-      metadata: {},
-      date: seed?.date ?? isoDateForWeekDay(todayDayIndex()),
-      start: seed?.start ?? 9,
-      end: seed?.end ?? 10,
-      timezone,
-      allDay: false,
-      timeSemantics: "zoned",
-    });
-  };
-
-  const openEditDialog = (event: CalendarGridEvent) => {
-    clearError();
-    const apiEvent = event.apiEvent;
-    const timeSemantics = apiEvent?.allDay ? "all_day" : (apiEvent?.timeSemantics ?? "zoned");
-    const timezone = apiEvent?.timezone ?? viewerTimeZone;
-    const intentZone = timeSemantics === "zoned" ? timezone : "UTC";
-    const startsLocal =
-      apiEvent?.startsLocal ??
-      (apiEvent === undefined
-        ? `${event.date}T${decimalHourToClock(event.start)}:00`
-        : instantToLocalDateTime(apiEvent.startsAt, intentZone));
-    const endsLocal =
-      apiEvent?.endsLocal ??
-      (apiEvent === undefined
-        ? `${event.date}T${decimalHourToClock(event.end)}:00`
-        : instantToLocalDateTime(apiEvent.endsAt, intentZone));
-    setDraft({
-      mode: "edit",
-      eventId: event.id,
-      calendarId: event.calendarId ?? defaultCalendarId,
-      title: event.title,
-      description: event.apiEvent?.description ?? "",
-      location: event.location ?? "",
-      attendeeEmails:
-        event.apiEvent?.attendees
-          .filter((attendee) => attendee.isOrganizer !== true)
-          .map((attendee) => attendee.email)
-          .join(", ") ?? "",
-      recurrenceRule: event.apiEvent?.recurrenceRule ?? "",
-      reminderMinutes: calendarReminderMinutes(event.apiEvent?.metadata),
-      metadata: event.apiEvent?.metadata ?? {},
-      date: startsLocal.slice(0, 10),
-      start: clockToDecimalHour(startsLocal.slice(11, 16), event.start),
-      end: clockToDecimalHour(endsLocal.slice(11, 16), event.end),
-      timezone,
-      allDay: apiEvent?.allDay ?? false,
-      timeSemantics,
-    });
-  };
-
-  const submitDraft = (value: EventDraft) => {
-    let startsAt: string;
-    let endsAt: string;
-    try {
-      const instants = draftInstants(value);
-      startsAt = instants.startsAt;
-      endsAt = instants.endsAt;
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : "That local time is invalid.");
-      return;
-    }
-    if (value.mode === "create") {
-      const attendees = attendeeInputs(value.attendeeEmails);
-      createMutation.mutate({
-        calendarId: value.calendarId,
-        title: value.title,
-        description: value.description.trim() === "" ? null : value.description,
-        location: value.location.trim() === "" ? null : value.location,
-        startsAt,
-        endsAt,
-        timezone: value.timezone,
-        allDay: value.allDay,
-        timeSemantics: value.timeSemantics,
-        recurrenceRule: value.recurrenceRule.trim() || null,
-        attendees,
-        metadata: calendarReminderMetadata(value.reminderMinutes, value.metadata),
-      });
-    } else if (value.eventId !== undefined) {
-      const attendees = attendeeInputs(value.attendeeEmails);
-      updateMutation.mutate({
-        eventId: value.eventId,
-        patch: {
-          title: value.title,
-          description: value.description.trim() === "" ? null : value.description,
-          location: value.location.trim() === "" ? null : value.location,
-          startsAt,
-          endsAt,
-          timezone: value.timezone,
-          allDay: value.allDay,
-          timeSemantics: value.timeSemantics,
-          recurrenceRule: value.recurrenceRule.trim() || null,
-          attendees,
-          metadata: calendarReminderMetadata(value.reminderMinutes, value.metadata),
-        },
-      });
-    }
-    setDraft(null);
-  };
-
-  /** Drag-move a backend event to a new day/start, preserving its duration. */
-  const moveEvent = (event: CalendarGridEvent, nextDay: number, nextStart: number) => {
-    if (event.apiEvent === undefined) {
-      setActionError("This event can't be moved.");
-      return;
-    }
-    const duration = event.end - event.start;
-    const date = isoDateForWeekDay(nextDay);
-    const semantics = event.apiEvent.timeSemantics ?? "zoned";
-    const localStart = `${date}T${decimalHourToClock(nextStart)}:00`;
-    const localEnd = `${date}T${decimalHourToClock(nextStart + duration)}:00`;
-    let startsAt: string;
-    let endsAt: string;
-    try {
-      if (semantics === "floating") {
-        startsAt = localDateTimeToFloatingInstant(localStart).toISOString();
-        endsAt = localDateTimeToFloatingInstant(localEnd).toISOString();
-      } else {
-        startsAt = localDateTimeToInstant(localStart, viewerTimeZone).toISOString();
-        endsAt = localDateTimeToInstant(localEnd, viewerTimeZone).toISOString();
-      }
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : "That local time is invalid.");
-      return;
-    }
-    updateMutation.mutate({
-      eventId: event.id,
-      patch: {
-        startsAt,
-        endsAt,
       },
     });
   };
 
-  /** Drag-create on an empty slot opens the dialog prefilled with that range. */
-  const dragCreate = (day: number, start: number, end: number) => {
-    openCreateDialog({
-      date: isoDateForWeekDay(day),
-      start,
-      end: Math.max(end, start + 0.5),
-    });
-  };
-
-  const respond = (eventId: string, status: CalendarApiResponseStatus) => {
-    if (status === "needs_action") {
-      return;
-    }
-    respondMutation.mutate({ eventId, responseStatus: status });
-  };
-
-  const writableSelected = selectedEvent !== null && selectedEvent.apiEvent !== undefined;
+  const setView = (next: CalendarView) => updateState({ view: next });
+  const goToday = () => updateState({ date: today });
+  const shift = (direction: -1 | 1) =>
+    updateState({ date: shiftAnchor(view, state.date, direction) });
+  const openDay = (day: string) => updateState({ view: "day", date: day });
+  const editSelected =
+    selectedOccurrence !== null && canModify(selectedOccurrence)
+      ? () => openEditor(draftFromEvent(selectedOccurrence.event))
+      : undefined;
+  const deleteSelected =
+    selectedOccurrence !== null && canModify(selectedOccurrence)
+      ? () => {
+          const event = selectedOccurrence.event;
+          closeEvent();
+          actions.deleteEvent(event);
+        }
+      : undefined;
+  const browsing = editor === null;
 
   useShortcuts("calendar", {
-    "calendar.view-day": () => updateState({ view: "day" }),
-    "calendar.view-week": () => updateState({ view: "week" }),
-    "calendar.view-month": () => updateState({ view: "month" }),
-    "calendar.view-agenda": () => updateState({ view: "agenda" }),
-    "calendar.today": goToday,
-    "calendar.next": () => shiftWindow(1),
-    "calendar.previous": () => shiftWindow(-1),
-    "calendar.create": () => openCreateDialog(),
-    "calendar.edit":
-      writableSelected && selectedEvent !== null ? () => openEditDialog(selectedEvent) : undefined,
+    "calendar.view-day": browsing ? () => setView("day") : undefined,
+    "calendar.view-3day": browsing ? () => setView("3day") : undefined,
+    "calendar.view-week": browsing ? () => setView("week") : undefined,
+    "calendar.view-month": browsing ? () => setView("month") : undefined,
+    "calendar.view-schedule": browsing ? () => setView("schedule") : undefined,
+    "calendar.today": browsing ? goToday : undefined,
+    "calendar.next": browsing ? () => shift(1) : undefined,
+    "calendar.previous": browsing ? () => shift(-1) : undefined,
+    "calendar.create": browsing ? createNew : undefined,
+    "calendar.edit": browsing ? editSelected : undefined,
+    "calendar.delete": browsing ? deleteSelected : undefined,
+    "calendar.close":
+      editor !== null
+        ? (event) => {
+            // Esc leaves the editor only from outside its fields, so typing is never lost.
+            const target = event.target;
+            if (target instanceof HTMLElement && target.closest("input, textarea, select"))
+              return false;
+            setEditor(null);
+          }
+        : selectedOccurrence !== null || quickCreate !== null
+          ? () => {
+              setQuickCreate(null);
+              closeEvent();
+            }
+          : undefined,
   });
 
+  const range = data.range;
+  const title = formatRangeTitle(view, range.start, range.end);
+  const handlers = {
+    onOpen: openOccurrence,
+    onNudge: (occurrence: CalendarOccurrence, startMinutes: number, endMinutes: number) =>
+      actions.moveEvent(occurrence.event, startMinutes, endMinutes),
+    onCreate: (day: string, start: number, end: number, anchor: AnchorRect) =>
+      startQuickCreate(draftFor({ date: day, start, end }), anchor),
+    onReschedule: (occurrence: CalendarOccurrence, startMinutes: number, endMinutes: number) =>
+      actions.moveEvent(occurrence.event, startMinutes, endMinutes),
+  };
+  const createButton = (
+    <Button onClick={createNew}>
+      <Plus aria-hidden="true" />
+      Create event
+    </Button>
+  );
+
+  let body;
+  if (data.eventsQuery.isLoading) {
+    body = <Skeleton variant="row" count={8} label="Loading events" className="p-4" />;
+  } else if (view === "month") {
+    body = (
+      <MonthView
+        anchor={state.date}
+        weekStartsOn={preferences.weekStartsOn}
+        occurrences={data.occurrences}
+        today={today}
+        selectedKey={selectedOccurrence?.key ?? null}
+        handlers={handlers}
+        onOpenDay={openDay}
+        onCreateOnDay={(day, anchor) =>
+          startQuickCreate(draftFor({ date: day, allDay: true }), anchor)
+        }
+      />
+    );
+  } else if (view === "schedule") {
+    body = (
+      <ScheduleView
+        start={range.start}
+        end={range.end}
+        occurrences={data.occurrences}
+        today={today}
+        selectedKey={selectedOccurrence?.key ?? null}
+        handlers={handlers}
+        onOpenDay={openDay}
+        emptyAction={createButton}
+      />
+    );
+  } else {
+    body = (
+      <TimeGrid
+        days={gridDays(view, state.date, preferences)}
+        occurrences={data.occurrences}
+        today={today}
+        nowHour={nowHourInZone(preferences.timeZone, now)}
+        zoneLabel={formatZoneLabel(preferences.timeZone, now)}
+        workdayStart={preferences.workingHours.start}
+        selectedKey={selectedOccurrence?.key ?? null}
+        pendingSlot={
+          quickCreate === null || quickCreate.draft.allDay
+            ? null
+            : {
+                day: quickCreate.draft.startDate,
+                start: quickCreate.draft.startTime,
+                end:
+                  quickCreate.draft.endDate > quickCreate.draft.startDate
+                    ? 24
+                    : quickCreate.draft.endTime,
+              }
+        }
+        canModify={canModify}
+        handlers={handlers}
+        onOpenDay={openDay}
+        label={`${VIEW_LABELS[view]}, ${title}`}
+      />
+    );
+  }
+
   return (
-    <section className="calendar-page flex flex-1 min-w-0 min-h-0 relative">
+    <section className="cal-page">
       <h1 className="sr-only">Calendar</h1>
       <CalendarSidebar
-        query={state.query}
-        onSearchChange={(value) => updateState({ query: value })}
-        calendars={calendars}
-        calendarsLoading={calendarsQuery.isLoading}
-        calendarsError={calendarsQuery.isError}
-        visibility={visibility}
-        onToggleCalendar={toggleCalendar}
-        onCreate={() => openCreateDialog()}
-      />
-      <CalendarWeek
-        events={events}
-        weekStartIso={weekStartIso}
-        selectedEvent={selectedEvent}
-        onSelectEvent={(eventId) => updateState({ eventId })}
-        onCloseEvent={() => updateState({ eventId: "" })}
-        view={state.view}
-        onChangeView={(view) => updateState({ view })}
-        windowLabel={windowLabel}
-        onToday={goToday}
-        onShiftWindow={shiftWindow}
-        loading={eventsQuery.isLoading}
-        errored={eventsFailed}
-        empty={!eventsQuery.isLoading && !eventsFailed && events.length === 0}
-        actionError={actionError}
-        onDismissError={clearError}
-        onMoveEvent={moveEvent}
-        onDragCreate={dragCreate}
-        onEditEvent={writableSelected ? openEditDialog : undefined}
-        onDeleteEvent={
-          writableSelected ? (eventId) => deleteMutation.mutate({ eventId }) : undefined
+        anchor={state.date}
+        weekStartsOn={preferences.weekStartsOn}
+        calendars={data.calendars}
+        loading={data.calendarsQuery.isLoading}
+        error={data.calendarsQuery.isError}
+        retrying={data.calendarsQuery.isFetching}
+        hidden={data.hiddenCalendars}
+        onCreate={createNew}
+        onPickDate={(date) => updateState({ date })}
+        onToggleCalendar={data.toggleCalendar}
+        onShowOnly={data.showOnlyCalendar}
+        onOpenSettings={setSettingsFor}
+        onRetry={() =>
+          void queryClient.invalidateQueries({ queryKey: calendarQueryKeys.calendars })
         }
-        onRespond={writableSelected ? respond : undefined}
-        respondPending={respondMutation.isPending}
-        deletePending={deleteMutation.isPending}
       />
-      {draft !== null && (
-        <CalendarEventDialog
-          draft={draft}
-          calendars={calendars}
-          pending={createMutation.isPending || updateMutation.isPending}
-          onSubmit={submitDraft}
-          onClose={() => setDraft(null)}
-        />
-      )}
+      <div className="cal-main">
+        {editor !== null ? (
+          <EventEditor
+            key={editor.id}
+            initial={editor.draft}
+            calendars={data.calendars}
+            weekStartsOn={preferences.weekStartsOn}
+            workingHours={preferences.workingHours}
+            viewerTimeZone={preferences.timeZone}
+            selfActorId={viewer.actorId}
+            pending={actions.save.isPending}
+            error={actions.saveError}
+            onSave={(draft) => saveDraft(draft, () => setEditor(null))}
+            onClose={() => setEditor(null)}
+          />
+        ) : (
+          <>
+            <CalendarToolbar
+              title={title}
+              view={view}
+              views={compact ? COMPACT_VIEWS : DESKTOP_VIEWS}
+              today={today}
+              showWeekends={preferences.showWeekends}
+              onToday={goToday}
+              onShift={shift}
+              onViewChange={setView}
+              onShowWeekendsChange={setShowWeekends}
+            />
+            {data.eventsQuery.isError ? (
+              <InlineError
+                className="m-3"
+                title="Couldn't load events"
+                message="Your calendar may be missing events. Check your connection and try again."
+                onRetry={() =>
+                  void queryClient.invalidateQueries({ queryKey: calendarQueryKeys.eventsRoot })
+                }
+                retrying={data.eventsQuery.isFetching}
+              />
+            ) : null}
+            {body}
+            <Button className="cal-fab" size="lg" aria-label="Create event" onClick={createNew}>
+              <Plus aria-hidden="true" />
+              Create
+            </Button>
+          </>
+        )}
+      </div>
+
+      {selectedOccurrence !== null && selected !== null && editor === null ? (
+        <AnchoredPopover
+          anchor={selected.anchor}
+          side={compact ? "bottom" : "right"}
+          label={`Event: ${selectedOccurrence.event.title || "(No title)"}`}
+          onClose={closeEvent}
+        >
+          <EventDetails
+            occurrence={selectedOccurrence}
+            calendarName={data.calendarsById.get(selectedOccurrence.event.calendarId)?.name ?? null}
+            viewer={viewer}
+            selfName={session?.name.trim() || null}
+            canEdit={canModify(selectedOccurrence)}
+            canRespond={(() => {
+              const self = selfAttendee(selectedOccurrence.event, viewer);
+              return self !== null && self.isOrganizer !== true;
+            })()}
+            respondPending={actions.respond.isPending}
+            onEdit={() => editSelected?.()}
+            onDelete={() => deleteSelected?.()}
+            onRespond={(status) =>
+              actions.respond.mutate({ eventId: selectedOccurrence.event.id, status })
+            }
+            {...(onEmailGuests === undefined ? {} : { onEmailGuests })}
+            {...(onOpenLink === undefined ? {} : { onOpenLink })}
+            onClose={closeEvent}
+          />
+        </AnchoredPopover>
+      ) : null}
+
+      {quickCreate !== null ? (
+        <AnchoredPopover
+          anchor={quickCreate.anchor}
+          label="Create event"
+          onClose={() => setQuickCreate(null)}
+        >
+          <QuickCreate
+            draft={quickCreate.draft}
+            pending={actions.save.isPending}
+            onSave={(draft) => saveDraft(draft, () => setQuickCreate(null))}
+            onMoreOptions={openEditor}
+            onClose={() => setQuickCreate(null)}
+          />
+        </AnchoredPopover>
+      ) : null}
+
+      {settingsFor !== null ? (
+        <CalendarSettingsSheet calendar={settingsFor} onClose={() => setSettingsFor(null)} />
+      ) : null}
+
+      <div role="status" aria-live="polite" className="sr-only">
+        {announcement}
+      </div>
     </section>
   );
 }

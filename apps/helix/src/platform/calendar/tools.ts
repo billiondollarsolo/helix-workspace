@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { defineTool } from "../tools/define-tool.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
-import { findCalendarMeetingTimes } from "./freebusy.js";
+import { findCalendarMeetingTimes, getCalendarFreeBusy } from "./freebusy.js";
 import type { CalendarInvitationSender } from "./ics.js";
 import type { CalendarAttendeeInput, CalendarStore } from "./store.js";
 import type {
@@ -91,6 +91,21 @@ const findTimeSchema = z.object({
   stepMinutes: z.number().int().positive().max(240).default(15),
   limit: z.number().int().positive().max(100).default(10),
 });
+
+/** One to two weeks of busy blocks for up to 20 people, for the find-a-time grid. */
+const freeBusySchema = z
+  .object({
+    actorIds: z.array(uuidSchema).min(1).max(20),
+    windowStartsAt: z.string().datetime(),
+    windowEndsAt: z.string().datetime(),
+  })
+  .refine(
+    (value) => {
+      const span = Date.parse(value.windowEndsAt) - Date.parse(value.windowStartsAt);
+      return span > 0 && span <= 14 * 86_400_000;
+    },
+    { message: "The free/busy window must be positive and at most 14 days." },
+  );
 
 const calendarsListSchema = z.object({});
 const calendarMembershipsListSchema = z.object({ calendarId: uuidSchema });
@@ -376,6 +391,33 @@ export function createCalendarToolDefinitions(
           memberActorId: input.actorId,
         }),
       }),
+    }),
+    defineTool<z.output<typeof freeBusySchema>, unknown>({
+      id: "calendar.free-busy",
+      description:
+        "List busy time blocks (no event details) for organization members in a window of up to 14 days.",
+      permission: "calendar.read:freebusy",
+      sideEffects: "read",
+      inputSchema: zodToolSchema(freeBusySchema, genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
+      handler: async (input, ctx) => {
+        if (!hasFreeBusyStore(options.store)) {
+          throw new Error("Calendar store does not implement free/busy lookup.");
+        }
+        const blocks = await getCalendarFreeBusy(options.store, {
+          orgId: ctx.actor.orgId,
+          actorIds: [...new Set(input.actorIds)],
+          startsAt: new Date(input.windowStartsAt),
+          endsAt: new Date(input.windowEndsAt),
+        });
+        return {
+          busy: blocks.map((block) => ({
+            actorId: block.actorId,
+            startsAt: block.startsAt.toISOString(),
+            endsAt: block.endsAt.toISOString(),
+          })),
+        };
+      },
     }),
     defineTool<z.output<typeof findTimeSchema>, unknown>({
       id: "calendar.find-time",

@@ -2,13 +2,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider, createRouter } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import {
-  ColorModeProvider,
-  DialogProvider,
-  WebPlatformProvider,
-  createWebPlatformHost,
-  useColorMode,
-} from "@helix/sdk-web";
+import { DialogProvider, WebPlatformProvider, createWebPlatformHost } from "@helix/sdk-web";
+import { useColorMode } from "@/components/color-mode";
 import { AppToaster } from "@/components/ui/toast";
 import { QUERY_RETRY_DEFAULTS } from "@/lib/query-retry";
 import { routeTree } from "./routeTree.gen";
@@ -29,13 +24,7 @@ const queryClient = new QueryClient({
   },
 });
 
-const platformHost = createWebPlatformHost({
-  queryClient,
-  getColorMode: () => {
-    const mode = document.documentElement.dataset.colorMode;
-    return mode === "light" || mode === "dark" || mode === "system" ? mode : "system";
-  },
-});
+const platformHost = createWebPlatformHost({ queryClient });
 
 const router = createRouter({
   routeTree,
@@ -56,16 +45,14 @@ declare module "@tanstack/react-router" {
 function AppProviders() {
   return (
     <StrictMode>
-      <ColorModeProvider>
-        <WebPlatformProvider host={platformHost} useColorMode={useColorMode}>
-          <DialogProvider>
-            <QueryClientProvider client={queryClient}>
-              <RouterProvider router={router} />
-              <AppToaster />
-            </QueryClientProvider>
-          </DialogProvider>
-        </WebPlatformProvider>
-      </ColorModeProvider>
+      <WebPlatformProvider host={platformHost} useColorMode={useColorMode}>
+        <DialogProvider>
+          <QueryClientProvider client={queryClient}>
+            <RouterProvider router={router} />
+            <AppToaster />
+          </QueryClientProvider>
+        </DialogProvider>
+      </WebPlatformProvider>
     </StrictMode>
   );
 }

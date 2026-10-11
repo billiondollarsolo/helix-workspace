@@ -33,7 +33,8 @@ test("profile save keeps a failed draft, updates identity, and persists after re
   await expect(
     page.getByRole("heading", { name: "What can I help you with, Léa Nguyen?" }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: /^Account:/ }).click();
+  await page.getByRole("button", { name: "Manage your account", exact: true }).click();
   const settings = page.getByRole("dialog", { name: "Settings", exact: true });
   await expect(settings.getByLabel("Display name", { exact: true })).toHaveValue(
     initialProfile.displayName,
@@ -57,7 +58,8 @@ test("profile save keeps a failed draft, updates identity, and persists after re
     page.getByRole("heading", { name: "What can I help you with, Nora Singh?" }),
   ).toBeVisible();
 
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: /^Account:/ }).click();
+  await page.getByRole("button", { name: "Manage your account", exact: true }).click();
   await expectProfileFields(page, editedFields);
   await expect(page).toHaveURL(/settings=profile/);
   await page.reload();
@@ -69,7 +71,8 @@ test("profile save keeps a failed draft, updates identity, and persists after re
   await expect(
     page.getByRole("heading", { name: "What can I help you with, Nora Singh?" }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: /^Account:/ }).click();
+  await page.getByRole("button", { name: "Manage your account", exact: true }).click();
   await settings.getByLabel("Pronouns", { exact: true }).fill("");
   await settings.getByLabel("Job title", { exact: true }).fill("");
   await settings.getByLabel("About", { exact: true }).fill("");

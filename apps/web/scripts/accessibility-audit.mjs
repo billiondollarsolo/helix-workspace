@@ -131,7 +131,7 @@ async function collectVisualSmoke(page, route, viewport, theme, rightRail) {
 
       if (themeName === "dark") {
         const colorScheme = window.getComputedStyle(document.documentElement).colorScheme;
-        if (!document.documentElement.classList.contains("dark") && !colorScheme.includes("dark")) {
+        if (document.documentElement.dataset.theme !== "dark" || !colorScheme.includes("dark")) {
           findings.push({
             type: "dark-mode",
             message: "Dark theme was requested but the document did not resolve to dark mode.",

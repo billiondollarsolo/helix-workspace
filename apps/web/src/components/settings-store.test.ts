@@ -69,16 +69,6 @@ describe("appearance settings", () => {
     expect(document.documentElement.dataset.theme).toBe("dark");
   });
 
-  it("toggles to the opposite of what is on screen", async () => {
-    installColorScheme(true);
-    const store = await loadStore({ theme: "system" });
-    store.toggleTheme();
-    expect(document.documentElement.dataset.theme).toBe("light");
-    expect(JSON.parse(localStorage.getItem("helix-appearance") ?? "{}")).toMatchObject({
-      theme: "light",
-    });
-  });
-
   it("drops unknown stored values instead of aliasing them", async () => {
     installColorScheme(false);
     const store = await loadStore({ theme: "sepia", density: "roomy", accent: "#7c3aed" });

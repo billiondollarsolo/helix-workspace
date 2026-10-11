@@ -54,6 +54,20 @@ All notable changes to Helix Workspace are documented here. This file follows
 - The Contacts side panel shows avatars, job titles and "Group" or "Contact" labels instead of raw
   source names, and searches people and groups as you type. The people directory now returns each
   entry's job title and organization member, so a personal contact for a colleague links to them.
+- Search finds content, not just commands. ⌘K lists matching mail, files, chat messages, events
+  and people under the command matches, and the top search box opens a `/search` results page
+  with app filter chips. In an app with its own search (Mail, Drive) the box searches that app.
+- The settings cog opens a Quick settings drawer for theme and density, with a link to all
+  settings. The other theme toggles in the top bar and account menu are gone.
+- The hamburger collapses each app's sidebar to an icon rail on desktop and remembers the choice.
+- Help opens a menu with keyboard shortcuts, documentation and About Helix.
+- Notifications are grouped by app with unread dots, Mark all read and an empty state.
+- The account menu is an account card with "Manage your account" and Sign out.
+- Phones get a bottom bar with four apps and a More sheet, show the app title in the top bar,
+  and no longer reserve space for the side-panel rail.
+- An offline banner spans the top of the workspace while the device has no connection.
+- "New email" and "Schedule meeting" in ⌘K go to `/mail?compose=new` and
+  `/calendar?create=event`.
 
 - Drive accepts S3 commands. An S3-compatible gateway at `/v1/s3` lets the AWS CLI, rclone, boto3,
   and the AWS SDKs list, upload, download, copy, and delete Drive files, including multipart uploads,
@@ -155,6 +169,9 @@ All notable changes to Helix Workspace are documented here. This file follows
   closed. A live test now keeps the database catalog equal to the app's scope catalog.
 
 ### Fixed
+
+- Drive trash now keeps items for the retention period an admin set (30 days by default) instead
+  of always 30 days. Items already in trash keep at least their original recovery window.
 
 - The API no longer stops answering after the Drive grid/list toggle. Signing in no longer holds
   identity locks for the whole request, and Drive layout, star and other database-only changes stay

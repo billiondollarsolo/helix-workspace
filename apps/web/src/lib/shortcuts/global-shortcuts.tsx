@@ -14,6 +14,14 @@ import { shortcutRegistry } from "./registry";
 import { ShortcutList } from "./shortcut-list";
 import { useShortcuts } from "./use-shortcuts";
 
+/** Window event that opens the shortcuts help dialog (`?`) from outside it. */
+const OPEN_SHORTCUTS_HELP_EVENT = "helix:open-shortcuts";
+
+/** Open the keyboard-shortcuts help dialog, as `?` does — e.g. from the Help menu. */
+export function openShortcutsHelp(): void {
+  window.dispatchEvent(new Event(OPEN_SHORTCUTS_HELP_EVENT));
+}
+
 /** Open modal dialogs and menus take precedence over app shortcuts. */
 const OVERLAY_SELECTOR = '[aria-modal="true"], [role="alertdialog"], [role="menu"]';
 
@@ -35,8 +43,13 @@ export function GlobalShortcuts({ onTogglePalette, onOpenShortcutSettings }: Glo
         isMac,
       });
     };
+    const onOpenHelp = () => setHelpOpen(true);
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    window.addEventListener(OPEN_SHORTCUTS_HELP_EVENT, onOpenHelp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener(OPEN_SHORTCUTS_HELP_EVENT, onOpenHelp);
+    };
   }, []);
 
   const goToMail = (folder?: "starred" | "sent" | "drafts") => {

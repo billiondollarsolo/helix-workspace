@@ -1,5 +1,5 @@
 import type { JsonValue } from "@helix/sdk-types";
-import { withTenantIoSagaPostgresContext as withTenantPostgresContext } from "../../tenancy/postgres-roles.js";
+import { withTenantPostgresContext } from "../../tenancy/postgres-roles.js";
 import { bytesFromDatabase } from "../core/mappers.js";
 import {
   DriveConflictError,

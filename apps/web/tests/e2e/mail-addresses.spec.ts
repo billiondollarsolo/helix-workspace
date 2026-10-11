@@ -414,11 +414,11 @@ async function mockAddresses(page: Page, failFirst = false) {
 }
 
 async function openCompose(page: Page) {
-  if ((page.viewportSize()?.width ?? 1440) <= 700)
-    await page.getByRole("button", { name: "Toggle section navigation", exact: true }).click();
+  if ((page.viewportSize()?.width ?? 1440) <= 760)
+    await page.getByRole("button", { name: "Main menu", exact: true }).click();
   await page.getByRole("button", { name: "Compose", exact: true }).click();
-  if ((page.viewportSize()?.width ?? 1440) <= 700)
-    await page.getByRole("button", { name: "Toggle section navigation", exact: true }).click();
+  if ((page.viewportSize()?.width ?? 1440) <= 760)
+    await page.getByRole("button", { name: "Main menu", exact: true }).click();
 }
 
 test("domain identity choices retain MFA and second-administrator gates", async ({ page }) => {

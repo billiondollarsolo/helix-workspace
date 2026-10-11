@@ -5,7 +5,6 @@ import { createWebPlatformHost } from "./platform";
 function createHost() {
   return createWebPlatformHost({
     queryClient: new QueryClient(),
-    getColorMode: () => "system",
   });
 }
 

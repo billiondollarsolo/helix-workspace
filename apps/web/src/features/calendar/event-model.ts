@@ -13,6 +13,7 @@ import type {
   CalendarListEventsInput,
 } from "./api";
 import { calendarLabel, type CalendarLabel } from "./colors";
+import { conferenceFromMetadata } from "./conference";
 import { addIsoDays, clockToHour } from "./date-math";
 import { occurrenceDates, parseRRule } from "./recurrence";
 
@@ -240,19 +241,9 @@ export function eventQueryWindowForTimeZone(
   };
 }
 
-/** A conference link stored on the event, or an http(s) location. */
+/** The event's video call link, or an http(s) location. */
 export function conferenceUrl(event: CalendarApiEvent): string | null {
-  const conference = event.metadata?.conference;
-  if (typeof conference === "object" && conference !== null && "url" in conference) {
-    const url = conference.url;
-    if (typeof url === "string") return isMeetPath(url) ? url : httpUrl(url);
-  }
-  return httpUrl(event.location);
-}
-
-/** An in-app Meet join path such as `/meet?code=abc-defg-hij`. */
-function isMeetPath(value: string): boolean {
-  return /^\/meet(?:[/?]|$)/u.test(value);
+  return httpUrl(conferenceFromMetadata(event.metadata)?.joinUrl) ?? httpUrl(event.location);
 }
 
 export function httpUrl(value: string | null | undefined): string | null {

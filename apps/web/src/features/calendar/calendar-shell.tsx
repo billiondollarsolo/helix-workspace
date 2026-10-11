@@ -21,7 +21,6 @@ import { AnchoredPopover, anchorRectOf, type AnchorRect } from "./anchored-popov
 import { CalendarSettingsSheet } from "./calendar-settings-sheet";
 import { CalendarSidebar } from "./calendar-sidebar";
 import { CalendarToolbar, VIEW_LABELS } from "./calendar-toolbar";
-import type { ConferenceProvider } from "./conference";
 import {
   formatRangeTitle,
   formatZoneLabel,
@@ -36,11 +35,7 @@ import { draftFromEvent, newEventDraft, type EventDraft } from "./event-draft";
 import { EventEditor } from "./event-editor";
 import { selfAttendee, type CalendarOccurrence, type CalendarSource } from "./event-model";
 import { MonthView } from "./month-view";
-import {
-  browserCalendarPreferences,
-  useCalendarPreferences,
-  type CalendarPreferencesSource,
-} from "./preferences";
+import { TimeFormatProvider, useCalendarPreferences } from "./preferences";
 import { calendarQueryKeys } from "./queries";
 import { QuickCreate } from "./quick-create";
 import { defaultCalendarRouteState, type CalendarRouteState } from "./route-state";
@@ -90,8 +85,6 @@ export interface CalendarShellProps {
   readonly onCreateIntentHandled?: () => void;
   readonly onEmailGuests?: (emails: readonly string[]) => void;
   readonly onOpenLink?: (url: string, event: MouseEvent<HTMLAnchorElement>) => void;
-  readonly preferencesSource?: CalendarPreferencesSource;
-  readonly conferenceProvider?: ConferenceProvider;
 }
 
 interface QuickCreateState {
@@ -106,8 +99,6 @@ export function CalendarShell({
   onCreateIntentHandled,
   onEmailGuests,
   onOpenLink,
-  preferencesSource = browserCalendarPreferences,
-  conferenceProvider,
 }: CalendarShellProps = {}) {
   const queryClient = useQueryClient();
   const [localState, setLocalState] = useState(routeState ?? defaultCalendarRouteState);
@@ -121,7 +112,7 @@ export function CalendarShell({
     [onRouteStateChange, state],
   );
 
-  const { preferences, setShowWeekends } = useCalendarPreferences(preferencesSource);
+  const { preferences, setShowWeekends } = useCalendarPreferences();
   const compact = useCompactLayout();
   const view: CalendarView = compact && state.view === "week" ? "3day" : state.view;
   const now = useNow();
@@ -134,7 +125,7 @@ export function CalendarShell({
   const [announcement, setAnnouncement] = useState("");
   const actions = useEventActions({
     announce: setAnnouncement,
-    ...(conferenceProvider === undefined ? {} : { conferenceProvider }),
+    timeFormat: preferences.timeFormat,
   });
   const data = useCalendarData({
     view,
@@ -392,126 +383,130 @@ export function CalendarShell({
   }
 
   return (
-    <section className="cal-page">
-      <h1 className="sr-only">Calendar</h1>
-      <CalendarSidebar
-        anchor={state.date}
-        weekStartsOn={preferences.weekStartsOn}
-        calendars={data.calendars}
-        loading={data.calendarsQuery.isLoading}
-        error={data.calendarsQuery.isError}
-        retrying={data.calendarsQuery.isFetching}
-        hidden={data.hiddenCalendars}
-        onCreate={createNew}
-        onPickDate={(date) => updateState({ date })}
-        onToggleCalendar={data.toggleCalendar}
-        onShowOnly={data.showOnlyCalendar}
-        onOpenSettings={setSettingsFor}
-        onRetry={() =>
-          void queryClient.invalidateQueries({ queryKey: calendarQueryKeys.calendars })
-        }
-      />
-      <div className="cal-main">
-        {editor !== null ? (
-          <EventEditor
-            key={editor.id}
-            initial={editor.draft}
-            calendars={data.calendars}
-            weekStartsOn={preferences.weekStartsOn}
-            workingHours={preferences.workingHours}
-            viewerTimeZone={preferences.timeZone}
-            selfActorId={viewer.actorId}
-            pending={actions.save.isPending}
-            error={actions.saveError}
-            onSave={(draft) => saveDraft(draft, () => setEditor(null))}
-            onClose={() => setEditor(null)}
-          />
-        ) : (
-          <>
-            <CalendarToolbar
-              title={title}
-              view={view}
-              views={compact ? COMPACT_VIEWS : DESKTOP_VIEWS}
-              today={today}
-              showWeekends={preferences.showWeekends}
-              onToday={goToday}
-              onShift={shift}
-              onViewChange={setView}
-              onShowWeekendsChange={setShowWeekends}
+    <TimeFormatProvider value={preferences.timeFormat}>
+      <section className="cal-page">
+        <h1 className="sr-only">Calendar</h1>
+        <CalendarSidebar
+          anchor={state.date}
+          weekStartsOn={preferences.weekStartsOn}
+          calendars={data.calendars}
+          loading={data.calendarsQuery.isLoading}
+          error={data.calendarsQuery.isError}
+          retrying={data.calendarsQuery.isFetching}
+          hidden={data.hiddenCalendars}
+          onCreate={createNew}
+          onPickDate={(date) => updateState({ date })}
+          onToggleCalendar={data.toggleCalendar}
+          onShowOnly={data.showOnlyCalendar}
+          onOpenSettings={setSettingsFor}
+          onRetry={() =>
+            void queryClient.invalidateQueries({ queryKey: calendarQueryKeys.calendars })
+          }
+        />
+        <div className="cal-main">
+          {editor !== null ? (
+            <EventEditor
+              key={editor.id}
+              initial={editor.draft}
+              calendars={data.calendars}
+              weekStartsOn={preferences.weekStartsOn}
+              workingHours={preferences.workingHours}
+              viewerTimeZone={preferences.timeZone}
+              selfActorId={viewer.actorId}
+              pending={actions.save.isPending}
+              error={actions.saveError}
+              onSave={(draft) => saveDraft(draft, () => setEditor(null))}
+              onClose={() => setEditor(null)}
             />
-            {data.eventsQuery.isError ? (
-              <InlineError
-                className="m-3"
-                title="Couldn't load events"
-                message="Your calendar may be missing events. Check your connection and try again."
-                onRetry={() =>
-                  void queryClient.invalidateQueries({ queryKey: calendarQueryKeys.eventsRoot })
-                }
-                retrying={data.eventsQuery.isFetching}
+          ) : (
+            <>
+              <CalendarToolbar
+                title={title}
+                view={view}
+                views={compact ? COMPACT_VIEWS : DESKTOP_VIEWS}
+                today={today}
+                showWeekends={preferences.showWeekends}
+                onToday={goToday}
+                onShift={shift}
+                onViewChange={setView}
+                onShowWeekendsChange={setShowWeekends}
               />
-            ) : null}
-            {body}
-            <Button className="cal-fab" size="lg" aria-label="Create event" onClick={createNew}>
-              <Plus aria-hidden="true" />
-              Create
-            </Button>
-          </>
-        )}
-      </div>
+              {data.eventsQuery.isError ? (
+                <InlineError
+                  className="m-3"
+                  title="Couldn't load events"
+                  message="Your calendar may be missing events. Check your connection and try again."
+                  onRetry={() =>
+                    void queryClient.invalidateQueries({ queryKey: calendarQueryKeys.eventsRoot })
+                  }
+                  retrying={data.eventsQuery.isFetching}
+                />
+              ) : null}
+              {body}
+              <Button className="cal-fab" size="lg" aria-label="Create event" onClick={createNew}>
+                <Plus aria-hidden="true" />
+                Create
+              </Button>
+            </>
+          )}
+        </div>
 
-      {selectedOccurrence !== null && selected !== null && editor === null ? (
-        <AnchoredPopover
-          anchor={selected.anchor}
-          side={compact ? "bottom" : "right"}
-          label={`Event: ${selectedOccurrence.event.title || "(No title)"}`}
-          onClose={closeEvent}
-        >
-          <EventDetails
-            occurrence={selectedOccurrence}
-            calendarName={data.calendarsById.get(selectedOccurrence.event.calendarId)?.name ?? null}
-            viewer={viewer}
-            selfName={session?.name.trim() || null}
-            canEdit={canModify(selectedOccurrence)}
-            canRespond={(() => {
-              const self = selfAttendee(selectedOccurrence.event, viewer);
-              return self !== null && self.isOrganizer !== true;
-            })()}
-            respondPending={actions.respond.isPending}
-            onEdit={() => editSelected?.()}
-            onDelete={() => deleteSelected?.()}
-            onRespond={(status) =>
-              actions.respond.mutate({ eventId: selectedOccurrence.event.id, status })
-            }
-            {...(onEmailGuests === undefined ? {} : { onEmailGuests })}
-            {...(onOpenLink === undefined ? {} : { onOpenLink })}
+        {selectedOccurrence !== null && selected !== null && editor === null ? (
+          <AnchoredPopover
+            anchor={selected.anchor}
+            side={compact ? "bottom" : "right"}
+            label={`Event: ${selectedOccurrence.event.title || "(No title)"}`}
             onClose={closeEvent}
-          />
-        </AnchoredPopover>
-      ) : null}
+          >
+            <EventDetails
+              occurrence={selectedOccurrence}
+              calendarName={
+                data.calendarsById.get(selectedOccurrence.event.calendarId)?.name ?? null
+              }
+              viewer={viewer}
+              selfName={session?.name.trim() || null}
+              canEdit={canModify(selectedOccurrence)}
+              canRespond={(() => {
+                const self = selfAttendee(selectedOccurrence.event, viewer);
+                return self !== null && self.isOrganizer !== true;
+              })()}
+              respondPending={actions.respond.isPending}
+              onEdit={() => editSelected?.()}
+              onDelete={() => deleteSelected?.()}
+              onRespond={(status) =>
+                actions.respond.mutate({ eventId: selectedOccurrence.event.id, status })
+              }
+              {...(onEmailGuests === undefined ? {} : { onEmailGuests })}
+              {...(onOpenLink === undefined ? {} : { onOpenLink })}
+              onClose={closeEvent}
+            />
+          </AnchoredPopover>
+        ) : null}
 
-      {quickCreate !== null ? (
-        <AnchoredPopover
-          anchor={quickCreate.anchor}
-          label="Create event"
-          onClose={() => setQuickCreate(null)}
-        >
-          <QuickCreate
-            draft={quickCreate.draft}
-            pending={actions.save.isPending}
-            onSave={(draft) => saveDraft(draft, () => setQuickCreate(null))}
-            onMoreOptions={openEditor}
+        {quickCreate !== null ? (
+          <AnchoredPopover
+            anchor={quickCreate.anchor}
+            label="Create event"
             onClose={() => setQuickCreate(null)}
-          />
-        </AnchoredPopover>
-      ) : null}
+          >
+            <QuickCreate
+              draft={quickCreate.draft}
+              pending={actions.save.isPending}
+              onSave={(draft) => saveDraft(draft, () => setQuickCreate(null))}
+              onMoreOptions={openEditor}
+              onClose={() => setQuickCreate(null)}
+            />
+          </AnchoredPopover>
+        ) : null}
 
-      {settingsFor !== null ? (
-        <CalendarSettingsSheet calendar={settingsFor} onClose={() => setSettingsFor(null)} />
-      ) : null}
+        {settingsFor !== null ? (
+          <CalendarSettingsSheet calendar={settingsFor} onClose={() => setSettingsFor(null)} />
+        ) : null}
 
-      <div role="status" aria-live="polite" className="sr-only">
-        {announcement}
-      </div>
-    </section>
+        <div role="status" aria-live="polite" className="sr-only">
+          {announcement}
+        </div>
+      </section>
+    </TimeFormatProvider>
   );
 }

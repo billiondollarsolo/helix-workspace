@@ -1,9 +1,16 @@
 import type { CSSProperties, KeyboardEvent, PointerEvent, MouseEvent } from "react";
 import { cn } from "@/lib/utils";
 import { labelFill, labelSoftFill } from "./colors";
-import { formatLongDate, formatShortDate, formatTime, formatTimeRange } from "./date-math";
+import {
+  formatLongDate,
+  formatShortDate,
+  formatTime,
+  formatTimeRange,
+  type TimeFormat,
+} from "./date-math";
 import type { CalendarOccurrence } from "./event-model";
 import type { AllDayPlacement, TimedSegment } from "./grid-layout";
+import { useTimeFormat } from "./preferences";
 
 export function eventColorStyle(occurrence: CalendarOccurrence): CSSProperties {
   return {
@@ -13,12 +20,12 @@ export function eventColorStyle(occurrence: CalendarOccurrence): CSSProperties {
 }
 
 /** "All day", "9 – 10am", or "Oct 15, 9pm – Oct 16, 1am" across midnight. */
-export function occurrenceTimeText(occurrence: CalendarOccurrence): string {
+export function occurrenceTimeText(occurrence: CalendarOccurrence, format: TimeFormat): string {
   if (occurrence.event.allDay) return "All day";
   if (occurrence.startDate === occurrence.endDate) {
-    return formatTimeRange(occurrence.start, occurrence.end);
+    return formatTimeRange(occurrence.start, occurrence.end, format);
   }
-  return `${formatShortDate(occurrence.startDate)}, ${formatTime(occurrence.start)} – ${formatShortDate(occurrence.endDate)}, ${formatTime(occurrence.end)}`;
+  return `${formatShortDate(occurrence.startDate)}, ${formatTime(occurrence.start, format)} – ${formatShortDate(occurrence.endDate)}, ${formatTime(occurrence.end, format)}`;
 }
 
 const STATUS_TEXT: Readonly<Record<string, string>> = {
@@ -35,10 +42,13 @@ export function occurrenceDateText(occurrence: CalendarOccurrence): string {
     : formatLongDate(occurrence.startDate);
 }
 
-export function occurrenceAccessibleName(occurrence: CalendarOccurrence): string {
+export function occurrenceAccessibleName(
+  occurrence: CalendarOccurrence,
+  format: TimeFormat,
+): string {
   const parts = [
     occurrence.event.title || "(No title)",
-    occurrenceTimeText(occurrence),
+    occurrenceTimeText(occurrence, format),
     occurrenceDateText(occurrence),
   ];
   if (occurrence.event.location) parts.push(occurrence.event.location);
@@ -121,6 +131,7 @@ export function TimedEventChip({
   readonly onClick: (event: MouseEvent<HTMLButtonElement>) => void;
 }) {
   const { occurrence } = segment;
+  const format = useTimeFormat();
   const span = segment.end - segment.start;
   const compact = span < 0.75;
   return (
@@ -132,7 +143,7 @@ export function TimedEventChip({
       data-selected={selected}
       data-compact={compact}
       data-dragging={dragging}
-      aria-label={occurrenceAccessibleName(occurrence)}
+      aria-label={occurrenceAccessibleName(occurrence, format)}
       aria-describedby={movable ? MOVE_HINT_ID : undefined}
       className={cn("cal-event cal-timed-event type-caption", movable && "cursor-grab")}
       style={
@@ -150,7 +161,7 @@ export function TimedEventChip({
     >
       <span className="cal-event-title">{occurrence.event.title || "(No title)"}</span>
       <span className="cal-event-meta">
-        {occurrenceTimeText(occurrence)}
+        {occurrenceTimeText(occurrence, format)}
         {!compact && occurrence.event.location ? ` · ${occurrence.event.location}` : null}
       </span>
       {movable && segment.occurrence.endDate === segment.day ? (
@@ -179,6 +190,7 @@ export function AllDayEventChip({
   readonly handlers: EventChipHandlers;
 }) {
   const { occurrence } = placement;
+  const format = useTimeFormat();
   return (
     <button
       type="button"
@@ -188,7 +200,7 @@ export function AllDayEventChip({
       data-selected={selected}
       data-continues-before={placement.continuesBefore}
       data-continues-after={placement.continuesAfter}
-      aria-label={occurrenceAccessibleName(occurrence)}
+      aria-label={occurrenceAccessibleName(occurrence, format)}
       aria-describedby={movable ? MOVE_HINT_ID : undefined}
       className="cal-event cal-all-day-event type-caption"
       style={{
@@ -214,6 +226,7 @@ export function EventListItem({
   readonly selected: boolean;
   readonly handlers: EventChipHandlers;
 }) {
+  const format = useTimeFormat();
   const open = (event: MouseEvent<HTMLButtonElement>) =>
     handlers.onOpen(occurrence, event.currentTarget);
   if (occurrence.allDay) {
@@ -224,7 +237,7 @@ export function EventListItem({
         data-occurrence-key={occurrence.key}
         data-status={occurrence.selfStatus ?? undefined}
         data-selected={selected}
-        aria-label={occurrenceAccessibleName(occurrence)}
+        aria-label={occurrenceAccessibleName(occurrence, format)}
         className="cal-event type-caption w-full"
         style={eventColorStyle(occurrence)}
         onClick={open}
@@ -239,14 +252,15 @@ export function EventListItem({
       data-calendar-event
       data-occurrence-key={occurrence.key}
       data-selected={selected}
-      aria-label={occurrenceAccessibleName(occurrence)}
+      aria-label={occurrenceAccessibleName(occurrence, format)}
       className="cal-dot-event type-caption"
       style={eventColorStyle(occurrence)}
       onClick={open}
     >
       <span aria-hidden="true" className="cal-dot" />
       <span>
-        {formatTime(occurrence.start)} <strong>{occurrence.event.title || "(No title)"}</strong>
+        {formatTime(occurrence.start, format)}{" "}
+        <strong>{occurrence.event.title || "(No title)"}</strong>
       </span>
     </button>
   );

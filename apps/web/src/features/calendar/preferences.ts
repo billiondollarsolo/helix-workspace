@@ -1,14 +1,13 @@
 /* Viewer preferences the calendar honours: week start, working hours, time
-   zone, and whether weekends show in Week view.
+   zone and 12/24-hour clock from `account.preferences`, falling back to the
+   browser locale for anything the person has not chosen. "Show weekends" is a
+   per-browser view toggle, remembered in local storage. */
 
-   There is no account preferences API yet, so week start, working hours and
-   time zone come from the browser locale through `browserCalendarPreferences`.
-   When an account preferences source exists, give `useCalendarPreferences` a
-   different `CalendarPreferencesSource`; nothing else changes. "Show weekends"
-   is a per-browser view toggle, remembered in local storage. */
-
-import { useCallback, useMemo, useState } from "react";
-import type { WeekStartDay } from "./date-math";
+import type { AccountPreferences } from "@helix/contracts";
+import { useQuery } from "@tanstack/react-query";
+import { createContext, useCallback, useContext, useMemo, useState } from "react";
+import { accountPreferencesQueryOptions } from "@/features/account/queries";
+import { clockToHour, type TimeFormat, type WeekStartDay } from "./date-math";
 
 export interface WorkingHours {
   /** Decimal hours, e.g. 9 and 17. */
@@ -22,12 +21,8 @@ export interface CalendarPreferences {
   readonly weekStartsOn: WeekStartDay;
   readonly workingHours: WorkingHours;
   readonly timeZone: string;
+  readonly timeFormat: TimeFormat;
   readonly showWeekends: boolean;
-}
-
-/** Where account-level preferences come from. */
-export interface CalendarPreferencesSource {
-  read(): Omit<CalendarPreferences, "showWeekends">;
 }
 
 const DEFAULT_WORKING_HOURS: WorkingHours = { start: 9, end: 17, days: [1, 2, 3, 4, 5] };
@@ -38,22 +33,39 @@ function localeWeekStart(): WeekStartDay {
       readonly weekInfo?: { readonly firstDay: number };
       getWeekInfo?: () => { readonly firstDay: number };
     };
+    // Intl numbers days 1 (Monday) to 7 (Sunday).
     const firstDay = (locale.getWeekInfo?.() ?? locale.weekInfo)?.firstDay;
-    if (firstDay === 1) return 1;
-    if (firstDay === 6) return 6;
-    return 0;
+    return firstDay === undefined ? 0 : ((firstDay % 7) as WeekStartDay);
   } catch {
     return 0;
   }
 }
 
-export const browserCalendarPreferences: CalendarPreferencesSource = {
-  read: () => ({
-    weekStartsOn: localeWeekStart(),
-    workingHours: DEFAULT_WORKING_HOURS,
-    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-  }),
-};
+function localeTimeFormat(): TimeFormat {
+  const cycle = new Intl.DateTimeFormat(undefined, { hour: "numeric" }).resolvedOptions().hourCycle;
+  return cycle === "h23" || cycle === "h24" ? "24h" : "12h";
+}
+
+function workingHoursFrom(value: AccountPreferences["workingHours"]): WorkingHours {
+  if (value === null || !value.enabled || value.days.length === 0) return DEFAULT_WORKING_HOURS;
+  return {
+    start: Math.min(...value.days.map((day) => clockToHour(day.start))),
+    end: Math.max(...value.days.map((day) => clockToHour(day.end))),
+    days: value.days.map((day) => day.day).sort((left, right) => left - right),
+  };
+}
+
+/** Account preferences with browser-locale fallbacks for unset fields. */
+export function calendarPreferencesFrom(
+  account: AccountPreferences | undefined,
+): Omit<CalendarPreferences, "showWeekends"> {
+  return {
+    weekStartsOn: (account?.weekStart ?? localeWeekStart()) as WeekStartDay,
+    workingHours: workingHoursFrom(account?.workingHours ?? null),
+    timeZone: account?.timeZone ?? (Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"),
+    timeFormat: account?.timeFormat ?? localeTimeFormat(),
+  };
+}
 
 const SHOW_WEEKENDS_KEY = "helix.calendar.showWeekends";
 
@@ -73,13 +85,12 @@ function writeShowWeekends(value: boolean): void {
   }
 }
 
-export function useCalendarPreferences(
-  source: CalendarPreferencesSource = browserCalendarPreferences,
-): {
+export function useCalendarPreferences(): {
   readonly preferences: CalendarPreferences;
   readonly setShowWeekends: (value: boolean) => void;
 } {
-  const base = useMemo(() => source.read(), [source]);
+  const account = useQuery(accountPreferencesQueryOptions()).data;
+  const base = useMemo(() => calendarPreferencesFrom(account), [account]);
   const [showWeekends, setShowWeekendsState] = useState(readShowWeekends);
   const setShowWeekends = useCallback((value: boolean) => {
     setShowWeekendsState(value);
@@ -87,4 +98,13 @@ export function useCalendarPreferences(
   }, []);
   const preferences = useMemo(() => ({ ...base, showWeekends }), [base, showWeekends]);
   return { preferences, setShowWeekends };
+}
+
+const TimeFormatContext = createContext<TimeFormat>("12h");
+
+/** Provides the viewer's clock to every calendar component below the shell. */
+export const TimeFormatProvider = TimeFormatContext.Provider;
+
+export function useTimeFormat(): TimeFormat {
+  return useContext(TimeFormatContext);
 }

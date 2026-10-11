@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import type { AccountPreferences } from "@helix/contracts";
 import { act } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createRoot, type Root } from "react-dom/client";
@@ -9,7 +10,7 @@ import { sessionQueryKeys } from "@/lib/auth";
 import { shortcutRegistry } from "@/lib/shortcuts/registry";
 import type { CalendarApiEvent } from "./api";
 import { CalendarShell, type CalendarShellProps } from "./calendar-shell";
-import type { CalendarPreferencesSource } from "./preferences";
+import { accountPreferencesQueryOptions } from "@/features/account/queries";
 import { defaultCalendarRouteState, type CalendarRouteState } from "./route-state";
 
 vi.mock("@/components/ui/toast", () => ({ notify: vi.fn(), dismissNotification: vi.fn() }));
@@ -30,12 +31,15 @@ const CALENDAR = {
   writable: true,
   timezone: "UTC",
 };
-const utcPreferences: CalendarPreferencesSource = {
-  read: () => ({
-    weekStartsOn: 0,
-    workingHours: { start: 9, end: 17, days: [1, 2, 3, 4, 5] },
-    timeZone: "UTC",
-  }),
+const ACCOUNT_PREFERENCES: AccountPreferences = {
+  language: null,
+  timeZone: "UTC",
+  dateFormat: null,
+  timeFormat: "12h",
+  weekStart: 0,
+  workingHours: null,
+  mail: { readingPane: "right", density: "default", conversationView: true },
+  updatedAt: null,
 };
 
 function apiEvent(overrides: Partial<CalendarApiEvent> = {}): CalendarApiEvent {
@@ -70,6 +74,7 @@ describe("CalendarShell", () => {
   let queryClient: QueryClient;
   let calls: ToolCall[];
   let state: CalendarRouteState;
+  let preferences: AccountPreferences;
 
   const mockBackend = (
     events: readonly CalendarApiEvent[],
@@ -93,11 +98,11 @@ describe("CalendarShell", () => {
           >,
         });
         if (tool === "calendar.event.list") return Promise.resolve(Response.json({ events }));
+        if (tool === "account.preferences.get") {
+          return Promise.resolve(Response.json(preferences));
+        }
         if (tool === "calendar.calendars.list") {
           return Promise.resolve(Response.json({ calendars: [CALENDAR] }));
-        }
-        if (tool === "meet.create-room") {
-          return Promise.resolve(Response.json({ id: "room-1", joinCode: "abc-defg-hij" }));
         }
         if (tool === "calendar.event.create" || tool === "calendar.event.update") {
           return Promise.resolve(Response.json(apiEvent({ title: "Saved" })));
@@ -118,7 +123,6 @@ describe("CalendarShell", () => {
               state = next;
               draw();
             }}
-            preferencesSource={utcPreferences}
             {...props}
           />
         </QueryClientProvider>,
@@ -181,6 +185,8 @@ describe("CalendarShell", () => {
     root = createRoot(container);
     queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 0 } } });
     queryClient.setQueryData(sessionQueryKeys.current, SESSION_USER);
+    preferences = ACCOUNT_PREFERENCES;
+    queryClient.setQueryData(accountPreferencesQueryOptions().queryKey, preferences);
   });
 
   afterEach(() => {
@@ -299,7 +305,7 @@ describe("CalendarShell", () => {
     });
   });
 
-  it("adds video conferencing by creating a Meet room on save", async () => {
+  it("asks the server to add video conferencing on save", async () => {
     mockBackend([]);
     render();
     await flush();
@@ -312,24 +318,25 @@ describe("CalendarShell", () => {
     act(() => button("Save")?.click());
     await flush();
 
-    const room = calls.findIndex((call) => call.tool === "meet.create-room");
-    const create = calls.findIndex((call) => call.tool === "calendar.event.create");
-    expect(room).toBeGreaterThanOrEqual(0);
-    expect(create).toBeGreaterThan(room);
-    expect(calls[room]?.body).toMatchObject({
-      scheduledStartAt: "2026-05-20T13:00:00.000Z",
-      scheduledEndAt: "2026-05-20T14:00:00.000Z",
+    expect(calls.some((call) => call.tool === "meet.create-room")).toBe(false);
+    expect(calls.find((call) => call.tool === "calendar.event.create")?.body).toMatchObject({
+      startsAt: "2026-05-20T13:00:00.000Z",
+      conference: "meet",
     });
-    expect(calls[create]?.body).toMatchObject({
-      metadata: {
-        conference: {
-          provider: "helix-meet",
-          roomId: "room-1",
-          joinCode: "abc-defg-hij",
-          url: "/meet?code=abc-defg-hij",
-        },
-      },
-    });
+  });
+
+  it("follows the account's 24-hour clock and week start", async () => {
+    mockBackend([apiEvent()]);
+    preferences = { ...ACCOUNT_PREFERENCES, timeFormat: "24h", weekStart: 1 };
+    queryClient.setQueryData(accountPreferencesQueryOptions().queryKey, preferences);
+    render();
+    await flush();
+
+    expect(chip("Planning")?.getAttribute("aria-label")).toContain("09:00 – 10:00");
+    expect(document.querySelector("[data-day]")?.getAttribute("data-day")).toBe("2026-05-18");
+    expect([...document.querySelectorAll(".cal-hour-label")].map((n) => n.textContent)).toContain(
+      "13:00",
+    );
   });
 
   it("shows event details with Join, recurrence, guests and Going? Yes / No / Maybe", async () => {
@@ -338,10 +345,10 @@ describe("CalendarShell", () => {
         recurrenceRule: "FREQ=WEEKLY;BYDAY=WE",
         metadata: {
           conference: {
-            provider: "helix-meet",
+            provider: "meet",
             roomId: "r1",
             joinCode: "abc",
-            url: "/meet?code=abc",
+            joinUrl: "https://helix.test/meet?code=abc",
           },
         },
         attendees: [
@@ -373,7 +380,9 @@ describe("CalendarShell", () => {
     expect(popover?.textContent).toContain("Organizer");
     expect(popover?.textContent).toContain("Rae Gomez");
     expect(popover?.textContent).toContain("1 yes, 1 awaiting");
-    const join = popover?.querySelector<HTMLAnchorElement>("a[href='/meet?code=abc']");
+    const join = popover?.querySelector<HTMLAnchorElement>(
+      "a[href='https://helix.test/meet?code=abc']",
+    );
     expect(join?.textContent).toContain("Join");
     for (const name of ["Edit event", "Delete event", "Email guests", "Close"]) {
       expect(button(name)).toBeDefined();

@@ -69,9 +69,11 @@ function CalendarRoute() {
             void navigate({ to: "/mail", search: { compose: "new", to: emails.join(",") } });
           }}
           onOpenLink={(url, event) => {
-            if (!url.startsWith("/")) return;
+            // Same-origin links (the workspace's own Meet) stay in the app.
+            const target = new URL(url, window.location.href);
+            if (target.origin !== window.location.origin) return;
             event.preventDefault();
-            void navigate({ href: url });
+            void navigate({ href: `${target.pathname}${target.search}` });
           }}
         />
       </QueryClientProvider>

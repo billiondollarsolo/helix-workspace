@@ -61,6 +61,8 @@ const updateSchema = updatePatchSchema.extend({
   eventId: uuidSchema,
   patch: updatePatchSchema.optional(),
   sendInvitations: z.boolean().default(true),
+  /** Add video conferencing to an event that has none yet. */
+  conference: z.enum(["meet"]).optional(),
 });
 
 const deleteSchema = z.object({
@@ -149,7 +151,12 @@ export interface CreateCalendarToolDefinitionsOptions {
 async function createConference(
   provider: CalendarConferenceProvider | undefined,
   actor: { readonly id: string; readonly orgId: string },
-  input: z.output<typeof createSchema>,
+  input: {
+    readonly title: string;
+    readonly startsAt: string;
+    readonly endsAt: string;
+    readonly attendees: readonly { readonly actorId?: string | null | undefined }[];
+  },
 ): Promise<JsonObject> {
   if (provider === undefined) {
     throw new BadRequestError(
@@ -266,18 +273,38 @@ export function createCalendarToolDefinitions(
     }),
     defineTool<z.output<typeof updateSchema>, unknown>({
       id: "calendar.event.update",
-      description: "Update a calendar event.",
+      description:
+        'Update a calendar event. conference: "meet" adds video conferencing when the event has none.',
       permission: "calendar.write",
       sideEffects: "external_communication",
       confirmationRequired: true,
-      scopeComposition: { conditionalScopes: [externalAttendeeScope] },
+      scopeComposition: { conditionalScopes: [externalAttendeeScope, meetConferenceScope] },
       inputSchema: zodToolSchema(updateSchema, genericObjectJsonSchema),
       outputSchema: unknownOutputSchema,
       handler: async (
-        { eventId, sendInvitations: shouldSend, patch: nestedPatch, ...topLevelPatch },
+        { eventId, sendInvitations: shouldSend, patch: nestedPatch, conference, ...topLevelPatch },
         ctx,
       ) => {
-        const patch = { ...topLevelPatch, ...(nestedPatch ?? {}) };
+        let patch = { ...topLevelPatch, ...(nestedPatch ?? {}) };
+        if (conference !== undefined) {
+          const current = await options.store.getEventForActor({
+            orgId: ctx.actor.orgId,
+            actorId: ctx.actor.id,
+            eventId,
+          });
+          if (current === null) throw new Error(`Unknown calendar event: ${eventId}`);
+          const metadata = patch.metadata ?? current.metadata;
+          // Adding conferencing twice keeps the existing room instead of creating another.
+          if (metadata.conference === undefined) {
+            const room = await createConference(options.conference, ctx.actor, {
+              title: patch.title ?? current.title,
+              startsAt: patch.startsAt ?? current.startsAt.toISOString(),
+              endsAt: patch.endsAt ?? current.endsAt.toISOString(),
+              attendees: patch.attendees ?? current.attendees,
+            });
+            patch = { ...patch, metadata: { ...metadata, conference: room } };
+          }
+        }
         const event = await options.store.updateEvent({
           orgId: ctx.actor.orgId,
           actorId: ctx.actor.id,

@@ -20,7 +20,7 @@ import {
   snapHour,
 } from "./date-math";
 import type { EventDraft } from "./event-draft";
-import type { WorkingHours } from "./preferences";
+import { useTimeFormat, type WorkingHours } from "./preferences";
 import { calendarFindTimeQueryOptions, calendarFreeBusyQueryOptions } from "./queries";
 
 const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
@@ -67,6 +67,7 @@ export function FindTimePanel({
   readonly onPick: (day: string, start: number) => void;
 }) {
   const [day, setDay] = useState(draft.startDate);
+  const format = useTimeFormat();
   const scrollRef = useRef<HTMLDivElement>(null);
   const columns = useMemo<Column[]>(
     () => [
@@ -171,7 +172,7 @@ export function FindTimePanel({
               variant="outline"
               onClick={() => onPick(local.slice(0, 10), start)}
             >
-              {formatTimeRange(start, start + length)}
+              {formatTimeRange(start, start + length, format)}
             </Button>
           );
         })}
@@ -204,7 +205,7 @@ export function FindTimePanel({
         <div aria-hidden="true">
           {HOURS.map((hour) => (
             <div key={hour} className="cal-hour-label type-caption">
-              <span>{formatHourLabel(hour)}</span>
+              <span>{formatHourLabel(hour, format)}</span>
             </div>
           ))}
         </div>
@@ -242,7 +243,7 @@ export function FindTimePanel({
                 >
                   Busy
                   <span className="sr-only">
-                    {` ${column.name}, ${formatTimeRange(range.start, range.end)}`}
+                    {` ${column.name}, ${formatTimeRange(range.start, range.end, format)}`}
                   </span>
                 </div>
               ))}

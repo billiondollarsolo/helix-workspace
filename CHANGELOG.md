@@ -66,7 +66,10 @@ All notable changes to Helix Workspace are documented here. This file follows
   side with suggested free slots. Event details show the repeat, a Join button, guests with their
   replies and the organizer, and "Going? Yes / No / Maybe". Deleting and moving offer Undo. The
   sidebar has a mini month and "My calendars" / "Other calendars" with colours, show/hide, and
-  sharing for calendars you own. Phones get 3-day and Schedule views and a Create button.
+  sharing for calendars you own. Phones get 3-day and Schedule views and a Create button. The
+  calendar follows your week start, working hours, time zone and 12/24-hour clock from your
+  account preferences. Video conferencing can also be added when editing an existing event
+  (`calendar.event.update` accepts `conference: "meet"`).
 - `calendar.free-busy` tool: busy blocks (no event details) for up to 20 organization members over
   a window of up to 14 days, for the Calendar's Find a time view.
 

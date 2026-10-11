@@ -10,6 +10,7 @@ import {
 } from "./event-chip";
 import type { CalendarOccurrence } from "./event-model";
 import { occurrencesOnDay } from "./grid-layout";
+import { useTimeFormat } from "./preferences";
 
 /** Schedule view: the upcoming days that have events, each with its agenda. */
 export function ScheduleView({
@@ -31,6 +32,7 @@ export function ScheduleView({
   readonly onOpenDay: (day: string) => void;
   readonly emptyAction: ReactNode;
 }) {
+  const format = useTimeFormat();
   const days = useMemo(() => {
     const count = isoDayDiff(start, end) + 1;
     return Array.from({ length: count }, (_, index) => addIsoDays(start, index))
@@ -84,13 +86,15 @@ export function ScheduleView({
                     data-calendar-event
                     data-occurrence-key={occurrence.key}
                     data-selected={occurrence.key === selectedKey}
-                    aria-label={occurrenceAccessibleName(occurrence)}
+                    aria-label={occurrenceAccessibleName(occurrence, format)}
                     className="cal-schedule-row type-body-sm"
                     style={eventColorStyle(occurrence)}
                     onClick={(event) => handlers.onOpen(occurrence, event.currentTarget)}
                   >
                     <span aria-hidden="true" className="cal-dot" />
-                    <span className="text-muted-foreground">{occurrenceTimeText(occurrence)}</span>
+                    <span className="text-muted-foreground">
+                      {occurrenceTimeText(occurrence, format)}
+                    </span>
                     <span className="truncate">
                       <strong>{occurrence.event.title || "(No title)"}</strong>
                       {occurrence.event.location ? ` · ${occurrence.event.location}` : null}

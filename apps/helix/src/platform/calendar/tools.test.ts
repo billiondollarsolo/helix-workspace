@@ -169,6 +169,53 @@ describe("calendar tools", () => {
     ).toMatchObject({ ok: false, statusCode: 400 });
   });
 
+  it("adds video conferencing to an existing event once", async () => {
+    const store = new FakeCalendarStore();
+    const rooms: unknown[] = [];
+    const registry = createToolRegistry();
+    const room = {
+      roomId: "55555555-5555-4555-8555-555555555555",
+      joinCode: "abc-defg-hij",
+      joinUrl: "https://helix.example.com/meet?code=abc-defg-hij",
+    };
+    registerCalendarTools(registry, {
+      store,
+      conference: {
+        async createRoom(input) {
+          rooms.push(input);
+          return room;
+        },
+      },
+    });
+    const actor: Actor = { id: actorId, orgId, type: "user", scopes: ["calendar.write"] };
+    const update = { eventId, conference: "meet", patch: { metadata: { alarms: [] } } };
+
+    const denied = await registry.invoke("calendar.event.update", update, { actor });
+    const updated = await registry.invoke("calendar.event.update", update, {
+      actor: { ...actor, scopes: ["calendar.write", "meet.write"] },
+    });
+    const again = await registry.invoke(
+      "calendar.event.update",
+      { ...update, patch: { metadata: { conference: { provider: "meet", ...room } } } },
+      { actor: { ...actor, scopes: ["calendar.write", "meet.write"] } },
+    );
+
+    expect(denied).toMatchObject({ ok: false, statusCode: 403 });
+    expect(updated.ok).toBe(true);
+    expect(again.ok).toBe(true);
+    expect(rooms).toEqual([
+      expect.objectContaining({
+        subject: "Planning",
+        startsAt: new Date("2026-05-20T13:00:00.000Z"),
+        endsAt: new Date("2026-05-20T14:00:00.000Z"),
+      }),
+    ]);
+    expect(store.updateInputs[0]?.patch.metadata).toEqual({
+      alarms: [],
+      conference: { provider: "meet", ...room },
+    });
+  });
+
   it("updates and cancels events through the store and invitation sender", async () => {
     const store = new FakeCalendarStore();
     const invitationSender = new FakeInvitationSender();

@@ -81,6 +81,8 @@ export interface CalendarUpdateEventInput {
   readonly eventId: string;
   readonly patch: CalendarUpdateEventPatch;
   readonly sendInvitations?: boolean;
+  /** Add video conferencing to an event that has none yet. */
+  readonly conference?: "meet";
 }
 
 export interface CalendarDeleteEventInput {
@@ -208,6 +210,7 @@ export async function updateCalendarEvent(
       eventId: input.eventId,
       patch: input.patch,
       sendInvitations: input.sendInvitations ?? true,
+      ...(input.conference === undefined ? {} : { conference: input.conference }),
     },
     fetchImpl,
   );

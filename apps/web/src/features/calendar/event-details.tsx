@@ -28,6 +28,7 @@ import {
   type CalendarOccurrence,
   type ViewerIdentity,
 } from "./event-model";
+import { useTimeFormat } from "./preferences";
 import { describeReminder, reminderFromMetadata } from "./reminders";
 
 const RSVP_CHOICES: readonly {
@@ -114,6 +115,7 @@ export function EventDetails({
   onClose,
 }: EventDetailsProps) {
   const { event } = occurrence;
+  const format = useTimeFormat();
   const joinUrl = conferenceUrl(event);
   const recurrence = event.recurrenceRule ? draftRecurrenceText(draftFromEvent(event)) : null;
   const reminder = reminderFromMetadata(event.metadata);
@@ -181,7 +183,7 @@ export function EventDetails({
           <div className="min-w-0">
             <h2 className="type-h3 m-0 break-words">{event.title || "(No title)"}</h2>
             <p className="m-0 type-body-sm">
-              {occurrenceDateText(occurrence)} · {occurrenceTimeText(occurrence)}
+              {occurrenceDateText(occurrence)} · {occurrenceTimeText(occurrence, format)}
             </p>
             {recurrence !== null ? (
               <p className="m-0 type-body-sm text-muted-foreground flex items-center gap-1">
@@ -197,7 +199,8 @@ export function EventDetails({
             <a
               className="inline-flex items-center gap-2 rounded-[var(--radius)] bg-primary px-4 py-1.5 text-primary-foreground font-medium focus-ring"
               href={joinUrl}
-              {...(joinUrl.startsWith("/") ? {} : { target: "_blank", rel: "noopener noreferrer" })}
+              target="_blank"
+              rel="noopener noreferrer"
               onClick={(clickEvent) => onOpenLink?.(joinUrl, clickEvent)}
             >
               Join video call

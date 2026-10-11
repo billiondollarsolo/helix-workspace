@@ -171,7 +171,7 @@ export function EventEditor({
                       <>
                         <span className="type-body-sm">
                           {draft.conference !== null
-                            ? `Video call: ${draft.conference.url}`
+                            ? `Video call: ${draft.conference.joinUrl}`
                             : "A video call link will be added when you save"}
                         </span>
                         <Button

@@ -13,8 +13,7 @@ import {
   type CalendarApiEvent,
   type CalendarApiResponseStatus,
 } from "./api";
-import { meetConferenceProvider, type ConferenceProvider } from "./conference";
-import { clockToHour, formatLongDate, formatTimeRange } from "./date-math";
+import { clockToHour, formatLongDate, formatTimeRange, type TimeFormat } from "./date-math";
 import {
   draftFromEvent,
   draftInstants,
@@ -62,11 +61,11 @@ function patchedEvent(event: CalendarApiEvent, draft: EventDraft): CalendarApiEv
 
 export function useEventActions({
   announce,
-  conferenceProvider = meetConferenceProvider,
+  timeFormat,
 }: {
   /** Polite screen-reader announcement. */
   readonly announce: (message: string) => void;
-  readonly conferenceProvider?: ConferenceProvider;
+  readonly timeFormat: TimeFormat;
 }) {
   const queryClient = useQueryClient();
   const [hiddenEventIds, setHiddenEventIds] = useState<ReadonlySet<string>>(new Set());
@@ -77,24 +76,16 @@ export function useEventActions({
 
   const save = useMutation({
     mutationFn: async (draft: EventDraft) => {
-      const conference = draft.addConference
-        ? await conferenceProvider.create({
-            title: draft.title.trim() || "Meeting",
-            ...draftInstants(draft),
-            participantActorIds: draft.guests.flatMap((guest) =>
-              guest.actorId === null ? [] : [guest.actorId],
-            ),
-          })
-        : draft.conference;
-      const input = draftToEventInput(draft, conference);
+      const { conference, ...input } = draftToEventInput(draft);
       if (draft.mode === "edit" && draft.eventId !== undefined) {
         // An event stays on its calendar; the API has no move-between-calendars.
         return updateCalendarEvent({
           eventId: draft.eventId,
           patch: { ...input, calendarId: undefined },
+          ...(conference === undefined ? {} : { conference }),
         });
       }
-      return createCalendarEvent(input);
+      return createCalendarEvent({ ...input, ...(conference === undefined ? {} : { conference }) });
     },
     onMutate: () => undefined,
     onError: () => undefined,
@@ -148,7 +139,7 @@ export function useEventActions({
       reschedule.mutate({ eventId: event.id, startsAt: next.startsAt, endsAt: next.endsAt });
       const when = after.allDay
         ? formatLongDate(after.startDate)
-        : `${formatLongDate(after.startDate)}, ${formatTimeRange(after.startTime, after.endTime || 24)}`;
+        : `${formatLongDate(after.startDate)}, ${formatTimeRange(after.startTime, after.endTime || 24, timeFormat)}`;
       announce(`${event.title || "Event"} moved to ${when}`);
       if (undoable) {
         notify({

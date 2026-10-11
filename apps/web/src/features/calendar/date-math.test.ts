@@ -99,18 +99,27 @@ describe("labels", () => {
   });
 
   it("formats times the way calendar users read them", () => {
-    expect(formatTime(9)).toBe("9am");
-    expect(formatTime(13.5)).toBe("1:30pm");
-    expect(formatTime(12)).toBe("12pm");
-    expect(formatTime(0)).toBe("12am");
-    expect(formatTimeRange(9, 10)).toBe("9 – 10am");
-    expect(formatTimeRange(9.5, 11)).toBe("9:30 – 11am");
-    expect(formatTimeRange(11, 13)).toBe("11am – 1pm");
-    expect(formatTimeRange(23, 24)).toBe("11pm – 12am");
-    expect(formatHourLabel(0)).toBe("");
-    expect(formatHourLabel(9)).toBe("9 AM");
-    expect(formatHourLabel(12)).toBe("12 PM");
-    expect(formatHourLabel(15)).toBe("3 PM");
+    expect(formatTime(9, "12h")).toBe("9am");
+    expect(formatTime(13.5, "12h")).toBe("1:30pm");
+    expect(formatTime(12, "12h")).toBe("12pm");
+    expect(formatTime(0, "12h")).toBe("12am");
+    expect(formatTimeRange(9, 10, "12h")).toBe("9 – 10am");
+    expect(formatTimeRange(9.5, 11, "12h")).toBe("9:30 – 11am");
+    expect(formatTimeRange(11, 13, "12h")).toBe("11am – 1pm");
+    expect(formatTimeRange(23, 24, "12h")).toBe("11pm – 12am");
+    expect(formatHourLabel(0, "12h")).toBe("");
+    expect(formatHourLabel(9, "12h")).toBe("9 AM");
+    expect(formatHourLabel(12, "12h")).toBe("12 PM");
+    expect(formatHourLabel(15, "12h")).toBe("3 PM");
+  });
+
+  it("uses a 24-hour clock when the viewer prefers it", () => {
+    expect(formatTime(9, "24h")).toBe("09:00");
+    expect(formatTime(13.5, "24h")).toBe("13:30");
+    expect(formatTimeRange(9, 10, "24h")).toBe("09:00 – 10:00");
+    expect(formatTimeRange(23, 24, "24h")).toBe("23:00 – 00:00");
+    expect(formatHourLabel(0, "24h")).toBe("");
+    expect(formatHourLabel(15, "24h")).toBe("15:00");
   });
 
   it("snaps to quarter hours", () => {

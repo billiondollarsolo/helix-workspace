@@ -9,9 +9,11 @@ import {
   formatShortDate,
   formatTime,
   isoDayDiff,
+  pickerWeekStart,
   type WeekStartDay,
 } from "./date-math";
 import type { EventDraft } from "./event-draft";
+import { useTimeFormat } from "./preferences";
 import { RecurrenceField } from "./recurrence-field";
 
 const SLOTS = Array.from({ length: 96 }, (_, index) => index / 4);
@@ -97,7 +99,7 @@ function DateButton({
           mode="date"
           label={label}
           value={isoToLocalDate(value)}
-          weekStartsOn={weekStartsOn}
+          weekStartsOn={pickerWeekStart(weekStartsOn)}
           onChange={(date) => {
             onChange(localDateToIso(date));
             setOpen(false);
@@ -118,6 +120,7 @@ export function EventTimeFields({
   readonly onChange: (draft: EventDraft) => void;
 }) {
   const ids = useId();
+  const format = useTimeFormat();
   const zones = useMemo(() => supportedTimeZones(draft.timeZone), [draft.timeZone]);
   const sameDay = draft.startDate === draft.endDate;
   const endSlots = sameDay ? SLOTS.filter((slot) => slot > draft.startTime) : SLOTS;
@@ -147,7 +150,7 @@ export function EventTimeFields({
             >
               {SLOTS.map((slot) => (
                 <option key={slot} value={String(slot)}>
-                  {formatTime(slot)}
+                  {formatTime(slot, format)}
                 </option>
               ))}
             </select>
@@ -162,13 +165,13 @@ export function EventTimeFields({
               onChange={(event) => onChange({ ...draft, endTime: Number(event.target.value) })}
             >
               {!endSlots.includes(draft.endTime) ? (
-                <option value={String(draft.endTime)}>{formatTime(draft.endTime)}</option>
+                <option value={String(draft.endTime)}>{formatTime(draft.endTime, format)}</option>
               ) : null}
               {endSlots.map((slot) => (
                 <option key={slot} value={String(slot)}>
                   {sameDay
-                    ? `${formatTime(slot)} (${durationText(slot - draft.startTime)})`
-                    : formatTime(slot)}
+                    ? `${formatTime(slot, format)} (${durationText(slot - draft.startTime)})`
+                    : formatTime(slot, format)}
                 </option>
               ))}
             </select>

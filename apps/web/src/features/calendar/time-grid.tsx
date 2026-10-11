@@ -20,6 +20,7 @@ import {
 } from "./event-chip";
 import type { CalendarOccurrence } from "./event-model";
 import { allDayPlacements, timedSegmentsForDay } from "./grid-layout";
+import { useTimeFormat } from "./preferences";
 import { useGridPointer, type GridPointerCallbacks } from "./use-grid-pointer";
 
 const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
@@ -60,6 +61,7 @@ export function TimeGrid({
   onOpenDay,
   label,
 }: TimeGridProps) {
+  const format = useTimeFormat();
   const scrollRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const { drag, onColumnPointerDown, onEventPointerDown, consumeDragClick } = useGridPointer(
@@ -142,7 +144,7 @@ export function TimeGrid({
         <div className="cal-hours" aria-hidden="true">
           {HOURS.map((hour) => (
             <div key={hour} className="cal-hour-label type-caption">
-              <span>{formatHourLabel(hour)}</span>
+              <span>{formatHourLabel(hour, format)}</span>
             </div>
           ))}
         </div>
@@ -194,7 +196,9 @@ export function TimeGrid({
                 <span className="cal-event-title">
                   {drag.occurrence.event.title || "(No title)"}
                 </span>
-                <span className="cal-event-meta">{formatTimeRange(drag.start, drag.end)}</span>
+                <span className="cal-event-meta">
+                  {formatTimeRange(drag.start, drag.end, format)}
+                </span>
               </div>
             ) : null}
             {drag?.kind === "create" && drag.day === day && drag.from !== drag.to ? (
@@ -221,6 +225,7 @@ export function TimeGrid({
 }
 
 function SlotPreview({ start, end }: { readonly start: number; readonly end: number }) {
+  const format = useTimeFormat();
   return (
     <div
       aria-hidden="true"
@@ -235,7 +240,7 @@ function SlotPreview({ start, end }: { readonly start: number; readonly end: num
       }
     >
       <span className="cal-event-title">(No title)</span>
-      <span className="cal-event-meta">{formatTimeRange(start, end)}</span>
+      <span className="cal-event-meta">{formatTimeRange(start, end, format)}</span>
     </div>
   );
 }

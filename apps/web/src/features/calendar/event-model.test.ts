@@ -10,6 +10,7 @@ import {
 } from "./event-model";
 import { allDayPlacements, timedSegmentsForDay } from "./grid-layout";
 import { describeReminder, reminderFromMinutes, reminderToMinutes } from "./reminders";
+import { calendarPreferencesFrom } from "./preferences";
 import { shiftDraft } from "./use-event-actions";
 
 function apiEvent(overrides: Partial<CalendarApiEvent> = {}): CalendarApiEvent {
@@ -99,16 +100,25 @@ describe("occurrencesInWindow", () => {
     });
   });
 
-  it("only trusts http(s) links and in-app Meet paths for Join", () => {
+  it("only trusts http(s) links for Join", () => {
     expect(conferenceUrl(apiEvent({ location: "https://meet.example.test/abc" }))).toBe(
       "https://meet.example.test/abc",
     );
     expect(conferenceUrl(apiEvent({ location: "Room 4" }))).toBeNull();
+    const conference = { provider: "meet", roomId: "r1", joinCode: "abc-defg-hij" };
     expect(
-      conferenceUrl(apiEvent({ metadata: { conference: { url: "/meet?code=abc-defg-hij" } } })),
-    ).toBe("/meet?code=abc-defg-hij");
+      conferenceUrl(
+        apiEvent({
+          metadata: {
+            conference: { ...conference, joinUrl: "https://helix.test/meet?code=abc-defg-hij" },
+          },
+        }),
+      ),
+    ).toBe("https://helix.test/meet?code=abc-defg-hij");
     expect(
-      conferenceUrl(apiEvent({ metadata: { conference: { url: "javascript:alert(1)" } } })),
+      conferenceUrl(
+        apiEvent({ metadata: { conference: { ...conference, joinUrl: "javascript:alert(1)" } } }),
+      ),
     ).toBeNull();
   });
 });
@@ -233,6 +243,66 @@ describe("drafts", () => {
       startsAt: "2026-05-20T00:00:00.000Z",
       endsAt: "2026-05-21T00:00:00.000Z",
     });
+  });
+});
+
+describe("video conferencing in drafts", () => {
+  it("asks the server for a room once and keeps or drops an existing link", () => {
+    const fresh = newEventDraft({ date: "2026-05-20", calendarId: null, timeZone: "UTC" });
+    expect(draftToEventInput(fresh).conference).toBeUndefined();
+    expect(draftToEventInput({ ...fresh, addConference: true }).conference).toBe("meet");
+
+    const conference = {
+      provider: "meet",
+      roomId: "r1",
+      joinCode: "abc-defg-hij",
+      joinUrl: "https://helix.test/meet?code=abc-defg-hij",
+    };
+    const existing = draftFromEvent(apiEvent({ metadata: { conference } }));
+    expect(existing.conference).toEqual(conference);
+    const kept = draftToEventInput({ ...existing, addConference: true });
+    expect(kept.conference).toBeUndefined();
+    expect(kept.metadata).toMatchObject({ conference });
+    expect(draftToEventInput({ ...existing, conference: null }).metadata).not.toHaveProperty(
+      "conference",
+    );
+  });
+});
+
+describe("calendar preferences", () => {
+  it("reads account preferences and falls back to the browser for unset fields", () => {
+    const account = {
+      language: null,
+      timeZone: "Europe/Paris",
+      dateFormat: null,
+      timeFormat: "24h" as const,
+      weekStart: 1,
+      workingHours: {
+        enabled: true,
+        days: [
+          { day: 2, start: "08:30", end: "16:00" },
+          { day: 1, start: "09:00", end: "17:30" },
+        ],
+      },
+      mail: { readingPane: "right" as const, density: "default" as const, conversationView: true },
+      updatedAt: null,
+    };
+    expect(calendarPreferencesFrom(account)).toEqual({
+      weekStartsOn: 1,
+      timeZone: "Europe/Paris",
+      timeFormat: "24h",
+      workingHours: { start: 8.5, end: 17.5, days: [1, 2] },
+    });
+    const unset = calendarPreferencesFrom({
+      ...account,
+      timeZone: null,
+      timeFormat: null,
+      weekStart: null,
+      workingHours: null,
+    });
+    expect(unset.timeZone).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
+    expect(unset.workingHours).toEqual({ start: 9, end: 17, days: [1, 2, 3, 4, 5] });
+    expect(["12h", "24h"]).toContain(unset.timeFormat);
   });
 });
 

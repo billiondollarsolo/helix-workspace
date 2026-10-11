@@ -6,7 +6,7 @@ import { InlineError } from "@/components/ui/inline-error";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { labelFill } from "./colors";
-import type { WeekStartDay } from "./date-math";
+import { pickerWeekStart, type WeekStartDay } from "./date-math";
 import type { CalendarSource } from "./event-model";
 
 function isoToLocalDate(iso: string): Date {
@@ -67,7 +67,7 @@ export function CalendarSidebar({
         mode="date"
         label="Go to date"
         value={isoToLocalDate(anchor)}
-        weekStartsOn={weekStartsOn}
+        weekStartsOn={pickerWeekStart(weekStartsOn)}
         onChange={(date) => onPickDate(localDateToIso(date))}
       />
 

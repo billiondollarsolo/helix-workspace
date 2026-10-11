@@ -43,7 +43,7 @@ export interface EventDraft {
   readonly preservedRule: string | null;
   readonly reminder: Reminder | null;
   readonly conference: EventConference | null;
-  /** Create a Meet room on save. */
+  /** Ask the server for a Meet room on save. */
   readonly addConference: boolean;
   /** Shown as busy in free/busy (`transparency: opaque`). */
   readonly busy: boolean;
@@ -225,14 +225,11 @@ export function draftInstants(draft: EventDraft): {
   };
 }
 
-/** The create/update payload for a draft, with an optional new conference. */
-export function draftToEventInput(
-  draft: EventDraft,
-  conference: EventConference | null = draft.conference,
-): CalendarCreateEventInput {
+/** The create/update payload for a draft. A new video call is requested with `conference: "meet"`. */
+export function draftToEventInput(draft: EventDraft): CalendarCreateEventInput {
   const { startsAt, endsAt } = draftInstants(draft);
   let metadata = metadataWithReminder(draft.metadata, draft.reminder);
-  metadata = metadataWithConference(metadata, conference);
+  metadata = metadataWithConference(metadata, draft.conference);
   metadata = { ...metadata, transparency: draft.busy ? "opaque" : "transparent" };
   return {
     calendarId: draft.calendarId,
@@ -247,5 +244,6 @@ export function draftToEventInput(
     recurrenceRule: draftRecurrenceRule(draft),
     attendees: attendeeInputs(draft),
     metadata,
+    ...(draft.addConference && draft.conference === null ? { conference: "meet" as const } : {}),
   };
 }

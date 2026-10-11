@@ -7,7 +7,15 @@
 import { instantToLocalDateTime } from "@helix/contracts";
 
 /** 0 = Sunday … 6 = Saturday, matching `Date.getUTCDay`. */
-export type WeekStartDay = 0 | 1 | 6;
+export type WeekStartDay = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+
+/** The date picker offers Sunday, Monday or Saturday starts; other days fall back to Sunday. */
+export function pickerWeekStart(day: WeekStartDay): 0 | 1 | 6 {
+  return day === 1 || day === 6 ? day : 0;
+}
+
+/** The viewer's clock: "9:30am" or "09:30". */
+export type TimeFormat = "12h" | "24h";
 
 export type CalendarView = "day" | "3day" | "week" | "month" | "schedule";
 
@@ -195,23 +203,28 @@ function bareTime(hour: number): string {
   return m === 0 ? String(display) : `${String(display)}:${String(m).padStart(2, "0")}`;
 }
 
-/** "9am", "9:30am", "12pm" */
-export function formatTime(hour: number): string {
+/** "9am", "9:30am", "12pm"; or "09:00", "13:30" on a 24-hour clock. */
+export function formatTime(hour: number, format: TimeFormat): string {
+  if (format === "24h") {
+    const { h, m } = clockParts(hour);
+    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+  }
   return `${bareTime(hour)}${meridiem(hour)}`;
 }
 
-/** "9 – 10am", "9:30 – 11am", "11am – 1pm" */
-export function formatTimeRange(start: number, end: number): string {
+/** "9 – 10am", "9:30 – 11am", "11am – 1pm"; or "09:00 – 10:00". */
+export function formatTimeRange(start: number, end: number, format: TimeFormat): string {
   const endHour = end >= 24 ? 0 : end;
-  if (meridiem(start) === meridiem(endHour)) {
-    return `${bareTime(start)} – ${formatTime(endHour)}`;
+  if (format === "12h" && meridiem(start) === meridiem(endHour)) {
+    return `${bareTime(start)} – ${formatTime(endHour, format)}`;
   }
-  return `${formatTime(start)} – ${formatTime(endHour)}`;
+  return `${formatTime(start, format)} – ${formatTime(endHour, format)}`;
 }
 
-/** Hour gutter label: "9 AM", "12 PM". Midnight has no label, like most calendars. */
-export function formatHourLabel(hour: number): string {
+/** Hour gutter label: "9 AM" or "09:00". Midnight has no label, like most calendars. */
+export function formatHourLabel(hour: number, format: TimeFormat): string {
   if (hour === 0) return "";
+  if (format === "24h") return `${String(hour).padStart(2, "0")}:00`;
   const display = hour % 12 === 0 ? 12 : hour % 12;
   return `${String(display)} ${hour < 12 ? "AM" : "PM"}`;
 }

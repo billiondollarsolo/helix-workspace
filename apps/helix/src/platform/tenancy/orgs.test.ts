@@ -391,7 +391,8 @@ describe("PostgresOrgStore", () => {
       },
     });
 
-    expect(recording.calls[0]?.text).toContain("feature_flags->>'byo_storage' = 'true'");
+    // BYO storage needs no entitlement flag; the configured storage kind decides.
+    expect(recording.calls[0]?.text).not.toContain("feature_flags");
     expect(recording.calls[0]?.text).toContain("byo_config->'storage'->>'kind' = 'byo'");
     expect(recording.calls[0]?.values).toEqual([2]);
     expect(recording.calls[1]?.text).toContain("helix.tenant_config_reason");
@@ -408,7 +409,6 @@ function orgRecord(overrides: Partial<OrgRecord>): OrgRecord {
     displayName: DEFAULT_ORG_DISPLAY_NAME,
     status: "active",
     tier: "personal",
-    planId: "personal",
     region: DEFAULT_ORG_REGION,
     byoConfig: {},
     featureFlags: {},
@@ -439,7 +439,6 @@ function orgRow(overrides: Partial<OrgRecord> = {}) {
     display_name: overrides.displayName ?? DEFAULT_ORG_DISPLAY_NAME,
     status: overrides.status ?? "active",
     tier: overrides.tier ?? "personal",
-    plan_id: overrides.planId ?? "personal",
     region: overrides.region ?? DEFAULT_ORG_REGION,
     byo_config: overrides.byoConfig ?? {},
     feature_flags: overrides.featureFlags ?? {},

@@ -17,7 +17,6 @@ const tenant: TenantContext = {
     displayName: "Profiles",
     status: "active",
     tier: "personal",
-    planId: "personal",
     region: "default",
     byoConfig: {},
     featureFlags: {},

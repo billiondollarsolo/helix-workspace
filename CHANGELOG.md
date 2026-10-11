@@ -20,9 +20,17 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Changed
 
-- Organizations can always share Drive files with their own members; the `b2b_sharing` flag
-  ("External sharing" in admin settings) now governs only public share links, so personal-plan
-  and single-tenant workspaces share internally and admins opt in to sharing outside.
+- Helix is free and open source with no plans or limits (ADR-0030). Every organization gets
+  every feature, and every quota (storage, AI tokens and images, actors, outbound webhooks,
+  integration API requests per second, export jobs per hour) defaults to unlimited; an org
+  admin may still set its own cap. Storage no longer falls back to 5 GB, webhooks to 5, or the
+  integration API to 5 requests per second. Agent and AI cost budgets have no default for any
+  security tier; admin-configured budgets still apply, and sovereign stays local-AI-only.
+- Organizations can always share Drive files with their own members and create public share
+  links for anyone with permission; the `b2b_sharing` flag no longer gates anything.
+- BYO storage no longer requires a `byo_storage` entitlement flag.
+- Tenant export manifests and signup events drop `planId`, and signup metrics and Alertmanager
+  grouping drop the `plan_id` label.
 - Live E2E runs give the API a deterministic OpenAI-compatible model
   (`apps/web/tests/e2e/support/fake-model-server.ts`), so the assistant spec sends a
   prompt and checks the streamed provider answer instead of only the no-model state.
@@ -32,6 +40,19 @@ All notable changes to Helix Workspace are documented here. This file follows
 - Dependency images move to Go 1.26.9, Alpine 3.24.2, PostgreSQL 18.6, Redis 8.8.3,
   OpenSSL 3.5.9, and patched Go modules in NATS, Cerbos, and Caddy; the scanned inventory now
   matches the Compose pins (RustFS stays on 1.0.0-beta.12 until 1.0.0 passes its health check).
+
+### Removed
+
+- Commercial plans: the `plans` table, `orgs.plan_id`, plan defaults in the effective tenant
+  config, and the plan types in `@helix/contracts` / `@helix/sdk-types`
+  (`CommercialPlanId`, `SupportTier`).
+- Billing: `/api/admin/billing/*`, the `admin_billing_accounts` and `admin_billing_invoices`
+  tables, and the admin console's "Billing & usage" section with its "Upgrade plan" link and
+  `VITE_HELIX_BILLING_ENABLED` build flag.
+- Plan-entitlement feature flags and their admin toggles (`b2b_sharing`, `byo_*`, `sso_saml`,
+  `scim_provisioning`, `custom_domain`, `white_label`, `multi_region_dr`, `dedicated_csm`,
+  `marketplace_install_paid`, `support_tier`); stored values still parse and are ignored.
+- The CI step that cleared the demo org's `api_rps_limit` before the k6 load test.
 
 ### Fixed
 

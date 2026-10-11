@@ -406,7 +406,6 @@ function tenantLifecycleView(org: OrgRecord): Record<string, unknown> {
     displayName: org.displayName,
     status: org.status,
     tier: org.tier,
-    planId: org.planId,
     region: org.region,
   };
 }

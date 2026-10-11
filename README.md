@@ -36,6 +36,9 @@ The runtime retains tenant-aware interfaces, but public multi-tenant SaaS is not
 - [Architecture decisions](docs/adr/README.md)
 
 Licensed under [Apache-2.0](LICENSE); see [NOTICE](NOTICE) and [third-party notices](THIRD_PARTY_NOTICES.md).
+Helix is free to use however you want: there are no plans, paid features, license keys, billing
+or usage limits. Every organization gets every feature, and quotas are unlimited unless an
+organization admin sets one ([ADR-0030](docs/adr/adr-0030-free-open-source-no-plans-or-limits.md)).
 
 ## Development
 

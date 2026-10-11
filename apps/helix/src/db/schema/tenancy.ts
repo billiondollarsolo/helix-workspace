@@ -19,27 +19,6 @@ import { actors, organizationMemberships } from "./auth.js";
 import { orgStatus, timestamps } from "./common.js";
 import { mailOutboundProviders } from "./mail.js";
 
-export const plans = pgTable(
-  "plans",
-  {
-    id: text("id").primaryKey(),
-    displayName: text("display_name").notNull(),
-    description: text("description"),
-    pricing: jsonb("pricing").default({}).notNull(),
-    featureFlagsDefault: jsonb("feature_flags_default").default({}).notNull(),
-    quotasDefault: jsonb("quotas_default").default({}).notNull(),
-    availableFor: text("available_for").array().default(["saas", "self-host"]).notNull(),
-    stripeProductId: text("stripe_product_id"),
-    stripePriceIds: jsonb("stripe_price_ids"),
-    sortOrder: integer("sort_order").default(100).notNull(),
-    available: boolean("available").default(true).notNull(),
-    ...timestamps,
-  },
-  (table) => ({
-    availableIdx: index("plans_available_idx").on(table.available, table.sortOrder),
-  }),
-);
-
 export const orgs = pgTable(
   "orgs",
   {
@@ -48,10 +27,6 @@ export const orgs = pgTable(
     displayName: text("display_name").notNull(),
     status: orgStatus("status").default("active").notNull(),
     tier: text("tier").default("personal").notNull(),
-    planId: text("plan_id")
-      .default("personal")
-      .notNull()
-      .references(() => plans.id),
     region: text("region").default("default").notNull(),
     byoConfig: jsonb("byo_config").default({}).notNull(),
     featureFlags: jsonb("feature_flags").default({}).notNull(),
@@ -66,7 +41,6 @@ export const orgs = pgTable(
   (table) => ({
     slugIdx: uniqueIndex("orgs_slug_idx").on(table.slug),
     statusIdx: index("orgs_status_idx").on(table.status),
-    planIdx: index("orgs_plan_id_idx").on(table.planId),
     regionCanonical: check(
       "orgs_region_canonical_check",
       sql`${table.region} ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'`,

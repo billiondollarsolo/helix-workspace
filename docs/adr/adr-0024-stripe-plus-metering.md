@@ -4,7 +4,7 @@
 
 ## Status
 
-Proposed (gates Commercial Phase B.2 + B.3)
+Superseded by [ADR-0030](adr-0030-free-open-source-no-plans-or-limits.md): Helix is free and open source with no plans, paid features, license keys, billing or plan limits. Previously: Proposed (gates Commercial Phase B.2 + B.3)
 
 ## Context
 

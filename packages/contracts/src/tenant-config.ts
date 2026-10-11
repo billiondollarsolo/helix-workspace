@@ -12,58 +12,41 @@ const jsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
 );
 const jsonObjectSchema: z.ZodType<JsonObject> = z.record(z.string(), jsonValueSchema);
 
-export const commercialPlanIdSchema = z.enum([
-  "personal",
-  "pro",
-  "business",
-  "enterprise",
-  "sovereign",
-]);
-export type CommercialPlanId = z.infer<typeof commercialPlanIdSchema>;
-
 export const dlpEnforcementModeSchema = z.enum(["off", "warn", "block"]);
 export type DlpEnforcementMode = z.infer<typeof dlpEnforcementModeSchema>;
 
 export const watermarkModeSchema = z.enum(["off", "visible", "invisible", "both"]);
 export type WatermarkMode = z.infer<typeof watermarkModeSchema>;
 
-export const supportTierSchema = z.enum([
-  "community",
-  "email-48h",
-  "priority-24h",
-  "premium-4h",
-  "premium-1h-named",
-]);
-export type SupportTier = z.infer<typeof supportTierSchema>;
-
 export const tenantByoConfigSchema = jsonObjectSchema;
 export type TenantByoConfig = z.infer<typeof tenantByoConfigSchema>;
 
+/**
+ * Tenant feature flags. Helix is free and open source with no plans: every
+ * feature is available to every org. The remaining flags are org-admin policy
+ * switches (an admin may turn outbound mail or AI features off), not
+ * entitlements, and they default to on, except `calendar_import_invitations`,
+ * which an admin opts into. Retired plan-entitlement keys in older
+ * stored configs (for example `b2b_sharing`, `byo_storage` or `support_tier`)
+ * still parse via passthrough and have no effect.
+ */
 export const tenantFeatureFlagsSchema = z
   .object({
     assistant_retrieval: z.boolean(),
     ai_smart_compose: z.boolean(),
     dlp_enforcement: dlpEnforcementModeSchema,
     watermark: watermarkModeSchema,
-    b2b_sharing: z.boolean(),
     mail_outbound: z.boolean(),
     calendar_import_invitations: z.boolean(),
-    sso_saml: z.boolean(),
-    scim_provisioning: z.boolean(),
-    custom_domain: z.boolean(),
-    byo_storage: z.boolean(),
-    byo_database: z.boolean(),
-    byo_kms: z.boolean(),
-    byo_ai_provider: z.boolean(),
-    white_label: z.boolean(),
-    multi_region_dr: z.boolean(),
-    dedicated_csm: z.boolean(),
-    marketplace_install_paid: z.boolean(),
-    support_tier: supportTierSchema,
   })
   .passthrough();
 export type TenantFeatureFlags = z.infer<typeof tenantFeatureFlagsSchema>;
 
+/**
+ * Tenant quotas. `null` means unlimited, which is the system default: Helix
+ * has no plan limits. An org admin may still set an explicit cap for its own
+ * tenant.
+ */
 export const tenantQuotasSchema = z
   .object({
     storage_bytes_limit: z.number().nullable(),
@@ -98,35 +81,22 @@ export const tenantConfigSchema = z.object({
 export type TenantConfig = z.infer<typeof tenantConfigSchema>;
 
 export const SYSTEM_TENANT_FEATURE_FLAGS = {
-  assistant_retrieval: false,
-  ai_smart_compose: false,
+  assistant_retrieval: true,
+  ai_smart_compose: true,
   dlp_enforcement: "off",
   watermark: "off",
-  b2b_sharing: false,
   mail_outbound: true,
   calendar_import_invitations: false,
-  sso_saml: false,
-  scim_provisioning: false,
-  custom_domain: false,
-  byo_storage: false,
-  byo_database: false,
-  byo_kms: false,
-  byo_ai_provider: false,
-  white_label: false,
-  multi_region_dr: false,
-  dedicated_csm: false,
-  marketplace_install_paid: false,
-  support_tier: "community",
 } as const satisfies TenantFeatureFlags;
 
 export const SYSTEM_TENANT_QUOTAS = {
-  storage_bytes_limit: 5_000_000_000,
-  ai_tokens_monthly_limit: 100_000,
-  ai_image_gen_monthly_limit: 10,
-  actors_limit: 1,
-  outbound_webhooks_limit: 5,
-  api_rps_limit: 5,
-  export_jobs_per_hour: 10,
+  storage_bytes_limit: null,
+  ai_tokens_monthly_limit: null,
+  ai_image_gen_monthly_limit: null,
+  actors_limit: null,
+  outbound_webhooks_limit: null,
+  api_rps_limit: null,
+  export_jobs_per_hour: null,
 } as const satisfies TenantQuotas;
 
 export const SYSTEM_TENANT_BRANDING = {} as const satisfies TenantBranding;

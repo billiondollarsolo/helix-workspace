@@ -879,9 +879,6 @@ describe("AdminOverview", () => {
     await renderWorkspace(CLEAN);
 
     const details = container.querySelector<HTMLDetailsElement>("details.admin-disclosure");
-    // Billing is the worked example: the whole section 404s and no check here
-    // can see it.
-    expect(details?.textContent).toContain("Billing & usage");
     expect(details?.textContent).toContain("Audit log");
     // The checked sections must not appear in the not-read list.
     expect(details?.textContent).not.toContain("No check on this page reads Domains");

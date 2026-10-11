@@ -1,4 +1,3 @@
-import type postgres from "postgres";
 import {
   SYSTEM_TENANT_CONFIG,
   type TenantConfig,
@@ -8,49 +7,13 @@ import {
 import type { JsonObject, JsonValue } from "@helix/sdk-types";
 import type { OrgRecord } from "./orgs.js";
 
-export interface PlanRecord {
-  readonly id: string;
-  readonly displayName: string;
-  readonly featureFlagsDefault: JsonObject;
-  readonly quotasDefault: JsonObject;
-}
-
-export interface PlanStore {
-  findById(id: string): Promise<PlanRecord | null>;
-}
-
-interface PlanRow {
-  readonly id: string;
-  readonly display_name: string;
-  readonly feature_flags_default: JsonObject;
-  readonly quotas_default: JsonObject;
-}
-
-export class PostgresPlanStore implements PlanStore {
-  constructor(private readonly sql: postgres.Sql) {}
-
-  async findById(id: string): Promise<PlanRecord | null> {
-    const rows = await this.sql<PlanRow[]>`
-      select id, display_name, feature_flags_default, quotas_default
-      from plans
-      where id = ${id}
-      limit 1
-    `;
-    const row = rows[0];
-    return row === undefined
-      ? null
-      : {
-          id: row.id,
-          displayName: row.display_name,
-          featureFlagsDefault: row.feature_flags_default,
-          quotasDefault: row.quotas_default,
-        };
-  }
-}
-
+/**
+ * Effective tenant config = system defaults, then the org's own overrides,
+ * then any per-request override. Helix has no plans: the system defaults turn
+ * every feature on and leave every quota unlimited (`null`).
+ */
 export interface BuildEffectiveTenantConfigInput {
   readonly org: Pick<OrgRecord, "byoConfig" | "featureFlags" | "quotas" | "branding">;
-  readonly plan?: Pick<PlanRecord, "featureFlagsDefault" | "quotasDefault"> | null;
   readonly override?: {
     readonly byo?: JsonObject;
     readonly features?: JsonObject;
@@ -64,13 +27,11 @@ export function buildEffectiveTenantConfig(input: BuildEffectiveTenantConfigInpu
     byo: mergeJsonObjects(SYSTEM_TENANT_CONFIG.byo, input.org.byoConfig, input.override?.byo),
     features: mergeJsonObjects(
       SYSTEM_TENANT_CONFIG.features,
-      input.plan?.featureFlagsDefault,
       input.org.featureFlags,
       input.override?.features,
     ) as TenantFeatureFlags,
     quotas: mergeJsonObjects(
       SYSTEM_TENANT_CONFIG.quotas,
-      input.plan?.quotasDefault,
       input.org.quotas,
       input.override?.quotas,
     ) as TenantQuotas,
@@ -82,11 +43,10 @@ export function buildEffectiveTenantConfig(input: BuildEffectiveTenantConfigInpu
   };
 }
 
-/** Load an org's effective tenant config (system defaults, plan defaults, org overrides). */
+/** Load an org's effective tenant config (system defaults, then org overrides). */
 export async function loadEffectiveTenantConfig(
   stores: {
     readonly orgs: { findById(id: string): Promise<OrgRecord | null> };
-    readonly plans: PlanStore;
   },
   orgId: string,
 ): Promise<TenantConfig | null> {
@@ -94,7 +54,7 @@ export async function loadEffectiveTenantConfig(
   if (org === null) {
     return null;
   }
-  return buildEffectiveTenantConfig({ org, plan: await stores.plans.findById(org.planId) });
+  return buildEffectiveTenantConfig({ org });
 }
 
 function mergeJsonObjects(...objects: readonly (JsonObject | undefined)[]): JsonObject {

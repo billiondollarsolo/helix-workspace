@@ -3,7 +3,7 @@ import { ChevronDown as ChevronDownIcon, Search as SearchIcon } from "lucide-rea
 /* The admin console's grouped section navigation. */
 
 import {
-  ADMIN_NAV_GROUPS_FOR_BUILD,
+  ADMIN_NAV_GROUPS,
   ADMIN_NAV_ROOT,
   type AdminSectionId,
 } from "@/features/admin/admin-console-data";
@@ -177,7 +177,7 @@ export function AdminSidebar({
     setFilter("");
   }, [section]);
 
-  const filteredGroups = ADMIN_NAV_GROUPS_FOR_BUILD.map((group) => ({
+  const filteredGroups = ADMIN_NAV_GROUPS.map((group) => ({
     title: group.title,
     /* A matching group title keeps all its rows — searching "security" should
        show what is in Security, not nothing. */

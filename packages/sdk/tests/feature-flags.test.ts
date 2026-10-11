@@ -20,14 +20,14 @@ describe("feature flag client", () => {
     const provider = new StaticFeatureFlagProvider(
       new Map<string, unknown>([
         ["ai_smart_compose", true],
-        ["support_tier", "premium-4h"],
+        ["dlp_enforcement", "block"],
       ]),
     );
 
     flags.setProvider(provider);
 
     expect(flags.get("ai_smart_compose", false)).toBe(true);
-    await expect(flags.getAsync("support_tier", "community")).resolves.toBe("premium-4h");
+    await expect(flags.getAsync("dlp_enforcement", "off")).resolves.toBe("block");
   });
 
   it("passes evaluation context to providers", async () => {

@@ -6,7 +6,7 @@ import { actorRoleDecision } from "../permissions/roles.js";
 
 /**
  * Shared helpers for the Admin Console backend domains (Groups & OUs,
- * Security policies, OAuth apps, Billing, Domain/DNS).
+ * Security policies, OAuth apps, Domain/DNS).
  *
  * Every domain reuses the same scope-gating, error envelope, cursor codec, and
  * Zod query primitives so the surfaces behave identically to the pre-existing
@@ -122,7 +122,7 @@ export interface KeysetCursor {
 }
 
 /** Encode a `(createdAt, id)` keyset cursor. */
-export function encodeCursor(record: { readonly createdAt: string; readonly id: string }): string {
+function encodeCursor(record: { readonly createdAt: string; readonly id: string }): string {
   return Buffer.from(
     JSON.stringify({ createdAt: record.createdAt, id: record.id }),
     "utf8",

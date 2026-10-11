@@ -129,7 +129,6 @@ describe("observability infrastructure assets", () => {
         "service",
         "slo",
         "tier",
-        "plan_id",
         "region",
       ]),
     );

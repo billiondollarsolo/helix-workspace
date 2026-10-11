@@ -25,7 +25,6 @@ const tenantProperties = {
   orgId: stringSchema,
   orgSlug: stringSchema,
   tier: stringSchema,
-  planId: stringSchema,
   region: stringSchema,
   source: { const: "signup" },
 } as const;
@@ -155,7 +154,6 @@ export const signupEventSchemas: readonly EventSchemaDefinition[] = [
         "orgId",
         "orgSlug",
         "tier",
-        "planId",
         "region",
         "source",
         "slo",
@@ -213,7 +211,7 @@ function baseRequiredProperties(
   if (identity === "actor") {
     return ["orgId", "actorId", "source", "step"];
   }
-  return ["orgId", "orgSlug", "tier", "planId", "region", "source", "step"];
+  return ["orgId", "orgSlug", "tier", "region", "source", "step"];
 }
 
 function tenantScopedProperties(identity: "actor" | "org"): JsonObject {

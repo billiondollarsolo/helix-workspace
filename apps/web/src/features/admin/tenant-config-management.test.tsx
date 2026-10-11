@@ -35,34 +35,22 @@ const tenantConfigPayload = {
     features: {
       ai_smart_compose: true,
       dlp_enforcement: "warn",
-      support_tier: "priority-24h",
     },
     quotas: {
       api_rps_limit: 10,
       actors_limit: null,
-    },
-    plan: {
-      id: "business",
-      displayName: "Business",
-      featureFlagsDefault: {
-        byo_storage: true,
-      },
-      quotasDefault: {
-        api_rps_limit: 25,
-        actors_limit: 500,
-      },
     },
     effective: {
       byo: {},
       features: {
         ai_smart_compose: true,
         dlp_enforcement: "warn",
-        support_tier: "priority-24h",
-        byo_storage: true,
+        assistant_retrieval: true,
+        mail_outbound: true,
       },
       quotas: {
         api_rps_limit: 10,
-        actors_limit: 500,
+        actors_limit: null,
       },
       branding: {
         display_name_override: "Acme",
@@ -191,11 +179,11 @@ describe("TenantConfigManagement", () => {
     await waitFor(() => {
       expect(container.textContent).toContain("Workspace settings");
       expect(container.textContent).toContain("AI smart compose");
-      expect(container.textContent).toContain("Business plan defaults");
+      expect(container.textContent).toContain("2 tenant overrides");
       expect(container.textContent).toContain("Integration API RPS");
       expect(container.textContent).toContain("Override");
     });
-    // The flag list is grouped rather than one flat column of 20 checkboxes.
+    // The flag list is grouped by area.
     expect(
       [...container.querySelectorAll("fieldset > legend")].map((element) => element.textContent),
     ).toEqual(BOOLEAN_FEATURE_FLAG_GROUPS.map((group) => group.title));
@@ -246,19 +234,19 @@ describe("TenantConfigManagement", () => {
     expect(patchBody()).not.toHaveProperty("branding");
   });
 
-  it("shows plan-aware effective quotas without presenting normal quota editing", async () => {
+  it("shows effective quotas without plan defaults or normal quota editing", async () => {
     fetchMock.mockResolvedValue(Response.json(tenantConfigPayload));
 
     await render();
 
     await waitFor(() => {
-      expect(container.textContent).toContain("Business plan defaults");
+      expect(container.textContent).toContain("2 tenant overrides");
       expect(container.textContent).toContain("Integration API RPS");
-      expect(container.textContent).toContain("25");
       expect(container.textContent).toContain("10");
       expect(container.textContent).toContain("Actors");
-      expect(container.textContent).toContain("500");
+      expect(container.textContent).toContain("Unlimited");
     });
+    expect(container.textContent).not.toMatch(/\bplan\b/iu);
     expect(() => inputByLabel("Integration API RPS")).toThrow(
       'Field "Integration API RPS" not found.',
     );
@@ -337,7 +325,8 @@ describe("TenantConfigManagement", () => {
         reason: "admin settings update: byo storage",
       });
     });
-    expect(patchBody().features).toStrictEqual({ byo_storage: true });
+    // BYO storage needs no entitlement flag: there are no plans.
+    expect(patchBody()).not.toHaveProperty("features");
     expect(patchBody()).not.toHaveProperty("quotas");
     expect(patchBody()).not.toHaveProperty("branding");
   });
@@ -803,7 +792,7 @@ describe("TenantConfigManagement", () => {
     await render();
 
     await waitFor(() => {
-      expect(container.textContent).toContain("Business plan defaults");
+      expect(container.textContent).toContain("2 tenant overrides");
     });
     const quotas = detailsBySummary("Effective limits");
     expect(quotas.querySelector("summary")?.textContent).toContain("2 tenant overrides");
@@ -819,7 +808,7 @@ describe("TenantConfigManagement", () => {
     await render();
 
     await waitFor(() => {
-      expect(container.textContent).toContain("Business plan defaults");
+      expect(container.textContent).toContain("2 tenant overrides");
     });
     const quotas = detailsBySummary("Effective limits");
     expect(rowByLabel(quotas, "Storage bytes").textContent).toContain("Not reported");

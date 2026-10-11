@@ -27,7 +27,6 @@ const tenant: TenantContext = {
     displayName: "Acme",
     status: "active",
     tier: "business",
-    planId: "business",
     region: "us-east-1",
     byoConfig: {},
     featureFlags: {},
@@ -61,7 +60,7 @@ describe("tenant Fastify hook", () => {
     expect(response.json()).toEqual({
       orgId: tenant.orgId,
       orgSlug: "acme",
-      aiSmartCompose: false,
+      aiSmartCompose: true,
     });
     expect(resolvedUrls).toEqual(["/api/tools"]);
   });

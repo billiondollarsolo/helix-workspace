@@ -23,7 +23,7 @@ describe(
         values (
           ${orgId}, 'tenant-config-merge', 'Tenant config merge', 'active',
           ${sql.json({ storage: { kind: "byo", credentials_secret_handle: "tenant-config-merge" } })},
-          ${sql.json({ byo_storage: true, dlp_enforcement: "warn", ai_smart_compose: true })},
+          ${sql.json({ mail_outbound: false, dlp_enforcement: "warn", ai_smart_compose: true })},
           ${sql.json({ api_rps_limit: 5 })}
         )
       `;
@@ -35,7 +35,7 @@ describe(
       await sql.end();
     });
 
-    it("keeps unsubmitted flags, so BYO storage orgs stay listed", async () => {
+    it("keeps unsubmitted flags and lists BYO storage orgs without any flag", async () => {
       const updated = await store.updateTenantConfig({
         orgId,
         featureFlags: { ai_smart_compose: false },
@@ -43,7 +43,7 @@ describe(
       });
 
       expect(updated?.featureFlags).toEqual({
-        byo_storage: true,
+        mail_outbound: false,
         dlp_enforcement: "warn",
         ai_smart_compose: false,
       });
@@ -54,7 +54,7 @@ describe(
         orgId,
         featureFlags: { dlp_enforcement: null },
       });
-      expect(cleared?.featureFlags).toEqual({ byo_storage: true, ai_smart_compose: false });
+      expect(cleared?.featureFlags).toEqual({ mail_outbound: false, ai_smart_compose: false });
     });
   },
 );

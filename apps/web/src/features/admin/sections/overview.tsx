@@ -25,11 +25,11 @@ import {
  * Two further constraints, both learned from this page misbehaving in a live
  * workspace:
  *
- * Request budget. Every request outside `/api/auth` is metered against the
- * tenant's `api_rps_limit` quota — five per second on the default plan
- * (`packages/contracts/src/tenant-config.ts`), counted per org over a
- * one-second sliding window (`installTenantApiRpsLimitHook`,
- * `apps/helix/src/server.ts`). Five checks leaving in the same tick, on top of
+ * Request budget. Every request outside `/api/auth` is metered: signed-in
+ * browser sessions against a fixed per-session request budget, integrations
+ * against the tenant's `api_rps_limit` (unlimited unless an org admin sets
+ * one), both over a sliding window (`installTenantApiRpsLimitHook`,
+ * `apps/helix/src/bootstrap/request-principal.ts`). Five checks leaving in the same tick, on top of
  * whatever the shell is fetching, put the org over that budget; one check came
  * back 429, and because every admin `queryOptions` in this app sets
  * `retry: false`, that refusal was permanent until the operator clicked Retry.

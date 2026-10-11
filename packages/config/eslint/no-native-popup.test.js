@@ -206,7 +206,7 @@ describe("helix/direct-drizzle-tenant-query", () => {
         valid: [
           "tenantScoped(objects, orgId).select({ id: objects.id });",
           "tenantScoped(driveFolders, orgId).update({ title });",
-          "db.select().from(plans);",
+          "db.select().from(iamPermissionCatalog);",
           "db.select().from(platformConfig);",
           "query.from(dynamicTable);",
           "sql`select * from objects where org_id = ${orgId}`;",

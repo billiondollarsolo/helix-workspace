@@ -13,14 +13,6 @@ const tenantConfigSchema = z.object({
   features: jsonObjectSchema,
   quotas: jsonObjectSchema,
   branding: jsonObjectSchema,
-  plan: z
-    .object({
-      id: z.string(),
-      displayName: z.string(),
-      featureFlagsDefault: jsonObjectSchema,
-      quotasDefault: jsonObjectSchema,
-    })
-    .nullable(),
   effective: z.object({
     byo: jsonObjectSchema,
     features: jsonObjectSchema,

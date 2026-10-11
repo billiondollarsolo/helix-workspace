@@ -3,27 +3,22 @@ import type { AICostBudget } from "./types.js";
 
 export const AI_USD_MICROS = 1_000_000;
 
+/**
+ * Helix has no plan limits: no security tier carries a default AI spend cap.
+ * Admin-configured budgets (`override`) still apply, and sovereign's
+ * local-only AI posture is enforced by the AI routing policy.
+ */
+const unlimitedAICostBudget: AICostBudget = {
+  actorDailyUsdMicros: null,
+  featureDailyUsdMicros: null,
+  warningThresholdRatio: 0.8,
+};
+
 const tierAICostBudgets: Record<SecurityTier, AICostBudget> = {
-  personal: {
-    actorDailyUsdMicros: null,
-    featureDailyUsdMicros: null,
-    warningThresholdRatio: 0.8,
-  },
-  business: {
-    actorDailyUsdMicros: 10 * AI_USD_MICROS,
-    featureDailyUsdMicros: null,
-    warningThresholdRatio: 0.8,
-  },
-  enterprise: {
-    actorDailyUsdMicros: 50 * AI_USD_MICROS,
-    featureDailyUsdMicros: null,
-    warningThresholdRatio: 0.8,
-  },
-  sovereign: {
-    actorDailyUsdMicros: 0,
-    featureDailyUsdMicros: 0,
-    warningThresholdRatio: 0.8,
-  },
+  personal: unlimitedAICostBudget,
+  business: unlimitedAICostBudget,
+  enterprise: unlimitedAICostBudget,
+  sovereign: unlimitedAICostBudget,
 };
 
 export function resolveAICostBudget(

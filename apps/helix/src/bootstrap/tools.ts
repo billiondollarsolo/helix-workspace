@@ -92,7 +92,6 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
     tenantStorageSecretReader,
     orgStore,
     securityPoliciesStore,
-    planStore,
     appPasswordStore,
     auditStore,
     webhookSecretResolver,
@@ -299,8 +298,7 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
 
   const featureFlags = new TenantConfigFeatureFlagProvider({
     environment: bootEnv.NODE_ENV,
-    loadTenantConfig: ({ orgId }) =>
-      loadEffectiveTenantConfig({ orgs: orgStore, plans: planStore }, orgId),
+    loadTenantConfig: ({ orgId }) => loadEffectiveTenantConfig({ orgs: orgStore }, orgId),
   });
 
   const runtimeFeatureFlags = {

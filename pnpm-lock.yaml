@@ -251,9 +251,6 @@ importers:
       '@helix/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
-      '@helix/sdk-types':
-        specifier: workspace:*
-        version: link:../../packages/sdk-types
       '@helix/sdk-web':
         specifier: workspace:*
         version: link:../../packages/sdk-web

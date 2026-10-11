@@ -1282,9 +1282,6 @@ export function featureFlagForTool(tool: Pick<ToolDefinition, "id">): string | u
   if (tool.id === "mail.send" || tool.id === "mail.reply" || tool.id === "mail.forward") {
     return "mail_outbound";
   }
-  if (tool.id === "drive.link.create") {
-    return "b2b_sharing";
-  }
   return undefined;
 }
 

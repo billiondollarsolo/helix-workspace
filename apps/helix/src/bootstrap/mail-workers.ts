@@ -41,7 +41,6 @@ export async function installMailWorkers(context: Awaited<ReturnType<typeof inst
     identityMailTransport,
     tenantStorageSecretReader,
     orgStore,
-    planStore,
     calendarStore,
     domainsStore,
     appPasswordStore,
@@ -259,8 +258,7 @@ export async function installMailWorkers(context: Awaited<ReturnType<typeof inst
   // Inbound iMIP invitations reach calendars only when the tenant flag is on (default off).
   const tenantFeatureFlags = new TenantConfigFeatureFlagProvider({
     environment: bootEnv.NODE_ENV,
-    loadTenantConfig: ({ orgId }) =>
-      loadEffectiveTenantConfig({ orgs: orgStore, plans: planStore }, orgId),
+    loadTenantConfig: ({ orgId }) => loadEffectiveTenantConfig({ orgs: orgStore }, orgId),
   });
   const calendarInvitations = new CalendarInvitationImporter({
     sql,

@@ -1714,7 +1714,7 @@ describe("featureFlagForTool", () => {
     expect(featureFlagForTool({ id: "mail.send" })).toBe("mail_outbound");
     expect(featureFlagForTool({ id: "mail.reply" })).toBe("mail_outbound");
     expect(featureFlagForTool({ id: "drive.share" })).toBeUndefined();
-    expect(featureFlagForTool({ id: "drive.link.create" })).toBe("b2b_sharing");
+    expect(featureFlagForTool({ id: "drive.link.create" })).toBeUndefined();
     expect(featureFlagForTool({ id: "platform.ping" })).toBeUndefined();
   });
 });

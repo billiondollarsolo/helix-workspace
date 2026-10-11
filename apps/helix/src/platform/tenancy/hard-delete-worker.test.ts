@@ -151,7 +151,6 @@ function orgRecord(overrides: Partial<OrgRecord> = {}): OrgRecord {
     displayName: "Acme",
     status: "active",
     tier: "personal",
-    planId: "personal",
     region: "default",
     byoConfig: {},
     featureFlags: {},

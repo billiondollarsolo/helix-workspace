@@ -17,7 +17,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ShellOverlayContext } from "@/components/shell";
 import { AdminConsole } from "./admin-console";
-import { ADMIN_SECTION_IDS, isAdminSectionId, type AdminSectionId } from "./admin-console-data";
+import { ADMIN_SECTION_IDS, type AdminSectionId } from "./admin-console-data";
 import {
   SHELL_BASELINE_REQUESTS,
   CLIENT_STARTUP_REQUEST_BUDGET,
@@ -98,22 +98,13 @@ const UNMEASURABLE_SECTIONS: Partial<Record<AdminSectionId, string>> = {
  *  entry is therefore an explicit, reviewable decision to ship a section whose
  *  cold load the server will refuse part of.
  *
- *  Empty as measured: every measurable section fits in 3. Two spend all three —
- *  `billing` (account + invoices + usage) and `webhooks` (inbound + outbound +
- *  deliveries) land at exactly 5 of 5 once the shell's two are counted, so they
- *  have zero headroom: one more query on either, or one extra shell request,
- *  and the tail of the burst comes back 429. `ai-observability` is absent from
+ *  Empty as measured: every measurable section fits in 3. `webhooks` (inbound +
+ *  outbound + deliveries) spends all three and lands at exactly 5 of 5 once the
+ *  shell's two are counted, so it has zero headroom: one more query, or one
+ *  extra shell request, and the tail of the burst comes back 429. `ai-observability` is absent from
  *  this ledger because it is unmeasured (see UNMEASURABLE_SECTIONS), not
  *  because it is known to fit. */
-/* Sections this build actually serves. `isAdminSectionId` rejects ids in
-   `DISABLED_SECTIONS`, which today is `billing` — metered SaaS plumbing that a
-   self-hosted install has no service behind, gated off unless a hosted build
-   sets VITE_HELIX_BILLING_ENABLED. Measuring a section the router 404s would
-   put a number in this report for a page no operator can reach, and would hold
-   an over-budget entry open against work nobody is going to do. */
-const MEASURED_SECTIONS: readonly AdminSectionId[] = ADMIN_SECTION_IDS.filter((section) =>
-  isAdminSectionId(section),
-);
+const MEASURED_SECTIONS: readonly AdminSectionId[] = ADMIN_SECTION_IDS;
 
 const OVER_BUDGET_ALLOWLIST: Partial<Record<AdminSectionId, number>> = {};
 

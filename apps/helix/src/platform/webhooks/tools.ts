@@ -87,8 +87,8 @@ const deliveryListSchema = z.object({
 });
 
 /* The console's Webhooks section reads all three lists on every load. As three
-   separate tool calls that is three of the tenant's five requests per second
-   (`api_rps_limit`), on top of the two the app shell always spends — so the
+   separate tool calls that was three of a tenant's five requests per second
+   (`api_rps_limit`, which used to default to 5 and now defaults to unlimited), on top of the two the app shell always spends — so the
    section reliably tripped the limiter and rendered "Webhook API unavailable:
    Tenant API request rate limit exceeded" instead of its content, with
    `retry: false` making the refusal stick until the operator hit Refresh.

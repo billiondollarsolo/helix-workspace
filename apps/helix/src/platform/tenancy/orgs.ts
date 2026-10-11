@@ -21,7 +21,6 @@ export interface OrgRecord {
   readonly displayName: string;
   readonly status: OrgStatus;
   readonly tier: string;
-  readonly planId: string;
   readonly region: string;
   readonly byoConfig: JsonObject;
   readonly featureFlags: JsonObject;
@@ -45,7 +44,6 @@ export interface CreateOrgInput {
   readonly displayName: string;
   readonly status?: OrgStatus;
   readonly tier?: string;
-  readonly planId?: string;
   readonly region?: string;
   readonly byoConfig?: JsonObject;
   readonly featureFlags?: JsonObject;
@@ -115,7 +113,6 @@ interface OrgRow {
   readonly display_name: string;
   readonly status: OrgStatus;
   readonly tier: string;
-  readonly plan_id: string;
   readonly region: string;
   readonly byo_config: JsonObject;
   readonly feature_flags: JsonObject;
@@ -142,7 +139,6 @@ export class PostgresOrgStore implements OrgStore {
         display_name,
         status,
         tier,
-        plan_id,
         region,
         byo_config,
         feature_flags,
@@ -155,7 +151,6 @@ export class PostgresOrgStore implements OrgStore {
         ${input.displayName},
         ${input.status ?? "provisioning"},
         ${input.tier ?? "personal"},
-        ${input.planId ?? "personal"},
         ${region},
         ${this.sql.json(input.byoConfig ?? {})},
         ${this.sql.json(input.featureFlags ?? {})},
@@ -168,7 +163,6 @@ export class PostgresOrgStore implements OrgStore {
         display_name,
         status,
         tier,
-        plan_id,
         region,
         byo_config,
         feature_flags,
@@ -194,8 +188,8 @@ export class PostgresOrgStore implements OrgStore {
     let org = await this.findExistingDefaultOrg(id, slug);
     if (org === null) {
       const rows = await this.sql<readonly OrgRow[]>`
-      insert into orgs (id, slug, display_name, status, tier, plan_id, region)
-      values (${id}, ${slug}, ${displayName}, 'active', 'personal', 'personal', ${region})
+      insert into orgs (id, slug, display_name, status, tier, region)
+      values (${id}, ${slug}, ${displayName}, 'active', 'personal', ${region})
         on conflict do nothing
       returning
         id,
@@ -203,7 +197,6 @@ export class PostgresOrgStore implements OrgStore {
         display_name,
         status,
         tier,
-        plan_id,
         region,
         byo_config,
         feature_flags,
@@ -278,7 +271,6 @@ export class PostgresOrgStore implements OrgStore {
         display_name,
         status,
         tier,
-        plan_id,
         region,
         byo_config,
         feature_flags,
@@ -299,7 +291,6 @@ export class PostgresOrgStore implements OrgStore {
         display_name,
         status,
         tier,
-        plan_id,
         region,
         byo_config,
         feature_flags,
@@ -323,7 +314,6 @@ export class PostgresOrgStore implements OrgStore {
         display_name,
         status,
         tier,
-        plan_id,
         region,
         byo_config,
         feature_flags,
@@ -358,7 +348,6 @@ export class PostgresOrgStore implements OrgStore {
           display_name,
           status,
           tier,
-          plan_id,
           region,
           byo_config,
           feature_flags,
@@ -386,7 +375,6 @@ export class PostgresOrgStore implements OrgStore {
           display_name,
           status,
           tier,
-          plan_id,
           region,
           byo_config,
           feature_flags,
@@ -415,7 +403,6 @@ export class PostgresOrgStore implements OrgStore {
           display_name,
           status,
           tier,
-          plan_id,
           region,
           byo_config,
           feature_flags,
@@ -444,7 +431,6 @@ export class PostgresOrgStore implements OrgStore {
         display_name,
         status,
         tier,
-        plan_id,
         region,
         byo_config,
         feature_flags,
@@ -468,7 +454,6 @@ export class PostgresOrgStore implements OrgStore {
         display_name,
         status,
         tier,
-        plan_id,
         region,
         byo_config,
         feature_flags,
@@ -517,7 +502,7 @@ export class PostgresOrgStore implements OrgStore {
           and status = 'soft_deleted'
           and hard_deleted_at is null
         returning
-          id, slug, display_name, status, tier, plan_id, region,
+          id, slug, display_name, status, tier, region,
           byo_config, feature_flags, quotas, branding,
           suspended_at, soft_deleted_at, hard_deleted_at
       `;
@@ -578,7 +563,6 @@ export class PostgresOrgStore implements OrgStore {
           display_name,
           status,
           tier,
-          plan_id,
           region,
           byo_config,
           feature_flags,
@@ -599,7 +583,6 @@ export class PostgresOrgStore implements OrgStore {
       select id
       from orgs
       where status = 'active'
-        and feature_flags->>'byo_storage' = 'true'
         and byo_config->'storage'->>'kind' = 'byo'
       order by updated_at asc
       limit ${input.limit ?? 100}
@@ -634,7 +617,6 @@ export class PostgresOrgStore implements OrgStore {
           display_name,
           status,
           tier,
-          plan_id,
           region,
           byo_config,
           feature_flags,
@@ -659,7 +641,6 @@ function mapOrgRow(row: OrgRow | undefined): OrgRecord {
     displayName: row.display_name,
     status: row.status,
     tier: row.tier,
-    planId: row.plan_id,
     region: row.region,
     byoConfig: row.byo_config,
     featureFlags: row.feature_flags,

@@ -164,12 +164,10 @@ describe("platform metrics", () => {
     metrics.recordSignupFunnelEvent({
       step: "verified",
       tier: "personal",
-      planId: "personal",
       region: "default",
     });
     metrics.recordSignupActivationSlo({
       tier: "personal",
-      planId: "personal",
       region: "default",
       durationSeconds: 42,
       withinTarget: true,
@@ -178,16 +176,16 @@ describe("platform metrics", () => {
     const output = await metrics.registry.metrics();
 
     expect(output).toContain(
-      'helix_signup_funnel_events_total{step="form_viewed",tier="unknown",plan_id="unknown",region="unknown"} 1',
+      'helix_signup_funnel_events_total{step="form_viewed",tier="unknown",region="unknown"} 1',
     );
     expect(output).toContain(
-      'helix_signup_funnel_events_total{step="verified",tier="personal",plan_id="personal",region="default"} 1',
+      'helix_signup_funnel_events_total{step="verified",tier="personal",region="default"} 1',
     );
     expect(output).toContain(
-      'helix_signup_activation_duration_seconds_count{tier="personal",plan_id="personal",region="default",within_target="true"} 1',
+      'helix_signup_activation_duration_seconds_count{tier="personal",region="default",within_target="true"} 1',
     );
     expect(output).toContain(
-      'helix_signup_activation_duration_seconds_sum{tier="personal",plan_id="personal",region="default",within_target="true"} 42',
+      'helix_signup_activation_duration_seconds_sum{tier="personal",region="default",within_target="true"} 42',
     );
     expect(output).not.toContain("org_id=");
     expect(output).not.toContain("org_slug=");

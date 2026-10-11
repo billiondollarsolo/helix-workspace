@@ -14,11 +14,9 @@ import {
 } from "./contracts.js";
 import { numberFromBigIntLike } from "./mappers.js";
 import { type DriveStorageQuotaRow, type SqlLike, type StorageQuotaDecisionRow } from "./rows.js";
+/** A missing, null or malformed limit means unlimited: Helix has no plan quotas. */
 function storageLimitFromJson(value: JsonValue | null): number | null {
-  if (value === null) {
-    return null;
-  }
-  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : 5000000000;
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
 }
 
 export async function reserveDriveStorageQuota(
@@ -80,20 +78,15 @@ export async function getStorageQuotaUsage(
 ): Promise<DriveStorageQuotaUsageRecord> {
   const rows = await context.sql<readonly DriveStorageQuotaRow[]>`
       select
-        case
-          when o.quotas ? 'storage_bytes_limit' then o.quotas -> 'storage_bytes_limit'
-          when p.quotas_default ? 'storage_bytes_limit' then p.quotas_default -> 'storage_bytes_limit'
-          else '5000000000'::jsonb
-        end as storage_bytes_limit,
+        o.quotas -> 'storage_bytes_limit' as storage_bytes_limit,
         helix_storage_usage_bytes(${input.orgId}) as storage_used_bytes
       from orgs o
-      left join plans p on p.id = o.plan_id
       where o.id = ${input.orgId}
       limit 1
     `;
   const row = rows[0];
   const usedBytes = row === undefined ? 0 : bytesFromDatabase(row.storage_used_bytes);
-  const limitBytes = row === undefined ? 5000000000 : storageLimitFromJson(row.storage_bytes_limit);
+  const limitBytes = row === undefined ? null : storageLimitFromJson(row.storage_bytes_limit);
   const unlimited = limitBytes === null;
   const percentUsed =
     unlimited || limitBytes === 0

@@ -6,7 +6,7 @@ import { skipUnlessLiveDatabase } from "../../test-support/live-suite.js";
 import { TenantConfigFeatureFlagProvider } from "../feature-flags/provider.js";
 import { ingestRawMail, type MailMessageInput, type MailStore } from "../mail/index.js";
 import { PostgresOrgStore } from "../tenancy/orgs.js";
-import { loadEffectiveTenantConfig, PostgresPlanStore } from "../tenancy/plans.js";
+import { loadEffectiveTenantConfig } from "../tenancy/effective-config.js";
 import { tenantAwarePostgresSql, withTenantPostgresContext } from "../tenancy/postgres-roles.js";
 import {
   CALENDAR_IMPORT_INVITATIONS_FLAG,
@@ -24,10 +24,7 @@ describe.skipIf(skipUnlessLiveDatabase("calendar invitation import"))(
     const calendar = new PostgresCalendarStore(sql);
     const flags = new TenantConfigFeatureFlagProvider({
       loadTenantConfig: ({ orgId }) =>
-        loadEffectiveTenantConfig(
-          { orgs: new PostgresOrgStore(sql), plans: new PostgresPlanStore(sql) },
-          orgId,
-        ),
+        loadEffectiveTenantConfig({ orgs: new PostgresOrgStore(sql) }, orgId),
     });
     const warn = vi.fn();
     const importer = new CalendarInvitationImporter({

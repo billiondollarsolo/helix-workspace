@@ -216,7 +216,7 @@ function failureStatus(error: Error): number | null {
 }
 
 /** Best honest reading of why a request failed. `subject` names the surface in
- *  the operator's words — "billing", "the directory", "mail routing". */
+ *  the operator's words — "domains", "the directory", "mail routing". */
 function describeFailure(error: Error, subject: string): string {
   const status = failureStatus(error);
   if (status === 401 || status === 403) {

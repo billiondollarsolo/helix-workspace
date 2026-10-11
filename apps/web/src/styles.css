@@ -3159,43 +3159,6 @@
     font-size: var(--rd-row-fs);
   }
 
-  .admin-stat-row {
-    display: grid;
-    gap: var(--gap);
-    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-  }
-  .admin-stat {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    padding: 12px;
-  }
-  .admin-stat-label {
-    font-size: var(--text-caption);
-    color: var(--text-2);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    font-weight: 600;
-  }
-  .admin-stat-value {
-    font-size: var(--text-h2);
-    font-weight: 600;
-    letter-spacing: -0.02em;
-  }
-  .admin-stat[data-tone="success"] .admin-stat-value {
-    color: var(--success, var(--text));
-  }
-  .admin-stat[data-tone="warning"] .admin-stat-value {
-    color: var(--warning, var(--text));
-  }
-  .admin-stat[data-tone="danger"] .admin-stat-value {
-    color: var(--danger, var(--text));
-  }
-  .admin-stat-note {
-    font-size: var(--text-caption);
-    color: var(--text-2);
-  }
-
   /* Progressive disclosure. One look for every <details> in the console so a
    drill-down is recognisable wherever an operator meets it. */
   .admin-disclosure > summary {

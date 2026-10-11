@@ -57,10 +57,11 @@ export function CalendarSidebar({
 
   return (
     <aside aria-label="Calendar navigation" className="surf-sidebar cal-sidebar">
-      <Button size="lg" className="w-fit rounded-full pr-6" onClick={onCreate}>
-        <Plus aria-hidden="true" />
+      {/* The shared sidebar primary action: it stays as an icon when navigation is collapsed. */}
+      <button type="button" className="btn primary lg w-full" onClick={onCreate}>
+        <Plus aria-hidden="true" size={18} />
         Create
-      </Button>
+      </button>
 
       <DateTimePicker
         key={anchor.slice(0, 7)}

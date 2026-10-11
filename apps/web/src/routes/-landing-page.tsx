@@ -1,5 +1,6 @@
 import { Link, redirect } from "@tanstack/react-router";
-import { Dna, LogIn } from "lucide-react";
+import { LogIn } from "lucide-react";
+import { HelixLogo } from "@/components/shell/helix-logo";
 import { getSessionUser, type SessionUser } from "@/lib/auth";
 
 export async function redirectSignedInRoot(
@@ -18,9 +19,7 @@ export function LandingPage() {
     <main className="auth-screen landing-screen">
       <section className="landing-panel">
         <div className="auth-brand landing-brand">
-          <div className="auth-logo" aria-hidden="true">
-            <Dna />
-          </div>
+          <HelixLogo size={56} />
           <h1 className="auth-title landing-title">Helix</h1>
           <p className="auth-subtitle landing-subtitle">
             One workspace for mail, file storage, chat, and governed AI.

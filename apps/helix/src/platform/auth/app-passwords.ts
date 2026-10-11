@@ -429,7 +429,7 @@ function createAppPasswordToolDefinitions(
     defineTool<z.output<typeof listSchema>, unknown>({
       id: "app.passwords.list",
       description:
-        "List app passwords without secrets: your own, or for admins (admin.users) one member's or the whole org's.",
+        "List app passwords without secrets: your own, or for admins (admin.users) one member's or the whole org's. grantableScopes lists the app password scopes you hold and can grant to a new one.",
       permission: "profile.read",
       sideEffects: "read",
       inputSchema: zodToolSchema(listSchema, genericObjectJsonSchema),
@@ -450,7 +450,12 @@ function createAppPasswordToolDefinitions(
             resultCount: appPasswords.length,
           });
         }
-        return { appPasswords: appPasswords.map(serializeAppPassword) };
+        return {
+          appPasswords: appPasswords.map(serializeAppPassword),
+          grantableScopes: appPasswordScopeCatalog.filter((scope) =>
+            actorHasScope(ctx.actor, scope),
+          ),
+        };
       },
     }),
     defineTool<z.output<typeof revokeSchema>, unknown>({

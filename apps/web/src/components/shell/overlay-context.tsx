@@ -6,15 +6,17 @@ import { createContext, useContext } from "react";
 
 const SETTINGS_SECTION_IDS = [
   "profile",
-  "appearance",
-  "language",
-  "mail",
+  "personal-info",
   "security",
+  "app-passwords",
   "s3-keys",
+  "language",
+  "appearance",
   "shortcuts",
+  "mail",
 ] as const;
 
-type SettingsSectionBaseId = (typeof SETTINGS_SECTION_IDS)[number];
+export type SettingsSectionBaseId = (typeof SETTINGS_SECTION_IDS)[number];
 
 /** A section, or `<section>/<tab>` to open one tab of a tabbed section (`mail/filters`). */
 export type SettingsSectionId = SettingsSectionBaseId | `${SettingsSectionBaseId}/${string}`;

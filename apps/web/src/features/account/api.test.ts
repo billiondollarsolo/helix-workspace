@@ -71,8 +71,15 @@ describe("account API", () => {
   });
 
   it("manages your own app passwords", async () => {
-    const fetchImpl = jsonFetch({ appPasswords: [], status: "revoked" });
-    await expect(listMyAppPasswords({ actorId: "actor-1" }, fetchImpl)).resolves.toEqual([]);
+    const fetchImpl = jsonFetch({
+      appPasswords: [],
+      grantableScopes: ["caldav"],
+      status: "revoked",
+    });
+    await expect(listMyAppPasswords({ actorId: "actor-1" }, fetchImpl)).resolves.toEqual({
+      appPasswords: [],
+      grantableScopes: ["caldav"],
+    });
     await createMyAppPassword({ label: "Phone", scopes: ["caldav"] }, fetchImpl);
     await revokeMyAppPassword("password-1", fetchImpl);
     expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([

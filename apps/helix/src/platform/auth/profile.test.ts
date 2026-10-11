@@ -17,7 +17,11 @@ const profile: UserProfile = {
   pronouns: "",
   jobTitle: "",
   about: "",
+  avatarDataUrl: null,
 };
+const pngAvatar = `data:image/png;base64,${Buffer.from([
+  137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13,
+]).toString("base64")}`;
 
 async function fixture(principal: Actor | null = actor) {
   const app = fastify();
@@ -39,6 +43,45 @@ async function fixture(principal: Actor | null = actor) {
 }
 
 describe("tenant user profiles", () => {
+  it("saves and removes a validated avatar image and rejects other content", async () => {
+    const { app, store } = await fixture();
+    try {
+      const saved = await app.inject({
+        method: "PATCH",
+        url: "/api/profile",
+        payload: { avatarDataUrl: pngAvatar },
+      });
+      expect(saved.statusCode).toBe(200);
+      expect(store.update).toHaveBeenLastCalledWith(actor.orgId, actor.id, {
+        avatarDataUrl: pngAvatar,
+      });
+      const removed = await app.inject({
+        method: "PATCH",
+        url: "/api/profile",
+        payload: { avatarDataUrl: null },
+      });
+      expect(removed.statusCode).toBe(200);
+      expect(store.update).toHaveBeenLastCalledWith(actor.orgId, actor.id, { avatarDataUrl: null });
+
+      for (const avatarDataUrl of [
+        // Declared PNG but the bytes are a script.
+        `data:image/png;base64,${Buffer.from("<script>alert(1)</script>").toString("base64")}`,
+        `data:image/svg+xml;base64,${Buffer.from("<svg/>").toString("base64")}`,
+        `${pngAvatar}${"A".repeat(350_000)}`,
+      ]) {
+        const rejected = await app.inject({
+          method: "PATCH",
+          url: "/api/profile",
+          payload: { avatarDataUrl },
+        });
+        expect(rejected.statusCode).toBe(400);
+      }
+      expect(store.update).toHaveBeenCalledTimes(2);
+    } finally {
+      await app.close();
+    }
+  });
+
   it("trims editable fields and audits changed field names without storing their contents in audit", async () => {
     const { app, store, auditSink } = await fixture();
     try {

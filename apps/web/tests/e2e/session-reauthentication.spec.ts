@@ -54,7 +54,7 @@ test("re-verifies an expired admin session once and returns to the requested pag
     return route.fulfill({ json: {} });
   });
   await page.goto("/admin/users#directory");
-  await expect(page.getByRole("heading", { name: "Sign in to Helix" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sign in", exact: true })).toBeVisible();
   await expect(page.getByRole("status")).toContainText("Your session must be verified again");
   const loginUrl = new URL(page.url());
   expect(loginUrl.searchParams.get("returnTo")).toBe("/admin/users#directory");
@@ -75,10 +75,11 @@ test("re-verifies an expired admin session once and returns to the requested pag
     ),
   ).toEqual([]);
   await page.getByLabel("Email", { exact: true }).fill("admin@example.test");
+  await page.getByRole("button", { name: "Next", exact: true }).click();
   await page.getByLabel("Password", { exact: true }).fill("test-password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page).toHaveURL(/\/admin\/users#directory$/u);
-  await expect(page.getByRole("heading", { name: "Sign in to Helix" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Sign in", exact: true })).toHaveCount(0);
   expect(rejectedRequests).toBe(1);
 });
 
@@ -184,11 +185,9 @@ test("keeps the session and unsent Assistant draft through a backend restart and
     .getByRole("button", { name: "Done", exact: true })
     .click();
   await expect(composer).toHaveValue("Keep this unsent message while the backend restarts.");
-  await expect(
-    page.getByRole("heading", { name: "What can I help you with, Test admin?" }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Hi Test, what can I help with?" })).toBeVisible();
   await expect(page.getByTestId("assistant-thread-list")).toContainText("Saved chat");
-  await expect(page.getByRole("heading", { name: "Sign in to Helix" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Sign in", exact: true })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "We couldn’t load this view" })).toHaveCount(0);
   down = false;
   await page.clock.setSystemTime(new Date(now + 62_000));
@@ -199,7 +198,7 @@ test("keeps the session and unsent Assistant draft through a backend restart and
   expect(await page.context().cookies()).toEqual(cookies);
   expired = true;
   await page.reload();
-  await expect(page.getByRole("heading", { name: "Sign in to Helix" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sign in", exact: true })).toBeVisible();
   expect(new URL(page.url()).searchParams.get("returnTo")).toBe("/assistant");
 });
 
@@ -235,12 +234,10 @@ test("Retry reloads a failed cold session lookup after the backend recovers", as
   ready = true;
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(page.getByRole("textbox", { name: "Message Helix AI" })).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "What can I help you with, Test admin?" }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Hi Test, what can I help with?" })).toBeVisible();
   await expect(page).toHaveURL(/\/assistant$/u);
   expect(lookups).toBe(3);
-  await expect(page.getByRole("heading", { name: "Sign in to Helix" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Sign in", exact: true })).toHaveCount(0);
   expect(await page.context().cookies()).toEqual(cookies);
 });
 
@@ -277,7 +274,7 @@ for (const rejection of ["401", "null"] as const) {
     expired = true;
     await page.clock.setSystemTime(new Date(Date.now() + 31_000));
     await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
-    await expect(page.getByRole("heading", { name: "Sign in to Helix" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Sign in", exact: true })).toBeVisible();
     await expect(page.getByRole("textbox", { name: "Message Helix AI" })).toHaveCount(0);
     expect(new URL(page.url()).searchParams.get("returnTo")).toBe("/assistant#draft");
     expect(rejected).toBe(2); // Background rejection, then login's own session lookup.

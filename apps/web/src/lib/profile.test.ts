@@ -12,6 +12,7 @@ const profile = {
   pronouns: "they/them",
   jobTitle: "Designer",
   about: "Hello",
+  avatarDataUrl: null,
 };
 
 afterEach(() => {

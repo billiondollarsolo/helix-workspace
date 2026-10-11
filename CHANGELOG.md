@@ -8,6 +8,23 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Added
 
+- Settings works like a "Manage your account" page: a Profile home with shortcuts to Personal info,
+  Security, Language & region and App passwords, sections grouped under Account, Preferences and
+  Apps, and a search box that finds sections and individual settings. On phones, Settings opens on
+  the list of sections and each section has a back button.
+- Profile photos: add a PNG, JPEG or WebP picture, crop it to a square and zoom in the browser, and
+  remove it again. Photos are resized to 256 pixels before upload and show in the people directory.
+- Language & region saves your time zone (searchable), date format, 12- or 24-hour clock, start of
+  week and working hours. "Automatic" follows your device.
+- Security lets you change your password with a strength hint and an option to sign out of other
+  devices, lists your signed-in devices with "This device" and last activity, and signs out one
+  device or all others.
+- App passwords: create one for a mail, calendar, contacts or file app, limited to what you can
+  already do; it is shown once with a copy button and the server details for SMTP, CalDAV, CardDAV
+  or WebDAV. The list shows when each was last used, and revoking asks first.
+- Everyone in an organization can read and change their own profile and preferences through the
+  built-in Member role. People who can read or write calendars can also see free/busy and answer
+  invitations.
 - Meet has a pre-join screen: preview your camera and microphone, turn them on or off, pick
   devices, see who you're joining as, accept the recording notice and choose Join now. Your
   choices carry into the call and are remembered on this device.
@@ -218,6 +235,13 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Changed
 
+- Sign-in asks for your email first, then your password (or sends you to your company sign-in when
+  your domain uses one), with Show password and Forgot password. A wrong email or password always
+  gets the same message, so the page never reveals whether an account exists. The demo account
+  buttons appear only in development builds.
+- Invitation, email verification and app-authorization pages use the same centred sign-in card.
+- Settings deep links (`?settings=<section>` or `<section>/<tab>`) work on every app and stay open
+  while you move around inside the app.
 - Chat's conversation details (about, members, pinned) stay closed until you open them from the
   header, and people are added with the people picker. Retention, legal hold and history
   settings are no longer offered when creating a conversation; admins manage them in Admin.
@@ -229,7 +253,6 @@ All notable changes to Helix Workspace are documented here. This file follows
 - Meet's home page uses original wording, skeleton, empty and error states, and Meet's top-bar
   search searches the whole workspace. In-call colours follow the dark theme tokens, and the
   Leave button is red.
-
 - Compose always starts a blank message; drafts are resumed from Drafts.
 - Blocked senders moved from the Mail signature page to Settings → Mail → Filters and blocked
   addresses; the separate Mail signature settings page is gone.
@@ -287,6 +310,10 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Fixed
 
+- A tool that needs confirmation (such as creating an app password) no longer fails after you
+  approve it when your permission comes from a role rather than your own account scopes.
+- Opening an invitation link no longer shows the "Choose a new password" step.
+- Dates and times no longer fail to render when the browser reports an unusual language tag.
 - When Chat can't reach the server it says so with Retry, instead of "Offline" and an empty
   placeholder room with a working composer. The composer no longer covers the newest messages.
 - Opening a Chat thread shows its replies.

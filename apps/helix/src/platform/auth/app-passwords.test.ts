@@ -54,6 +54,8 @@ describe("self-service app passwords", () => {
         ? (listed.output as AppPasswordListOutput).appPasswords.map((row) => row.actorId)
         : [],
     ).toEqual([actorId]);
+    // Only the app password scopes the member holds can be granted.
+    expect(listed).toMatchObject({ output: { grantableScopes: ["calendar.read", "caldav"] } });
     expect(
       await registry.invoke(
         "app.passwords.revoke",

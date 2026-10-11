@@ -3,13 +3,104 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { sessionQueryKeys } from "@/lib/auth";
 import { profileQueryKeys } from "@/lib/profile";
-import { ProfileSection } from "./settings-account";
+import { axeViolations, settle, unmountAll } from "@/test/ui";
+import { PersonalInfoSection, ProfileHomeSection } from "./settings-profile";
+import { mockApi, renderWithClient, sessionUser } from "./settings-test-support";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
+
+describe("Profile home and photo", () => {
+  const profile = {
+    actorId: sessionUser.actorId,
+    orgId: "org-1",
+    email: "morgan@example.com",
+    displayName: "Morgan Lee",
+    pronouns: "",
+    jobTitle: "",
+    about: "",
+    avatarDataUrl: "data:image/jpeg;base64,/9j/4AAQ",
+  };
+
+  afterEach(() => {
+    unmountAll();
+    vi.restoreAllMocks();
+  });
+
+  it("welcomes you and links to each part of your account and app settings", async () => {
+    mockApi({
+      "/api/tools/account.preferences.get": {
+        language: null,
+        timeZone: "Asia/Tokyo",
+        dateFormat: null,
+        timeFormat: "24h",
+        weekStart: null,
+        workingHours: null,
+        mail: { readingPane: "none", density: "default", conversationView: true },
+        updatedAt: null,
+      },
+    });
+    const onNavigate = vi.fn();
+    renderWithClient(
+      <ProfileHomeSection tab={undefined} onTabChange={vi.fn()} onNavigate={onNavigate} />,
+      (client) => client.setQueryData(profileQueryKeys.current, profile),
+    );
+    await settle();
+    await settle();
+    expect(document.querySelector("h1")?.textContent).toBe("Welcome, Morgan Lee");
+    expect(document.body.textContent).toContain("Asia/Tokyo · 24-hour clock");
+    for (const [name, target] of [
+      ["Security", "security"],
+      ["Mail settings", "mail/general"],
+      ["Calendar settings", "language"],
+    ] as const) {
+      Array.from(document.querySelectorAll("button"))
+        .find((candidate) => candidate.textContent?.includes(name))
+        ?.click();
+      expect(onNavigate).toHaveBeenLastCalledWith(target);
+    }
+    expect(await axeViolations()).toEqual([]);
+  });
+
+  it("removes the photo and rejects files that are not images", async () => {
+    const calls = mockApi({
+      "/api/profile": (body) => ({ profile: { ...profile, ...(body as object) } }),
+    });
+    renderWithClient(<PersonalInfoSection />, (client) =>
+      client.setQueryData(profileQueryKeys.current, profile),
+    );
+    await settle();
+    expect(document.querySelector('[role="img"]')?.getAttribute("aria-label")).toBe(
+      "Profile photo of Morgan Lee",
+    );
+    const file = document.querySelector<HTMLInputElement>('input[type="file"]');
+    expect(file?.labels?.[0]?.textContent).toBe("Change photo");
+    expect(file?.accept).toBe("image/png,image/jpeg,image/webp");
+    act(() => {
+      Object.defineProperty(file, "files", {
+        configurable: true,
+        value: [new File(["<svg/>"], "logo.svg", { type: "image/svg+xml" })],
+      });
+      file?.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe(
+      "Choose a PNG, JPEG or WebP image.",
+    );
+
+    Array.from(document.querySelectorAll("button"))
+      .find((button) => button.textContent === "Remove photo")
+      ?.click();
+    await settle();
+    expect(calls.find((call) => call.path === "/api/profile")?.body).toEqual({
+      avatarDataUrl: null,
+    });
+    expect(file?.labels?.[0]?.textContent).toBe("Add photo");
+    expect(await axeViolations()).toEqual([]);
+  });
+});
 
 it("keeps a failed draft, saves profile fields, updates shared identity, and reopens saved values", async () => {
   const profile = {
@@ -20,6 +111,7 @@ it("keeps a failed draft, saves profile fields, updates shared identity, and reo
     pronouns: "",
     jobTitle: "",
     about: "",
+    avatarDataUrl: null,
   };
   const updated = {
     ...profile,
@@ -49,7 +141,7 @@ it("keeps a failed draft, saves profile fields, updates shared identity, and reo
   const render = () =>
     root.render(
       <QueryClientProvider client={client}>
-        <ProfileSection />
+        <PersonalInfoSection />
       </QueryClientProvider>,
     );
   try {

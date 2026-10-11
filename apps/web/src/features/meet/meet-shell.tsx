@@ -1,14 +1,19 @@
-import { Video as VideoIcon } from "lucide-react";
-/* MeetShell — the Meet surface root. Renders the Hub inside the standard
-   <SurfaceFrame> chrome, or the dark-themed in-call view (full-bleed, no
-   chrome) once a meeting is started or joined. The in-call view is wired to a
-   real backend room: a room id + minted Jitsi token carried through here. */
+/* MeetShell — the Meet surface root: the hub, the pre-join screen, or the
+   full-bleed call. `/meet?code=…` (Calendar's Join link) opens the pre-join
+   screen for that meeting directly. */
 
 import { SurfaceFrame } from "@/components/shell";
+import { useQuery } from "@tanstack/react-query";
+import { Video as VideoIcon } from "lucide-react";
 import { useState } from "react";
 import type { MeetControlState } from "./api";
+import type { JitsiInitialMedia } from "./jitsi-external-api";
 import { MeetCall } from "./meet-call";
 import { MeetHub } from "./meet-hub";
+import type { MeetJoinTarget } from "./meet-join";
+import { MeetPreJoin } from "./meet-prejoin";
+import { conferenceFromMetadata } from "@/features/calendar/conference";
+import { meetMeetingsQueryOptions, meetTodayEventsQueryOptions } from "./queries";
 
 /** An active call session — a real backend room plus its minted join token. */
 export interface MeetCallSession {
@@ -33,33 +38,67 @@ export interface MeetCallSession {
   readonly canModerate: boolean;
   /** Wall-clock start (epoch ms) for the elapsed timer. */
   readonly startedAtMs: number;
+  /** Microphone, camera and devices chosen on the pre-join screen. */
+  readonly media: JitsiInitialMedia;
 }
 
-export function MeetShell() {
+export interface MeetShellProps {
+  /** Meeting code from the URL; opens its pre-join screen. */
+  readonly code?: string | undefined;
+  readonly onCodeChange: (code: string | undefined) => void;
+  /** Opens the Calendar event editor with video conferencing added. */
+  readonly onScheduleInCalendar: () => void;
+}
+
+export function MeetShell({ code, onCodeChange, onScheduleInCalendar }: MeetShellProps) {
   const [session, setSession] = useState<MeetCallSession | null>(null);
-  const [search, setSearch] = useState("");
+  const [starting, setStarting] = useState(false);
+  const meetings = useQuery(meetMeetingsQueryOptions()).data;
+  const events = useQuery(meetTodayEventsQueryOptions()).data;
+
+  const backToHub = () => {
+    setSession(null);
+    setStarting(false);
+    if (code !== undefined) onCodeChange(undefined);
+  };
 
   if (session !== null) {
-    return (
-      <MeetCall
-        session={session}
-        onLeave={() => {
-          setSession(null);
-        }}
-      />
-    );
+    return <MeetCall session={session} onLeave={backToHub} />;
   }
 
+  const target: MeetJoinTarget | null =
+    code !== undefined
+      ? {
+          kind: "code",
+          code,
+          title:
+            meetings?.meetings.find((meeting) => meeting.code === code)?.title ??
+            events?.find((event) => conferenceFromMetadata(event.metadata)?.joinCode === code)
+              ?.title ??
+            null,
+        }
+      : starting
+        ? { kind: "start", subject: "Instant meeting" }
+        : null;
+
   return (
-    <SurfaceFrame
-      title="Meet"
-      icon={<VideoIcon size={16} />}
-      searchPlaceholder="Search meetings"
-      searchValue={search}
-      onSearchChange={setSearch}
-    >
-      <h1 className="sr-only">Meet</h1>
-      <MeetHub search={search} onEnterCall={setSession} />
+    <SurfaceFrame title="Meet" icon={<VideoIcon size={16} />}>
+      {target !== null ? (
+        <MeetPreJoin
+          key={target.kind === "code" ? target.code : target.kind}
+          target={target}
+          onJoined={setSession}
+          onCancel={backToHub}
+        />
+      ) : (
+        <MeetHub
+          onStartInstant={() => {
+            setStarting(true);
+          }}
+          onOpenCode={onCodeChange}
+          onScheduleInCalendar={onScheduleInCalendar}
+        />
+      )}
     </SurfaceFrame>
   );
 }

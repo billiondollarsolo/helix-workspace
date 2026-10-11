@@ -8,6 +8,23 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Added
 
+- Meet has a pre-join screen: preview your camera and microphone, turn them on or off, pick
+  devices, see who you're joining as, accept the recording notice and choose Join now. Your
+  choices carry into the call and are remembered on this device.
+- `/meet?code=…` (the Join link on calendar events) opens that meeting's pre-join screen, and
+  the code box accepts a pasted meeting link as well as a code.
+- Meet's "Today" list shows today's calendar events that have video conferencing, plus meetings
+  already running, each with Join. "New meeting" offers Start an instant meeting, Create a
+  meeting for later (with a link to copy) and Schedule in Calendar, which opens the event editor
+  with video conferencing added (`/calendar?create=event&conference=meet`).
+- In a call, Meeting details shows the joining link with Copy.
+- Helix AI answers cite the mail threads, files, chat rooms and events they drew on, each linking
+  to the item, and any answer can be regenerated.
+- When too many Helix AI tool groups are on for one request, the reply says how far over the
+  limit it is and offers one-click "Turn off <group> (count)" buttons that retry. The tool menu
+  shows each group's tool count, how many are on out of the limit, and "Choose automatically".
+- The Helix AI side panel takes a question or a suggestion and opens it as a new chat.
+
 - Mail labels: create, rename, recolour (24 named palette colours) and nest your own labels, and
   delete a label with its sublabels. Label lists show unread counts.
 - Mail search understands `from:`, `to:`, `cc:`, `subject:`, `label:`, `in:` (including
@@ -177,6 +194,15 @@ All notable changes to Helix Workspace are documented here. This file follows
 - Mail filters can mark matching mail as read and star it (`markRead`, `star` actions).
 
 ### Changed
+
+- Helix AI picks its tools automatically until you choose tool groups, so a fully scoped admin's
+  first prompt no longer fails.
+- Helix AI shows friendly model names; admins see the model id on hover. Chats are searched from
+  the top bar, the list is denser with a pin icon and ⋮ menus, "Forget memory" moved into a
+  Memory menu and asks first, and the new-chat page fits phones.
+- Meet's home page uses original wording, skeleton, empty and error states, and Meet's top-bar
+  search searches the whole workspace. In-call colours follow the dark theme tokens, and the
+  Leave button is red.
 
 - Compose always starts a blank message; drafts are resumed from Drafts.
 - Blocked senders moved from the Mail signature page to Settings → Mail → Filters and blocked

@@ -1,8 +1,12 @@
+import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import {
   VideoOff as CamOffIcon,
   MessageCircle as ChatIcon,
+  Copy as CopyIcon,
   Hand as HandIcon,
+  Info as InfoIcon,
   Mic as MicIcon,
   MicOff as MicOffIcon,
   Phone as PhoneIcon,
@@ -10,13 +14,11 @@ import {
   Settings as SettingsIcon,
   Users as UsersIcon,
   Video as VideoIcon,
-  X as XIcon,
 } from "lucide-react";
-/* MeetCall — the in-call view. Dark theme regardless of the user's theme
-   (`#0a0a0b` background). Top bar with title / live REC pill / meeting code /
-   elapsed timer; a Jitsi External API embed (the real room, when a token was
-   minted) or a placeholder when offline; a 76px control bar with controls
-   wired through the External API; and an optional 320px in-call chat panel.
+/* MeetCall — the in-call view, always in the dark theme. Top bar with title,
+   live REC pill, meeting details and elapsed timer; the Jitsi External API
+   embed (the real room, when a token was minted) or a placeholder; a bottom
+   control bar wired through the External API; and optional side panels.
 
    The view is wired to a real backend room carried in via `session`: the
    subject/code come from `meet.create-room`/`meet.meetings.list`, the embed
@@ -33,17 +35,19 @@ import {
   type MeetHostControl,
   type MeetTelemetryEvent,
 } from "./api";
+import { useJitsiCall, type JitsiCallOptions } from "./jitsi-external-api";
 import {
-  useJitsiCall,
-  type JitsiCallCommands,
-  type JitsiCallOptions,
-  type JitsiCallState,
-  type JitsiChatMessage,
-} from "./jitsi-external-api";
+  CallOptionsPanel,
+  ChatPanel,
+  MiniAction,
+  ParticipantRow,
+  PolicyButton,
+  SidePanel,
+  UUID_PATTERN,
+} from "./meet-call-panels";
+import { copyMeetingLink, meetJoinLink } from "./meet-join";
 import type { MeetCallSession } from "./meet-shell";
 import { meetCallElapsedQueryOptions } from "./queries";
-
-const DARK_BORDER = "#27272d";
 
 /** Format an elapsed-second count as `M:SS` or `H:MM:SS`. */
 export function formatElapsed(totalSeconds: number): string {
@@ -92,6 +96,7 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
         displayName,
         email: sessionQuery.data?.email ?? null,
       },
+      media: session.media,
     };
   }, [
     hasLiveRoom,
@@ -99,6 +104,7 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
     session.jitsiDomain,
     session.roomName,
     session.recordingActive,
+    session.media,
     sessionQuery.data?.name,
     sessionQuery.data?.email,
   ]);
@@ -141,21 +147,21 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
   };
 
   return (
-    <div className="flex flex-col [height:100vh] [background:#0a0a0b] [color:#ededee]">
+    <div data-theme="dark" className="flex flex-col h-dvh bg-[var(--bg)] text-[var(--text)]">
       {/* Top bar */}
-      <div className="h-11 flex items-center [padding:0_16px] gap-3 shrink-0 [border-bottom:1px_solid_#27272d]">
+      <div className="h-11 flex items-center [padding:0_16px] gap-3 shrink-0 [border-bottom:1px_solid_var(--border)]">
         <div className="flex items-center gap-2">
           <VideoIcon size={16} />
           <span className="font-semibold">{session.subject}</span>
         </div>
         {call.recordingActive ? (
-          <span className="chip [background:rgba(220,38,38,0.15)] [color:#f87171] [border-color:transparent]">
+          <span className="chip danger">
             <span className="chip-dot" />
             REC
           </span>
         ) : null}
-        <span className="type-meta [color:#a1a1aa]">helix.meet/{session.code}</span>
-        <div className="ml-auto flex items-center gap-2 [color:#a1a1aa] type-meta">
+        <MeetingDetails subject={session.subject} code={session.code} />
+        <div className="ml-auto flex items-center gap-2 [color:var(--text-2)] type-meta">
           <span className="[font-variant-numeric:tabular-nums]" aria-label="Elapsed time">
             {formatElapsed(elapsed)}
           </span>
@@ -179,7 +185,7 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
         {/* Main stage — Jitsi External API mounts its iframe inside the host
             ref. We always render the host so the ref stays attached. */}
         <div className="flex-1 p-4 flex flex-col gap-3 min-w-0">
-          <div className="flex-1 relative rounded-lg overflow-hidden [background:#000] min-h-0">
+          <div className="flex-1 relative rounded-lg overflow-hidden bg-[var(--surface)] min-h-0">
             <div
               ref={jitsiHostRef}
               className="absolute inset-0"
@@ -293,7 +299,7 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
                 </ParticipantRow>
               ))}
               {call.participants.length === 0 && call.isJoined ? (
-                <li className="[padding:12px_16px] [color:#71717a] type-meta">
+                <li className="[padding:12px_16px] [color:var(--text-3)] type-meta">
                   No one else has joined yet.
                 </li>
               ) : null}
@@ -371,7 +377,7 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
                   }}
                 />
               ))}
-              <small className="[color:#a1a1aa]">Policy version {controls.version}</small>
+              <small className="[color:var(--text-2)]">Policy version {controls.version}</small>
             </div>
           </SidePanel>
         ) : null}
@@ -402,7 +408,7 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
       </div>
 
       {/* Bottom control bar */}
-      <div className="relative h-19 flex items-center justify-center gap-2 [padding:0_16px] shrink-0 [border-top:1px_solid_#27272d]">
+      <div className="relative h-19 flex items-center justify-center gap-2 [padding:0_16px] shrink-0 [border-top:1px_solid_var(--border)]">
         <CallControl
           label={call.audioMuted ? "Unmute microphone" : "Mute microphone"}
           danger={call.audioMuted}
@@ -471,7 +477,7 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
           <ChatIcon size={16} />
         </CallControl>
 
-        <div className="[width:1px] h-7 [background:#27272d] [margin:0_4px]" />
+        <div aria-hidden="true" className="[width:1px] h-7 bg-[var(--border)] [margin:0_4px]" />
 
         <button
           type="button"
@@ -479,16 +485,16 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
             commands.hangup();
             leave();
           }}
-          className="h-11 [padding:0_18px] [border-radius:999px] [background:#dc2626] [color:white] flex items-center gap-1.5 font-medium [border:none] cursor-pointer"
+          className="focus-ring h-11 [padding:0_18px] [border-radius:999px] bg-[var(--label-red)] text-[var(--label-on)] flex items-center gap-1.5 font-medium [border:none] cursor-pointer"
         >
-          <PhoneIcon size={16} /> Leave
+          <PhoneIcon size={16} className="rotate-[135deg]" aria-hidden="true" /> Leave
         </button>
 
         <div className="absolute right-4 flex items-center gap-2">
           <button
             className={cn(
               "btn sm",
-              "[border-color:#27272d] [color:#ededee]",
+              "[border-color:var(--border)] [color:var(--text)]",
               participantsOpen ? "[background:var(--accent)]" : "bg-transparent",
             )}
             type="button"
@@ -503,7 +509,7 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
             <button
               className={cn(
                 "btn sm",
-                "[border-color:#27272d] [color:#ededee]",
+                "[border-color:var(--border)] [color:var(--text)]",
                 callOptionsOpen ? "[background:var(--accent)]" : "bg-transparent",
               )}
               type="button"
@@ -519,14 +525,14 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
         </div>
       </div>
       {recordingAuthorization.isError ? (
-        <div role="alert" className="[padding:8px_16px] [color:#fecaca]">
+        <div role="alert" className="[padding:8px_16px] [color:var(--danger)]">
           {recordingAuthorization.error instanceof Error
             ? recordingAuthorization.error.message
             : "Recording could not be authorized."}
         </div>
       ) : null}
       {hostControl.isError ? (
-        <div role="alert" className="[padding:8px_16px] [color:#fecaca]">
+        <div role="alert" className="[padding:8px_16px] [color:var(--danger)]">
           {hostControl.error instanceof Error
             ? hostControl.error.message
             : "Host control was rejected."}
@@ -536,88 +542,41 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
   );
 }
 
-function CallOptionsPanel({
-  call,
-  commands,
-  canModerate,
-  onClose,
-}: {
-  readonly call: JitsiCallState;
-  readonly commands: JitsiCallCommands;
-  readonly canModerate: boolean;
-  readonly onClose: () => void;
-}) {
-  const breakoutRooms = call.breakoutRooms.filter((room) => !room.isMainRoom);
+/** Meeting details: the title and the link to share, with Copy. */
+function MeetingDetails({ subject, code }: { readonly subject: string; readonly code: string }) {
+  const link = meetJoinLink(code);
   return (
-    <SidePanel title="Call options" icon={<SettingsIcon size={16} />} onClose={onClose}>
-      <div className="p-3 grid gap-2">
-        {call.capabilities.tileView ? (
-          <PolicyButton
-            label={call.tileView === true ? "Use speaker layout" : "Use tile layout"}
-            onClick={commands.toggleTileView}
-          />
-        ) : null}
-        {call.capabilities.noiseSuppression ? (
-          <PolicyButton
-            label={
-              call.noiseSuppressionEnabled === true
-                ? "Disable noise suppression"
-                : "Enable noise suppression"
-            }
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="text-[var(--text-2)]"
+          aria-label="Meeting details"
+        >
+          <InfoIcon aria-hidden="true" />
+          <span className="mono type-meta">{code}</span>
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent aria-label="Meeting details" align="start" className="w-80">
+        <p className="m-0 type-body-sm font-semibold">{subject}</p>
+        <p className="m-0 mt-1 type-meta text-muted-foreground">Joining info</p>
+        <div className="mt-2 flex items-center gap-2 rounded-md bg-muted px-2.5 py-1.5">
+          <span className="min-w-0 flex-1 truncate type-meta">{link}</span>
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="Copy joining info"
             onClick={() => {
-              commands.setNoiseSuppression(call.noiseSuppressionEnabled !== true);
+              void copyMeetingLink(link);
             }}
-          />
-        ) : null}
-        {call.capabilities.backgroundBlur ? (
-          <PolicyButton
-            label={call.backgroundBlurred === true ? "Remove background blur" : "Blur background"}
-            onClick={() => {
-              commands.setBackgroundBlur(call.backgroundBlurred !== true);
-            }}
-          />
-        ) : null}
-        {call.capabilities.breakoutRooms && canModerate ? (
-          <section aria-label="Breakout rooms" className="grid gap-2 mt-2">
-            <strong className="type-body-sm">Breakout rooms</strong>
-            <PolicyButton label="Add breakout room" onClick={commands.addBreakoutRoom} />
-            <PolicyButton
-              label="Auto-assign participants"
-              onClick={commands.autoAssignBreakoutRooms}
-            />
-            {breakoutRooms.length > 0 ? (
-              <PolicyButton
-                label="Return to main room"
-                onClick={() => {
-                  commands.joinBreakoutRoom();
-                }}
-              />
-            ) : null}
-            {breakoutRooms.map((room) => (
-              <div key={room.id} className="grid gap-1.5 p-2 [border:1px_solid_#27272d]">
-                <span className="type-meta">
-                  {room.name} ({String(room.participantCount)})
-                </span>
-                <div className="flex gap-1.5">
-                  <MiniAction
-                    label={`Join ${room.name}`}
-                    onClick={() => {
-                      commands.joinBreakoutRoom(room.id);
-                    }}
-                  />
-                  <MiniAction
-                    label={`Close ${room.name}`}
-                    onClick={() => {
-                      commands.closeBreakoutRoom(room.id);
-                    }}
-                  />
-                </div>
-              </div>
-            ))}
-          </section>
-        ) : null}
-      </div>
-    </SidePanel>
+          >
+            <CopyIcon size={16} />
+          </button>
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -627,7 +586,7 @@ export function RecordingNotice({ active }: { readonly active: boolean }) {
     <div
       role="alert"
       aria-live="assertive"
-      className="[padding:10px_16px] [background:#991b1b] [color:white] font-bold text-center"
+      className="[padding:10px_16px] bg-[var(--label-red)] text-[var(--label-on)] font-bold text-center"
     >
       Recording in progress — audio, video, and shared content are being captured.
     </div>
@@ -646,186 +605,13 @@ function Overlay({
       role="status"
       className={cn(
         "absolute inset-0 grid [place-items:center] type-body-sm pointer-events-none",
-        tone === "error" ? "[background:rgba(127,29,29,0.4)]" : "[background:rgba(0,0,0,0.65)]",
-        tone === "error" ? "[color:#fecaca]" : "[color:#a1a1aa]",
+        tone === "error"
+          ? "[background:color-mix(in_srgb,var(--danger)_25%,transparent)] [color:var(--danger)]"
+          : "[background:color-mix(in_srgb,var(--bg)_65%,transparent)] [color:var(--text-2)]",
       )}
     >
       {message}
     </div>
-  );
-}
-
-function SidePanel({
-  title,
-  icon,
-  children,
-  onClose,
-  ariaLabel,
-}: {
-  readonly title: string;
-  readonly icon: React.ReactNode;
-  readonly children: React.ReactNode;
-  readonly onClose: () => void;
-  readonly ariaLabel?: string;
-}) {
-  return (
-    <div
-      aria-label={ariaLabel ?? title}
-      className="w-80 flex flex-col [background:#131316] [border-left:1px_solid_#27272d]"
-    >
-      <div className="[padding:12px_16px] flex items-center gap-2 [border-bottom:1px_solid_#27272d]">
-        {icon}
-        <span className="font-semibold type-body-sm">{title}</span>
-        <button
-          className="icon-btn ml-auto"
-
-          type="button"
-          aria-label={`Close ${title}`}
-          onClick={onClose}
-        >
-          <XIcon size={16} />
-        </button>
-      </div>
-      <div className="flex-1 overflow-y-auto">{children}</div>
-    </div>
-  );
-}
-
-function ParticipantRow({
-  name,
-  badge,
-  children,
-}: {
-  readonly name: string;
-  readonly badge?: string | null;
-  readonly children?: React.ReactNode;
-}) {
-  return (
-    <li className="[padding:10px_16px] flex items-center gap-2.5 [border-bottom:1px_solid_#27272d]">
-      <span
-        aria-hidden="true"
-        className="w-7 h-7 [border-radius:999px] [background:#3f3f46] grid [place-items:center] [color:#ededee] type-meta"
-      >
-        {initials(name)}
-      </span>
-      <span className="flex-1 type-body-sm">{name}</span>
-      {badge !== undefined && badge !== null ? (
-        <span className="type-caption [color:#f87171]">{badge}</span>
-      ) : null}
-      {children}
-    </li>
-  );
-}
-
-function MiniAction({ label, onClick }: { readonly label: string; readonly onClick: () => void }) {
-  return (
-    <button type="button" className="btn sm" onClick={onClick} aria-label={label}>
-      {label}
-    </button>
-  );
-}
-
-function PolicyButton({
-  label,
-  onClick,
-}: {
-  readonly label: string;
-  readonly onClick: () => void;
-}) {
-  return (
-    <button type="button" className="btn" onClick={onClick}>
-      {label}
-    </button>
-  );
-}
-
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
-
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/);
-  if (parts.length === 0 || parts[0] === undefined) return "?";
-  if (parts.length === 1) return (parts[0][0] ?? "?").toUpperCase();
-  const last = parts[parts.length - 1] ?? "";
-  return `${(parts[0][0] ?? "").toUpperCase()}${(last[0] ?? "").toUpperCase()}`;
-}
-
-function ChatPanel({
-  messages,
-  onSend,
-  onClose,
-}: {
-  readonly messages: readonly JitsiChatMessage[];
-  readonly onSend: (text: string) => void;
-  readonly onClose: () => void;
-}) {
-  const [draft, setDraft] = useState("");
-  return (
-    <SidePanel title="In-call messages" icon={<ChatIcon size={16} />} onClose={onClose}>
-      <div className="p-3 flex flex-col gap-2">
-        {messages.length === 0 ? (
-          <p className="m-0 [color:#71717a] type-meta text-center [padding:24px_0]">
-            No messages yet. Say hi.
-          </p>
-        ) : (
-          messages.map((m) => (
-            <div
-              key={m.id}
-              className={cn(
-                "flex flex-col gap-0.5 [max-width:85%]",
-                m.isLocal ? "[align-self:flex-end]" : "[align-self:flex-start]",
-              )}
-            >
-              <span
-                className={cn(
-                  "type-caption [color:#71717a]",
-                  m.isLocal ? "text-right" : "text-left",
-                )}
-              >
-                {m.nick}
-              </span>
-              <span
-                className={cn(
-                  "[color:white] [padding:6px_10px] [border-radius:10px] type-body-sm whitespace-pre-wrap [word-break:break-word]",
-                  m.isLocal ? "[background:var(--accent)]" : "[background:#27272d]",
-                )}
-              >
-                {m.message}
-              </span>
-            </div>
-          ))
-        )}
-      </div>
-      <form
-        className="p-2.5 flex gap-1.5 [border-top:1px_solid_#27272d]"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (draft.trim().length === 0) return;
-          onSend(draft);
-          setDraft("");
-        }}
-      >
-        <input
-          aria-label="Message everyone in the call"
-          placeholder="Message everyone in the call"
-          value={draft}
-          onChange={(event) => {
-            setDraft(event.target.value);
-          }}
-          className="flex-1 h-7.5 [padding:0_10px] rounded-md [background:#0a0a0b] [color:#ededee] outline-none type-meta [border:1px_solid_#27272d]"
-        />
-        <button
-          type="submit"
-          aria-label="Send message"
-          disabled={draft.trim().length === 0}
-          className={cn(
-            "h-7.5 [padding:0_10px] rounded-md [border:none] [background:var(--accent)] [color:white] cursor-pointer",
-            draft.trim().length === 0 ? "[opacity:0.5]" : "[opacity:1]",
-          )}
-        >
-          Send
-        </button>
-      </form>
-    </SidePanel>
   );
 }
 
@@ -854,7 +640,6 @@ function CallControl({
   readonly disabled?: boolean;
   readonly badge?: number | null;
 }) {
-  const background = danger ? "#dc2626" : active ? "var(--accent)" : DARK_BORDER;
   return (
     <button
       type="button"
@@ -863,17 +648,20 @@ function CallControl({
       aria-pressed={active}
       disabled={disabled}
       className={cn(
-        "relative w-11 h-11 [border-radius:999px] [color:white] grid [place-items:center] [border:none]",
-        disabled ? "cursor-not-allowed" : "cursor-pointer",
-        disabled ? "[opacity:0.5]" : "[opacity:1]",
+        "focus-ring relative w-11 h-11 [border-radius:999px] grid [place-items:center] [border:none]",
+        danger
+          ? "bg-[var(--label-red)] text-[var(--label-on)]"
+          : active
+            ? "bg-[var(--accent)] text-[var(--accent-fg)]"
+            : "bg-[var(--surface-3)] text-[var(--text)]",
+        disabled ? "cursor-not-allowed [opacity:0.5]" : "cursor-pointer",
       )}
-      style={{ background }}
     >
       {children}
       {badge !== undefined && badge !== null && badge > 0 ? (
         <span
           aria-hidden="true"
-          className="absolute [top:-2px] [right:-2px] min-w-4 h-4 [padding:0_4px] [border-radius:999px] [background:#dc2626] [color:white] type-chip font-semibold grid [place-items:center]"
+          className="absolute [top:-2px] [right:-2px] min-w-4 h-4 [padding:0_4px] [border-radius:999px] bg-[var(--label-red)] text-[var(--label-on)] type-chip font-semibold grid [place-items:center]"
         >
           {badge > 99 ? "99+" : badge}
         </span>

@@ -6,6 +6,7 @@ import { uploadDriveFile } from "@/features/drive/api";
 import { driveUploadStatusQueryOptions } from "@/features/drive/queries";
 import { assistantModelsQueryOptions, assistantToolsQueryOptions } from "./queries";
 import type { AssistantAttachment } from "./api";
+import { assistantModelNames } from "./model-name";
 
 const MAX_FILES = 10;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -55,7 +56,7 @@ export function AssistantComposer({
   onNewChat,
   editing,
   onCancelEdit,
-  initialToolGroups,
+  toolGroups,
   onToolGroupsChange,
   webSearch: webSearchProp,
   onWebSearchChange,
@@ -67,8 +68,9 @@ export function AssistantComposer({
     webSearch: boolean,
     toolGroups: readonly string[] | undefined,
   ) => Promise<boolean>;
-  readonly initialToolGroups?: readonly string[] | undefined;
-  readonly onToolGroupsChange: (groups: readonly string[]) => void;
+  /** The chosen tool groups; undefined lets the server pick within the limit. */
+  readonly toolGroups: readonly string[] | undefined;
+  readonly onToolGroupsChange: (groups: readonly string[] | undefined) => void;
   readonly webSearch?: boolean;
   readonly onWebSearchChange?: (enabled: boolean) => void;
   readonly pending: boolean;
@@ -89,16 +91,22 @@ export function AssistantComposer({
   const webSearch =
     onWebSearchChange === undefined ? uncontrolledWebSearch : (webSearchProp ?? false);
   const setWebSearch = onWebSearchChange ?? setUncontrolledWebSearch;
-  const [chosenGroups, setChosenGroups] = useState<readonly string[] | undefined>(
-    editing?.toolGroups,
-  );
+  // An edit keeps its own choice; the main composer's choice lives with the conversation.
+  const [editGroups, setEditGroups] = useState<readonly string[] | undefined>(editing?.toolGroups);
+  const chosenGroups = editing ? editGroups : toolGroups;
+  const setChosenGroups = editing ? setEditGroups : onToolGroupsChange;
   const tools = useQuery(assistantToolsQueryOptions());
   const availableGroups = (tools.data?.groups ?? []).filter((group) => group.count > 0);
+  const automaticGroups = chosenGroups === undefined;
   const selectedGroups = (
-    chosenGroups ??
-    initialToolGroups ??
-    availableGroups.filter((group) => group.defaultEnabled).map((group) => group.id)
+    chosenGroups ?? availableGroups.filter((group) => group.defaultEnabled).map((group) => group.id)
   ).filter((id) => availableGroups.some((group) => group.id === id));
+  const selectedToolCount = availableGroups
+    .filter((group) => selectedGroups.includes(group.id))
+    .reduce((total, group) => total + group.count, 0);
+  const toolLimit = tools.data?.limit;
+  // Only people with admin tools can see raw model ids.
+  const showModelIds = availableGroups.some((group) => group.id === "admin");
   const [text, setText] = useState(editing?.text ?? "");
   const [retainedAttachments, setRetainedAttachments] = useState(editing?.attachments ?? []);
   const [uploads, setUploads] = useState<readonly Upload[]>([]);
@@ -119,6 +127,7 @@ export function AssistantComposer({
       statuses[index]?.data?.available === true &&
       !statuses[index]?.isError,
   );
+  const modelNames = assistantModelNames(models.data?.models ?? []);
   const selectedModel =
     models.data?.models.find((model) => model.id === modelId)?.id ??
     models.data?.defaultModelId ??
@@ -213,7 +222,8 @@ export function AssistantComposer({
         ],
         selectedModel,
         webSearch && models.data?.webSearchEnabled === true,
-        tools.data ? selectedGroups : (chosenGroups ?? initialToolGroups),
+        // Until the tool list loads, an explicit choice is sent as saved.
+        chosenGroups === undefined || !tools.data ? chosenGroups : selectedGroups,
       )
     ) {
       setText("");
@@ -435,17 +445,40 @@ export function AssistantComposer({
                               Could not load tools. Retry
                             </DropdownMenu.Item>
                           ) : null}
+                          {tools.data && availableGroups.length > 0 ? (
+                            <>
+                              <DropdownMenu.Label className="px-2 pt-1.5 pb-1 type-caption text-muted-foreground">
+                                {automaticGroups
+                                  ? `Helix AI picks up to ${String(toolLimit)} tools for each request`
+                                  : `${String(selectedToolCount)} of ${String(toolLimit)} tools on`}
+                              </DropdownMenu.Label>
+                              <DropdownMenu.CheckboxItem
+                                checked={automaticGroups}
+                                onSelect={(event) => event.preventDefault()}
+                                onCheckedChange={(checked) => {
+                                  setChosenGroups(checked ? undefined : selectedGroups);
+                                }}
+                                className="flex cursor-pointer items-center gap-2 rounded-md p-2 text-sm outline-none focus:bg-accent"
+                              >
+                                Choose automatically
+                                <DropdownMenu.ItemIndicator className="ml-auto">
+                                  <Check size={16} />
+                                </DropdownMenu.ItemIndicator>
+                              </DropdownMenu.CheckboxItem>
+                              <DropdownMenu.Separator className="my-1 h-px bg-border" />
+                            </>
+                          ) : null}
                           {availableGroups.map((group) => (
                             <DropdownMenu.CheckboxItem
                               key={group.id}
                               checked={selectedGroups.includes(group.id)}
                               onSelect={(event) => event.preventDefault()}
                               onCheckedChange={(checked) => {
-                                const next = checked
-                                  ? [...selectedGroups, group.id]
-                                  : selectedGroups.filter((id) => id !== group.id);
-                                setChosenGroups(next);
-                                if (!editing) onToolGroupsChange(next);
+                                setChosenGroups(
+                                  checked
+                                    ? [...selectedGroups, group.id]
+                                    : selectedGroups.filter((id) => id !== group.id),
+                                );
                               }}
                               className="flex cursor-pointer items-center gap-2 rounded-md p-2 text-sm outline-none focus:bg-accent"
                             >
@@ -458,6 +491,13 @@ export function AssistantComposer({
                           ))}
                           {tools.data && availableGroups.length === 0 ? (
                             <p className="p-2 text-sm">No workspace tools available.</p>
+                          ) : null}
+                          {toolLimit !== undefined &&
+                          !automaticGroups &&
+                          selectedToolCount > toolLimit ? (
+                            <p role="status" className="max-w-56 p-2 type-caption text-destructive">
+                              {`${String(selectedToolCount - toolLimit)} over the limit. Turn off a group before sending.`}
+                            </p>
                           ) : null}
                         </DropdownMenu.SubContent>
                       </section>
@@ -489,6 +529,7 @@ export function AssistantComposer({
             <span className="sr-only">Model</span>
             <select
               aria-label="Assistant model"
+              title={showModelIds && selectedModel.length > 0 ? selectedModel : undefined}
               value={selectedModel}
               onChange={(event) => onModelChange(event.target.value)}
               disabled={pending || models.isPending || selectedModel.length === 0}
@@ -500,8 +541,8 @@ export function AssistantComposer({
                 </option>
               ) : null}
               {models.data?.models.map((model) => (
-                <option key={model.id} value={model.id}>
-                  {model.label}
+                <option key={model.id} value={model.id} title={showModelIds ? model.id : undefined}>
+                  {modelNames.get(model.id) ?? model.label}
                 </option>
               ))}
             </select>

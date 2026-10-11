@@ -31,13 +31,21 @@ function CalendarRoute() {
   const createIntent = useMemo<CalendarCreateIntent | null>(
     () =>
       search.create === "event"
-        ? { attendees: search.attendees === undefined ? [] : search.attendees.split(",") }
+        ? {
+            attendees: search.attendees === undefined ? [] : search.attendees.split(","),
+            conference: search.conference === "meet",
+          }
         : null,
-    [search.create, search.attendees],
+    [search.create, search.attendees, search.conference],
   );
   const clearCreateIntent = useCallback(() => {
     void navigate({
-      search: (previous) => ({ ...previous, create: undefined, attendees: undefined }),
+      search: (previous) => ({
+        ...previous,
+        create: undefined,
+        attendees: undefined,
+        conference: undefined,
+      }),
       replace: true,
     });
   }, [navigate]);

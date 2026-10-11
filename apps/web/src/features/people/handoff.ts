@@ -18,10 +18,14 @@ export interface ChatDirectMessageHandoff {
   readonly dm?: string;
 }
 
-/** `/calendar?create=event&attendees=a@x.com` opens the event editor with those guests. */
+/**
+ * `/calendar?create=event&attendees=a@x.com` opens the event editor with those
+ * guests; `&conference=meet` also adds video conferencing.
+ */
 export interface CalendarCreateHandoff {
   readonly create?: "event";
   readonly attendees?: string;
+  readonly conference?: "meet";
 }
 
 export function mailComposeHandoffFromSearch(search: Record<string, unknown>): MailComposeHandoff {
@@ -45,9 +49,11 @@ export function calendarCreateHandoffFromSearch(
 ): CalendarCreateHandoff {
   const create = optionalEnumSearchParam(search.create, ["event"] as const);
   const attendees = emailListSearchParam(search.attendees);
+  const conference = optionalEnumSearchParam(search.conference, ["meet"] as const);
   return {
     ...(create === undefined ? {} : { create }),
     ...(attendees === undefined ? {} : { attendees }),
+    ...(conference === undefined ? {} : { conference }),
   };
 }
 

@@ -1,22 +1,11 @@
-/* Jitsi IFrame API integration.
- *
- * Loads `external_api.js` from the configured Jitsi domain, instantiates a
- * JitsiMeetExternalAPI inside a host React element, and exposes call state +
- * commands as React-idiomatic values.
- *
- * Why this hook exists: the raw <iframe> embed is a black box — mute/camera
- * buttons in the Helix UI couldn't talk to Jitsi, the REC pill was hard-coded
- * on, and there was no way to read participants or recording state. Jitsi
- * publishes a stable postMessage API for exactly this; we wrap it here so
- * meet-call.tsx can stay a thin presentational layer.
- */
+/* Jitsi IFrame API integration: loads `external_api.js` from the configured
+ * Jitsi domain, mounts JitsiMeetExternalAPI in a host element, and exposes call
+ * state + commands so meet-call.tsx stays a thin presentational layer. */
 
 import { useEffect, useRef, useState } from "react";
 import type { MeetMediaCommand, MeetRecordingAuthorization, MeetTelemetryEvent } from "./api";
 
-// ---------------------------------------------------------------------------
-// Public types
-// ---------------------------------------------------------------------------
+// ---- Public types ----
 
 interface JitsiParticipant {
   readonly id: string;
@@ -133,11 +122,18 @@ export interface JitsiCallOptions {
     readonly displayName: string;
     readonly email: string | null;
   };
+  readonly media: JitsiInitialMedia;
 }
 
-// ---------------------------------------------------------------------------
-// Script loader (memoised per domain)
-// ---------------------------------------------------------------------------
+/** Pre-join choices. Jitsi matches the picked devices by their label. */
+export interface JitsiInitialMedia {
+  readonly audioMuted: boolean;
+  readonly videoMuted: boolean;
+  readonly audioInputLabel: string | null;
+  readonly videoInputLabel: string | null;
+}
+
+// ---- Script loader (memoised per domain) ----
 
 const loaderPromises = new Map<string, Promise<void>>();
 
@@ -168,10 +164,7 @@ function loadExternalApiScript(domain: string): Promise<void> {
   return promise;
 }
 
-// ---------------------------------------------------------------------------
-// Minimal structural type for the external API. We don't pull in the
-// upstream @types/jitsi since the surface we use is small and stable.
-// ---------------------------------------------------------------------------
+// ---- Minimal structural type for the external API (small, stable surface) ----
 
 interface ExternalApiCtor {
   new (domain: string, options: ExternalApiOptions): ExternalApi;
@@ -182,6 +175,7 @@ interface ExternalApiOptions {
   readonly parentNode: HTMLElement;
   readonly jwt?: string;
   readonly userInfo?: { displayName?: string; email?: string };
+  readonly devices?: { audioInput?: string; videoInput?: string };
   readonly configOverwrite?: Record<string, unknown>;
   readonly interfaceConfigOverwrite?: Record<string, unknown>;
 }
@@ -202,9 +196,7 @@ declare global {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Hook
-// ---------------------------------------------------------------------------
+// ---- Hook ----
 
 const EMPTY_CAPABILITIES: JitsiClientCapabilities = {
   tileView: false,
@@ -264,7 +256,12 @@ export function useJitsiCall({
     const joinStartedAt = performance.now();
     let lastQualityAt = 0;
 
-    setState({ ...EMPTY_STATE, recordingActive: options.initialRecordingActive });
+    setState({
+      ...EMPTY_STATE,
+      audioMuted: options.media.audioMuted,
+      videoMuted: options.media.videoMuted,
+      recordingActive: options.initialRecordingActive,
+    });
     recordingActiveRef.current = options.initialRecordingActive;
     if (options.initialRecordingActive) announceRecordingStarted();
 
@@ -284,8 +281,15 @@ export function useJitsiCall({
             displayName: options.userInfo.displayName,
             email: options.userInfo.email ?? undefined,
           },
+          devices: {
+            ...(options.media.audioInputLabel ? { audioInput: options.media.audioInputLabel } : {}),
+            ...(options.media.videoInputLabel ? { videoInput: options.media.videoInputLabel } : {}),
+          },
           configOverwrite: {
+            // Helix renders its own pre-join screen; these carry its choices.
             prejoinPageEnabled: false,
+            startWithAudioMuted: options.media.audioMuted,
+            startWithVideoMuted: options.media.videoMuted,
             disableDeepLinking: true,
             // We render our own bottom bar — empty toolbarButtons hides
             // the Jitsi-native toolbar entirely (modern Jitsi spelling).
@@ -405,14 +409,10 @@ export function useJitsiCall({
         api.addListener("videoQualityChanged", reportQuality);
         api.addListener("peerConnectionFailure", reportQuality);
         api.addListener("raiseHandUpdated", (payload: unknown) => {
-          // Jitsi sends raiseHandUpdated for every participant; only mirror it
-          // when it's for the local participant (id matches the local one).
           const id = readString(payload, "id");
           const handRaised = readBool(payload, "handRaised");
           if (handRaised === null) return;
-          // Treat any raiseHandUpdated as authoritative for local because we
-          // toggle via executeCommand which only affects local. False positives
-          // are harmless — the next local toggle will re-sync.
+          // Treated as local: we only toggle our own hand; the next toggle re-syncs.
           setState((prev) => ({
             ...prev,
             handRaised: id === null ? handRaised : prev.handRaised || handRaised,
@@ -600,9 +600,7 @@ export function useJitsiCall({
   return { state, commands };
 }
 
-// ---------------------------------------------------------------------------
-// Small helpers (payloads from Jitsi are typed as unknown over postMessage)
-// ---------------------------------------------------------------------------
+// ---- Small helpers (payloads from Jitsi are typed as unknown over postMessage) ----
 
 function readBool(payload: unknown, key: string): boolean | null {
   if (typeof payload !== "object" || payload === null) return null;

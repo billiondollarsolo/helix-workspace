@@ -110,7 +110,7 @@ test("selects a model, scans uploads before sending, retains failed drafts and r
       modelId: "groq/openai/gpt-oss-20b",
       attachmentObjectIds: [objectId],
       webSearch: false,
-      toolGroups: ["mail", "drive", "other"],
+      // No tool groups chosen: the server picks within the provider limit.
     })),
   );
   expect(backend.uploads).toBe(1);
@@ -529,7 +529,7 @@ async function mockBackend(page: Page, failFirst = false, webSearchEnabled = tru
     if (pathname.endsWith("/assistant.tools.list"))
       return state.toolsFail
         ? fulfillJson(route, { error: { message: "Tools temporarily unavailable" } }, 503)
-        : fulfillJson(route, { groups });
+        : fulfillJson(route, { limit: 128, groups });
     if (pathname.endsWith("/assistant.models.list"))
       return fulfillJson(route, { models, defaultModelId: models[0]?.id, webSearchEnabled });
     if (pathname.endsWith("/assistant.conversations.list"))

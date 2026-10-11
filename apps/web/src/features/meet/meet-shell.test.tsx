@@ -1,12 +1,9 @@
 // @vitest-environment jsdom
 
 import { act } from "react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type * as TanStackRouter from "@tanstack/react-router";
-import { ShellOverlayContext } from "@/components/shell";
-import { MeetShell } from "./meet-shell";
 import { MeetCall, RecordingNotice, formatElapsed } from "./meet-call";
 import {
   announceRecordingStarted,
@@ -16,7 +13,7 @@ import {
 } from "./jitsi-external-api";
 import type { MeetCallSession } from "./meet-shell";
 import * as authModule from "@/lib/auth";
-import { shellOverlaysForTest } from "@/test/shell-overlays";
+import { flush, meetingsPayload, mockTools, renderWithClient, waitForText } from "@/test/meet";
 
 vi.mock("@tanstack/react-router", async (importOriginal) => {
   const actual = await importOriginal<typeof TanStackRouter>();
@@ -28,119 +25,6 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
-
-const noopOverlays = shellOverlaysForTest();
-
-/* A live `meet.meetings.list` payload covering Today (active) + Recent. */
-const meetingsPayload = {
-  meetings: [] as unknown[],
-  active: [
-    {
-      id: "room-1",
-      threadId: "thread-1",
-      roomName: "atlas-sync",
-      subject: "Atlas weekly sync",
-      title: "Atlas weekly sync",
-      jitsiDomain: "meet.localhost",
-      status: "active",
-      code: "atl-asly-snc",
-      host: { actorId: "a1", displayName: "Mira Okafor", email: null, role: "owner" },
-      attendees: [],
-      attendeeCount: 4,
-      startedAt: "2026-05-21T09:00:00.000Z",
-      endedAt: null,
-      scheduledStartAt: null,
-      scheduledEndAt: null,
-      durationSeconds: null,
-      recorded: false,
-      recordingArtifacts: [],
-      summaries: [],
-      createdAt: "2026-05-21T09:00:00.000Z",
-      updatedAt: "2026-05-21T09:00:00.000Z",
-    },
-  ],
-  scheduled: [] as unknown[],
-  recent: [
-    {
-      id: "room-2",
-      threadId: "thread-2",
-      roomName: "eng-standup",
-      subject: "Eng standup",
-      title: "Eng standup",
-      jitsiDomain: "meet.localhost",
-      status: "ended",
-      code: "eng-stnd-up0",
-      host: { actorId: "a1", displayName: "Mira Okafor", email: null, role: "owner" },
-      attendees: [],
-      attendeeCount: 8,
-      startedAt: "2026-05-21T08:00:00.000Z",
-      endedAt: "2026-05-21T08:27:00.000Z",
-      scheduledStartAt: null,
-      scheduledEndAt: null,
-      durationSeconds: 1620,
-      recorded: true,
-      recordingArtifacts: [],
-      summaries: [],
-      createdAt: "2026-05-21T08:00:00.000Z",
-      updatedAt: "2026-05-21T08:27:00.000Z",
-    },
-  ],
-};
-meetingsPayload.meetings = [...meetingsPayload.active, ...meetingsPayload.recent];
-
-function mockTools(handlers: Record<string, () => unknown>) {
-  return vi.spyOn(authModule, "authenticatedFetch").mockImplementation((input) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-    const toolId = url.replace("/api/tools/", "");
-    const handler = handlers[toolId];
-    if (handler === undefined) {
-      return Promise.resolve(Response.json({ error: `no mock for ${toolId}` }, { status: 500 }));
-    }
-    return Promise.resolve(Response.json(handler() as object));
-  });
-}
-
-function renderWithClient(node: React.ReactNode, root: Root) {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
-  act(() => {
-    root.render(
-      <QueryClientProvider client={client}>
-        <ShellOverlayContext.Provider value={noopOverlays}>{node}</ShellOverlayContext.Provider>
-      </QueryClientProvider>,
-    );
-  });
-}
-
-function flush() {
-  return act(async () => {
-    await Promise.resolve();
-    await Promise.resolve();
-  });
-}
-
-/* Repeatedly flush microtasks until the container shows `text` (or give up). */
-async function waitForText(container: HTMLElement, text: string) {
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    if (container.textContent.includes(text)) {
-      return;
-    }
-    await flush();
-  }
-  throw new Error(`Timed out waiting for text: ${text}`);
-}
-
-/* Set a controlled input's value through React's native value tracker. */
-function setReactInputValue(input: HTMLInputElement, value: string) {
-  const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
-  if (descriptor?.set !== undefined) {
-    Reflect.apply(descriptor.set, input, [value]);
-  } else {
-    input.value = value;
-  }
-  input.dispatchEvent(new Event("input", { bubbles: true }));
-}
 
 const liveSession: MeetCallSession = {
   roomId: "room-1",
@@ -169,6 +53,7 @@ const liveSession: MeetCallSession = {
   },
   canModerate: true,
   startedAtMs: Date.now() - 32 * 60 * 1000,
+  media: { audioMuted: false, videoMuted: false, audioInputLabel: null, videoInputLabel: null },
 };
 
 /** A session that hasn't yet received its minted join URL. Used to verify the
@@ -200,6 +85,7 @@ const pendingSession: MeetCallSession = {
   },
   canModerate: false,
   startedAtMs: Date.now(),
+  media: { audioMuted: false, videoMuted: false, audioInputLabel: null, videoInputLabel: null },
 };
 
 afterEach(() => {
@@ -335,152 +221,6 @@ describe("Meet product capabilities", () => {
   });
 });
 
-describe("MeetShell hub", () => {
-  let container: HTMLDivElement;
-  let root: Root;
-
-  beforeEach(() => {
-    container = document.createElement("div");
-    document.body.append(container);
-    root = createRoot(container);
-  });
-
-  afterEach(() => {
-    act(() => {
-      root.unmount();
-    });
-    container.remove();
-  });
-
-  it("renders backend meetings from meet.meetings.list", async () => {
-    mockTools({ "meet.meetings.list": () => meetingsPayload });
-    renderWithClient(<MeetShell />, root);
-    await waitForText(container, "Atlas weekly sync");
-    expect(container.textContent).toContain("Start a call");
-    expect(container.textContent).toContain("Eng standup");
-  });
-
-  it("surfaces an unavailable indicator when meet.meetings.list errors", async () => {
-    vi.spyOn(authModule, "authenticatedFetch").mockResolvedValue(
-      Response.json({ error: "boom" }, { status: 500 }),
-    );
-    renderWithClient(<MeetShell />, root);
-    // No fabricated rows — just the surface-level "Meetings unavailable" chip.
-    await waitForText(container, "Meetings unavailable");
-  });
-
-  it("starts an instant meeting via meet.create-room + meet.mint-token", async () => {
-    const fetchSpy = mockTools({
-      "meet.meetings.list": () => meetingsPayload,
-      "meet.create-room": () => ({
-        id: "room-new",
-        threadId: "t",
-        roomName: "instant-room",
-        subject: "Instant meeting",
-        jitsiDomain: "meet.localhost",
-        status: "active",
-        createdByActorId: "a1",
-        startedAt: "2026-05-21T10:00:00.000Z",
-        endedAt: null,
-        createdAt: "2026-05-21T10:00:00.000Z",
-        updatedAt: "2026-05-21T10:00:00.000Z",
-      }),
-      "meet.mint-token": () => ({
-        roomId: "room-new",
-        roomName: "instant-room",
-        jitsiDomain: "meet.localhost",
-        token: "jwt",
-        joinUrl: "https://meet.localhost/instant-room?jwt=jwt",
-        expiresAt: "2026-05-21T11:00:00.000Z",
-        recordingAvailable: true,
-        canStartRecording: true,
-        recordingNoticeVersion: "2026-09-02",
-        recordingActive: false,
-      }),
-    });
-    renderWithClient(<MeetShell />, root);
-    await waitForText(container, "Atlas weekly sync");
-    const startButton = [...container.querySelectorAll("button")].find((b) =>
-      b.textContent.includes("Start instant meeting"),
-    );
-    act(() => {
-      startButton?.click();
-    });
-    const consentButton = [...container.querySelectorAll("button")].find(
-      (button) => button.textContent === "I consent and join",
-    );
-    expect(container.textContent).toContain("global all-parties recording policy");
-    act(() => {
-      consentButton?.click();
-    });
-    await waitForText(container, "helix.meet/");
-    expect(fetchSpy).toHaveBeenCalledWith("/api/tools/meet.create-room", expect.anything());
-    expect(fetchSpy).toHaveBeenCalledWith("/api/tools/meet.mint-token", expect.anything());
-    const mintCall = fetchSpy.mock.calls.find((call) => call[0] === "/api/tools/meet.mint-token");
-    if (mintCall === undefined) throw new Error("Expected Meet token request.");
-    const mintBody = JSON.parse(mintCall[1]?.body as string) as Record<string, unknown>;
-    expect(mintBody).toMatchObject({
-      recordingNoticeAccepted: true,
-      recordingNoticeVersion: "2026-09-02",
-    });
-    expect(mintBody.deviceId).toEqual(expect.any(String));
-    expect(mintBody.joinGrantId).toEqual(expect.any(String));
-    // Entered the in-call view: the Jitsi host element should be present.
-    expect(container.querySelector('[aria-label^="Jitsi meeting:"]')).not.toBeNull();
-  });
-
-  it("opens the schedule dialog and calls meet.create-room with a window", async () => {
-    const fetchSpy = mockTools({
-      "meet.meetings.list": () => meetingsPayload,
-      "meet.create-room": () => ({
-        id: "room-sched",
-        threadId: "t",
-        roomName: "sched-room",
-        subject: "Planning",
-        jitsiDomain: "meet.localhost",
-        status: "scheduled",
-        createdByActorId: "a1",
-        startedAt: "2026-05-22T10:00:00.000Z",
-        endedAt: null,
-        createdAt: "2026-05-21T10:00:00.000Z",
-        updatedAt: "2026-05-21T10:00:00.000Z",
-      }),
-    });
-    renderWithClient(<MeetShell />, root);
-    await flush();
-    const scheduleButton = [...container.querySelectorAll("button")].find((b) =>
-      b.textContent.includes("Schedule for later"),
-    );
-    act(() => {
-      scheduleButton?.click();
-    });
-    const titleInput = container.querySelector<HTMLInputElement>(
-      'input[aria-label="Meeting title"]',
-    );
-    expect(titleInput).not.toBeNull();
-    act(() => {
-      if (titleInput) {
-        setReactInputValue(titleInput, "Planning");
-      }
-    });
-    const submit = [...container.querySelectorAll("button")].find(
-      (b) => b.textContent === "Schedule",
-    );
-    act(() => {
-      submit?.click();
-    });
-    await flush();
-    expect(fetchSpy).toHaveBeenCalledWith("/api/tools/meet.create-room", expect.anything());
-    const createCall = fetchSpy.mock.calls.find(
-      (call) => call[0] === "/api/tools/meet.create-room",
-    );
-    if (createCall === undefined) throw new Error("Expected Meet room request.");
-    const body = JSON.parse(createCall[1]?.body as string) as Record<string, unknown>;
-    expect(body.scheduledStartAt).toBeDefined();
-    expect(body.scheduledEndAt).toBeDefined();
-  });
-});
-
 describe("MeetCall", () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -505,7 +245,9 @@ describe("MeetCall", () => {
     // verify the host is wired and the room subject + code are present.
     const host = container.querySelector(`[aria-label="Jitsi meeting: ${liveSession.subject}"]`);
     expect(host).not.toBeNull();
-    expect(container.textContent).toContain("helix.meet/atl-asly-snc");
+    expect(container.querySelector('[aria-label="Meeting details"]')?.textContent).toContain(
+      "atl-asly-snc",
+    );
   });
 
   it("renders a connecting placeholder when no join URL is available yet", () => {

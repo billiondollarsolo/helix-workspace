@@ -1,0 +1,299 @@
+@layer components {
+  .person-avatar {
+    display: inline-flex;
+    flex-shrink: 0;
+  }
+
+  /* ---------- Picker ---------- */
+  .people-picker {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .people-picker-label {
+    flex-shrink: 0;
+    padding-top: 5px;
+    color: var(--text-3);
+    font-size: var(--text-body-sm);
+  }
+
+  .people-picker-field {
+    display: flex;
+    flex: 1;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+    min-height: 32px;
+    padding: 3px 4px;
+    border: 1px solid var(--border-2);
+    border-radius: var(--radius);
+    background: var(--surface);
+    cursor: text;
+  }
+
+  .people-picker-field:focus-within {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent);
+  }
+
+  .people-picker-chips {
+    display: contents;
+  }
+
+  .people-picker-input {
+    flex: 1 0 120px;
+    min-width: 120px;
+    height: 24px;
+    border: 0;
+    padding: 0 4px;
+    color: var(--text);
+    background: transparent;
+    font: inherit;
+    font-size: var(--text-body-sm);
+    outline: none;
+  }
+
+  .people-picker-listbox {
+    position: absolute;
+    z-index: 40;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    max-height: 288px;
+    margin: 0;
+    padding: 4px 0;
+    overflow-y: auto;
+    list-style: none;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+    box-shadow: var(--shadow-lg);
+  }
+
+  .people-picker-option {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 12px;
+    cursor: pointer;
+  }
+
+  .people-picker-option[aria-selected="true"] {
+    background: var(--hover-strong);
+  }
+
+  .people-option-text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .people-option-name {
+    overflow: hidden;
+    color: var(--text);
+    font-size: var(--text-body-sm);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .people-option-detail {
+    overflow: hidden;
+    color: var(--text-2);
+    font-size: var(--text-meta);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* ---------- Chip ---------- */
+  .person-chip {
+    display: inline-flex;
+    align-items: center;
+    max-width: 100%;
+    height: 26px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface-2);
+    color: var(--text);
+    font-size: var(--text-body-sm);
+  }
+
+  .person-chip[data-invalid] {
+    border-color: var(--danger);
+    background: var(--danger-soft);
+    color: var(--danger);
+  }
+
+  .person-chip-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    height: 100%;
+    padding: 0 6px 0 2px;
+    border: 0;
+    border-radius: 999px;
+    color: inherit;
+    background: transparent;
+    font: inherit;
+  }
+
+  button.person-chip-label {
+    cursor: pointer;
+  }
+
+  .person-chip-name {
+    overflow: hidden;
+    max-width: 220px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .person-chip-remove {
+    display: grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    margin-right: 3px;
+    border: 0;
+    border-radius: 999px;
+    color: inherit;
+    background: transparent;
+    cursor: pointer;
+  }
+
+  .person-chip-remove:hover,
+  button.person-chip-label:hover {
+    background: var(--hover-strong);
+  }
+
+  /* ---------- Hovercard ---------- */
+  .person-hovercard {
+    position: fixed;
+    z-index: 60;
+    width: min(320px, calc(100vw - 16px));
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+    box-shadow: var(--shadow-lg);
+    color: var(--text);
+    animation: person-hovercard-in 120ms ease-out;
+  }
+
+  .person-hovercard-head {
+    display: flex;
+    gap: 14px;
+    align-items: center;
+    padding: 16px;
+  }
+
+  .person-hovercard-identity {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .person-hovercard-name {
+    margin: 0;
+    font-size: var(--text-body-lg);
+    font-weight: 600;
+  }
+
+  .person-hovercard-detail {
+    overflow: hidden;
+    color: var(--text-2);
+    font-size: var(--text-body-sm);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .person-hovercard-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 8px 12px 12px;
+    border-top: 1px solid var(--border);
+  }
+
+  .person-hovercard-status {
+    padding: 0 16px 10px;
+    color: var(--text-3);
+    font-size: var(--text-meta);
+  }
+
+  .person-hovercard-status:empty {
+    padding: 0;
+  }
+
+  @keyframes person-hovercard-in {
+    from {
+      opacity: 0;
+      transform: translateY(-2px);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .person-hovercard {
+      animation: none;
+    }
+  }
+
+  /* ---------- Contacts side panel ---------- */
+  .contacts-panel {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+  }
+
+  .contacts-panel-search {
+    padding: 12px 12px 8px;
+  }
+
+  .contacts-panel-list {
+    flex: 1;
+    margin: 0;
+    padding: 0 6px 12px;
+    overflow-y: auto;
+    list-style: none;
+  }
+
+  .contacts-panel-row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    width: 100%;
+    padding: 8px;
+    border: 0;
+    border-radius: var(--radius);
+    color: var(--text);
+    background: transparent;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .contacts-panel-row:hover,
+  .contacts-panel-row[aria-expanded="true"] {
+    background: var(--hover);
+  }
+
+  .contacts-panel-badge {
+    flex-shrink: 0;
+    margin-left: auto;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: var(--surface-2);
+    color: var(--text-2);
+    font-size: var(--text-caption);
+  }
+
+  .contacts-panel-state {
+    padding: 8px 14px;
+    color: var(--text-3);
+    font-size: var(--text-body-sm);
+  }
+}

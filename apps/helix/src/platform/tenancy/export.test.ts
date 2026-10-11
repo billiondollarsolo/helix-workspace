@@ -76,7 +76,7 @@ describe("buildTenantExportManifest", () => {
       },
       configSnapshot: {
         byoConfig: { storage: { kind: "helix-default" } },
-        featureFlags: { byo_storage: true },
+        featureFlags: { mail_outbound: false },
         quotas: { export_jobs_per_hour: 1 },
         branding: { display_name_override: "Acme" },
       },
@@ -647,7 +647,7 @@ function orgRecord(overrides: Partial<OrgRecord> = {}): OrgRecord {
     tier: "business",
     region: "us-east-1",
     byoConfig: { storage: { kind: "helix-default" } },
-    featureFlags: { byo_storage: true },
+    featureFlags: { mail_outbound: false },
     quotas: { export_jobs_per_hour: 1 },
     branding: { display_name_override: "Acme" },
     suspendedAt: null,

@@ -8,7 +8,7 @@
 
 Helix has organization-scoped models and a multi-tenant operating mode, but its current inbound and
 outbound mail bootstrap paths still rely on a default organization. Public multi-tenant SaaS also
-requires tenant lifecycle, billing, abuse response, per-tenant keys and provider secrets,
+requires tenant lifecycle, abuse response, per-tenant keys and provider secrets,
 noisy-neighbor controls, and independent isolation evidence. Claiming that operating shape at
 launch would exceed the available operational evidence.
 
@@ -30,7 +30,7 @@ Public multi-tenant SaaS is not part of this launch.
 ## Alternatives considered
 
 - **Public multi-tenant SaaS at launch:** rejected because tenant lifecycle, routing, isolation,
-  abuse, billing, and operational controls are not yet proven together.
+  abuse, and operational controls are not yet proven together.
 - **Remove tenant-aware internals for simplicity:** rejected because it creates security debt and a
   migration hazard without materially simplifying the pilot.
 - **Personal-only deployment:** rejected because the pilot needs Business controls, shared

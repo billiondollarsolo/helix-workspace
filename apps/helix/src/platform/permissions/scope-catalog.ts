@@ -256,11 +256,6 @@ const scopeCatalog = [
   },
   { scope: "admin.domains", description: "Administer organization domains.", surfaces: ["admin"] },
   { scope: "admin.security", description: "Administer security policy.", surfaces: ["admin"] },
-  {
-    scope: "admin.billing",
-    description: "Retired: Helix has no billing (ADR-0030); grants no access.",
-    surfaces: ["admin"],
-  },
   { scope: "admin.retention", description: "Administer retention policy.", surfaces: ["admin"] },
   { scope: "admin.config", description: "Administer platform configuration.", surfaces: ["admin"] },
   { scope: "admin.config.read", description: "Read platform configuration.", surfaces: ["admin"] },

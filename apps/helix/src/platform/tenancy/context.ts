@@ -46,7 +46,7 @@ export interface TenantProxyAssertionOptions {
 
 export class TenantResolutionError extends Error {
   constructor(
-    readonly statusCode: 400 | 402 | 404 | 410 | 421 | 423,
+    readonly statusCode: 400 | 404 | 410 | 421 | 423,
     readonly code:
       | "tenant-required"
       | "tenant-not-found"
@@ -82,7 +82,11 @@ export async function resolveTenantContext(
   }
 
   if (org.status === "suspended" && !allowsSuspendedTenant(options.request)) {
-    throw new TenantResolutionError(402, "tenant-suspended", `Tenant "${org.slug}" is suspended.`);
+    throw new TenantResolutionError(
+      423,
+      "tenant-suspended",
+      `Tenant "${org.slug}" is suspended. Ask a platform administrator to unsuspend it; export and delete remain available.`,
+    );
   }
   if (org.status === "provisioning") {
     throw new TenantResolutionError(

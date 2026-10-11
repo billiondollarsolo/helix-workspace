@@ -31,6 +31,8 @@ All notable changes to Helix Workspace are documented here. This file follows
 - BYO storage no longer requires a `byo_storage` entitlement flag.
 - Tenant export manifests and signup events drop `planId`, and signup metrics and Alertmanager
   grouping drop the `plan_id` label.
+- A suspended tenant now answers `423 Locked` (code `tenant-suspended`) instead of
+  `402 Payment Required`, with a message that says how to restore access.
 - Live E2E runs give the API a deterministic OpenAI-compatible model
   (`apps/web/tests/e2e/support/fake-model-server.ts`), so the assistant spec sends a
   prompt and checks the streamed provider answer instead of only the no-model state.
@@ -53,6 +55,17 @@ All notable changes to Helix Workspace are documented here. This file follows
   `scim_provisioning`, `custom_domain`, `white_label`, `multi_region_dr`, `dedicated_csm`,
   `marketplace_install_paid`, `support_tier`); stored values still parse and are ignored.
 - The CI step that cleared the demo org's `api_rps_limit` before the k6 load test.
+- The `billing_admin` IAM role and the `admin.billing` permission, including its Cerbos rule
+  and scope-catalog entry, and the retired editor (`docs.*`, `sheets.*`, `slides.*`) and
+  `imap` permissions still left in the database permission catalog. Migration
+  `0203_retire_unknown_iam_permissions.sql` retires every catalog permission the app does not
+  know: roles that held only retired permissions are removed after each grant (and any
+  delegated beneath it) is recorded as revoked in the append-only delegation log; other roles
+  and stored credential and token scopes lose just those entries, and a credential left with
+  no scope is revoked. A stale entry previously made the whole stored permission set fail
+  closed. A live test now keeps the database catalog equal to the app's scope catalog, and
+  new organizations no longer receive `billing_admin`.
+- Leftover billing and plan wording in docs, tests and the observability plugin README.
 
 ### Fixed
 

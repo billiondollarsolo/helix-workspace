@@ -44,7 +44,7 @@ describe("feature flag client", () => {
     };
     flags.setProvider(provider);
 
-    await flags.getAsync("editors_native_document", true, {
+    await flags.getAsync("assistant_retrieval", true, {
       orgId: "org-1",
       actorId: "actor-1",
       environment: "test",
@@ -52,7 +52,7 @@ describe("feature flag client", () => {
 
     expect(seen).toEqual([
       {
-        key: "editors_native_document",
+        key: "assistant_retrieval",
         context: { orgId: "org-1", actorId: "actor-1", environment: "test" },
       },
     ]);
@@ -63,7 +63,7 @@ describe("coerceFlagValue", () => {
   it("keeps default value type stable", () => {
     expect(coerceFlagValue(true, false)).toBe(true);
     expect(coerceFlagValue("yes", false)).toBe(false);
-    expect(coerceFlagValue("premium-4h", "community")).toBe("premium-4h");
+    expect(coerceFlagValue("block", "off")).toBe("block");
     expect(coerceFlagValue(25, 10)).toBe(25);
     expect(coerceFlagValue("25", 10)).toBe(10);
   });

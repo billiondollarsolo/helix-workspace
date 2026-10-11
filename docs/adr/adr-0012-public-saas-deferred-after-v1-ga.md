@@ -6,7 +6,7 @@
 
 ## Context
 
-Public signup, billing, and noisy-neighbor controls are large workstreams (S+).
+Public signup and noisy-neighbor controls are large workstreams (S+).
 
 ## Decision
 

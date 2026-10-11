@@ -184,7 +184,7 @@ describe("resolveTenantContext", () => {
         request: requestWith({ host: "acme.helix.app" }, { method: "GET", url: "/api/tools" }),
         rootHosts: ["helix.app"],
       }),
-    ).rejects.toMatchObject({ statusCode: 402, code: "tenant-suspended" });
+    ).rejects.toMatchObject({ statusCode: 423, code: "tenant-suspended" });
   });
 
   it("allows only lifecycle recovery routes for suspended and soft-deleted tenants", async () => {

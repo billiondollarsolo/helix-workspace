@@ -25,7 +25,7 @@ to focused procedures under `docs/runbooks/`; see `docs/observability.md` for
 the metric and data-safety contract.
 
 Alertmanager listens on `http://localhost:28461` by default. The bundled route
-groups signup activation alerts by alert, service, SLO, tier, plan, and region,
+groups signup activation alerts by alert, service, SLO, tier, and region,
 then sends matching `service="signup", slo="signup_activation"` alerts to the
 local signup SLO webhook receiver. Validate the route with:
 

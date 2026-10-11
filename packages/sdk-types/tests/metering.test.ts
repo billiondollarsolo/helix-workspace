@@ -6,7 +6,7 @@ import {
 } from "../src/metering.js";
 
 describe("metering rollup metric keys", () => {
-  it("defines the canonical additive and billing-grade rollup keys", () => {
+  it("defines the canonical additive and peak rollup keys", () => {
     expect(meteringRollupMetricKeys).toEqual([
       "ai_tokens",
       "storage_delta_bytes",

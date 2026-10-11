@@ -58,7 +58,6 @@ export const DELEGATED_ADMIN_ROLE_PERMISSIONS = {
   domain_admin: "admin.domains",
   security_admin: "admin.security",
   audit_admin: "admin.audit",
-  billing_admin: "admin.billing",
   retention_admin: "admin.retention",
   mail_admin: "mail.admin",
 } as const satisfies Record<string, Permission>;

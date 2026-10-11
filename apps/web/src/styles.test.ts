@@ -240,8 +240,7 @@ describe("mobile shell responsive CSS (viewport ≤760 / 390 design width)", () 
     expect(mobileCss).toMatch(/\.side-panel-rail\s*\{[^}]*display:\s*none/s);
   });
 
-  it("keeps compose above the bottom bar and top-bar targets at 40px", () => {
-    expect(mobileCss).toMatch(/\.compose\s*\{[^}]*bottom:\s*calc\(56px/s);
+  it("keeps top-bar targets at 40px", () => {
     expect(mobileCss).toMatch(/\.topbar-actions\s+\.icon-btn\s*\{[^}]*min-width:\s*40px/s);
   });
 

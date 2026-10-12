@@ -11,8 +11,9 @@ describe("TenantEnvelopeCipher", () => {
     expect(cipher.open("org-a", "webhook", envelope)).toBe("directly-usable-secret");
     expect(() => cipher.open("org-b", "webhook", envelope)).toThrow(/cannot be decrypted/u);
     expect(() => cipher.open("org-a", "dkim", envelope)).toThrow(/cannot be decrypted/u);
-    expect(() => cipher.open("org-a", "webhook", `${envelope.slice(0, -1)}A`)).toThrow(
-      /cannot be decrypted/u,
-    );
+    // Change the last character to a different one: it is random, and replacing
+    // an "A" with "A" (one envelope in 64) left the envelope intact.
+    const tampered = `${envelope.slice(0, -1)}${envelope.endsWith("A") ? "B" : "A"}`;
+    expect(() => cipher.open("org-a", "webhook", tampered)).toThrow(/cannot be decrypted/u);
   });
 });

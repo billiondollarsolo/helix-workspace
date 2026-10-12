@@ -47,7 +47,7 @@ docker compose up -d --build postgres redis nats meilisearch rustfs cerbos mailp
 ```
 
 2. Start Helix API on host (or compose `helix`) with matching env (`DATABASE_URL`, `RUSTFS_ENDPOINT`, `MAIL_SMTP_*` → Mailpit, `MAIL_SMTP_RECEIVER_PORT=38613`, `CERBOS_HTTP_URL`, `HELIX_DEFAULT_ORG_ID=00000000-0000-0000-0000-000000000000`).
-3. Migrate + seed: `db migrate`, `db:seed:oauth` (include `mail.external`, `chat.create`), `db:seed:logins`.
+3. Migrate + seed: `db migrate`, `db:seed:demo -- --accounts-only --size small` (see [Demo data](../demo-data.md)), then `db:seed:oauth` (include `mail.external`, `chat.create`).
 4. Keep the tenant integration quota finite. Pace API/agent probes to that allowance;
    verified human sessions have their separate [browser request policy](../architecture/request-rate-policy.md).
 5. Seed `helix.local` as active receiving domain for SMTP tests.

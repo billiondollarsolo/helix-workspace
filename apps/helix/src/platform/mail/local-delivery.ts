@@ -39,6 +39,95 @@ export function remoteDeliveryEnvelope(
   return localAddresses.size === 0 ? envelope : { ...envelope, envelopeRecipients: remote };
 }
 
+export interface LocalMailboxes {
+  /** Envelope addresses that resolved to mailboxes in the sender's tenant. */
+  readonly local: ReadonlySet<string>;
+  /** Mailbox actor id to the address it was reached at. */
+  readonly actors: ReadonlyMap<string, string>;
+}
+
+/**
+ * The envelope recipients that are mailboxes in the sender's tenant. Runs in
+ * the caller's tenant context; addresses with routing rules stay with SMTP.
+ */
+export async function resolveLocalMailboxes(
+  sql: postgres.Sql,
+  input: {
+    readonly orgId: string;
+    readonly envelope: MailOutboundEnvelope;
+    readonly senderAuthenticated: boolean;
+  },
+): Promise<LocalMailboxes> {
+  const routing = new MailRoutingStore(sql);
+  const local = new Set<string>();
+  const actors = new Map<string, string>();
+  const { envelope } = input;
+  for (const recipient of [...envelope.to, ...envelope.cc, ...envelope.bcc]) {
+    const resolution = await routing.resolveInboundAddress(
+      recipient.address,
+      input.senderAuthenticated,
+    );
+    const sameTenant = resolution.recipients.filter((entry) => entry.orgId === input.orgId);
+    if (sameTenant.length === 0) continue;
+    // Routing rules must keep using the SMTP ingress rule engine.
+    if (resolution.rules.length !== 0) continue;
+    local.add(recipient.address.toLowerCase());
+    for (const entry of sameTenant) actors.set(entry.actorId, entry.address);
+  }
+  return { local, actors };
+}
+
+/**
+ * Delivers an already stored message to local mailboxes and runs each
+ * recipient's inbound filters. Runs in the caller's tenant transaction.
+ */
+export async function deliverLocalMessage(
+  tx: postgres.TransactionSql,
+  sql: postgres.Sql,
+  input: {
+    readonly orgId: string;
+    readonly threadId: string;
+    readonly messageId: string;
+    readonly envelope: MailOutboundEnvelope;
+    readonly mailboxes: LocalMailboxes;
+  },
+): Promise<void> {
+  const { envelope, mailboxes } = input;
+  if (mailboxes.actors.size === 0) return;
+  const message = {
+    orgId: input.orgId,
+    mailboxActorIds: [...mailboxes.actors.keys()],
+    from: envelope.from,
+    to: envelope.to,
+    cc: envelope.cc,
+    subject: envelope.subject,
+    bodyText: envelope.text,
+    bodyHtml: envelope.html,
+    attachments: envelope.attachments,
+    messageId: envelope.messageId,
+    references: envelope.references,
+    // Same header map as SMTP ingest so loop guards and categories apply.
+    metadata: {
+      direction: "inbound",
+      headers: localHeaderMap(envelope),
+      ...(envelope.replyTo === undefined ? {} : { replyTo: [envelope.replyTo] }),
+    },
+  };
+  const delivered = await deliverInboundMessage(tx, {
+    threadId: input.threadId,
+    messageId: input.messageId,
+    input: message,
+  });
+  for (const actorId of delivered) {
+    await evaluateInboundMail(new PostgresMailStore(sql), {
+      message,
+      stored: { threadId: input.threadId, messageId: input.messageId },
+      recipientActorId: actorId,
+      recipientAddress: mailboxes.actors.get(actorId) ?? "",
+    });
+  }
+}
+
 /** Dispatch local mail after the undo window, through the existing mailbox ledger. */
 export class LocalMailTransport implements OutboundMailTransport {
   constructor(
@@ -48,71 +137,33 @@ export class LocalMailTransport implements OutboundMailTransport {
   ) {}
 
   async send(envelope: MailOutboundEnvelope, handoff: { readonly idempotencyKey: string }) {
-    const { local, actors } = await withTenantPostgresContext(
+    const senderAuthenticated = this.outbound.deliveryMetadata.senderAuthenticated === true;
+    const mailboxes = await withTenantPostgresContext(
       this.sql,
       {
         orgId: this.outbound.orgId,
-        ...(this.outbound.deliveryMetadata.senderAuthenticated === true
-          ? { actorId: this.outbound.actorId }
-          : {}),
+        ...(senderAuthenticated ? { actorId: this.outbound.actorId } : {}),
       },
       async (tx) => {
         await this.assertLease(tx);
-        const routing = new MailRoutingStore(this.sql);
-        const addresses = new Set<string>();
-        const actors = new Map<string, string>();
-        for (const recipient of [...envelope.to, ...envelope.cc, ...envelope.bcc]) {
-          const resolution = await routing.resolveInboundAddress(
-            recipient.address,
-            this.outbound.deliveryMetadata.senderAuthenticated === true,
-          );
-          const sameTenant = resolution.recipients.filter(
-            (entry) => entry.orgId === this.outbound.orgId,
-          );
-          if (sameTenant.length === 0) continue;
-          // Routing rules must keep using the SMTP ingress rule engine.
-          if (resolution.rules.length !== 0) continue;
-          addresses.add(recipient.address.toLowerCase());
-          for (const entry of sameTenant) actors.set(entry.actorId, entry.address);
-        }
-        return { local: addresses, actors };
+        return resolveLocalMailboxes(this.sql, {
+          orgId: this.outbound.orgId,
+          envelope,
+          senderAuthenticated,
+        });
       },
     );
+    const { local, actors } = mailboxes;
     if (actors.size > 0) {
       await withTenantPostgresContext(this.sql, { orgId: this.outbound.orgId }, async (tx) => {
         await this.assertLease(tx);
-        const message = {
+        await deliverLocalMessage(tx, this.sql, {
           orgId: this.outbound.orgId,
-          mailboxActorIds: [...actors.keys()],
-          from: envelope.from,
-          to: envelope.to,
-          cc: envelope.cc,
-          subject: envelope.subject,
-          bodyText: envelope.text,
-          bodyHtml: envelope.html,
-          attachments: envelope.attachments,
-          messageId: envelope.messageId,
-          references: envelope.references,
-          // Same header map as SMTP ingest so loop guards and categories apply.
-          metadata: {
-            direction: "inbound",
-            headers: localHeaderMap(envelope),
-            ...(envelope.replyTo === undefined ? {} : { replyTo: [envelope.replyTo] }),
-          },
-        };
-        const delivered = await deliverInboundMessage(tx, {
           threadId: this.outbound.threadId,
           messageId: this.outbound.messageId,
-          input: message,
+          envelope,
+          mailboxes,
         });
-        for (const actorId of delivered) {
-          await evaluateInboundMail(new PostgresMailStore(this.sql), {
-            message,
-            stored: { threadId: this.outbound.threadId, messageId: this.outbound.messageId },
-            recipientActorId: actorId,
-            recipientAddress: actors.get(actorId) ?? "",
-          });
-        }
       });
     }
     const remote = remoteDeliveryEnvelope(envelope, local);

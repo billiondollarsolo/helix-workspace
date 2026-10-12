@@ -9,20 +9,23 @@ usage() {
   cat <<'EOF'
 Usage: infra/scripts/live-demo-data-smoke.sh [options]
 
-Starts the add-on services needed for realistic local demo data, then prepares and
-verifies seeded Mail, Drive, Calendar, Chat, RustFS object bytes, and
-Meilisearch projections. Dry-run is the default.
+Starts Postgres, Meilisearch, RustFS and ClamAV, migrates a fresh database and
+runs the Quillfeather Labs demo seed (docs/demo-data.md) against them. The seed
+fails unless its own validation passes: every stored object readable through
+tenant storage, Drive contents loadable, storage accounting settled, a clean
+search reindex and Drive reconciliation, an intact audit chain and working
+sign-ins. The seed also registers the local OAuth client
+(helix-local-oauth-client) as the workspace admin for API smokes. Dry-run is
+the default.
 
 Options:
   --execute                    Start/run Docker-backed commands
   --dry-run                    Print commands only
   --compose-project <name>     Default: helix_demo_smoke
   --skip-services-up           Do not run docker compose up first
-  --skip-migrate               Pass --skip-migrate to db:prepare:demo
-  --volume-search              Seed and verify the deterministic volume mail corpus
-  --volume-mail-count <n>      Seed n deterministic volume mail messages
-  --anchor-date <YYYY-MM-DD>   Shift seeded mail/calendar/chat dates near this day
-  --batch-size <n>             Reindex batch size for db:prepare:demo
+  --skip-migrate               Do not run db:migrate
+  --skip-seed                  Start services and migrate only
+  --size <small|medium|large>  Demo preset (default: small)
   -h, --help
 
 Environment:
@@ -33,6 +36,7 @@ Environment:
   MEILI_PORT                   Default: 39533
   RUSTFS_API_PORT              Default: 39534
   RUSTFS_CONSOLE_PORT          Default: 39535
+  CLAMAV_PORT                  Default: 39536
   DATABASE_URL, MEILI_HOST, MEILI_MASTER_KEY, RUSTFS_ENDPOINT, RUSTFS_* override
   HELIX_LIVE_DEMO_*            Mirrors the options above for CI/runbooks
 EOF
@@ -42,10 +46,8 @@ DRY_RUN=1
 COMPOSE_PROJECT=${HELIX_LIVE_DEMO_COMPOSE_PROJECT:-${COMPOSE_PROJECT_NAME:-helix_demo_smoke}}
 START_SERVICES=${HELIX_LIVE_DEMO_START_SERVICES:-true}
 RUN_MIGRATIONS=${HELIX_LIVE_DEMO_MIGRATE:-true}
-VOLUME_SEARCH=${HELIX_LIVE_DEMO_VOLUME_SEARCH:-false}
-VOLUME_MAIL_COUNT=${HELIX_LIVE_DEMO_VOLUME_MAIL_COUNT:-}
-ANCHOR_DATE=${HELIX_LIVE_DEMO_ANCHOR_DATE:-}
-BATCH_SIZE=${HELIX_LIVE_DEMO_BATCH_SIZE:-}
+RUN_SEED=${HELIX_LIVE_DEMO_SEED:-true}
+DEMO_SIZE=${HELIX_LIVE_DEMO_SIZE:-small}
 
 POSTGRES_DB=${POSTGRES_DB:-helix_demo_smoke}
 POSTGRES_USER=${POSTGRES_USER:-helix}
@@ -59,6 +61,7 @@ RUSTFS_CONSOLE_PORT=${RUSTFS_CONSOLE_PORT:-39535}
 RUSTFS_ACCESS_KEY=${RUSTFS_ACCESS_KEY:-helixrustfs}
 RUSTFS_SECRET_KEY=${RUSTFS_SECRET_KEY:-helix_rustfs_dev_secret}
 RUSTFS_BUCKET=${RUSTFS_BUCKET:-helix-objects}
+CLAMAV_PORT=${CLAMAV_PORT:-39536}
 
 DATABASE_URL=${DATABASE_URL:-postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:$POSTGRES_PORT/$POSTGRES_DB}
 MEILI_HOST=${MEILI_HOST:-http://127.0.0.1:$MEILI_PORT}
@@ -71,10 +74,8 @@ while [[ $# -gt 0 ]]; do
     --compose-project) COMPOSE_PROJECT=${2:?missing compose project}; shift 2 ;;
     --skip-services-up) START_SERVICES=false; shift ;;
     --skip-migrate) RUN_MIGRATIONS=false; shift ;;
-    --volume-search) VOLUME_SEARCH=true; shift ;;
-    --volume-mail-count) VOLUME_MAIL_COUNT=${2:?missing volume mail count}; VOLUME_SEARCH=true; shift 2 ;;
-    --anchor-date) ANCHOR_DATE=${2:?missing anchor date}; shift 2 ;;
-    --batch-size) BATCH_SIZE=${2:?missing batch size}; shift 2 ;;
+    --skip-seed) RUN_SEED=false; shift ;;
+    --size) DEMO_SIZE=${2:?missing demo size}; shift 2 ;;
     --) shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown option: $1" ;;
@@ -83,19 +84,10 @@ done
 
 [[ "$COMPOSE_PROJECT" =~ ^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$ ]] || die "compose project contains unsupported characters: $COMPOSE_PROJECT"
 [[ "$POSTGRES_DB" =~ ^[A-Za-z_][A-Za-z0-9_]{0,62}$ ]] || die "POSTGRES_DB contains unsupported characters: $POSTGRES_DB"
-[[ "$POSTGRES_PORT" =~ ^[0-9]+$ ]] || die "POSTGRES_PORT must be numeric"
-[[ "$MEILI_PORT" =~ ^[0-9]+$ ]] || die "MEILI_PORT must be numeric"
-[[ "$RUSTFS_API_PORT" =~ ^[0-9]+$ ]] || die "RUSTFS_API_PORT must be numeric"
-[[ "$RUSTFS_CONSOLE_PORT" =~ ^[0-9]+$ ]] || die "RUSTFS_CONSOLE_PORT must be numeric"
-if [[ -n "$VOLUME_MAIL_COUNT" ]]; then
-  [[ "$VOLUME_MAIL_COUNT" =~ ^[1-9][0-9]*$ ]] || die "volume mail count must be a positive integer"
-fi
-if [[ -n "$ANCHOR_DATE" ]]; then
-  [[ "$ANCHOR_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die "anchor date must use YYYY-MM-DD"
-fi
-if [[ -n "$BATCH_SIZE" ]]; then
-  [[ "$BATCH_SIZE" =~ ^[1-9][0-9]*$ ]] || die "batch size must be a positive integer"
-fi
+for port in "$POSTGRES_PORT" "$MEILI_PORT" "$RUSTFS_API_PORT" "$RUSTFS_CONSOLE_PORT" "$CLAMAV_PORT"; do
+  [[ "$port" =~ ^[0-9]+$ ]] || die "ports must be numeric: $port"
+done
+[[ "$DEMO_SIZE" =~ ^(small|medium|large)$ ]] || die "--size must be small, medium or large"
 
 ensure_repo_root
 require_cmd bash
@@ -107,13 +99,12 @@ if [[ "$DRY_RUN" == "0" ]]; then
 fi
 
 log "live demo data compose project: $COMPOSE_PROJECT"
-log "postgres port: $POSTGRES_PORT"
-log "meilisearch port: $MEILI_PORT"
-log "rustfs ports: $RUSTFS_API_PORT/$RUSTFS_CONSOLE_PORT"
+log "ports: postgres $POSTGRES_PORT, meilisearch $MEILI_PORT, rustfs $RUSTFS_API_PORT/$RUSTFS_CONSOLE_PORT, clamav $CLAMAV_PORT"
+log "demo size: $DEMO_SIZE"
 log "dry run: $DRY_RUN"
 
 compose_prefix() {
-  printf 'docker compose -p %q' "$COMPOSE_PROJECT"
+  printf 'docker compose -p %q --profile mail-security' "$COMPOSE_PROJECT"
 }
 
 compose_exec_cmd() {
@@ -131,7 +122,7 @@ compose_service_running() {
   if [[ "$DRY_RUN" == "1" ]]; then
     return 1
   fi
-  docker compose -p "$COMPOSE_PROJECT" ps --services --status running 2>/dev/null | grep -Fxq "$service"
+  docker compose -p "$COMPOSE_PROJECT" --profile mail-security ps --services --status running 2>/dev/null | grep -Fxq "$service"
 }
 
 wait_for_postgres() {
@@ -164,6 +155,23 @@ wait_for_http() {
   curl -fsS "$url" >/dev/null
 }
 
+# clamd loads its signature database before it accepts connections; that can take minutes.
+wait_for_tcp() {
+  local port=${1:?missing port}
+  local label=${2:?missing label}
+  if [[ "$DRY_RUN" == "1" ]]; then
+    printf '+ wait for %s on 127.0.0.1:%s\n' "$label" "$port"
+    return 0
+  fi
+  for _ in {1..180}; do
+    if timeout 1 bash -c "</dev/tcp/127.0.0.1/$port" 2>/dev/null; then
+      return 0
+    fi
+    sleep 2
+  done
+  die "$label did not accept connections on 127.0.0.1:$port"
+}
+
 assert_port_free() {
   local port=${1:?missing port}
   local label=${2:?missing label}
@@ -189,7 +197,7 @@ server.listen(Number(port), "127.0.0.1");
 run_env_command() {
   local cmd=${1:?missing command}
   if [[ "$DRY_RUN" == "1" ]]; then
-    printf '+ DATABASE_URL=<redacted> MEILI_HOST=%q RUSTFS_ENDPOINT=%q %s\n' "$MEILI_HOST" "$RUSTFS_ENDPOINT" "$cmd"
+    printf '+ DATABASE_URL=<redacted> MEILI_HOST=%q RUSTFS_ENDPOINT=%q MAIL_CLAMAV_PORT=%q %s\n' "$MEILI_HOST" "$RUSTFS_ENDPOINT" "$CLAMAV_PORT" "$cmd"
   else
     DATABASE_URL="$DATABASE_URL" \
       MEILI_HOST="$MEILI_HOST" \
@@ -198,6 +206,9 @@ run_env_command() {
       RUSTFS_ACCESS_KEY="$RUSTFS_ACCESS_KEY" \
       RUSTFS_SECRET_KEY="$RUSTFS_SECRET_KEY" \
       RUSTFS_BUCKET="$RUSTFS_BUCKET" \
+      MAIL_CLAMAV_ENABLED=true \
+      MAIL_CLAMAV_HOST=127.0.0.1 \
+      MAIL_CLAMAV_PORT="$CLAMAV_PORT" \
       bash -c "$cmd"
   fi
 }
@@ -213,36 +224,27 @@ if bool_true "$START_SERVICES"; then
     assert_port_free "$RUSTFS_API_PORT" "RustFS API"
     assert_port_free "$RUSTFS_CONSOLE_PORT" "RustFS console"
   fi
-  run_shell "$(printf 'POSTGRES_DB=%q POSTGRES_USER=%q POSTGRES_PASSWORD=%q POSTGRES_PORT=%q MEILI_PORT=%q MEILI_MASTER_KEY=%q RUSTFS_API_PORT=%q RUSTFS_CONSOLE_PORT=%q RUSTFS_ACCESS_KEY=%q RUSTFS_SECRET_KEY=%q %s up -d postgres meilisearch rustfs' \
-    "$POSTGRES_DB" "$POSTGRES_USER" "$POSTGRES_PASSWORD" "$POSTGRES_PORT" "$MEILI_PORT" "$MEILI_MASTER_KEY" "$RUSTFS_API_PORT" "$RUSTFS_CONSOLE_PORT" "$RUSTFS_ACCESS_KEY" "$RUSTFS_SECRET_KEY" "$(compose_prefix)")"
+  if ! compose_service_running clamav; then
+    assert_port_free "$CLAMAV_PORT" "ClamAV"
+  fi
+  run_shell "$(printf 'POSTGRES_DB=%q POSTGRES_USER=%q POSTGRES_PASSWORD=%q POSTGRES_PORT=%q MEILI_PORT=%q MEILI_MASTER_KEY=%q RUSTFS_API_PORT=%q RUSTFS_CONSOLE_PORT=%q RUSTFS_ACCESS_KEY=%q RUSTFS_SECRET_KEY=%q MAIL_CLAMAV_PORT_PUBLISHED=%q %s up -d postgres meilisearch rustfs clamav' \
+    "$POSTGRES_DB" "$POSTGRES_USER" "$POSTGRES_PASSWORD" "$POSTGRES_PORT" "$MEILI_PORT" "$MEILI_MASTER_KEY" "$RUSTFS_API_PORT" "$RUSTFS_CONSOLE_PORT" "$RUSTFS_ACCESS_KEY" "$RUSTFS_SECRET_KEY" "$CLAMAV_PORT" "$(compose_prefix)")"
   wait_for_postgres
   wait_for_http "$MEILI_HOST/health" "Meilisearch"
   wait_for_http "$RUSTFS_ENDPOINT/health" "RustFS"
+  wait_for_tcp "$CLAMAV_PORT" "ClamAV"
 else
-  log "skipping docker compose up -d postgres meilisearch rustfs"
+  log "skipping docker compose up -d postgres meilisearch rustfs clamav"
 fi
 
-prepare_args=(--require-storage --require-search)
-if ! bool_true "$RUN_MIGRATIONS"; then
-  prepare_args+=(--skip-migrate)
-fi
-if bool_true "$VOLUME_SEARCH"; then
-  prepare_args+=(--volume-search)
-fi
-if [[ -n "$VOLUME_MAIL_COUNT" ]]; then
-  prepare_args+=(--volume-mail-count "$VOLUME_MAIL_COUNT")
-fi
-if [[ -n "$ANCHOR_DATE" ]]; then
-  prepare_args+=(--anchor-date "$ANCHOR_DATE")
-fi
-if [[ -n "$BATCH_SIZE" ]]; then
-  prepare_args+=(--batch-size "$BATCH_SIZE")
+if bool_true "$RUN_MIGRATIONS"; then
+  run_env_command "pnpm --filter @helix/app db:migrate"
 fi
 
-prepare_cmd="pnpm --filter @helix/app db:prepare:demo --"
-for arg in "${prepare_args[@]}"; do
-  prepare_cmd+=" $(printf '%q' "$arg")"
-done
-run_env_command "$prepare_cmd"
+if bool_true "$RUN_SEED"; then
+  run_env_command "pnpm --filter @helix/app db:seed:demo -- --reset --size $(printf '%q' "$DEMO_SIZE")"
+else
+  log "skipping db:seed:demo"
+fi
 
 log "live demo data smoke complete"

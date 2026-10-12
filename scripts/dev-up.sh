@@ -7,12 +7,12 @@
 #   3. Loads env from .env + apps/helix/.env (with overrides).
 #   4. Starts the helix backend (apps/helix) and waits for /healthz.
 #   5. Starts the web dev server (apps/web) and waits for the vite port.
-#   6. Optionally runs `pnpm corpus:seed` to populate Drive with the test corpus.
+#   6. Optionally seeds the demo workspace (`pnpm --filter @helix/app db:seed:demo`).
 #
 # Usage (run from repo root or any subdir):
 #   scripts/dev-up.sh                 # bring everything up, do not seed
-#   scripts/dev-up.sh --seed          # bring up + seed the 1272-file corpus
-#   scripts/dev-up.sh --reseed        # bring up + seed (re-running is idempotent)
+#   scripts/dev-up.sh --seed          # bring up + seed the demo workspace (DEMO_SIZE=small|medium|large)
+#   scripts/dev-up.sh --reseed        # bring up + wipe and reseed the demo workspace
 #   scripts/dev-up.sh --no-web        # backend only (CI smoke)
 #
 # Exit codes:
@@ -187,40 +187,22 @@ if [[ $WEB -eq 1 ]]; then
   fi
 fi
 
-# ───────── step 6: seed users + corpus (one consistent deployment state) ─────────
-# Both are idempotent and run in order: demo accounts first (so corpus files have
-# a stable owner), then the public test corpus. Result: every fresh stack has
-# the same admin@helix.local / member@helix.local logins AND the same 1272-file
-# Drive — coding agents can rely on identical fixtures every run.
+# ───────── step 6: seed the Quillfeather Labs demo workspace ─────────
+# One deterministic seed (docs/demo-data.md): people, Mail, Drive, Chat,
+# Calendar, Meet history, Contacts, Assistant and Admin, every byte scanned by
+# ClamAV and stored under the tenant's storage prefix, validated at the end.
+# Re-running an identical seed only re-validates; --reseed starts over.
 if [[ $SEED -eq 1 ]]; then
-  log "seeding login accounts (admin@helix.local / user@helix.local) + demo content…"
+  log "seeding the ${DEMO_SIZE:-medium} demo workspace (admin@helix.local / user@helix.local)…"
   : > /tmp/helix-seed.log
-  # db:seed:logins creates the email/password records better-auth checks
-  # against; db:seed:demo lays down org + actors + reference content for the
-  # demo workspace. Both are idempotent.
-  if (cd apps/helix && pnpm db:seed:logins && pnpm db:seed:demo) >> /tmp/helix-seed.log 2>&1; then
-    ok "demo accounts seeded"
+  seed_args=(--size "${DEMO_SIZE:-medium}")
+  [[ $RESEED -eq 1 ]] && seed_args+=(--reset)
+  if (cd apps/helix && MAIL_CLAMAV_ENABLED=true MAIL_CLAMAV_HOST="${MAIL_CLAMAV_HOST:-127.0.0.1}" \
+    MAIL_CLAMAV_PORT="${MAIL_CLAMAV_PORT:-28460}" pnpm db:seed:demo -- "${seed_args[@]}") \
+    >> /tmp/helix-seed.log 2>&1; then
+    ok "demo workspace seeded — see http://localhost:${WEB_PORT}/mail"
   else
-    fail "demo account seed failed — last 30 lines:"
-    tail -30 /tmp/helix-seed.log >&2
-    exit 5
-  fi
-
-  log "seeding test corpus (1272 files, ~86 MB)…"
-  if pnpm corpus:seed >> /tmp/helix-seed.log 2>&1; then
-    ok "corpus seeded — see Drive at http://localhost:${WEB_PORT}/drive"
-    tail -5 /tmp/helix-seed.log
-  else
-    fail "corpus seed failed — last 30 lines:"
-    tail -30 /tmp/helix-seed.log >&2
-    exit 5
-  fi
-
-  log "seeding 300 EML corpus into admin's mailbox…"
-  if (cd apps/helix && pnpm db:seed:mail-corpus) >> /tmp/helix-seed.log 2>&1; then
-    ok "mail corpus seeded — admin@helix.local Inbox populated"
-  else
-    fail "mail corpus seed failed — last 30 lines:"
+    fail "demo seed failed — last 30 lines:"
     tail -30 /tmp/helix-seed.log >&2
     exit 5
   fi

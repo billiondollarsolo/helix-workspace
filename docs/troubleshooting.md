@@ -224,22 +224,14 @@ With `--search-reindex`, the same smoke run also posts to
 `/api/admin/search/reindex`, which queues a reindex job (HTTP 202), and polls
 `/api/admin/search/reindex/jobs/<id>` until it reports `status: "completed"`. If
 that route is missing, restart the API with Meilisearch configured.
-With `--seeded-demo-tools`, the smoke run also reads the deterministic local
-demo corpus through `/api/tools/...` and `/mcp` resources, including seeded
-Mail, Chat, Docs, Drive, Calendar, and global search records. Search failures
-now point at projection shape drift as well as missing ids because the smoke
-checks hit ids, titles, URLs, snippets, and selected attributes. Run
-`pnpm --filter @helix/app db:prepare:demo -- --require-storage --require-search`
-first and mint the token with `platform.read mail.read drive.read docs.read
-calendar.read chat.read assistant.write assistant.memory admin.users admin.audit
-admin.agents admin.webhooks admin.config.write`.
-With `--seeded-volume-search-smoke`, the smoke run asserts opt-in high-volume
-demo Mail through global `search.query`. Run
-`pnpm --filter @helix/app db:prepare:demo -- --volume-search --require-search`
-first, or use `--volume-mail-count <n>` for a smaller local proof. If the smoke
-cannot find `helix-volume-mail-search`, confirm Meilisearch is configured, the
-prepare command completed its scoped reindex, and the API token includes
-`platform.read` plus `mail.read`.
+With `--seeded-demo-tools`, the smoke run also reads the demo workspace through
+`/api/tools/...` and `/mcp` as the demo admin: Mail, Chat, Drive and Calendar
+tool results, global search for Mail, Drive and Calendar, and the MCP resource
+list. Run `pnpm --filter @helix/app db:seed:demo -- --size small` first (it
+registers the local OAuth client for the admin) and mint the token with
+`platform.read mail.read drive.read calendar.read chat.read`. If a check finds
+nothing, confirm the seed finished with its validation summary and that the API
+uses the same Meilisearch index (`MEILI_INDEX_UID`) as the seed.
 With `--agent-limits-smoke`, the smoke run mints a second OAuth token for a
 dedicated agent actor and expects `platform.ping` to return `429` once the
 per-minute budget is consumed. Run

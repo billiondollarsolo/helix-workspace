@@ -45,15 +45,6 @@ infra/meet/config/**/certs/
 infra/meet/config/**/keys/
 infra/meet/config/**/data/
 
-# Test corpus (downloaded public-domain files; scripts/manifest are tracked)
-/test-corpus/apache-tika/
-/test-corpus/commonmark/
-/test-corpus/libreoffice/
-/test-corpus/picsum/
-/test-corpus/generated/
-/test-corpus/.cache/
-/test-corpus/_state.json
-
 # OS / editor
 .DS_Store
 Thumbs.db

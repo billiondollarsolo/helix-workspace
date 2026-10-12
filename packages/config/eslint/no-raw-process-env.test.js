@@ -42,7 +42,7 @@ describe("helix/no-raw-process-env", () => {
       invalid: [
         {
           code: "const x = process.env.FOO;",
-          filename: "/repo/apps/helix/src/db/seed-local-demo.ts",
+          filename: "/repo/apps/helix/src/db/demo-seed/cli.ts",
           errors: [{ messageId: "noRawProcessEnv" }],
         },
         {

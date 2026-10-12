@@ -136,25 +136,25 @@ export class PostgresMailAttachmentIngestor {
           `Mail attachment failed antivirus scanning: ${scan.signature ?? "unknown"}.`,
         );
       }
-      const updated = await this.phase(
-        input.orgId,
-        input.ownerActorId,
-        async (tx) =>
-          tx<{ readonly id: string }[]>`
-          with stage as (
-            update mail_attachment_ingestions set status = 'clean',
-              scan_evidence = ${tx.json({ ...scan.evidence, scanned: true, infected: false })},
-              updated_at = now()
-            where org_id = ${input.orgId} and id = ${stageId} and status = 'scanning'
-            returning id, object_id
-          )
+      // Two statements: the object's row policy reads the stage status, and a
+      // data-modifying CTE's change is invisible to the rest of its statement.
+      const updated = await this.phase(input.orgId, input.ownerActorId, async (tx) => {
+        const stages = await tx<{ readonly id: string; readonly object_id: string }[]>`
+          update mail_attachment_ingestions set status = 'clean',
+            scan_evidence = ${tx.json({ ...scan.evidence, scanned: true, infected: false })},
+            updated_at = now()
+          where org_id = ${input.orgId} and id = ${stageId} and status = 'scanning'
+          returning id, object_id
+        `;
+        const stage = stages[0];
+        if (stage === undefined) return [];
+        return tx<{ readonly id: string }[]>`
           update objects set metadata = metadata || ${tx.json({ ingestState: "clean" })},
             updated_at = now()
-          from stage
-          where objects.org_id = ${input.orgId} and objects.id = stage.object_id
-          returning stage.id
-        `,
-      );
+          where org_id = ${input.orgId} and id = ${stage.object_id}
+          returning id
+        `;
+      });
       if (updated[0] === undefined)
         throw new Error("Mail attachment stage was concurrently changed.");
       return {

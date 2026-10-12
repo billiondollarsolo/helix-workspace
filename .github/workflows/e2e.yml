@@ -161,10 +161,23 @@ jobs:
           done
 
       - name: Prepare database
+        # The demo seed's accounts-only mode creates the tenant, its people (with
+        # admin@helix.local and user@helix.local) and groups; the OAuth seed then
+        # adds its client to that tenant.
+        env:
+          MEILI_HOST: http://127.0.0.1:28436
+          MEILI_MASTER_KEY: helix_dev_meili_master_key
+          RUSTFS_ENDPOINT: http://127.0.0.1:28437
+          RUSTFS_ACCESS_KEY: helixrustfs
+          RUSTFS_SECRET_KEY: helix_rustfs_dev_secret
+          RUSTFS_BUCKET: helix-objects
+          MAIL_CLAMAV_ENABLED: "true"
+          MAIL_CLAMAV_HOST: 127.0.0.1
+          MAIL_CLAMAV_PORT: "28460"
         run: |
           pnpm --filter @helix/app db:migrate
+          pnpm --filter @helix/app db:seed:demo -- --accounts-only --size small
           pnpm --filter @helix/app db:seed:oauth
-          pnpm --filter @helix/app db:seed:logins
 
       - name: Prepare S3 contract bucket
         env:

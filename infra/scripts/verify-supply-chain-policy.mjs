@@ -112,7 +112,7 @@ function secretViolations(path, source) {
 }
 
 async function sourceFiles(directory) {
-  const ignored = new Set([".git", ".turbo", "coverage", "dist", "node_modules", "test-corpus"]);
+  const ignored = new Set([".git", ".turbo", "coverage", "dist", "node_modules"]);
   const entries = await readdir(directory, { withFileTypes: true });
   const nested = await Promise.all(
     entries.map((entry) => {

@@ -240,7 +240,7 @@ export function createRedisTenantDeletionCachePurger(
   };
 }
 
-async function purgeTenantSearch(engine: SearchEngine, orgId: string): Promise<number> {
+export async function purgeTenantSearch(engine: SearchEngine, orgId: string): Promise<number> {
   let deleted = 0;
   for (;;) {
     const page = await engine.search({

@@ -1,7 +1,5 @@
 {
   "apps/helix/src/config/production-assertions.ts": 817,
-  "apps/helix/src/db/seed-local-demo.ts": 1183,
-  "apps/helix/src/db/seed-scenarios.ts": 962,
   "apps/helix/src/platform/admin/domains.ts": 1675,
   "apps/helix/src/platform/admin/groups.ts": 1326,
   "apps/helix/src/platform/admin/service-status.ts": 822,

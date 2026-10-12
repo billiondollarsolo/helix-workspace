@@ -144,22 +144,19 @@ proof from the deployed backup backend.
    pnpm --filter @helix/app db:reindex:search -- --all
    ```
 
-   For a local test stack that should be ready for UI/API smoke against seeded
-   mail, Drive, Docs, Calendar, RustFS objects, and Meilisearch results, use the
-   live demo data wrapper. It starts only Postgres, RustFS, and Meilisearch under
-   an isolated Compose project on contiguous high ports (`39532`-`39535` by
-   default), then runs the stricter all-in-one preparation command:
+   For a local test stack that should be ready for UI/API smoke against a
+   realistic workspace, use the live demo data wrapper. It starts Postgres,
+   RustFS, Meilisearch and ClamAV under an isolated Compose project on
+   contiguous high ports (`39532`-`39536` by default), migrates, and runs the
+   demo seed (see [Demo data](demo-data.md)), which fails unless its own
+   validation of storage, search, audit and sign-ins passes:
 
    ```sh
    pnpm quality:live-demo-data -- --execute
    ```
 
    Pull requests and pushes run the same backend smoke in the Quality Gates
-   workflow with a small deterministic volume mailbox (`--volume-mail-count 25`)
-   and an always-on Compose cleanup step.
-   Add `--anchor-date <YYYY-MM-DD>` when the seeded mail, calendar, chat, and
-   volume-mail timestamps should sit near a current test day without changing
-   deterministic IDs, storage keys, or search markers.
+   workflow with `--size small` and an always-on Compose cleanup step.
 
    The underlying command remains useful when services are already running:
 
@@ -168,7 +165,8 @@ proof from the deployed backup backend.
    RUSTFS_ENDPOINT=http://127.0.0.1:28437 \
    MEILI_HOST=http://127.0.0.1:28436 \
    MEILI_MASTER_KEY=<key> \
-   pnpm --filter @helix/app db:prepare:demo -- --require-storage --require-search
+   MAIL_CLAMAV_ENABLED=true MAIL_CLAMAV_HOST=127.0.0.1 MAIL_CLAMAV_PORT=28460 \
+   pnpm --filter @helix/app db:seed:demo -- --size small
    ```
 
 8. Verify critical paths:

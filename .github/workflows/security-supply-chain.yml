@@ -106,7 +106,7 @@ jobs:
           severity: CRITICAL,HIGH
           ignore-unfixed: false
           exit-code: 1
-          skip-dirs: helix-all/helix-workspace/node_modules,helix-all/helix-workspace/test-corpus
+          skip-dirs: helix-all/helix-workspace/node_modules
 
       - name: Initialize CodeQL
         if: steps.scope.outputs.code == 'true'

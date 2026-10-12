@@ -3,11 +3,29 @@ import assert from "node:assert/strict";
 import { globSync, readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
-// These exact two contracts run in e2e.yml with the full dependency stack.
-const allowed = new Set([
-  "mandatory real-service contracts uses Redis and NATS instead of process-local substitutes",
-  "mandatory real-service contracts uses live search, antivirus, and policy allow/deny paths",
+// These exact tests run in a separate job with the full dependency stack: the
+// real-service contracts in e2e.yml, the demo seed in quality-gates.yml
+// (backend-live-demo-data).
+const allowed = new Map([
+  [
+    "/platform/ops/real-services.integration.test.ts",
+    new Set([
+      "mandatory real-service contracts uses Redis and NATS instead of process-local substitutes",
+      "mandatory real-service contracts uses live search, antivirus, and policy allow/deny paths",
+    ]),
+  ],
+  [
+    "/db/demo-seed/seed.integration.test.ts",
+    new Set(["demo seed seeds the small preset on a fresh database and passes its own validation"]),
+  ],
 ]);
+
+function allowedSkip(fileName, testName) {
+  for (const [suffix, names] of allowed) {
+    if (fileName.endsWith(suffix) && names.has(testName)) return true;
+  }
+  return false;
+}
 
 export function checkTestSkips(report) {
   assert.ok(Array.isArray(report.testResults), "Missing Vitest test results");
@@ -17,10 +35,7 @@ export function checkTestSkips(report) {
       if (!["pending", "skipped", "todo", "disabled"].includes(test.status)) continue;
       skipped += 1;
       const name = test.fullName.trim();
-      assert.ok(
-        file.name.endsWith("/platform/ops/real-services.integration.test.ts") && allowed.has(name),
-        `Unexpected skipped test: ${file.name}: ${name}`,
-      );
+      assert.ok(allowedSkip(file.name, name), `Unexpected skipped test: ${file.name}: ${name}`);
     }
   }
   assert.equal(

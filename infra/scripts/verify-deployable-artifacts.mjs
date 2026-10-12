@@ -5,15 +5,7 @@ import { URL } from "node:url";
 
 const root = new URL("../../", import.meta.url);
 const violations = [];
-const ignoredDirectories = new Set([
-  ".git",
-  ".turbo",
-  "coverage",
-  "data",
-  "dist",
-  "node_modules",
-  "test-corpus",
-]);
+const ignoredDirectories = new Set([".git", ".turbo", "coverage", "data", "dist", "node_modules"]);
 const immutableImage = /@sha256:[a-f0-9]{64}$/u;
 const variableImageDigest = /@sha256:\$\{[A-Z0-9_]+:\?[^}]+\}$/u;
 const exactVersion = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u;

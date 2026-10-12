@@ -235,7 +235,7 @@ export class PostgresOrgStore implements OrgStore {
     if (byId !== null) {
       // Slug drift under the configured id is benign: every tenant-scoped query
       // routes on org_id, and both operators and the local seed scripts rename the
-      // default org's slug freely (seed-local-demo gives it slug "local-demo").
+      // default org's slug freely (the demo seed gives it slug "quillfeather").
       return byId;
     }
 

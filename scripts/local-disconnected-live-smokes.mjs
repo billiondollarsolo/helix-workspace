@@ -41,7 +41,7 @@ export const RBAC_UNIT_SUITES = [
 
 /**
  * live-auth-smoke flags for MVP surfaces on a fresh local stack.
- * Omits --seeded-demo-tools (requires db:prepare:demo corpus). Prefer live
+ * Omits --seeded-demo-tools (requires the full db:seed:demo workspace). Prefer live
  * mutation smokes that create their own fixtures where possible.
  */
 /**

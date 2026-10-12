@@ -12,7 +12,7 @@ const workflowSources = readdirSync(resolve(".github"), { recursive: true })
 describe("source supply-chain workflow", () => {
   it("runs the pinned, fail-closed production dependency audit", () => {
     expect(source).toContain("uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1");
-    expect(source).toContain("uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271");
+    expect(source).toContain("uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413");
     expect(source).toContain("version: 11.18.0");
     expect(source).toContain("uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020");
     expect(source).toContain("run: pnpm quality:production-dependency-audit");

@@ -556,18 +556,23 @@ describe("AdminUsers", () => {
       await click(item as HTMLElement);
     };
     const confirmIn = async (label: string) => {
-      const dialog = document.querySelector<HTMLElement>('[role="alertdialog"]');
-      const action = [...(dialog?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(
-        (element) => element.textContent?.trim() === label,
-      );
-      if (action === undefined) throw new Error(`No ${label} button in the confirmation`);
-      await click(action);
+      let action: HTMLButtonElement | undefined;
+      await waitFor(() => {
+        const dialog = document.querySelector<HTMLElement>('[role="alertdialog"]');
+        action = [...(dialog?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(
+          (element) => element.textContent?.trim() === label,
+        );
+        if (action === undefined) throw new Error(`No ${label} button in the confirmation`);
+      });
+      await click(action as HTMLButtonElement);
     };
 
     await choose("Suspend user…");
-    expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain(
-      "signed out on every device",
-    );
+    await waitFor(() => {
+      expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain(
+        "signed out on every device",
+      );
+    });
     expect(posts).toEqual([]);
     await confirmIn("Suspend");
     await waitFor(() => {

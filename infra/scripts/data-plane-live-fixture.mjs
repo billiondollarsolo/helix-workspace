@@ -11,7 +11,7 @@ const natsBoxImage =
 const postgresClientImage =
   "postgres:18.6-alpine3.24@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873";
 const redisClientImage =
-  "redis:8.8.3-alpine@sha256:0b2b77d3ea5078274795e3177cdbdada8b96316684a38911d528534ed679b5ec";
+  "redis:8.10.2-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0";
 const secretNames = [
   "database_url",
   "migration_database_url",

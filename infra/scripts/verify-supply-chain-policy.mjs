@@ -100,6 +100,10 @@ function missingMarkerViolations(path, source, markers) {
 }
 
 function secretViolations(path, source) {
+  // Only the published AWS SigV4 test vector is exempt; other keys in that file still fail.
+  if (path === "apps/helix/src/platform/drive/s3/sigv4.test.ts") {
+    source = source.replaceAll(["AKIA", "IOSFODNN7EXAMPLE"].join(""), "AWS_DOCUMENTATION_KEY");
+  }
   const patterns = [
     /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/u,
     /\bAKIA[0-9A-Z]{16}\b/u,
@@ -133,6 +137,13 @@ async function sourceFiles(directory) {
 function selfTest() {
   const privateKey = ["-----BEGIN", " PRIVATE KEY-----"].join("");
   assert.equal(secretViolations("seeded-secret", privateKey).length, 1);
+  const fixturePath = "apps/helix/src/platform/drive/s3/sigv4.test.ts";
+  const exampleKey = ["AKIA", "IOSFODNN7EXAMPLE"].join("");
+  const otherKey = `AKIA${"A".repeat(16)}`;
+  assert.deepEqual(secretViolations(fixturePath, exampleKey), []);
+  assert.equal(secretViolations("other.ts", exampleKey).length, 1);
+  assert.equal(secretViolations(fixturePath, `${exampleKey}\n${otherKey}`).length, 1);
+  assert.equal(secretViolations(fixturePath, privateKey).length, 1);
   assert.match(mutableActionViolation("actions/checkout@v4") ?? "", /mutable action/u);
   assert.equal(mutableActionViolation(`actions/checkout@${"1".repeat(40)}`), null);
   assert.equal(

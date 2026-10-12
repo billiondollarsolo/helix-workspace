@@ -19,7 +19,7 @@ ADD --checksum=sha256:${CERBOS_ARCHIVE_SHA256} \
 
 RUN tar -xzf /tmp/cerbos.tar.gz --strip-components=1 \
     && rm /tmp/cerbos.tar.gz \
-    && go get google.golang.org/grpc@v1.83.2 golang.org/x/net@v0.60.0 \
+    && go get google.golang.org/grpc@v1.83.2 golang.org/x/net@v0.60.0 github.com/go-git/go-git/v6@v6.0.0-alpha.5 \
     && go mod verify \
     && CGO_ENABLED=0 go build \
       -trimpath \

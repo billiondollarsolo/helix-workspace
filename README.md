@@ -1,72 +1,83 @@
 # Helix Workspace
 
-Helix 1.0 is an invite-only, self-hostable workspace for **Mail, Drive, Chat, Assistant, and Admin**.
-The initial production target is one organization with 5–50 trusted users on the `business` security
-tier. Calendar and Meet are dormant behind the `full` profile and are outside 1.0.
+**Your team's mail, files, and conversations. On infrastructure you control.**
 
-The [canonical 1.0 scope](docs/release/1.0-scope.md) defines the shipped surfaces and non-claims.
-Production uses `HELIX_APPS=mail,drive,chat,assistant` and `VITE_HELIX_MVP_ONLY=true`.
-Package versions alone do not establish production readiness.
+Helix brings **Mail, Drive, Chat, Assistant, and Admin** together in a self-hostable,
+open-source workspace. Work in the browser, connect your tools through the CLI and
+APIs, and give assistants scoped access to your workspace.
 
-## Business pilot boundaries
+- **Keep work together.** Email, shared files, and team conversations in one place.
+- **Own your deployment.** Run on your infrastructure with organization-scoped
+  access, retention controls, malware scanning, and audit trails.
+- **Connect the tools you use.** Access Drive through WebDAV and its S3-compatible
+  API, and automate workspace tasks through REST, the SDK, CLI, and MCP.
+- **Keep people in control.** Agent writes require human confirmation by default,
+  with bounded, audited policies for approved automation.
 
-- Internet mail delivery requires a supported managed outbound email provider. Helix does not
-  operate direct-to-MX outbound delivery for the pilot.
-- Mail is available through the Helix web UI and supported APIs. The pilot does not include a
-  Helix-hosted IMAP server.
-- Drive provides file upload, storage, organization, versions, sharing, download, WebDAV, and an
-  S3-compatible API (`/v1/s3`, SigV4 access keys) for the AWS CLI, rclone, and S3 SDKs; see
-  [docs/drive-s3-api.md](docs/drive-s3-api.md). Editors, file viewers, and converters are not part
-  of this product.
-- Chat uses TLS, organization and room authorization, retention controls, and deployment-attested
-  encrypted storage. Chat is **not end-to-end encrypted**, and authorized server administrators can
-  technically access stored messages.
-- Authorized agent reads may execute immediately. Agent writes require authenticated human
-  confirmation by default unless an explicit, audited automation policy limits the exact action,
-  resource, target, time window, and rate.
-- Untrusted Business-tier uploads remain unavailable until integrity checks and a real malware
-  scanner return a clean verdict. Scanner failures remain quarantined.
-- Pilot objectives are 99.5% monthly availability, an RPO of no more than 24 hours, and an RTO of
-  no more than 4 hours. These are engineering objectives, not a contractual SLA.
+Apache-2.0 licensed. No paid feature tiers or built-in usage caps; administrators
+can set their own quotas. See the [license and usage policy](docs/adr/adr-0030-free-open-source-no-plans-or-limits.md).
 
-The runtime retains tenant-aware interfaces, but public multi-tenant SaaS is not an approved launch claim.
+[Documentation](docs/README.md) · [Local setup](docs/development.md) ·
+[Self-hosting](docs/deployment-production.md) · [Release scope](docs/release/1.0-scope.md)
 
-- [Production deployment](docs/deployment-production.md)
-- [Admin guide](docs/admin-guide.md)
-- [Operations runbook](docs/RUNBOOK.md)
-- [Security threat model](docs/security/threat-model.md)
-- [Architecture decisions](docs/adr/README.md)
+## Quick start
 
-Licensed under [Apache-2.0](LICENSE); see [NOTICE](NOTICE) and [third-party notices](THIRD_PARTY_NOTICES.md).
-Helix is free to use however you want, with no usage limits. Every organization gets every
-feature, and quotas are unlimited unless an organization admin sets one
-([ADR-0030](docs/adr/adr-0030-free-open-source-no-plans-or-limits.md)).
-
-## Development
-
-Required local tools:
-
-- Node.js 24.18.0 LTS (the exact version is in `.node-version`)
-- pnpm 11.18.0 (activated from `packageManager` with Corepack)
-- Docker Engine 29.x with Compose 5.x for the fully validated local stack
-- Helm 4.2.3 and kubeconform 0.8.0 for Kubernetes chart validation
-
-See the [platform version policy](docs/platform-version-policy.md) for the complete runtime,
-container, Kubernetes, and compatibility matrix.
-
-Common commands:
+Use **Node.js 24.18.0**, **pnpm 11.18.0**, Docker with Compose, and a Bash-compatible
+shell. This starts a local development workspace with fictional demo data. The
+[development guide](docs/development.md) explains configuration, ports, and troubleshooting.
 
 ```sh
-pnpm install
-pnpm typecheck
-pnpm lint
-pnpm test
+git clone https://github.com/billiondollarsolo/helix-workspace.git
+cd helix-workspace
+corepack enable
+pnpm install --frozen-lockfile
+pnpm build
+cp .env.example .env
+set -a; . ./.env; set +a
+
+export DATABASE_URL=postgres://helix_app:helix_app_local@127.0.0.1:28432/helix
+export BETTER_AUTH_DATABASE_URL="$DATABASE_URL"
+export HELIX_MIGRATION_DATABASE_URL=postgres://helix:helix_dev_password@127.0.0.1:28432/helix
+export RUSTFS_ENDPOINT=http://127.0.0.1:28437
+export RUSTFS_SERVER_DOMAINS=localhost,rustfs,localhost:28437,127.0.0.1:28437,rustfs:9000
+export MEILI_HOST=http://127.0.0.1:28436
+export MAIL_CLAMAV_ENABLED=true MAIL_CLAMAV_HOST=127.0.0.1 MAIL_CLAMAV_PORT=28460
+export POSTGRES_POOL_MAX=30
+export HELIX_DEFAULT_ORG_ID=00000000-0000-4000-8000-000000000100
+
+docker compose up -d --build --wait postgres redis nats meilisearch rustfs cerbos mailpit clamav
+pnpm --filter @helix/app db:migrate
+pnpm --filter @helix/app db:seed:demo -- --size small
 pnpm dev
 ```
 
-Local infrastructure is defined in `docker-compose.yml`. Exposed ports default to a
-contiguous high-port block to avoid colliding with system Postgres, Redis, HTTP, HTTPS,
-or SMTP services during tests. Base Tier 1 uses `28431`-`28443`; optional profiles occupy
-`28444`-`28455`; local mail receive/outbound test ports use `28456`-`28458`; the
-observability Alertmanager proof uses `28461`-`28462`. Run
-`pnpm infra:config` and `pnpm infra:config:observability` for TASK-121 compose evidence.
+Open **http://localhost:5173** (or the URL Vite prints) and sign in as
+`admin@helix.local` / `helix-admin-password`. The first container build and ClamAV
+signature download can take several minutes. Demo credentials are for local use.
+See [demo data](docs/demo-data.md) for accounts, presets, and reset behavior.
+
+For a deployed workspace, start with the [production installation guide](docs/runbooks/pilot-install-zero-to-mail.md).
+It covers secrets, managed mail delivery, deployment evidence, and recovery requirements.
+
+## Explore the docs
+
+| I want to…                    | Start here                                                                             |
+| ----------------------------- | -------------------------------------------------------------------------------------- |
+| Run or contribute locally     | [Development guide](docs/development.md)                                               |
+| Deploy and operate Helix      | [Production deployment](docs/deployment-production.md) · [Runbook](docs/RUNBOOK.md)    |
+| Manage users and policies     | [Admin guide](docs/admin-guide.md)                                                     |
+| Connect storage clients       | [S3 API](docs/drive-s3-api.md) · [Desktop sync](docs/drive-desktop-sync.md)            |
+| Understand security and scope | [Threat model](docs/security/threat-model.md) · [1.0 scope](docs/release/1.0-scope.md) |
+| Find architecture and APIs    | [Documentation index](docs/README.md)                                                  |
+
+## Release status
+
+Helix 1.0 targets invite-only use by one organization with 5–50 trusted users on the
+`business` security tier. Calendar and Meet are dormant behind the `full` profile and are outside 1.0.
+Production uses `HELIX_APPS=mail,drive,chat,assistant` and `VITE_HELIX_MVP_ONLY=true`.
+The [canonical release scope](docs/release/1.0-scope.md) records product boundaries,
+security disclosures, and recovery objectives; the [release checklist](docs/release/checklist.md)
+defines readiness. Package versions alone do not establish production readiness.
+
+Licensed under [Apache-2.0](LICENSE). See [NOTICE](NOTICE) and
+[third-party notices](THIRD_PARTY_NOTICES.md).

@@ -295,6 +295,16 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Changed
 
+- Dependency refresh: GitHub Actions pins move to current releases (checkout 7.0.1, setup-node
+  7.0.0, upload-artifact 7.0.1, pnpm/action-setup 6.1.0, attest 4.2.2), and Compose moves to
+  Redis 8.10.2, RustFS 1.0.1 (the first stable line, replacing 1.0.0-beta.12), Mailpit 1.31.4,
+  Caddy 2.11.7, coturn 4.18.0 and current observability images. The RustFS health check now reads
+  `/health/ready`, because 1.0.1 no longer reports readiness from the liveness endpoint.
+- Dependabot groups only minor and patch npm updates, so major upgrades arrive as individual pull
+  requests, and no longer watches the removed LibreOffice integration directories.
+- The README leads with the product and a working local quick start; detailed launch disclosures
+  live in the release scope, linked from a new documentation index and development guide.
+
 - The demo seed writes as the `helix_app` runtime role, like the API in production, and refuses a
   privileged `DATABASE_URL`; only `--reset` uses the owner connection
   (`HELIX_MIGRATION_DATABASE_URL`). Its validation now reindexes Chat too and fails when any
@@ -433,6 +443,15 @@ All notable changes to Helix Workspace are documented here. This file follows
   closed. A live test now keeps the database catalog equal to the app's scope catalog.
 
 ### Fixed
+
+- The local quick start pointed `HELIX_DEFAULT_ORG_ID` at an empty organization, so sign-in
+  succeeded but every workspace request returned 403, and used `localhost` for `RUSTFS_ENDPOINT`,
+  which the outbound request guard rejects. It now targets the demo tenant and `127.0.0.1`.
+- CI: the live auth smoke requests `profile.read` (needed by `app.passwords.list`), the
+  performance journey follows the staged sign-in, the secret scan exempts only the published AWS
+  SigV4 test vector, and contracts coverage is restored with account and contacts schema tests.
+- Timing-dependent web tests (profile photo removal, compose focus, admin suspend/restore) wait
+  for the UI instead of asserting before it renders.
 
 - The metering rollup worker produced no totals under the `helix_app` runtime role because it read
   `metering_events` without a tenant context. It now rolls up each organization inside that

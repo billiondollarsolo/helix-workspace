@@ -128,10 +128,18 @@ encryption attestation env flags before continuing.
 Production does **not** use the local seed accounts from `scripts/dev-up.sh`
 (`admin@helix.local` is for development evidence only).
 
-The 1.0 pilot uses an operator-provisioned first organization owner. Complete the
-controlled bootstrap procedure, then use Admin invitations for additional users.
-Recipients accept their invitation and complete email verification. Public
-self-service signup and onboarding routes are absent.
+The 1.0 pilot requires an operator-provisioned first organization owner. This
+runbook assumes that a deployment-specific bootstrap procedure has already been
+validated. Public self-service account and workspace creation are absent.
+
+**Current onboarding gap:** the Admin directory supports suspension and restoration,
+but does not yet provide local account creation or an Admin invite flow for new
+users. The existing `/api/signup/onboarding-invites` API can issue invitations,
+but acceptance requires an already authenticated identity; it does not create a
+new user's password login. [PR #15](https://github.com/billiondollarsolo/helix-workspace/pull/15) proposes
+those flows and needs reconciliation with the current identity and authorization
+code. Do not count invitations as a completed pilot prerequisite until the
+implementation and end-to-end invite, acceptance, and sign-in checks land.
 
 Then:
 

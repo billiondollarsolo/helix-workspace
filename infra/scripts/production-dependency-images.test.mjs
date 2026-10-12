@@ -73,7 +73,7 @@ describe("production dependency image build contracts", () => {
   it("pins data-plane validation clients to the production service lines", () => {
     expect(dataPlaneFixture).toContain("natsio/nats-box:0.19.7@sha256:");
     expect(dataPlaneFixture).toContain("postgres:18.6-alpine3.24@sha256:");
-    expect(dataPlaneFixture).toContain("redis:8.8.3-alpine@sha256:");
+    expect(dataPlaneFixture).toContain("redis:8.10.2-alpine@sha256:");
     expect(dataPlaneFixture).not.toMatch(/(?:postgres|redis):(?:17|7)-alpine/u);
   });
   it("repackages Meilisearch into a minimal patched runtime from an immutable source image", () => {

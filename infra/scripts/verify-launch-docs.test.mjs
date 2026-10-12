@@ -45,6 +45,21 @@ describe("verify-launch-docs", () => {
     expect(errors).toContain("README.md: missing required claim: managed outbound provider");
     expect(errors).toContain("README.md: missing required claim: no Helix-hosted IMAP server");
   });
+  it("allows a concise README but keeps disclosures in the canonical scope", async () => {
+    const readme = await readFile(join(workspaceRoot, "README.md"), "utf8");
+    const scope = await readFile(join(workspaceRoot, "docs/release/1.0-scope.md"), "utf8");
+    expect(findClaimErrors("README.md", readme, false)).toEqual([]);
+    expect(findClaimErrors("docs/release/1.0-scope.md", scope)).toEqual([]);
+    expect(
+      findClaimErrors("README.md", `${readme}\nChat is end-to-end encrypted.`, false),
+    ).toContain("README.md: prohibited unqualified claim: E2EE chat");
+    expect(
+      findScopeErrors("README.md", readme.replaceAll("1.0-scope.md)", "missing.md)"), scope),
+    ).toContain("README.md: missing canonical scope link");
+    expect(findClaimErrors("docs/release/1.0-scope.md", scope.replace("99.5%", "99%"))).toContain(
+      "docs/release/1.0-scope.md: missing required claim: pilot availability objective",
+    );
+  });
   it("requires the complete accepted ADR shape and plan mapping", () => {
     const errors = findAdrErrors(
       "docs/architecture/adr-0001-example.md",

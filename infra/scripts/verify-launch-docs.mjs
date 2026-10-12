@@ -13,6 +13,7 @@ const defaultWorkspaceRoot = resolve(
 
 export const launchDocumentPaths = [
   "README.md",
+  "docs/release/1.0-scope.md",
   "docs/admin-guide.md",
   "docs/security/threat-model.md",
 ];
@@ -146,6 +147,8 @@ export async function verifyLaunchDocumentation(workspaceRoot = defaultWorkspace
       ...launchDocumentPaths,
       scopeDocumentPath,
       ...scopeConsumerPaths,
+      "docs/README.md",
+      "docs/development.md",
       "docs/final-release-supporting-evidence.md",
       "docs/adr/README.md",
       ...adrPaths,
@@ -169,7 +172,7 @@ export async function verifyLaunchDocumentation(workspaceRoot = defaultWorkspace
     if (source === undefined) {
       continue;
     }
-    errors.push(...findClaimErrors(documentPath, source));
+    errors.push(...findClaimErrors(documentPath, source, documentPath !== "README.md"));
   }
 
   const scope = sources.get(scopeDocumentPath);
@@ -233,9 +236,9 @@ export function findScopeErrors(documentPath, source, scope) {
   return errors;
 }
 
-export function findClaimErrors(documentPath, source) {
+export function findClaimErrors(documentPath, source, requireDisclosures = true) {
   const errors = [];
-  for (const claim of requiredClaimPatterns) {
+  for (const claim of requireDisclosures ? requiredClaimPatterns : []) {
     if (!claim.pattern.test(source)) {
       errors.push(`${documentPath}: missing required claim: ${claim.id}`);
     }

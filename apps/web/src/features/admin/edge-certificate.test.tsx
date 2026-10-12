@@ -264,6 +264,28 @@ describe("EdgeCertificatePanel", () => {
     expect(text()).not.toContain("Go back to automatic");
   });
 
+  it("stays off the page where there is no HTTPS edge at all", async () => {
+    current = status({
+      manageable: false,
+      unavailableReason: "Certificate management is not set up for this deployment.",
+      served: null,
+      applied: null,
+    });
+    await render();
+
+    expect(container.textContent).toBe("");
+  });
+
+  it("still explains an unreadable certificate where one can be managed", async () => {
+    current = status({ served: null, applied: null });
+    await render();
+
+    expect(text()).toContain(
+      "Helix could not read the certificate that is being served right now.",
+    );
+    expect(text()).toContain("Use your own certificate");
+  });
+
   it("says so when the certificate cannot be loaded", async () => {
     respond = () => Response.json({ error: "Denied for this role." }, { status: 403 });
     await render();

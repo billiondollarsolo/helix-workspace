@@ -47,7 +47,7 @@ interface ListRoomsForAdminInput {
 }
 
 interface AdminRoomList {
-  readonly rooms: readonly OrganizationRoom[];
+  readonly rooms: OrganizationRoom[];
   readonly hiddenPrivateCount: number;
 }
 

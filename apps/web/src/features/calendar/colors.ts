@@ -30,6 +30,14 @@ const LABEL_HUES = {
 type HuedLabel = keyof typeof LABEL_HUES;
 export type CalendarLabel = HuedLabel | "brown" | "slate" | "gray";
 
+/** Every palette entry, in the order the colour picker offers them. */
+export const CALENDAR_LABELS: readonly CalendarLabel[] = [
+  ...(Object.keys(LABEL_HUES) as HuedLabel[]),
+  "brown",
+  "slate",
+  "gray",
+];
+
 export const DEFAULT_CALENDAR_LABEL: CalendarLabel = "blue";
 
 function isLabel(value: string): value is CalendarLabel {

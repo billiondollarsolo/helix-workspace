@@ -94,17 +94,53 @@ export class PostgresMeteringEventStore implements MeteringEventStore {
 export class PostgresMeteringRollupStore implements MeteringRollupStore {
   constructor(private readonly sql: postgres.Sql) {}
 
+  /**
+   * Rolls up each organization inside its own tenant context: the runtime role
+   * sees no `metering_events` rows without one, and no cross-tenant read is needed.
+   */
   async rollupCompletedPeriods(input: MeteringRollupRunInput): Promise<MeteringRollupRunResult> {
-    const rows = await this.sql<MeteringRollupRunRow[]>`
+    const total = { periodCount: 0, rollupCount: 0, eventCount: 0 };
+    let after = "00000000-0000-0000-0000-000000000000";
+    for (;;) {
+      const orgs = await this.sql<{ readonly id: string }[]>`
+        select id from orgs where id > ${after}::uuid order by id limit 100
+      `;
+      for (const { id: orgId } of orgs) {
+        const remaining = input.periodLimit - total.periodCount;
+        if (remaining <= 0) return total;
+        const result = await detachedFromTenantPostgresContext(() =>
+          withTenantPostgresContext(this.sql, { orgId }, (tx) =>
+            rollupOrganization(tx, orgId, input.cutoff, remaining),
+          ),
+        );
+        total.periodCount += result.periodCount;
+        total.rollupCount += result.rollupCount;
+        total.eventCount += result.eventCount;
+      }
+      const last = orgs.at(-1);
+      if (last === undefined || orgs.length < 100) return total;
+      after = last.id;
+    }
+  }
+}
+
+async function rollupOrganization(
+  tx: postgres.TransactionSql,
+  orgId: string,
+  cutoff: Date,
+  periodLimit: number,
+): Promise<MeteringRollupRunResult> {
+  const rows = await tx<MeteringRollupRunRow[]>`
       with candidate_periods as (
         select distinct
           org_id,
           date_trunc('day', occurred_at)::date as period_start
         from metering_events
-        where rolled_up_at is null
-          and occurred_at < ${input.cutoff}
+        where org_id = ${orgId}
+          and rolled_up_at is null
+          and occurred_at < ${cutoff}
         order by org_id, period_start
-        limit ${input.periodLimit}
+        limit ${periodLimit}
       ),
       aggregated as (
         select
@@ -246,13 +282,12 @@ export class PostgresMeteringRollupStore implements MeteringRollupStore {
         (select count(*)::int from upserted) as rollup_count,
         (select count(*)::int from marked) as event_count
     `;
-    const row = rows[0];
-    return {
-      periodCount: row?.period_count ?? 0,
-      rollupCount: row?.rollup_count ?? 0,
-      eventCount: row?.event_count ?? 0,
-    };
-  }
+  const row = rows[0];
+  return {
+    periodCount: row?.period_count ?? 0,
+    rollupCount: row?.rollup_count ?? 0,
+    eventCount: row?.event_count ?? 0,
+  };
 }
 
 export function meteringEventInsertFromPayload(

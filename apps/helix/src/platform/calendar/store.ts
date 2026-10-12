@@ -7,7 +7,6 @@ import {
 import type { Actor, JsonObject } from "@helix/sdk-types";
 import { randomUUID } from "node:crypto";
 import type postgres from "postgres";
-import { activityChainHash } from "../activity/hash-chain.js";
 import { sensitivityClassificationFromMetadata } from "../ai/classification/index.js";
 import { restrictAppPasswordActor } from "../auth/app-passwords.js";
 import { verifySecret } from "../auth/oauth.js";
@@ -34,7 +33,16 @@ import type {
   CalendarSearchRecord,
 } from "./types.js";
 import { resolveCalendarAttendees } from "./attendee-identities.js";
+import {
+  createCalendar,
+  deleteCalendar,
+  updateCalendar,
+  type CreateCalendarInput,
+  type DeleteCalendarInput,
+  type UpdateCalendarInput,
+} from "./calendar-management.js";
 import { ensureDefaultCalendar, mapCalendar, type CalendarRow } from "./calendar-records.js";
+import { appendCalendarActivity, grantAccess, hasCalendarManageAccess } from "./store-access.js";
 
 export interface CalendarAttendeeInput {
   readonly actorId?: string | null | undefined;
@@ -192,6 +200,15 @@ export interface CalendarStore {
     readonly orgId: string;
     readonly actorId: string;
   }): Promise<readonly CalendarListEntry[]>;
+  /** Create an extra calendar owned by the actor (their default calendar is created first). */
+  createCalendar(input: CreateCalendarInput): Promise<CalendarRecord>;
+  /** Rename or recolour a calendar the actor owns or manages; null when inaccessible. */
+  updateCalendar(input: UpdateCalendarInput): Promise<CalendarRecord | null>;
+  /**
+   * Delete a calendar and its events. Only the owner may, and never their
+   * default calendar; false when it is not theirs to delete.
+   */
+  deleteCalendar(input: DeleteCalendarInput): Promise<boolean>;
   listCalendarMemberships(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -224,6 +241,7 @@ interface CalendarMembershipRow {
   readonly color_override: string | null;
   readonly visible: boolean;
   readonly sort_order: number;
+  readonly is_default: boolean;
   readonly role: CalendarMembershipRole;
   readonly event_count: number;
   readonly sync_version: string | number | bigint;
@@ -1085,6 +1103,13 @@ export class PostgresCalendarStore implements CalendarStore, CalendarSearchProje
         e.color_override,
         e.visible,
         e.sort_order,
+        e.id = (
+          select owned.id from cal_calendars owned
+          where owned.org_id = e.org_id and owned.owner_actor_id = e.owner_actor_id
+            and owned.deleted_at is null
+          order by owned.created_at
+          limit 1
+        ) as is_default,
         e.role,
         a.display_name as owner_display_name,
         coalesce((
@@ -1096,6 +1121,18 @@ export class PostgresCalendarStore implements CalendarStore, CalendarSearchProje
       order by e.sort_order asc, lower(e.name) asc
     `;
     return rows.map((row) => mapCalendarListEntry(row, input.actorId));
+  }
+
+  createCalendar(input: CreateCalendarInput): Promise<CalendarRecord> {
+    return createCalendar(this.sql, input);
+  }
+
+  updateCalendar(input: UpdateCalendarInput): Promise<CalendarRecord | null> {
+    return updateCalendar(this.sql, input);
+  }
+
+  deleteCalendar(input: DeleteCalendarInput): Promise<boolean> {
+    return deleteCalendar(this.sql, input);
   }
 
   async listCalendarMemberships(input: {
@@ -1353,42 +1390,6 @@ async function cancelResourceBookings(
   `;
 }
 
-async function hasCalendarManageAccess(
-  sql: SqlLike,
-  orgId: string,
-  actorId: string,
-  calendarId: string,
-): Promise<boolean> {
-  const rows = await sql<{ readonly id: string }[]>`
-    select calendar.id
-    from cal_calendars calendar
-    where calendar.id = ${calendarId}
-      and calendar.org_id = ${orgId}
-      and calendar.deleted_at is null
-      and (
-        calendar.owner_actor_id = ${actorId}
-        or exists (
-          select 1 from cal_calendar_memberships membership
-          where membership.calendar_id = calendar.id
-            and membership.org_id = ${orgId}
-            and membership.actor_id = ${actorId}
-            and membership.role in ('owner', 'manager')
-        )
-        or exists (
-          select 1 from permissions permission
-          where permission.resource_type = 'calendar'
-            and permission.resource_id = calendar.id
-            and permission.org_id = ${orgId}
-            and permission.actor_id = ${actorId}
-            and permission.role in ('owner', 'manager')
-            and (permission.expires_at is null or permission.expires_at > now())
-        )
-      )
-    for update
-  `;
-  return rows[0] !== undefined;
-}
-
 async function selectEventById(
   sql: SqlLike,
   orgId: string,
@@ -1560,69 +1561,6 @@ async function requireActiveCalendarActor(
   return { email: email.toLowerCase() };
 }
 
-async function grantAccess(
-  sql: SqlLike,
-  orgId: string,
-  actorId: string,
-  resourceType: string,
-  resourceId: string,
-  role: string,
-  grantedByActorId: string,
-): Promise<void> {
-  await sql`
-    insert into permissions (org_id, actor_id, resource_type, resource_id, role, granted_by_actor_id)
-    select ${orgId}, ${actorId}, ${resourceType}, ${resourceId}, ${role}, ${grantedByActorId}
-    where not exists (
-      select 1 from permissions
-      where org_id = ${orgId}
-        and actor_id = ${actorId}
-        and resource_type = ${resourceType}
-        and resource_id = ${resourceId}
-        and role = ${role}
-        and status = 'active'
-        and revoked_at is null
-        and valid_from <= statement_timestamp()
-        and (expires_at is null or expires_at > statement_timestamp())
-    )
-  `;
-}
-
-async function appendCalendarActivity(
-  sql: SqlLike,
-  orgId: string,
-  actorId: string | null,
-  verb: string,
-  eventId: string,
-  payload: JsonObject,
-): Promise<void> {
-  const previousRows = await sql<{ readonly this_hash: string }[]>`
-    select this_hash from activity where org_id = ${orgId} order by created_at desc limit 1
-  `;
-  const prevHash = previousRows[0]?.this_hash ?? null;
-  const thisHash = activityChainHash({
-    prevHash,
-    verb,
-    objectId: eventId,
-    timestamp: Date.now(),
-  });
-  await sql`
-    insert into activity (org_id, actor_id, verb, object_type, object_id, payload, prev_hash, this_hash)
-    values (${orgId}, ${actorId}, ${verb}, 'event', ${eventId}, ${sql.json(toSqlJson(payload))}, ${prevHash}, ${thisHash})
-  `;
-  await sql`
-    insert into outbox (subject, payload)
-    values (${`activity.${verb}`}, ${sql.json(
-      toSqlJson({
-        orgId,
-        actorId,
-        eventId,
-        id: eventId,
-        ...payload,
-      }),
-    )})
-  `;
-}
-
 function findOpenSlots(
   busy: readonly CalendarBusyInterval[],
   windowStartsAt: Date,
@@ -1744,6 +1682,7 @@ function mapCalendarListEntry(row: CalendarMembershipRow, actorId: string): Cale
     group: row.owner_actor_id === actorId ? "mine" : "team",
     writable,
     sortOrder: row.sort_order,
+    isDefault: row.is_default,
     eventCount: row.event_count,
     syncVersion: Number(row.sync_version),
   };

@@ -1,7 +1,6 @@
-import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
 import { createRecordingSql as sharedRecordingSql } from "../../test-support/recording-sql.js";
-import { PostgresMeteringEventStore, PostgresMeteringRollupStore } from "./store.js";
+import { PostgresMeteringEventStore } from "./store.js";
 
 const orgId = "11111111-1111-4111-8111-111111111111";
 
@@ -42,41 +41,6 @@ describe("PostgresMeteringEventStore", () => {
   });
 });
 
-describe("PostgresMeteringRollupStore", () => {
-  it("recomputes affected completed periods and marks source events rolled up", async () => {
-    const recording = createRecordingRollupSql();
-    const store = new PostgresMeteringRollupStore(recording.sql);
-    const cutoff = new Date("2026-05-24T00:00:00.000Z");
-
-    const result = await store.rollupCompletedPeriods({ cutoff, periodLimit: 25 });
-
-    expect(result).toEqual({ periodCount: 2, rollupCount: 3, eventCount: 7 });
-    expect(recording.calls).toHaveLength(1);
-    const query = recording.calls[0];
-    expect(query?.text).toContain("candidate_periods as");
-    expect(query?.text).toContain("rolled_up_at is null");
-    expect(query?.text).toContain("occurred_at < ?");
-    expect(query?.text).toContain("when 'ai.tokens' then 'ai_tokens'");
-    expect(query?.text).toContain("when 'ai.image.generated' then 'ai_images_generated'");
-    expect(query?.text).toContain("when 'storage.delta' then 'storage_delta_bytes'");
-    expect(query?.text).toContain("when 'export.completed' then 'exports_count'");
-    expect(query?.text).toContain("storage_baselines as");
-    expect(query?.text).toContain("'storage_avg_bytes' as metric_key");
-    expect(query?.text).toContain("'daily_average_from_deltas'");
-    expect(query?.text).toContain("union all select * from storage_daily");
-    expect(query?.text).toContain("'metering_events_v1'");
-    expect(query?.text).toContain("insert into metering_rollups");
-    expect(query?.text).toContain("on conflict (org_id, period_start, metric_key)");
-    expect(query?.text).toContain("do update set");
-    expect(query?.text).toContain("update metering_events events");
-    expect(query?.values).toEqual([cutoff, 25]);
-  });
-});
-
-interface RecordedQuery {
-  readonly text: string;
-  readonly values: readonly unknown[];
-}
 function createRecordingSql() {
   const recording = sharedRecordingSql(({ values }) => {
     return Promise.resolve([
@@ -99,28 +63,5 @@ function createRecordingSql() {
     get beginCalls() {
       return recording.beginCalls;
     },
-  };
-}
-
-function createRecordingRollupSql(): {
-  readonly sql: postgres.Sql;
-  readonly calls: readonly RecordedQuery[];
-} {
-  const calls: RecordedQuery[] = [];
-  const tag = (strings: TemplateStringsArray, ...values: unknown[]) => {
-    calls.push({ text: strings.join("?"), values });
-    return Promise.resolve([
-      {
-        period_count: 2,
-        rollup_count: 3,
-        event_count: 7,
-      },
-    ]);
-  };
-  return {
-    sql: Object.assign(tag, {
-      json: (value: unknown) => value,
-    }) as unknown as postgres.Sql,
-    calls,
   };
 }

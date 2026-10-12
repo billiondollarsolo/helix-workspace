@@ -8,6 +8,14 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Added
 
+- Multiple calendars. People can create extra calendars (name and a colour from the shared label
+  palette), rename and recolour them, and delete them; the default calendar cannot be deleted.
+  New tools `calendar.calendar.create`, `calendar.calendar.update` and `calendar.calendar.delete`
+  are actor-scoped (managers may rename and recolour, only the owner may delete), audited, and
+  deletion needs confirmation. The Calendar sidebar's "My calendars" gets a "+" and each
+  calendar's menu gets Rename, Color and Delete. The demo seed adds a team calendar per department
+  (owned by the lead, writable by the members), "Company holidays" and an "On-call" rotation with
+  their events.
 - One demo seed, `pnpm --filter @helix/app db:seed:demo` (`--size small|medium|large`, `--reset`,
   `--accounts-only`), builds Quillfeather Labs: 60–120 people with departments, groups and suspended, offboarded and invited accounts, plus Mail (threads, external mail with
   SPF/DKIM/DMARC evidence, receipts with attachments, labels, filters, drafts, scheduled sends,
@@ -426,6 +434,12 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Fixed
 
+- The metering rollup worker produced no totals under the `helix_app` runtime role because it read
+  `metering_events` without a tenant context. It now rolls up each organization inside that
+  organization's own tenant context, with no cross-tenant read or new privilege.
+- `db:seed:demo --reset` left Meilisearch shadow indexes behind for reindex jobs it had deleted. The
+  reset now deletes every `helix_search_shadow_*` index whose job no longer exists
+  (`PostgresSearchDurabilityStore.deleteOrphanedShadowIndexes`).
 - Chat writes failed under the runtime role with "permission denied for table activity": Chat
   audit and tenant provisioning computed the audit hash chain in the application with
   `SELECT … FOR UPDATE`. Both now append through the same insert as every other audit entry, and

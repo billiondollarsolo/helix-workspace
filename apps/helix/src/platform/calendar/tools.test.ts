@@ -1,5 +1,6 @@
 import type { Actor } from "@helix/sdk-types";
 import { describe, expect, it } from "vitest";
+import { UnusedCalendarStoreMethods } from "../../test-support/unused-calendar-store.js";
 import { createToolRegistry } from "../tool-registry.js";
 import type { CalendarInvitationSender } from "./ics.js";
 import type { CalendarStore } from "./store.js";
@@ -442,6 +443,7 @@ describe("calendar tools", () => {
         group: "mine",
         writable: true,
         sortOrder: 0,
+        isDefault: true,
         eventCount: 12,
         syncVersion: 0,
       },
@@ -459,6 +461,7 @@ describe("calendar tools", () => {
         group: "team",
         writable: false,
         sortOrder: 100,
+        isDefault: false,
         eventCount: 4,
         syncVersion: 0,
       },
@@ -569,7 +572,7 @@ describe("calendar tools", () => {
   });
 });
 
-class FakeCalendarStore implements CalendarStore {
+class FakeCalendarStore extends UnusedCalendarStoreMethods implements CalendarStore {
   readonly createInputs: Parameters<CalendarStore["createEvent"]>[0][] = [];
   readonly listInputs: Parameters<CalendarStore["listCalendarEventsForActor"]>[0][] = [];
   readonly updateInputs: Parameters<CalendarStore["updateEvent"]>[0][] = [];
@@ -688,10 +691,6 @@ class FakeCalendarStore implements CalendarStore {
 
   async setCalendarMembership(): Promise<CalendarMembershipRecord | null> {
     return null;
-  }
-
-  async removeCalendarMembership(): Promise<boolean> {
-    return false;
   }
 }
 

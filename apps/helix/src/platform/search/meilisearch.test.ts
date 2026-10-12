@@ -82,6 +82,20 @@ describe("MeilisearchSearchEngine", () => {
     expect(client.waitedTasks).toEqual([3, 5]);
   });
 
+  it("lists shadow indexes by prefix and deletes one", async () => {
+    const client = new FakeMeilisearchClient();
+    const engine = new MeilisearchSearchEngine(client, { indexUid: "helix_search" });
+
+    expect(await engine.listIndexUids("helix_search_shadow_")).toEqual([
+      "helix_search_shadow_a",
+      "helix_search_shadow_b",
+    ]);
+    await engine.deleteIndex("helix_search_shadow_a");
+
+    expect(client.deletedIndexes).toEqual(["helix_search_shadow_a"]);
+    expect(client.waitedTasks).toEqual([7]);
+  });
+
   it("maps search requests and Meilisearch hits into engine responses", async () => {
     const client = new FakeMeilisearchClient();
     const index = client.index("helix_search");
@@ -146,6 +160,16 @@ class FakeMeilisearchClient implements MeilisearchClientLike {
   readonly indexes = new Map<string, FakeMeilisearchIndex>();
   readonly waitedTasks: number[] = [];
   readonly swaps: Array<readonly [string, string]> = [];
+  readonly deletedIndexes: string[] = [];
+
+  async listIndexUids(): Promise<readonly string[]> {
+    return ["helix_search", "helix_search_shadow_a", "helix_search_shadow_b", "other"];
+  }
+
+  async deleteIndex(uid: string): Promise<unknown> {
+    this.deletedIndexes.push(uid);
+    return { taskUid: 7 };
+  }
 
   index(uid: string): FakeMeilisearchIndex {
     const existing = this.indexes.get(uid);

@@ -18,6 +18,10 @@ export interface MeilisearchClientLike {
   createIndex?: (uid: string, options?: { readonly primaryKey?: string }) => Promise<unknown>;
   waitForTask?: (uid: number) => Promise<void>;
   swapIndexes?: (indexes: readonly [string, string]) => Promise<unknown>;
+  /** Every index uid on the server. */
+  listIndexUids?: () => Promise<readonly string[]>;
+  /** Deletes an index; a missing one is not an error. */
+  deleteIndex?: (uid: string) => Promise<unknown>;
 }
 
 export class MeilisearchTaskError extends Error {
@@ -107,6 +111,16 @@ export class MeilisearchSearchEngine implements SearchEngine {
 
   forIndex(indexUid: string): MeilisearchSearchEngine {
     return new MeilisearchSearchEngine(this.client, { indexUid, primaryKey: this.primaryKey });
+  }
+
+  /** Uids of the indexes on the server that start with `prefix`. */
+  async listIndexUids(prefix: string): Promise<readonly string[]> {
+    const uids = (await this.client.listIndexUids?.()) ?? [];
+    return uids.filter((uid) => uid.startsWith(prefix));
+  }
+
+  async deleteIndex(indexUid: string): Promise<void> {
+    await this.wait(await this.client.deleteIndex?.(indexUid));
   }
 
   async swapWith(indexUid: string): Promise<void> {

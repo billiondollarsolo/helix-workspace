@@ -13,6 +13,7 @@ import type {
   Unsubscribe,
 } from "@helix/sdk-types";
 import { describe, expect, it } from "vitest";
+import { UnusedCalendarStoreMethods } from "../../test-support/unused-calendar-store.js";
 import { AllowAllToolAccessPolicy } from "../permissions/tool-access.js";
 import { SearchEventIndexer } from "../search/event-indexer.js";
 import type {
@@ -211,11 +212,16 @@ describe("calendar AI/free-busy/search flow", () => {
   });
 });
 
-class FakeCalendarService implements CalendarStore, CalendarSearchProjectionStore {
+class FakeCalendarService
+  extends UnusedCalendarStoreMethods
+  implements CalendarStore, CalendarSearchProjectionStore
+{
   readonly #events = new Map<string, CalendarEventRecord>();
   #next = 1;
 
-  constructor(private readonly events: EventBus) {}
+  constructor(private readonly events: EventBus) {
+    super();
+  }
 
   async createEvent(input: {
     readonly orgId: string;
@@ -473,10 +479,6 @@ class FakeCalendarService implements CalendarStore, CalendarSearchProjectionStor
 
   async setCalendarMembership(): Promise<CalendarMembershipRecord | null> {
     return null;
-  }
-
-  async removeCalendarMembership(): Promise<boolean> {
-    return false;
   }
 
   async listCalendarFreeBusyEvents(

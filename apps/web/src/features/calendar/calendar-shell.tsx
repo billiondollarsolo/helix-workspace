@@ -18,6 +18,7 @@ import { parseAddressList } from "@/features/people/person-ref";
 import { sessionUserQueryOptions } from "@/lib/auth";
 import { useShortcuts } from "@/lib/shortcuts/use-shortcuts";
 import { AnchoredPopover, anchorRectOf, type AnchorRect } from "./anchored-popover";
+import { CalendarManageDialog, type CalendarManageAction } from "./calendar-manage-dialog";
 import { CalendarSettingsSheet } from "./calendar-settings-sheet";
 import { CalendarSidebar } from "./calendar-sidebar";
 import { CalendarToolbar, VIEW_LABELS } from "./calendar-toolbar";
@@ -142,6 +143,7 @@ export function CalendarShell({
   const [quickCreate, setQuickCreate] = useState<QuickCreateState | null>(null);
   const [editor, setEditor] = useState<{ draft: EventDraft; id: number } | null>(null);
   const [settingsFor, setSettingsFor] = useState<CalendarSource | null>(null);
+  const [manage, setManage] = useState<CalendarManageAction | null>(null);
 
   const selectedOccurrence = useMemo<CalendarOccurrence | null>(() => {
     if (state.eventId === "") return null;
@@ -404,6 +406,7 @@ export function CalendarShell({
           onToggleCalendar={data.toggleCalendar}
           onShowOnly={data.showOnlyCalendar}
           onOpenSettings={setSettingsFor}
+          onManage={setManage}
           onRetry={() =>
             void queryClient.invalidateQueries({ queryKey: calendarQueryKeys.calendars })
           }
@@ -502,6 +505,10 @@ export function CalendarShell({
               onClose={() => setQuickCreate(null)}
             />
           </AnchoredPopover>
+        ) : null}
+
+        {manage !== null ? (
+          <CalendarManageDialog action={manage} onClose={() => setManage(null)} />
         ) : null}
 
         {settingsFor !== null ? (

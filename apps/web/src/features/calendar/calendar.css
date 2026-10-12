@@ -666,3 +666,27 @@
     scroll-behavior: auto;
   }
 }
+
+.cal-color-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 28px);
+  gap: 8px;
+}
+
+.cal-color-option {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--swatch);
+  cursor: pointer;
+}
+
+.cal-color-option:has(input:checked) {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+
+.cal-color-option:has(input:focus-visible) {
+  outline-offset: 3px;
+}

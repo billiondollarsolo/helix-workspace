@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  createCalendar,
   createCalendarEvent,
+  deleteCalendar,
   deleteCalendarEvent,
   findCalendarTime,
   listCalendarEvents,
@@ -9,6 +11,7 @@ import {
   removeCalendarMembership,
   respondToCalendarEvent,
   setCalendarMembership,
+  updateCalendar,
   updateCalendarEvent,
 } from "./api";
 import {
@@ -352,5 +355,24 @@ describe("calendar free/busy and sharing API", () => {
       "/api/tools/calendar.memberships.remove",
     ]);
     expect(calls[2]?.body).toEqual({ calendarId: "c1", actorId: "a2", role: "writer" });
+  });
+
+  it("manages calendars through the calendar.calendar.* tools", async () => {
+    const calls: { url: string; body: unknown }[] = [];
+    const fetchImpl = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: requestUrl(input), body: JSON.parse(init?.body as string) });
+      return Promise.resolve(Response.json({ id: "c1", name: "Team", color: "teal" }));
+    });
+    await createCalendar({ name: "Team", color: "teal" }, fetchImpl);
+    await updateCalendar({ calendarId: "c1", name: "Platform" }, fetchImpl);
+    await deleteCalendar("c1", fetchImpl);
+    expect(calls).toEqual([
+      { url: "/api/tools/calendar.calendar.create", body: { name: "Team", color: "teal" } },
+      {
+        url: "/api/tools/calendar.calendar.update",
+        body: { calendarId: "c1", name: "Platform" },
+      },
+      { url: "/api/tools/calendar.calendar.delete", body: { calendarId: "c1" } },
+    ]);
   });
 });

@@ -114,6 +114,21 @@ const freeBusySchema = z
   );
 
 const calendarsListSchema = z.object({});
+const calendarColorSchema = z
+  .string()
+  .regex(/^(#[0-9a-fA-F]{6}|[a-z]{3,12})$/u, "color must be a palette name or #rrggbb");
+const calendarNameSchema = z.string().trim().min(1).max(120);
+const calendarCreateSchema = z.object({ name: calendarNameSchema, color: calendarColorSchema });
+const calendarUpdateSchema = z
+  .object({
+    calendarId: uuidSchema,
+    name: calendarNameSchema.optional(),
+    color: calendarColorSchema.optional(),
+  })
+  .refine((value) => value.name !== undefined || value.color !== undefined, {
+    message: "Provide a new name or color.",
+  });
+const calendarDeleteSchema = z.object({ calendarId: uuidSchema });
 const calendarMembershipsListSchema = z.object({ calendarId: uuidSchema });
 const calendarMembershipSetSchema = z.object({
   calendarId: uuidSchema,
@@ -424,6 +439,66 @@ export function createCalendarToolDefinitions(
         };
       },
     }),
+    defineTool<z.output<typeof calendarCreateSchema>, unknown>({
+      id: "calendar.calendar.create",
+      description: "Create an additional calendar owned by the current actor.",
+      permission: "calendar.write",
+      sideEffects: "write",
+      inputSchema: zodToolSchema(calendarCreateSchema, genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
+      handler: async (input, ctx) => {
+        const calendar = await options.store.createCalendar({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          name: input.name,
+          color: input.color,
+        });
+        return { id: calendar.id, name: calendar.name, color: calendar.color };
+      },
+    }),
+    defineTool<z.output<typeof calendarUpdateSchema>, unknown>({
+      id: "calendar.calendar.update",
+      description: "Rename or recolor a calendar the current actor owns or manages.",
+      permission: "calendar.write",
+      sideEffects: "write",
+      inputSchema: zodToolSchema(calendarUpdateSchema, genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
+      handler: async (input, ctx) => {
+        const calendar = await options.store.updateCalendar({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          calendarId: input.calendarId,
+          name: input.name,
+          color: input.color,
+        });
+        if (calendar === null)
+          throw new Error(`Unknown or unmanaged calendar: ${input.calendarId}`);
+        return { id: calendar.id, name: calendar.name, color: calendar.color };
+      },
+    }),
+    defineTool<z.output<typeof calendarDeleteSchema>, unknown>({
+      id: "calendar.calendar.delete",
+      description:
+        "Delete a calendar and its events. Only the owner may, and never their default calendar.",
+      permission: "calendar.write",
+      sideEffects: "destructive",
+      confirmationRequired: true,
+      inputSchema: zodToolSchema(calendarDeleteSchema, genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
+      handler: async (input, ctx) => {
+        const deleted = await options.store.deleteCalendar({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          calendarId: input.calendarId,
+        });
+        if (!deleted) {
+          throw new Error(
+            "Calendar not found, not owned by you, or it is your default calendar and cannot be deleted.",
+          );
+        }
+        return { deleted: true, calendarId: input.calendarId };
+      },
+    }),
     defineTool<z.output<typeof calendarMembershipsListSchema>, unknown>({
       id: "calendar.memberships.list",
       description: "List members of a calendar the current actor manages.",
@@ -610,6 +685,7 @@ function serializeCalendarEntry(entry: CalendarListEntry) {
     group: entry.group,
     writable: entry.writable,
     sortOrder: entry.sortOrder,
+    isDefault: entry.isDefault,
     eventCount: entry.eventCount,
   };
 }

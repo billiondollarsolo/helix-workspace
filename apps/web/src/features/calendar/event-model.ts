@@ -28,6 +28,8 @@ export interface CalendarSource {
   readonly writable: boolean;
   readonly timezone: string;
   readonly ownerDisplayName: string | null;
+  /** The owner's primary calendar: it can be renamed and recoloured but not deleted. */
+  readonly isDefault: boolean;
 }
 
 export function calendarSourceFromApi(calendar: CalendarApiCalendar): CalendarSource {
@@ -41,6 +43,7 @@ export function calendarSourceFromApi(calendar: CalendarApiCalendar): CalendarSo
     writable: calendar.writable ?? calendar.role !== "reader",
     timezone: calendar.timezone ?? "UTC",
     ownerDisplayName: calendar.ownerDisplayName ?? null,
+    isDefault: calendar.isDefault ?? false,
   };
 }
 

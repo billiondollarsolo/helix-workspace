@@ -106,6 +106,7 @@ import {
   registerWebhookVerificationDocsRoute,
 } from "../platform/webhooks/index.js";
 import { registerBetterAuthRoutes } from "./auth-routes.js";
+import { installEdgeCertificateManagement } from "./edge-certificate.js";
 import { traceIdForRequest } from "./request-principal.js";
 import { isAdminMfaProtectedPath } from "./route-scope.js";
 import type { installTools } from "./tools.js";
@@ -159,6 +160,8 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
     sessionActorResolver,
     principalFromAuthenticatedRequest,
     actorFromAuthenticatedRequest,
+    tenantSecretCipher,
+    defaultOrg,
     coreApps,
     configuredMeetSecrets,
     dlp,
@@ -532,6 +535,17 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
     mfa: mfaResolver,
     securityTier: () => runtimeConfiguration.current.security.tier,
     hasOtherAdministrator: (actor) => securityPoliciesStore.hasOtherAdministrator(actor),
+  });
+
+  installEdgeCertificateManagement({
+    app,
+    sql,
+    bootEnv,
+    cipher: tenantSecretCipher,
+    auditSink: auditStore,
+    actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+    defaultOrgId: defaultOrg.id,
+    leaderGatedWorkers,
   });
 
   await registerTenantConfigAdminRoutes(app, {

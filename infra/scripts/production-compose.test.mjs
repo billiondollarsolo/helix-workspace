@@ -462,11 +462,56 @@ describe("production Compose overlay", () => {
     expect(migrator.deploy.resources.limits.pids).toBe(128);
     expect(resolvedCompose.services.cerbos.read_only).toBe(true);
   });
+  it("lets Helix hand an uploaded certificate to the edge over a private socket", () => {
+    const { helix, caddy } = resolvedCompose.services;
+    const init = resolvedCompose.services["edge-volumes-init"];
+    const mounts = (service) =>
+      Object.fromEntries(
+        service.volumes.map((volume) => [
+          volume.source,
+          { target: volume.target, readOnly: volume.read_only === true },
+        ]),
+      );
+
+    expect(helix.environment).toMatchObject({
+      HELIX_EDGE_TLS_SOURCE: "automatic",
+      HELIX_EDGE_CERT_DIR: "/run/helix-edge-certs",
+      HELIX_EDGE_ADMIN_SOCKET: "/run/caddy-admin/admin.sock",
+      HELIX_EDGE_PROBE_ADDRESS: "caddy:443",
+    });
+    // A Unix socket in a volume only these two services mount: no admin port.
+    expect(caddy.environment.HELIX_CADDY_ADMIN).toBe("unix//run/caddy-admin/admin.sock");
+    expect(mounts(helix)).toMatchObject({
+      "edge-certs": { target: "/run/helix-edge-certs", readOnly: false },
+      "caddy-admin": { target: "/run/caddy-admin", readOnly: false },
+    });
+    // The edge only reads certificates; Helix is the one writer.
+    expect(mounts(caddy)).toMatchObject({
+      "edge-certs": { target: "/run/helix-edge-certs", readOnly: true },
+      "caddy-admin": { target: "/run/caddy-admin", readOnly: false },
+    });
+    const sharers = Object.entries(resolvedCompose.services)
+      .filter(([, service]) =>
+        (service.volumes ?? []).some((volume) =>
+          ["edge-certs", "caddy-admin"].includes(volume.source),
+        ),
+      )
+      .map(([name]) => name)
+      .sort();
+    expect(sharers).toEqual(["caddy", "edge-volumes-init", "helix"]);
+    expect(init.network_mode).toBe("none");
+    expect(init.restart).toBe("no");
+    expect(helix.depends_on["edge-volumes-init"].condition).toBe("service_completed_successfully");
+    expect(caddy.depends_on["edge-volumes-init"].condition).toBe("service_completed_successfully");
+  });
+
   it("serves the SPA and proxies only explicit backend paths at the production edge", () => {
     const caddyfile = readFileSync(join(root, "infra/caddy/Caddyfile.production"), "utf8");
     // The admin endpoint stays off unless a deployment mounts its private socket.
-    expect(caddyfile).toContain("admin off");
+    expect(caddyfile).toContain("admin {$HELIX_CADDY_ADMIN:off}");
     expect(caddyfile).not.toMatch(/admin\s+(?:localhost|0\.0\.0\.0|:)\S*/u);
+    // An uploaded certificate is loaded from the folder Helix writes.
+    expect(caddyfile).toContain("load {$HELIX_EDGE_CERT_DIR:/run/helix-edge-certs}");
     // Certificate source is a switch; the default is automatic HTTPS.
     expect(caddyfile).toContain("tls {$HELIX_CADDY_TLS:} {");
     // Only the bucket path reaches the object store, with the signed Host kept

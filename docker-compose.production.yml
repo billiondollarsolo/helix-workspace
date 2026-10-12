@@ -203,6 +203,13 @@ services:
       MAIL_SMTP_RECEIVER_ENABLED: "true"
       MAIL_SMTP_RECEIVER_HOST: 0.0.0.0
       MAIL_SMTP_RECEIVER_PORT: 2525
+      # Admin → Domains → HTTPS certificate: Helix writes an uploaded certificate
+      # to the folder the edge loads and asks it, over its admin socket, to load
+      # the folder again.
+      HELIX_EDGE_TLS_SOURCE: ${HELIX_CADDY_TLS:-automatic}
+      HELIX_EDGE_CERT_DIR: /run/helix-edge-certs
+      HELIX_EDGE_ADMIN_SOCKET: /run/caddy-admin/admin.sock
+      HELIX_EDGE_PROBE_ADDRESS: caddy:443
       # Inbound SMTP offers STARTTLS with the mail hostname's certificate.
       MAIL_SMTP_RECEIVER_TRANSPORT_SECURITY: starttls
       MAIL_SMTP_RECEIVER_TLS_CERT: !reset "null"
@@ -290,6 +297,8 @@ services:
         condition: service_healthy
       helix-storage-init:
         condition: service_completed_successfully
+      edge-volumes-init:
+        condition: service_completed_successfully
       cerbos:
         condition: service_healthy
       spamd:
@@ -299,6 +308,9 @@ services:
     networks: !override
       - edge
       - data-plane
+    volumes:
+      - edge-certs:/run/helix-edge-certs
+      - caddy-admin:/run/caddy-admin
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=256m
@@ -503,6 +515,30 @@ services:
         limits:
           cpus: "1.0"
           memory: 1g
+
+  # One-shot: the two volumes Helix and the edge share start out root-owned,
+  # and both services run as the same unprivileged user.
+  edge-volumes-init:
+    image: rustfs/rustfs:1.0.1@sha256:1803faef57627e2d9c2e7d89d655d712ddded5389040054987163043fecb6a3c
+    user: "0:0"
+    entrypoint:
+      - /bin/sh
+      - -euc
+      - install -d -m 0700 -o 10001 -g 10001 /certs /admin
+    volumes:
+      - edge-certs:/certs
+      - caddy-admin:/admin
+    network_mode: none
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+    security_opt:
+      - no-new-privileges:true
+    restart: "no"
 
   # One-shot: the RustFS local KMS refuses a key directory it does not own with
   # mode 0700, and a new named volume is root-owned.
@@ -784,6 +820,10 @@ services:
       # Certificate source: empty for automatic HTTPS (Let's Encrypt). Add
       # docker-compose.tls-files.yml to serve operator-provided PEM files.
       HELIX_CADDY_TLS: ${HELIX_CADDY_TLS:-}
+      # Reachable only through a volume shared with Helix; mode 0200, so only
+      # the shared service user can use it.
+      HELIX_CADDY_ADMIN: unix//run/caddy-admin/admin.sock
+      HELIX_EDGE_CERT_DIR: /run/helix-edge-certs
       # Certificates persist in the caddy-data volume.
       XDG_DATA_HOME: /data
       XDG_CONFIG_HOME: /config
@@ -809,9 +849,13 @@ services:
     volumes: !override
       - caddy-data:/data
       - caddy-config:/config
+      - edge-certs:/run/helix-edge-certs:ro
+      - caddy-admin:/run/caddy-admin
     depends_on: !override
       helix:
         condition: service_healthy
+      edge-volumes-init:
+        condition: service_completed_successfully
     networks: !override
       - edge
     read_only: true
@@ -974,6 +1018,11 @@ secrets:
     file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/audit_anchor_secret
 
 volumes:
+  # An HTTPS certificate uploaded in Admin → Domains, as the edge loads it. It
+  # is rewritten from the database, so it needs no backup of its own.
+  edge-certs:
+  # Holds only the edge's admin socket.
+  caddy-admin:
   # Local KMS key material for the bundled RustFS. Back it up with rustfs-data:
   # objects cannot be decrypted without it and the rustfs_kms_master_key secret.
   rustfs-kms:

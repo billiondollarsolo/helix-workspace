@@ -146,6 +146,11 @@ const SETTINGS: readonly Omit<AdminSettingEntry, "location">[] = [
     keywords: ["dns", "txt record", "verify", "primary domain"],
   },
   {
+    title: "HTTPS certificate",
+    section: "domains",
+    keywords: ["tls", "ssl", "certificate", "https", "let's encrypt", "expiry", "renew"],
+  },
+  {
     title: "Outbound webhooks",
     section: "webhooks",
     tab: "outbound",

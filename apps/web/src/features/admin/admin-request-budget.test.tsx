@@ -398,10 +398,11 @@ describe("admin console request budget", () => {
           ],
         },
         "domains": {
-          "requestCount": 1,
+          "requestCount": 2,
           "settled": true,
           "urls": [
             "/v1/api/admin/domains",
+            "/v1/api/admin/edge/certificate",
           ],
         },
         "drive": {

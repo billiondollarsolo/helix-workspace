@@ -9,6 +9,7 @@ import { RowMenu, RowMenuItem } from "@/features/admin/console/widgets";
 
 import { Button } from "@/components/ui/button";
 import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
+import { EdgeCertificatePanel } from "@/features/admin/edge-certificate";
 import {
   AdminField,
   AdminInput,
@@ -490,6 +491,8 @@ export function AdminDomain() {
           console cannot undo the deletion.
         </ConfirmDestructive>
       )}
+
+      <EdgeCertificatePanel />
     </>
   );
 }

@@ -12,6 +12,11 @@ transactional, limited to one per hour, and reversible for 24 hours. See the
 [domain and identity model](domain-identity.md) for secondary-domain versus
 domain-alias behavior and the rename/release runbook.
 
+The same page shows the HTTPS certificate the workspace's address serves and when it expires. In a
+self-hosted deployment an administrator can replace it with the organization's own certificate or
+go back to automatic certificates; see
+[TLS certificates](deployment-production.md#tls-certificates).
+
 ## Supported Business pilot profile
 
 The first supported production profile is one organization with 5–50 trusted users on the

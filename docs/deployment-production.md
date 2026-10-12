@@ -492,21 +492,45 @@ configuration files (NATS, Cerbos policies, Meilisearch) from the repository.
 
 Caddy terminates HTTPS for `HELIX_DOMAIN`. Choose one source for its certificate:
 
-| Mode             | How to select it                                               | Use it when                                                              |
-| ---------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| Automatic        | Nothing to set                                                 | The host is reachable from the Internet on ports 80 and 443              |
-| Your certificate | Add `-f docker-compose.tls-files.yml` to every Compose command | You have a certificate from your own CA or a wildcard you already manage |
-| Internal CA      | `HELIX_CADDY_TLS=internal` in `.env.production`                | Testing on a private network; browsers will not trust it                 |
+| Mode                      | How to select it                                               | Use it when                                                               |
+| ------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| Automatic                 | Nothing to set                                                 | The host is reachable from the Internet on ports 80 and 443               |
+| Uploaded in the console   | **Admin → Domains → HTTPS certificate**                        | You have your own certificate and want to manage it without server access |
+| Your certificate as files | Add `-f docker-compose.tls-files.yml` to every Compose command | Certificates are delivered to the server by your own tooling              |
+| Internal CA               | `HELIX_CADDY_TLS=internal` in `.env.production`                | Testing on a private network; browsers will not trust it                  |
 
 **Automatic.** Caddy obtains and renews a certificate from Let's Encrypt. The DNS record for
 `HELIX_DOMAIN` must point at the host before the first start, and ports 80 and 443 must be open.
 The certificate and its account key are stored in the `caddy-data` volume; include it in backups to
 avoid requesting a new certificate after every restore.
 
-**Your certificate.** Put two PEM files in `HELIX_PRODUCTION_SECRETS_DIR`: `tls_cert` (the
+**Uploaded in the console.** An administrator with security permissions opens
+**Admin → Domains → HTTPS certificate**, which shows the certificate being served, who issued it,
+and when it expires, and chooses **Use your own certificate**. Helix accepts a PEM certificate
+followed by its intermediates and an unencrypted RSA (2048 bits or more) or ECDSA P-256/P-384 key.
+It refuses, with the reason, a certificate that does not cover `HELIX_DOMAIN`, is not yet valid or
+has expired, has its chain out of order, or does not match the key. The edge switches to the new
+certificate within seconds, without a restart, and stops requesting automatic certificates while
+an uploaded one is in place. **Go back to automatic** removes it.
+
+Nothing renews an uploaded certificate. The console warns from 30 days before it expires, the
+application log repeats the warning once a day, and the same screen takes the renewal. Uploads and
+removals are recorded in the audit log as `edge.tls.certificate_uploaded` and
+`edge.tls.certificate_removed`, with the certificate's names, issuer, expiry, and fingerprint, and
+never the key.
+
+The private key is stored encrypted in the database and is never returned by the API. Helix writes
+the certificate and key to the `edge-certs` volume, which only Helix and the edge mount, so the
+edge serves the right certificate after a restart even when Helix is down; the volume is rewritten
+from the database within a minute after a restore. Helix asks the edge to load that folder again
+through the edge's admin socket, a Unix socket in the `caddy-admin` volume that only those two
+services mount; the edge's admin interface has no network address. This mode is available when the
+deployment selects automatic HTTPS or the internal CA, in single-organization deployments.
+
+**Your certificate as files.** Put two PEM files in `HELIX_PRODUCTION_SECRETS_DIR`: `tls_cert` (the
 certificate followed by its intermediate chain) and `tls_key` (the unencrypted private key). The
-certificate must cover `HELIX_DOMAIN`. Caddy does not renew it. To replace it, overwrite both files
-and restart the edge:
+certificate must cover `HELIX_DOMAIN`. Caddy does not renew it, and the console shows it but
+cannot replace it. To replace it, overwrite both files and restart the edge:
 
 ```sh
 docker compose --env-file .env.production \
@@ -517,7 +541,8 @@ docker compose --env-file .env.production \
 Inbound SMTP uses a separate certificate, `smtp_tls_cert` and `smtp_tls_key`. The generated one is
 signed by the private CA, which is enough for opportunistic STARTTLS: sending servers encrypt the
 connection but rarely verify the certificate. Replace both files with a publicly trusted
-certificate for your mail hostname if you publish MTA-STS or DANE, then restart `helix`.
+certificate for your mail hostname if you publish MTA-STS or DANE, then restart `helix`. A
+certificate uploaded in the console is not used for mail.
 
 ## Object storage
 

@@ -1,3 +1,4 @@
+import { runtimeEnvironment } from "../config/env.js";
 import { createMeteringClient } from "@helix/sdk";
 import { Redis } from "ioredis";
 import {
@@ -173,9 +174,9 @@ export async function installAuth(context: Awaited<ReturnType<typeof installHttp
   const identityMailTransport =
     mailCfg.outbound === undefined ? undefined : new NodemailerMailTransport(mailCfg.outbound);
 
-  const tenantStorageSecretReader = createVaultTenantSecretReaderFromEnv(process.env);
+  const tenantStorageSecretReader = createVaultTenantSecretReaderFromEnv(runtimeEnvironment());
 
-  const betterAuthConfig = getBetterAuthRuntimeConfig(process.env);
+  const betterAuthConfig = getBetterAuthRuntimeConfig(runtimeEnvironment());
 
   if (
     bootEnv.NODE_ENV === "production" &&
@@ -318,7 +319,7 @@ export async function installAuth(context: Awaited<ReturnType<typeof installHttp
       })
     : undefined;
 
-  const defaultOrg = resolveDefaultOrgInput(process.env);
+  const defaultOrg = resolveDefaultOrgInput(runtimeEnvironment());
 
   const appPasswordStore = new PostgresAppPasswordStore(sql);
 

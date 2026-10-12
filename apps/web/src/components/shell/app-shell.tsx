@@ -18,6 +18,7 @@ import { useNavCollapsed } from "@/components/shell/nav-collapse";
 import { QuickSettings } from "@/components/shell/quick-settings";
 import { NotificationsPanel } from "@/components/shell/notifications-panel";
 import { CommandPalette } from "@/components/shell/command-palette";
+import { SecondFactorPrompt } from "@/components/shell/second-factor-prompt";
 import { SettingsPage } from "@/components/shell/settings-page";
 import { NetworkStatus } from "@/components/shell/network-status";
 import { GlobalShortcuts, openShortcutsHelp } from "@/lib/shortcuts/global-shortcuts";
@@ -136,6 +137,7 @@ export function AppShell() {
           onClose={closeSettings}
         />
         <MailDialogsHost />
+        <SecondFactorPrompt onOpenSecuritySettings={() => overlays.openSettings("security")} />
       </div>
     </ShellOverlayContext.Provider>
   );

@@ -19,7 +19,6 @@ import {
   type SignInInput,
 } from "@/lib/auth";
 import { AuthCard } from "./auth-card";
-import { DevDemoAccounts } from "./dev-demo-accounts";
 
 type Step = "email" | "password" | "totp" | "recovery" | "forgot" | "reset";
 
@@ -107,23 +106,7 @@ export function LocalLoginPanel({
     );
 
   return (
-    <AuthCard
-      title={TITLES[step]}
-      subtitle={subtitle(step)}
-      footer={
-        step === "email" ? (
-          <DevDemoAccounts
-            disabled={busy}
-            onUse={(account) => {
-              setEmail(account.email);
-              setPassword(account.password);
-              goTo("password");
-              void run(() => signIn({ email: account.email, password: account.password }));
-            }}
-          />
-        ) : undefined
-      }
-    >
+    <AuthCard title={TITLES[step]} subtitle={subtitle(step)}>
       {reauthenticate ? (
         <p role="status" className="auth-notice">
           Your session must be verified again. Sign in again to continue.

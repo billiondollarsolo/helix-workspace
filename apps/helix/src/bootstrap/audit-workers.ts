@@ -1,3 +1,4 @@
+import { runtimeEnvironment } from "../config/env.js";
 import { envFlag } from "../bootstrap/env.js";
 import { getAuditDestinationConfigs } from "../config/audit.js";
 import { createAuditDestinationShipper } from "../platform/audit/destinations.js";
@@ -75,7 +76,7 @@ export async function installAuditWorkers(context: Awaited<ReturnType<typeof ins
   // destination (`immutable-s3` | `siem-syslog` | `audit-immutable-postgres`)
   // gets its own AuditShippingWorker, built through `createAuditDestinationShipper`.
   // Every worker is leader-gated below alongside the other singleton workers.
-  const auditDestinationConfigs = getAuditDestinationConfigs(process.env);
+  const auditDestinationConfigs = getAuditDestinationConfigs(runtimeEnvironment());
 
   const hardDeleteEnabled = envFlag("HELIX_TENANT_HARD_DELETE_WORKER_ENABLED", false);
 

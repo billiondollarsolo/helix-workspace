@@ -1942,26 +1942,6 @@
     font-size: var(--text-meta);
   }
 
-  .auth-demo {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .auth-demo-label {
-    font-size: var(--text-chip);
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--text-2);
-  }
-
-  .auth-demo-row {
-    display: flex;
-    gap: 8px;
-  }
-
   @media (max-width: 520px) {
     .auth-screen {
       place-items: start center;

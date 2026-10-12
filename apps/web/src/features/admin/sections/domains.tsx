@@ -231,9 +231,8 @@ function DomainDnsPanel({ entry }: { entry: DomainWithRecords }) {
              means it does not — say so, rather than leaving an operator to
              guess which records to type into the form below. */
           <EmptyRow>
-            No DNS records yet. Helix adds the records it needs automatically once
-            <code> HELIX_MAIL_PUBLIC_HOSTNAME</code> is set on the deployment; until then, add them
-            below.
+            No DNS records yet. Helix adds the records it needs automatically once this deployment
+            has a public mail hostname; until then, add them below.
           </EmptyRow>
         }
       />

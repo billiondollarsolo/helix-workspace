@@ -52,6 +52,15 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     await installAgentApi(observability);
   });
   registerMcpWellKnownRoutes(tools.app, tools);
-  registerHealthRoutes(tools.app, new ReadinessMonitor(tools.readinessProbes));
+  registerHealthRoutes(
+    tools.app,
+    new ReadinessMonitor(tools.readinessProbes, {
+      onChange: (failures) => {
+        if (failures.length === 0)
+          tools.app.log.info("Readiness restored: every dependency probe passes");
+        else tools.app.log.warn({ failures }, "Not ready: dependency probes are failing");
+      },
+    }),
+  );
   return tools.app;
 }

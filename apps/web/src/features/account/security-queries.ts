@@ -3,6 +3,7 @@
 
 import type { AccountSession } from "@helix/contracts";
 import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query";
+import { listPasskeys } from "@/lib/auth";
 import {
   createMyAppPassword,
   listAccountSessions,
@@ -19,6 +20,16 @@ export function accountSessionsQueryOptions() {
   return queryOptions({
     queryKey: ["account", "sessions"] as const,
     queryFn: () => listAccountSessions(),
+    throwOnError: false,
+  });
+}
+
+/** Your passkeys, read fresh each time: they decide how you can verify. */
+export function accountPasskeysQueryOptions() {
+  return queryOptions({
+    queryKey: ["account", "passkeys"] as const,
+    queryFn: () => listPasskeys(),
+    staleTime: 0,
     throwOnError: false,
   });
 }

@@ -15,6 +15,16 @@ export interface ReadinessMonitorOptions {
   readonly cacheMs?: number;
   readonly timeoutMs?: number;
   readonly now?: () => Date;
+  /**
+   * Called when the set of failing probes changes, for the operator's log.
+   * The public probe still answers one bit; the reason is never sent to clients.
+   */
+  readonly onChange?: (failures: readonly ReadinessProbeFailure[]) => void;
+}
+
+export interface ReadinessProbeFailure {
+  readonly id: string;
+  readonly reason: string;
 }
 
 const defaultCacheMs = 5_000;
@@ -25,6 +35,8 @@ export class ReadinessMonitor {
   readonly #cacheMs: number;
   readonly #timeoutMs: number;
   readonly #now: () => Date;
+  readonly #onChange: ((failures: readonly ReadinessProbeFailure[]) => void) | undefined;
+  #reported = "";
   #cached: { readonly expiresAt: number; readonly result: ReadinessResult } | undefined;
   #inFlight: Promise<ReadinessResult> | undefined;
 
@@ -35,6 +47,7 @@ export class ReadinessMonitor {
     this.#cacheMs = nonNegativeInteger(options.cacheMs ?? defaultCacheMs, "cacheMs");
     this.#timeoutMs = positiveInteger(options.timeoutMs ?? defaultTimeoutMs, "timeoutMs");
     this.#now = options.now ?? (() => new Date());
+    this.#onChange = options.onChange;
   }
 
   check(): Promise<ReadinessResult> {
@@ -51,11 +64,19 @@ export class ReadinessMonitor {
       const outcomes = await Promise.all(
         this.probes.map(async (probe) => ({
           id: probe.id,
-          ok: await probeSucceeded(probe.check, this.#timeoutMs),
+          failure: await probeFailure(probe.check, this.#timeoutMs),
         })),
       );
       const checkedAt = this.#now();
-      const failedProbeIds = outcomes.filter((outcome) => !outcome.ok).map((outcome) => outcome.id);
+      const failures = outcomes.flatMap((outcome) =>
+        outcome.failure === undefined ? [] : [{ id: outcome.id, reason: outcome.failure }],
+      );
+      const failedProbeIds = failures.map((failure) => failure.id);
+      const signature = failedProbeIds.join(",");
+      if (signature !== this.#reported) {
+        this.#reported = signature;
+        this.#onChange?.(failures);
+      }
       const result: ReadinessResult = {
         ok: failedProbeIds.length === 0,
         failedProbeIds,
@@ -82,7 +103,11 @@ export function registerHealthRoutes(app: FastifyInstance, monitor: ReadinessMon
   });
 }
 
-async function probeSucceeded(check: () => Promise<void>, timeoutMs: number): Promise<boolean> {
+/** Undefined when the probe passed; otherwise why it failed. */
+async function probeFailure(
+  check: () => Promise<void>,
+  timeoutMs: number,
+): Promise<string | undefined> {
   try {
     const timeout = AbortSignal.timeout(timeoutMs);
     await Promise.race([
@@ -97,9 +122,11 @@ async function probeSucceeded(check: () => Promise<void>, timeoutMs: number): Pr
         );
       }),
     ]);
-    return true;
-  } catch {
-    return false;
+    return undefined;
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "Readiness probe failed";
+    // Connection errors can echo a URL; never log embedded credentials.
+    return reason.replace(/\/\/[^@\s/]+@/gu, "//***@");
   }
 }
 

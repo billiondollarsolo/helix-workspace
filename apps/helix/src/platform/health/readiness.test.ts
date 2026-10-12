@@ -69,6 +69,37 @@ describe("ReadinessMonitor", () => {
     await expect(monitor.check()).resolves.toMatchObject({ ok: false, failedProbeIds: ["queue"] });
   });
 
+  it("tells the operator which probes fail and why, once per change, without credentials", async () => {
+    let databaseUp = false;
+    const reports: (readonly { id: string; reason: string }[])[] = [];
+    const monitor = new ReadinessMonitor(
+      [
+        {
+          id: "postgres",
+          check: () =>
+            databaseUp
+              ? Promise.resolve()
+              : Promise.reject(
+                  new Error("connect to postgres://helix_app:s3cret@postgres:5432 failed"),
+                ),
+        },
+        { id: "queue", check: () => Promise.resolve() },
+      ],
+      { cacheMs: 0, onChange: (failures) => reports.push(failures) },
+    );
+
+    await monitor.check();
+    await monitor.check();
+    expect(reports).toEqual([
+      [{ id: "postgres", reason: "connect to postgres://***@postgres:5432 failed" }],
+    ]);
+
+    databaseUp = true;
+    await expect(monitor.check()).resolves.toMatchObject({ ok: true });
+    expect(reports).toHaveLength(2);
+    expect(reports[1]).toEqual([]);
+  });
+
   it("coalesces and caches concurrent checks", async () => {
     let now = new Date("2026-09-02T00:00:00.000Z");
     const check = vi.fn(async () => undefined);

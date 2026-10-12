@@ -442,9 +442,7 @@ export function AIProvidersManagement() {
         </p>
 
         {editor.providers.length === 0 ? (
-          <Notice>
-            No providers yet. Add one, or set OPENAI_* env vars as bootstrap until you save here.
-          </Notice>
+          <Notice>No providers yet. Add one to turn on Helix AI for your workspace.</Notice>
         ) : null}
 
         <div className="grid gap-4">
@@ -577,7 +575,6 @@ export function AIProvidersManagement() {
                 <div>
                   <div className="text-xs font-semibold">{slot.label}</div>
                   <div className="type-caption text-muted-foreground">{slot.hint}</div>
-                  <code className="type-chip text-muted-foreground">{slot.feature}</code>
                 </div>
                 <label className="grid gap-1 text-xs">
                   <span className="font-medium">Provider</span>
@@ -646,7 +643,7 @@ export function AIProvidersManagement() {
               setEditor((current) => ({ ...current, spamBetaMode: mode }));
             }}
           >
-            <option value="env">Use environment default</option>
+            <option value="env">Use the deployment default</option>
             <option value="on">Enabled</option>
             <option value="off">Disabled in Admin</option>
           </select>

@@ -91,13 +91,14 @@ const SECTION_SUBJECTS: Partial<Record<AdminSectionId, readonly string[]>> = {
 /* Connection state                                                    */
 /* ------------------------------------------------------------------ */
 
-/** `live` — at least one socket open. `connecting` — trying, none open yet.
- *  `offline` — the server refused permanently (auth) or has no bus, so the
- *  sections' own polling is all there is. Rendered by the console so a dead
- *  socket can never read as a quiet system. */
-export type AdminRealtimeState = "live" | "connecting" | "offline";
+/** `idle` — the current section subscribes to nothing, so there is no
+ *  connection to report on. `live` — at least one socket open. `connecting` —
+ *  trying, none open yet. `offline` — the server refused permanently (auth) or
+ *  has no bus, so the sections' own polling is all there is. Rendered by the
+ *  console so a dead socket can never read as a quiet system. */
+export type AdminRealtimeState = "idle" | "live" | "connecting" | "offline";
 
-let connectionState: AdminRealtimeState = "connecting";
+let connectionState: AdminRealtimeState = "idle";
 const stateListeners = new Set<() => void>();
 
 function setConnectionState(next: AdminRealtimeState): void {
@@ -113,7 +114,7 @@ function setConnectionState(next: AdminRealtimeState): void {
 function recomputeConnectionState(): void {
   const entries = [...hub.values()];
   if (entries.length === 0) {
-    setConnectionState("connecting");
+    setConnectionState("idle");
     return;
   }
   if (entries.some((entry) => entry.open)) {
@@ -131,7 +132,7 @@ export function useAdminRealtimeState(): AdminRealtimeState {
       return () => stateListeners.delete(listener);
     },
     () => connectionState,
-    () => "connecting" as const,
+    () => "idle" as const,
   );
 }
 
@@ -323,7 +324,7 @@ export function resetAdminRealtime(): void {
   /* Through the setter, not a bare assignment: anything subscribed via
      `useAdminRealtimeState` has to be told, or a reset leaves a stale "live"
      indicator on screen with no socket behind it. */
-  setConnectionState("connecting");
+  setConnectionState("idle");
 }
 
 /* ------------------------------------------------------------------ */

@@ -15,7 +15,7 @@ import {
   HeadObjectCommand,
   ListObjectsV2Command,
   PutObjectCommand,
-  S3Client,
+  type S3Client,
   UploadPartCommand,
   type CreateMultipartUploadCommandOutput,
   type GetBucketEncryptionCommandOutput,
@@ -36,6 +36,7 @@ import type {
   RequestHandler,
 } from "@smithy/types";
 import { OutboundHttpError, outboundFetch } from "../outbound-http.js";
+import { buildS3Client, validatedPublicEndpoint } from "./s3-client-factory.js";
 
 export interface S3CompatibleCredentials {
   readonly accessKeyId: string;
@@ -51,6 +52,8 @@ export interface S3CompatibleStorageConfig {
   readonly serverSideEncryptionAwsKmsKeyId?: string;
   readonly securityPolicy?: S3StorageSecurityPolicy;
   readonly forcePathStyle?: boolean;
+  /** Browser-reachable endpoint for presigned URLs when `endpoint` is private. */
+  readonly publicEndpoint?: string;
   readonly fetch?: typeof fetch;
   readonly now?: () => Date;
   readonly requestTimeoutMs?: number;
@@ -148,27 +151,22 @@ export function createS3CompatibleStorage(
 
 class SdkS3CompatibleStorageClient implements S3CompatibleStorageClient {
   readonly #client: S3Client;
+  readonly #presignClient: S3Client;
   readonly #config: NormalizedS3Config;
 
   constructor(config: S3CompatibleStorageConfig) {
     this.#config = normalizeConfig(config);
-    this.#client = new S3Client({
-      endpoint: this.#config.endpoint,
-      region: this.#config.region,
-      credentials: this.#config.credentials,
-      forcePathStyle: this.#config.forcePathStyle,
-      maxAttempts: this.#config.maxAttempts,
-      retryMode: "standard",
-      requestChecksumCalculation: "WHEN_REQUIRED", // presigned ones would hash an empty body
-      responseChecksumValidation: "WHEN_SUPPORTED",
-      requestHandler: new GuardedFetchHandler(this.#config.fetch),
-      systemClockOffset: this.#config.now().getTime() - Date.now(),
-    });
-    this.#client.middlewareStack.addRelativeTo(omitSignedContentLengthMiddleware as never, {
-      name: "omitSignedContentLengthMiddleware",
-      relation: "before",
-      toMiddleware: "httpSigningMiddleware",
-    });
+    const build = (endpoint: string) =>
+      buildS3Client({
+        ...this.#config,
+        endpoint,
+        requestHandler: new GuardedFetchHandler(this.#config.fetch),
+        clockOffsetMs: this.#config.now().getTime() - Date.now(),
+        signingMiddleware: omitSignedContentLengthMiddleware,
+      });
+    this.#client = build(this.#config.endpoint);
+    const publicEndpoint = validatedPublicEndpoint(config.publicEndpoint, this.#config.endpoint);
+    this.#presignClient = publicEndpoint === undefined ? this.#client : build(publicEndpoint);
   }
 
   async checkHealth(): Promise<void> {
@@ -533,7 +531,7 @@ class SdkS3CompatibleStorageClient implements S3CompatibleStorageClient {
     expiresSeconds: number | undefined,
     unhoistableHeaders?: Set<string>,
   ): Promise<string> {
-    return getSignedUrl(this.#client, command as never, {
+    return getSignedUrl(this.#presignClient, command as never, {
       expiresIn: validateExpiresSeconds(expiresSeconds ?? 900),
       signingDate: this.#config.now(),
       ...(unhoistableHeaders === undefined

@@ -1,3 +1,4 @@
+import { runtimeEnvironment } from "../config/env.js";
 import { envFlag, parseS3ServerSideEncryption } from "../bootstrap/env.js";
 import { PostgresChatAttachmentStore } from "../platform/chat/index.js";
 import { loadDriveConfig } from "../platform/drive/config.js";
@@ -22,6 +23,7 @@ import {
   ByoStorageHealthWorker,
   createDefaultTenantStorageResolver,
   createS3CompatibleStorage,
+  operatorStorageFetch,
   createTenantStorageMigrationPairResolver,
   createTenantStorageResolver,
   PostgresTenantStorageMigrationJobStore,
@@ -55,7 +57,7 @@ export async function installStorage(context: Awaited<ReturnType<typeof installA
 
   const inboundMailScanners = {
     tier: securityTier,
-    betaSpamSecondPass: createBetaSpamSecondPass(process.env),
+    betaSpamSecondPass: createBetaSpamSecondPass(runtimeEnvironment()),
     ...(spamdScanner === undefined ? {} : { spam: spamdScanner }),
     ...(clamavScanner === undefined ? {} : { antivirus: clamavScanner }),
     onUnavailable: ({
@@ -87,6 +89,10 @@ export async function installStorage(context: Awaited<ReturnType<typeof installA
       ? undefined
       : createS3CompatibleStorage({
           endpoint: rustfsEndpoint,
+          fetch: operatorStorageFetch(rustfsEndpoint),
+          ...(driveConfig.storage.publicEndpoint === undefined
+            ? {}
+            : { publicEndpoint: driveConfig.storage.publicEndpoint }),
           region: driveConfig.storage.region,
           bucket: driveConfig.storage.bucket,
           credentials: {

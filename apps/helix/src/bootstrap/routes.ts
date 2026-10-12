@@ -1,3 +1,4 @@
+import { runtimeEnvironment } from "../config/env.js";
 import { installDriveRoutes } from "./drive-routes.js";
 import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
@@ -353,10 +354,10 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
 
   await registerAdminServicesRoutes(app, {
     catalog: new AdminServicesCatalog({
-      env: process.env,
+      env: runtimeEnvironment(),
     }),
     statusStore: new PostgresAdminServiceStatusStore(sql, {
-      env: process.env,
+      env: runtimeEnvironment(),
     }),
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
   });
@@ -364,7 +365,7 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
   if (coreApps.shouldRegister("mail")) {
     await registerMailAdminRoutes(app, {
       service: new MailAdminStatusService({
-        env: process.env,
+        env: runtimeEnvironment(),
         deliveryHealthStore: mailStore,
       }),
       actorFromRequest: (request) => actorFromAuthenticatedRequest(request),

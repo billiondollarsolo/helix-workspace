@@ -28,6 +28,7 @@ const {
   resetAdminRealtime,
   setAdminRealtimeSocketFactory,
   useAdminRealtime,
+  useAdminRealtimeState,
 } = await import("./use-admin-realtime");
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
@@ -188,6 +189,34 @@ describe("admin realtime hub", () => {
     mount("users");
 
     expect(sockets).toHaveLength(0);
+  });
+
+  it("reports no connection status for a section that has no live updates", () => {
+    const states: string[] = [];
+    function StateProbe() {
+      states.push(useAdminRealtimeState());
+      return null;
+    }
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    roots.push({ root, container });
+    act(() => {
+      root.render(createElement(StateProbe));
+    });
+
+    /* "Connecting…" on Users would never resolve: nothing is being connected. */
+    mount("users");
+    expect(states.at(-1)).toBe("idle");
+
+    const unmountOverview = mount("overview");
+    expect(states.at(-1)).toBe("connecting");
+    act(() => {
+      socketFor("helix.config.changed").emit("open", {});
+    });
+    expect(states.at(-1)).toBe("live");
+
+    unmountOverview();
+    expect(states.at(-1)).toBe("idle");
   });
 
   it("invalidates the mapped query keys and only those", () => {

@@ -45,7 +45,7 @@ export function SpamFiltering() {
                 <ShieldIcon size={16} aria-hidden="true" />
               </span>
               <div className="flex-1">
-                <div className="type-body font-semibold">spamd daemon</div>
+                <div className="type-body font-semibold">SpamAssassin</div>
                 <div className="type-meta [color:var(--text-2)]">
                   {settings.enabled
                     ? `Ruleset ${settings.rulesetVersion ?? "as installed"}`

@@ -8,6 +8,29 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Added
 
+- Single-host production deployment that starts from one command.
+  `infra/scripts/generate-production-secrets.mjs` writes every secret file and the internal
+  service certificates; the production Compose overlay now provisions object storage (TLS, a KMS
+  key, a versioned object-locked bucket, and an object-locked audit bucket) before the application
+  starts; and `node dist/db/bootstrap-owner.js --email <address>` prints the first
+  administrator's single-use invitation link (audited as `identity.owner.bootstrapped`). New
+  required settings `HELIX_REGION` and `HELIX_DEFAULT_ORG_NAME`; optional `RUSTFS_PUBLIC_ENDPOINT`
+  for the address browsers use for signed upload and download links (defaults to
+  `https://$HELIX_DOMAIN`, routed by Caddy to the bucket only). See
+  [`docs/runbooks/pilot-install-zero-to-mail.md`](docs/runbooks/pilot-install-zero-to-mail.md).
+- The Admin console asks for a 2-step verification code in place when an administrator session
+  must be verified again (after 10 minutes by default) or an action needs a second step, then
+  continues what the person was doing. Previously the page was replaced by the sign-in page, or
+  showed a refusal with nothing to do about it. People without a second step are sent to their
+  security settings, or to sign-in when the whole session has lapsed.
+- `infra/scripts/production-boot-smoke.sh` boots the production Compose stack from nothing on a
+  Docker host and checks the path a new deployment takes, with either certificate source.
+- Serve your own HTTPS certificate: add `docker-compose.tls-files.yml` and place `tls_cert` and
+  `tls_key` in the secrets directory. Automatic Let's Encrypt certificates remain the default.
+- `/readyz` failures are explained in the application log ("Not ready: dependency probes are
+  failing", with each dependency and reason, credentials removed), and logged errors now include
+  their type, message, code, and stack instead of `{}`.
+
 - AI decision model for mail spam and triage. Admin → Mail → Spam filtering can send a compact
   summary of mail from outside senders to Cloudflare Workers AI Clef or TypeSafe Jev after it is
   stored (never delaying delivery). Off by default; **Shadow** records verdicts only, **Enforce**
@@ -451,6 +474,9 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Removed
 
+- Development sign-in shortcuts on the sign-in page, and internal wording in the Admin console
+  (feature identifiers, "tool" and "actor" error text) that was never meant for people using the
+  product.
 - The previous seeds and their scripts: `db:seed:logins`, `db:seed:scenarios`, `db:seed:team`,
   `db:verify:team`, `db:prepare:demo`, `db:verify:demo`, `db:seed:mail-corpus`,
   `db:fetch:corpus`, `corpus:fetch` and `corpus:seed`, the `test-corpus/` and
@@ -483,6 +509,18 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Fixed
 
+- The production Compose stack starts. It previously could not: the application was missing
+  required region and workspace settings, object storage had no TLS, encryption key, or bucket,
+  the Business tier had no immutable audit destination, the sign-in database pool connected
+  without TLS and was refused, ClamAV and SpamAssassin could not download updates from the
+  internal network, Caddy could not store certificates on its read-only filesystem, and Drive
+  upload links pointed at an address browsers cannot reach.
+- The workspace takes the name in `HELIX_DEFAULT_ORG_NAME` on first start; it stayed
+  "Default Organization". A name chosen later is kept.
+- Audit copies written to the WORM-Postgres destination run inside the organization's tenant
+  context, so row-level security no longer rejects them under the runtime database role.
+- Meet stays off in production unless `MEET_JITSI_ENABLED=true` is set explicitly, and the search
+  reindex no longer requires object-storage credentials to read file metadata.
 - Meilisearch stored its database in the container layer (`/data.ms`) instead of the
   `meili-data` volume, so indexes were lost when the container was recreated and the production
   overlay's read-only root filesystem blocked startup. The image now works in `/meili_data`, as

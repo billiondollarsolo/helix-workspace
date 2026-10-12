@@ -1,3 +1,4 @@
+import { runtimeEnvironment } from "../config/env.js";
 import { deriveClassification } from "../platform/ai/index.js";
 import { createSemanticSearchEmbeddingProvider } from "../platform/ai/providers/factory.js";
 import {
@@ -58,7 +59,7 @@ export function installAssistantRuntime(
     }));
   }
 
-  const attachmentEmbedder = createSemanticSearchEmbeddingProvider(ai(), process.env);
+  const attachmentEmbedder = createSemanticSearchEmbeddingProvider(ai(), runtimeEnvironment());
   const assistantSearchTypes: readonly GlobalSearchType[] = [
     ...(coreApps.shouldRegister("mail") ? (["mail"] as const) : []),
     ...(coreApps.shouldRegister("chat") ? (["chat"] as const) : []),

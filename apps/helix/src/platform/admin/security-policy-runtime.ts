@@ -13,7 +13,11 @@
 
 import type { Actor, SecurityTier } from "@helix/sdk-types";
 import { resolveAdminSecurityControls } from "../auth/admin-security-policy.js";
-import { actorHasAdminScope, type AdminMfaDecision } from "../auth/mfa.js";
+import {
+  actorHasAdminScope,
+  ADMIN_MFA_REQUIRED_MESSAGE,
+  type AdminMfaDecision,
+} from "../auth/mfa.js";
 
 /** Local copies of policy types to avoid a circular import with security-policies.ts. */
 export type PolicyEnforcement = "disabled" | "optional" | "required";
@@ -362,7 +366,7 @@ export function evaluateOrgAdminMfa(input: {
     allowed: false,
     statusCode: 403,
     code: "admin_mfa_required",
-    message: "Organization MFA policy requires a verified MFA factor for admin-scoped requests.",
+    message: ADMIN_MFA_REQUIRED_MESSAGE,
   };
 }
 

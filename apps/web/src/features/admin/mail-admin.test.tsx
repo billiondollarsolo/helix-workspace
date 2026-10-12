@@ -462,9 +462,9 @@ describe("MailAdminSection", () => {
     await clickButton("Spam filtering");
 
     await waitFor(() => {
-      expect(container.textContent).toContain("spamd daemon");
+      expect(container.textContent).toContain("Spam threshold");
     });
-    expect(container.textContent).toContain("Spam threshold");
+    expect(container.textContent).toContain("SpamAssassin");
     expect(container.textContent).toContain("running");
     expect(container.textContent).toContain("nothing is rejected outright");
     expect(container.textContent).toContain("AI second opinion");

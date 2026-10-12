@@ -4,6 +4,35 @@ import { describe, expect, it } from "vitest";
 import { helixLoggerOptions, redactSignedUrl } from "./logger-redaction.js";
 
 describe("helixLoggerOptions", () => {
+  it("logs the cause of a failure passed as `error`, with credentials scrubbed", async () => {
+    const stream = new PassThrough();
+    const output: Buffer[] = [];
+    stream.on("data", (chunk: Buffer) => output.push(chunk));
+    const logger = pino(helixLoggerOptions("info"), stream);
+
+    const failure = Object.assign(
+      new Error("connect to postgres://helix_app:s3cret@postgres:5432 failed"),
+      { code: "ECONNREFUSED" },
+    );
+    logger.error({ error: failure }, "Worker error");
+    logger.error({ error: "plain text stays as it is" }, "Worker error");
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const [first, second] = Buffer.concat(output)
+      .toString("utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { error: unknown });
+    // Without the serializer pino prints an Error under `error` as `{}`.
+    expect(first?.error).toMatchObject({
+      type: "Error",
+      code: "ECONNREFUSED",
+      message: "connect to postgres://***@postgres:5432 failed",
+    });
+    expect(JSON.stringify(first)).not.toContain("s3cret");
+    expect(second?.error).toBe("plain text stays as it is");
+  });
+
   it("redacts HTTP and WebSocket credentials in structured logs", async () => {
     const stream = new PassThrough();
     const output: Buffer[] = [];

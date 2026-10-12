@@ -84,6 +84,69 @@ test("re-verifies an expired admin session once and returns to the requested pag
   expect(rejectedRequests).toBe(1);
 });
 
+test("verifies a lapsed admin session in place with an authenticator code", async ({ page }) => {
+  await seedBrowserSession(page, "lapsed-admin-session");
+  const user = {
+    id: "admin",
+    actorId: "00000000-0000-4000-8000-000000000111",
+    email: "admin@example.test",
+    name: "Avery Park",
+    scopes: ["*"],
+    twoFactorEnabled: true,
+  };
+  let lapsed = false;
+  let refusedRequests = 0;
+  let loginVisits = 0;
+  const codes: unknown[] = [];
+  page.on("request", (request) => {
+    if (request.isNavigationRequest() && new URL(request.url()).pathname === "/login")
+      loginVisits += 1;
+  });
+  await page.route("**/api/**", async (route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    if (pathname === "/v1/api/auth/get-session") return route.fulfill({ json: { user } });
+    if (pathname === "/v1/api/auth/passkey/list-user-passkeys") return route.fulfill({ json: [] });
+    if (pathname === "/v1/api/auth/two-factor/verify-totp") {
+      codes.push(route.request().postDataJSON());
+      lapsed = false;
+      return route.fulfill({ json: { token: "lapsed-admin-session", user } });
+    }
+    if (await fulfillCoreAppsRoute(route)) return;
+    if (pathname === "/v1/api/admin/users") {
+      if (lapsed) {
+        refusedRequests += 1;
+        return route.fulfill({
+          status: 401,
+          json: {
+            error: {
+              code: "session_reauthentication_required",
+              message: "Your session must be verified again. Sign in again to continue.",
+            },
+          },
+        });
+      }
+      return route.fulfill({ json: { users: [], nextCursor: null } });
+    }
+    return route.fulfill({ json: {} });
+  });
+  await page.goto("/admin/domains");
+  await expect(page.getByRole("heading", { name: "Domains", level: 1 })).toBeVisible();
+
+  lapsed = true;
+  await page.getByRole("link", { name: "Users", exact: true }).click();
+  const confirm = page.getByRole("dialog", { name: "Confirm it’s you" });
+  await expect(confirm).toContainText("It has been a while since you last verified.");
+  await confirm.getByLabel("Authenticator code").fill("123456");
+  await confirm.getByRole("button", { name: "Verify" }).click();
+
+  await expect(confirm).toBeHidden();
+  await expect(page).toHaveURL(/\/admin\/users$/u);
+  await expect(page.getByRole("heading", { name: "Users", level: 1 })).toBeVisible();
+  expect(codes).toEqual([{ code: "123456", trustDevice: false }]);
+  expect(refusedRequests).toBeGreaterThan(0);
+  expect(loginVisits).toBe(0);
+});
+
 test("keeps a genuine permission denial on the page without a login loop", async ({ page }) => {
   await seedBrowserSession(page, "denied-admin-session");
   let requests = 0;

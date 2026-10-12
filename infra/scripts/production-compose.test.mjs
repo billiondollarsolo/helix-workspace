@@ -92,6 +92,8 @@ beforeAll(() => {
     HELIX_SPAMD_IMAGE: promotedImages.spamassassin,
     HELIX_CLAMAV_IMAGE: promotedImages.clamav,
     HELIX_DOMAIN: "workspace.example.test",
+    HELIX_REGION: "eu-test",
+    HELIX_DEFAULT_ORG_NAME: "Example Workspace",
     CADDY_HTTP_PORT: "80",
     CADDY_HTTPS_PORT: "443",
     HELIX_SMTP_RECEIVE_PORT: "25",
@@ -157,9 +159,66 @@ describe("production Compose overlay", () => {
       expect(resolvedCompose.services[service].ports).toBeUndefined();
       expect(resolvedCompose.services[service].networks).toHaveProperty("data-plane");
     }
-    expect(resolvedCompose.services.clamav.networks).toEqual({ "data-plane": null });
-    expect(resolvedCompose.services.spamd.networks).toEqual({ "data-plane": null });
+    // The scanners download signature and rule updates; without egress the
+    // signatures go stale and Helix reports not ready.
+    const scannerNetworks = { "data-plane": null, "scanner-updates-egress": null };
+    expect(resolvedCompose.services.clamav.networks).toEqual(scannerNetworks);
+    expect(resolvedCompose.services.spamd.networks).toEqual(scannerNetworks);
+    expect(resolvedCompose.networks["scanner-updates-egress"].internal).not.toBe(true);
+    expect(resolvedCompose.services.clamav.environment.CLAMD_CONF_SelfCheck).toBe("60");
+    // Caddy forwards signed object requests to RustFS over `edge`; nothing is published.
+    expect(resolvedCompose.services.rustfs.networks).toEqual({ "data-plane": null, edge: null });
     expect(resolvedCompose.networks["data-plane"].internal).toBe(true);
+  });
+  it("boots the application against TLS object storage with KMS, object lock and audit copies", () => {
+    const environment = resolvedCompose.services.helix.environment;
+    expect(environment).toMatchObject({
+      HELIX_REGION: "eu-test",
+      HELIX_DEFAULT_ORG_NAME: "Example Workspace",
+      RUSTFS_ENDPOINT: "https://rustfs:9000",
+      RUSTFS_PUBLIC_ENDPOINT: "https://workspace.example.test",
+      RUSTFS_REGION: "eu-test",
+      RUSTFS_SERVER_SIDE_ENCRYPTION: "aws:kms",
+      RUSTFS_SSE_KMS_KEY_ID: "helix-default",
+      RUSTFS_OBJECT_LOCK_MODE: "GOVERNANCE",
+      NODE_EXTRA_CA_CERTS: "/run/secrets/rustfs_ca",
+      MAIL_SMTP_RECEIVER_TRANSPORT_SECURITY: "starttls",
+      MAIL_SMTP_RECEIVER_TLS_CERT_FILE: "/run/secrets/smtp_tls_cert",
+      MAIL_SMTP_RECEIVER_TLS_KEY_FILE: "/run/secrets/smtp_tls_key",
+      AUDIT_IMMUTABLE_S3_ENABLED: "true",
+      AUDIT_IMMUTABLE_S3_REGION: "eu-test",
+      AUDIT_IMMUTABLE_S3_ANCHOR_SECRET_FILE: "/run/secrets/audit_anchor_secret",
+      MEET_JITSI_ENABLED: "false",
+    });
+    // Development Meet defaults from the base file must not reach production.
+    expect(environment).not.toHaveProperty("MEET_JITSI_PUBLIC_URL");
+    expect(environment).not.toHaveProperty("MEET_JITSI_DOMAIN");
+    expect(resolvedCompose.services["helix-migrate"].environment.HELIX_REGION).toBe("eu-test");
+    // First boot waits for ClamAV to load current signatures instead of failing.
+    expect(resolvedCompose.services.helix.healthcheck.start_period).toBe("10m0s");
+    expect(resolvedCompose.services.helix.depends_on["helix-storage-init"].condition).toBe(
+      "service_completed_successfully",
+    );
+    const rustfs = resolvedCompose.services.rustfs;
+    expect(rustfs.environment).toMatchObject({
+      RUSTFS_TLS_PATH: "/tmp/tls",
+      RUSTFS_KMS_ENABLE: "true",
+      RUSTFS_KMS_BACKEND: "local",
+      RUSTFS_KMS_KEY_DIR: "/kms",
+      RUSTFS_REGION: "eu-test",
+    });
+    expect(rustfs.environment).not.toHaveProperty("RUSTFS_KMS_LOCAL_MASTER_KEY");
+    expect(rustfs.entrypoint.join("\n")).toContain("cat /run/secrets/rustfs_kms_master_key");
+    expect(resolvedCompose.services["rustfs-kms-key"].entrypoint.join("\n")).toContain(
+      "/rustfs/admin/v3/kms/key/create",
+    );
+    expect(resolvedCompose.services["helix-storage-init"].entrypoint).toEqual([
+      "/nodejs/bin/node",
+      "dist/db/provision-object-store.js",
+    ]);
+    const caddy = resolvedCompose.services.caddy;
+    expect(caddy.environment).toMatchObject({ XDG_DATA_HOME: "/data", XDG_CONFIG_HOME: "/config" });
+    expect(caddy.healthcheck.test).toContain("http://127.0.0.1:8081/healthz");
   });
   it("removes Mailpit from active production and Helix dependencies", () => {
     expect(resolvedCompose.services.mailpit).toBeUndefined();
@@ -405,15 +464,26 @@ describe("production Compose overlay", () => {
   });
   it("serves the SPA and proxies only explicit backend paths at the production edge", () => {
     const caddyfile = readFileSync(join(root, "infra/caddy/Caddyfile.production"), "utf8");
+    // The admin endpoint stays off unless a deployment mounts its private socket.
     expect(caddyfile).toContain("admin off");
+    expect(caddyfile).not.toMatch(/admin\s+(?:localhost|0\.0\.0\.0|:)\S*/u);
+    // Certificate source is a switch; the default is automatic HTTPS.
+    expect(caddyfile).toContain("tls {$HELIX_CADDY_TLS:} {");
+    // Only the bucket path reaches the object store, with the signed Host kept
+    // and the deployment CA pinned.
+    expect(caddyfile).toContain("@objects path /{$HELIX_STORAGE_BUCKET:helix-objects}/*");
+    expect(caddyfile).toContain("header_up Host {host}");
+    expect(caddyfile).toContain(
+      "tls_trust_pool file {$HELIX_STORAGE_CA_FILE:/run/secrets/rustfs_ca}",
+    );
     expect(caddyfile).toContain("root * /srv");
     expect(caddyfile).toContain("try_files {path} /index.html");
     expect(caddyfile).toContain("file_server");
     expect(caddyfile).toContain("/api/*");
     expect(caddyfile).toContain("/ws/*");
-    expect(caddyfile).not.toContain("/rustfs");
+    expect(caddyfile).not.toMatch(/path[^\n]*\/rustfs/u);
     expect(caddyfile).not.toContain("/cerbos");
     expect(caddyfile).not.toContain("/metrics");
-    expect(caddyfile.match(/header_up -X-Helix-Mfa-Verified/gu)).toHaveLength(2);
+    expect(caddyfile.match(/header_up -X-Helix-Mfa-Verified/gu)).toHaveLength(3);
   });
 });

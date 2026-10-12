@@ -1,6 +1,7 @@
 import { env, type Env } from "../../config/env.js";
 interface DriveStorageConfig {
   readonly endpoint?: string;
+  readonly publicEndpoint?: string;
   readonly region: string;
   readonly bucket: string;
   readonly accessKeyId: string;
@@ -129,6 +130,9 @@ export function loadDriveConfig(e: Env = env()): DriveConfig {
   return {
     storage: {
       ...(endpoint === undefined ? {} : { endpoint }),
+      ...(e.RUSTFS_PUBLIC_ENDPOINT === undefined
+        ? {}
+        : { publicEndpoint: e.RUSTFS_PUBLIC_ENDPOINT }),
       region: e.RUSTFS_REGION,
       bucket: e.RUSTFS_BUCKET,
       accessKeyId: e.RUSTFS_ACCESS_KEY,

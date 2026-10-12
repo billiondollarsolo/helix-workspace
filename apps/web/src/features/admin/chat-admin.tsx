@@ -443,7 +443,7 @@ export function ChatAdminSection() {
         title="Save Chat retention policy"
         confirmLabel="Save policy"
         isPending={retentionMutation.isPending}
-        blastRadius="Applies to messages already stored for this organization (or the named room). Shorter retention will cause older messages to be tombstoned by the retention worker."
+        blastRadius="Applies to messages already stored for this organization (or the named room). A shorter period removes older messages the next time retention runs."
         onConfirm={() => {
           if (typeof pendingRetentionInput === "string") {
             setFormError(pendingRetentionInput);

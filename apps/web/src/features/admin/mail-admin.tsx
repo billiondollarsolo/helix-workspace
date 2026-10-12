@@ -187,9 +187,11 @@ function ProviderForm({ onCancel, onSubmit, pending }: ProviderFormProps) {
       <div className="grid [grid-template-columns:1fr_1fr] gap-2.5">
         {(kind === "ses" || kind === "mailgun" || kind === "postmark") && (
           <label>
-            <span className="type-caption text-muted-foreground block">API key (env ref)</span>
+            <span className="type-caption text-muted-foreground block">
+              API key (secret reference)
+            </span>
             <input
-              aria-label="API key env ref"
+              aria-label="API key secret reference"
               value={config.apiKeyRef ?? ""}
               onChange={(event) => setField("apiKeyRef", event.target.value)}
               placeholder="env:MAIL_API_KEY"

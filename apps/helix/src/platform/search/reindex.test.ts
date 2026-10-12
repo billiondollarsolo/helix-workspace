@@ -1,5 +1,7 @@
 import type postgres from "postgres";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import * as environment from "../../config/env.js";
+import { PostgresDriveStore } from "../drive/index.js";
 import {
   createPostgresSearchReindexSources,
   SearchReconciliationWorker,
@@ -217,6 +219,48 @@ describe("SearchReindexService", () => {
       `mail:actor-a:${messageId}`,
       `mail:actor-b:${messageId}`,
     ]);
+  });
+});
+
+describe("createPostgresSearchReindexSources in production", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("builds every source without a Drive antivirus scanner while writes still require one", () => {
+    const configured = environment.env();
+    vi.spyOn(environment, "env").mockReturnValue({ ...configured, NODE_ENV: "production" });
+    const sql = (() => Promise.resolve([])) as unknown as postgres.Sql;
+
+    // Reindexing only reads metadata, so it must not abort application startup.
+    expect(createPostgresSearchReindexSources(sql).map((source) => source.type)).toEqual([
+      "mail",
+      "chat",
+      "drive",
+      "calendar",
+    ]);
+    // The write-capable Drive store keeps failing closed without a real scanner.
+    expect(() => new PostgresDriveStore(sql)).toThrow("antivirus scanner is required");
+  });
+
+  it("reads Drive projections from metadata without touching object storage", async () => {
+    const queries: string[] = [];
+    const tag = (strings: TemplateStringsArray) => {
+      queries.push(strings.join("?"));
+      return Promise.resolve([]);
+    };
+    const sql = Object.assign(tag, {
+      unsafe: () => Promise.resolve([{ id: "22222222-2222-4222-8222-222222222222" }]),
+    }) as unknown as postgres.Sql;
+    const driveSource = createPostgresSearchReindexSources(sql).find(
+      (source) => source.type === "drive",
+    );
+    if (driveSource === undefined) throw new Error("Drive reindex source missing");
+
+    await expect(
+      driveSource.collect({ orgId: "11111111-1111-4111-8111-111111111111" }),
+    ).resolves.toEqual([]);
+    expect(queries.some((query) => query.includes("from objects"))).toBe(true);
   });
 });
 

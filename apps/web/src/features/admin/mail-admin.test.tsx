@@ -5,6 +5,10 @@ import { act, createElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MailAdminSection } from "./mail-admin";
+import {
+  decisionModelReportFixture,
+  decisionModelViewFixture,
+} from "./mail-decision-model.test-fixtures";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
@@ -89,13 +93,21 @@ const routingPayload = {
   ],
 };
 
+// Shape of GET /api/admin/mail/spam (apps/helix/src/platform/mail/decision/admin-routes.ts).
 const spamPayload = {
   enabled: true,
   threshold: 5,
-  rejectThreshold: 12,
+  rejectThreshold: null,
   daemonStatus: "running",
-  rulesetVersion: "2026.05",
+  rulesetVersion: null,
   taggedLast24h: 47,
+  betaSecondPass: { enabled: false, model: null },
+  decisionModel: {
+    mode: "shadow",
+    provider: "cloudflare",
+    model: "clef-flash",
+    credentialConfigured: true,
+  },
 };
 
 const operationsPayloads = {
@@ -198,6 +210,17 @@ function routedFetch(): ReturnType<typeof vi.fn<typeof fetch>> {
     }
     if (url.includes("/api/admin/mail/routing-rules")) {
       return Promise.resolve(jsonResponse(routingPayload));
+    }
+    if (url.includes("/api/admin/mail/decision-model/report")) {
+      return Promise.resolve(
+        jsonResponse({
+          report: decisionModelReportFixture(),
+          decisionModel: { mode: "shadow", provider: "cloudflare", model: "clef-flash" },
+        }),
+      );
+    }
+    if (url.includes("/api/admin/mail/decision-model")) {
+      return Promise.resolve(jsonResponse({ decisionModel: decisionModelViewFixture() }));
     }
     if (url.includes("/api/admin/mail/spam")) {
       return Promise.resolve(jsonResponse(spamPayload));
@@ -432,7 +455,7 @@ describe("MailAdminSection", () => {
     expect(container.textContent).toContain("Stop processing later rules");
   });
 
-  it("shows spam filtering thresholds and daemon status", async () => {
+  it("shows spam filtering status, the AI decision model, and its report", async () => {
     vi.stubGlobal("fetch", routedFetch());
 
     await render(createElement(MailAdminSection));
@@ -443,7 +466,13 @@ describe("MailAdminSection", () => {
     });
     expect(container.textContent).toContain("Spam threshold");
     expect(container.textContent).toContain("running");
-    expect(container.textContent).toContain("Reject threshold");
+    expect(container.textContent).toContain("nothing is rejected outright");
+    expect(container.textContent).toContain("AI second opinion");
+    expect(container.textContent).toContain("Cloudflare Workers AI · clef-flash");
+    await waitFor(() => {
+      expect(container.textContent).toContain("Saved mode: Shadow");
+      expect(container.textContent).toContain("Messages classified");
+    });
   });
 
   it("shows tenant-scoped delivery traces, dead letters, and suppressions", async () => {

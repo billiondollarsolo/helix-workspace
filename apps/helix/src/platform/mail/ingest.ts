@@ -911,6 +911,7 @@ export async function ingestRawMail(input: {
                 orgId: input.input.orgId,
                 actorId: recipient.actorId,
                 threadId: stored.threadId,
+                messageId: stored.messageId,
                 label: "spam",
                 source: feedback.source,
                 evidence: feedback.evidence,

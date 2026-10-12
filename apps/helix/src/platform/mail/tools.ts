@@ -488,6 +488,8 @@ export function createMailToolDefinitions(
           await options.store.recordSpamFeedback({
             orgId: ctx.actor.orgId,
             actorId: ctx.actor.id,
+            // One row per message this mailbox received in the thread, so reports join by message.
+            mailboxActorId: input.mailboxActorId ?? ctx.actor.id,
             threadId: input.threadId,
             label: input.spam ? "spam" : "ham",
             source: "user",
@@ -1280,6 +1282,7 @@ function serializeThreadRow(row: MailThreadRowRecord) {
     snoozedUntil: row.snoozedUntil,
     participants: row.participants.map((participant) => ({ ...participant })),
     ...(row.spamCatcher === undefined ? {} : { spamCatcher: row.spamCatcher }),
+    ...(row.decision === undefined ? {} : { decision: { ...row.decision } }),
   };
 }
 

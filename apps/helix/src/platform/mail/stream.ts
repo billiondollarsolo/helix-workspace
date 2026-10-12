@@ -2,9 +2,14 @@ import type { EventBus, EventEnvelope, Unsubscribe } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { ForbiddenError, UnauthorizedError } from "../../api/api-error.js";
 
-const MAIL_ACTIVITY_SUBJECTS = ["activity.mail.received", "activity.mail.sent"] as const;
+const MAIL_ACTIVITY_SUBJECTS = [
+  "activity.mail.received",
+  "activity.mail.sent",
+  "activity.mail.updated",
+] as const;
 
-type MailStreamEventType = "mail.received" | "mail.sent";
+/** `mail.updated`: server-side mailbox change (e.g. the decision model filed a thread in Spam). */
+type MailStreamEventType = "mail.received" | "mail.sent" | "mail.updated";
 
 export interface MailStreamFrame {
   readonly type: MailStreamEventType;
@@ -81,6 +86,8 @@ function mailStreamEventType(subject: string): MailStreamEventType | null {
       return "mail.received";
     case "activity.mail.sent":
       return "mail.sent";
+    case "activity.mail.updated":
+      return "mail.updated";
     default:
       return null;
   }

@@ -125,7 +125,27 @@ export class SpamdScanner implements SpamScanner {
     });
   }
 
+  /** SPAMC `PING`: true when the daemon answers `PONG` within the timeout (admin status). */
+  async ping(timeoutMs = 2_000): Promise<boolean> {
+    const response = await this.#exchange("PING SPAMC/1.5\r\n\r\n", undefined, timeoutMs).catch(
+      () => "",
+    );
+    return /^SPAMD\/[\d.]+\s+0\s+PONG/u.test(response);
+  }
+
   #request(body: Buffer): Promise<string> {
+    // SPAMC/1.5 SYMBOLS request: returns the score header plus the list of
+    // triggered rule symbols. Headers are CRLF-delimited; a blank line ends
+    // the header block. spamd keeps reading until the client half-closes its
+    // write side (it otherwise waits out its own 30s read timeout), so end
+    // the request after the body; the reply is still read until spamd closes.
+    const header = ["SYMBOLS SPAMC/1.5", `Content-length: ${String(body.byteLength)}`, "", ""].join(
+      "\r\n",
+    );
+    return this.#exchange(header, body, this.#timeoutMs);
+  }
+
+  #exchange(header: string, body: Buffer | undefined, timeoutMs: number): Promise<string> {
     return new Promise((resolve, reject) => {
       const socket = new Socket();
       const chunks: Buffer[] = [];
@@ -144,9 +164,9 @@ export class SpamdScanner implements SpamScanner {
         }
       };
 
-      socket.setTimeout(this.#timeoutMs);
+      socket.setTimeout(timeoutMs);
       socket.once("timeout", () => {
-        finish(new Error(`spamd request timed out after ${String(this.#timeoutMs)}ms`));
+        finish(new Error(`spamd request timed out after ${String(timeoutMs)}ms`));
       });
       socket.once("error", (error: Error) => {
         finish(error);
@@ -159,19 +179,9 @@ export class SpamdScanner implements SpamScanner {
       });
 
       socket.connect(this.#port, this.#host, () => {
-        // SPAMC/1.5 SYMBOLS request: returns the score header plus the list of
-        // triggered rule symbols. Headers are CRLF-delimited; a blank line ends
-        // the header block. spamd keeps reading until the client half-closes its
-        // write side (it otherwise waits out its own 30s read timeout), so end
-        // the request after the body; the reply is still read until spamd closes.
-        const header = [
-          "SYMBOLS SPAMC/1.5",
-          `Content-length: ${String(body.byteLength)}`,
-          "",
-          "",
-        ].join("\r\n");
         socket.write(header);
-        socket.end(body);
+        if (body === undefined) socket.end();
+        else socket.end(body);
       });
     });
   }

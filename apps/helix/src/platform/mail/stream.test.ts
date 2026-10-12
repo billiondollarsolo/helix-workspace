@@ -28,6 +28,16 @@ describe("mail SSE stream", () => {
     expect(frame?.type).toBe("mail.sent");
   });
 
+  it("frames activity.mail.updated for mailbox changes made server-side", () => {
+    const frame = frameForMailActivity({
+      subject: "activity.mail.updated",
+      payload: { threadId: "t3", orgId: "o1", actorId: "a1", reason: "decision-model" },
+      actorOrgId: "o1",
+      actorId: "a1",
+    });
+    expect(frame).toEqual({ type: "mail.updated", threadId: "t3", orgId: "o1" });
+  });
+
   it("does not deliver events for a different org (authz filter)", async () => {
     const chunks: string[] = [];
     const delivered = await handleMailStreamEventForTest(

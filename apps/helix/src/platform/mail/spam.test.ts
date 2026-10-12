@@ -142,6 +142,18 @@ describe("SpamdScanner", () => {
       symbols: ["MISSING_DATE"],
     });
   });
+  it("answers PING with PONG for the admin status card", async () => {
+    const daemon = await fakeDaemon((request) =>
+      request.toString("utf8").startsWith("PING SPAMC/1.5")
+        ? "SPAMD/1.5 0 PONG\r\n"
+        : "SPAMD/1.5 76 EX_PROTOCOL\r\n",
+    );
+    servers.push(daemon);
+    const scanner = new SpamdScanner({ host: "127.0.0.1", port: daemon.port, threshold: 5 });
+    await expect(scanner.ping()).resolves.toBe(true);
+    const down = new SpamdScanner({ host: "127.0.0.1", port: 1, threshold: 5 });
+    await expect(down.ping(200)).resolves.toBe(false);
+  });
 });
 
 describe("clamd protocol parsing", () => {

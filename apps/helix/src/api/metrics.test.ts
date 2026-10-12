@@ -299,6 +299,29 @@ describe("platform metrics", () => {
     expect(output).not.toContain("secret=");
   });
 
+  it("records mail decision-model outcomes, latency, and enforced actions", async () => {
+    const metrics = createPlatformMetrics();
+
+    metrics.recordMailDecision?.({
+      provider: "cloudflare",
+      outcome: "decided",
+      latencySeconds: 0.4,
+      action: "spam",
+    });
+    metrics.recordMailDecision?.({ provider: "cloudflare", outcome: "skipped" });
+
+    const output = await metrics.registry.metrics();
+
+    expect(output).toContain(
+      'helix_mail_decision_requests_total{provider="cloudflare",outcome="decided"} 1',
+    );
+    expect(output).toContain(
+      'helix_mail_decision_requests_total{provider="cloudflare",outcome="skipped"} 1',
+    );
+    expect(output).toContain('helix_mail_decision_latency_seconds_count{provider="cloudflare"} 1');
+    expect(output).toContain('helix_mail_decision_actions_total{action="spam"} 1');
+  });
+
   it("records privacy-safe malware scanner health, result, backlog, and quarantine metrics", async () => {
     const metrics = createPlatformMetrics();
 

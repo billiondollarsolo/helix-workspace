@@ -129,6 +129,13 @@ export interface PlatformMetrics extends SecurityScanningMetrics {
     readonly status: "success" | "error";
     readonly lagSeconds: number;
   }) => void;
+  /** Mail decision-model pass: one call per message outcome; `action` only when enforced. */
+  readonly recordMailDecision?: (input: {
+    readonly provider: string;
+    readonly outcome: "decided" | "skipped" | "error";
+    readonly latencySeconds?: number | undefined;
+    readonly action?: "spam" | "phishing" | "category" | undefined;
+  }) => void;
   recordOperationalEvent(input: {
     readonly capability: OperationalCapability;
     readonly operation: OperationalOperation;
@@ -410,6 +417,25 @@ export function createPlatformMetrics(): PlatformMetrics {
     "Active participant load observed from signed media lifecycle events.",
     [1, 2, 5, 10, 25, 50, 75, 100, 250],
   );
+  const mailDecisionRequests = new Counter({
+    name: "helix_mail_decision_requests_total",
+    help: "Mail decision-model outcomes by provider (decided, skipped, error).",
+    labelNames: ["provider", "outcome"],
+    registers: [registry],
+  });
+  const mailDecisionLatency = new Histogram({
+    name: "helix_mail_decision_latency_seconds",
+    help: "Mail decision-model provider latency in seconds.",
+    labelNames: ["provider"],
+    buckets: [0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30],
+    registers: [registry],
+  });
+  const mailDecisionActions = new Counter({
+    name: "helix_mail_decision_actions_total",
+    help: "Mailbox changes made by the mail decision model in enforce mode.",
+    labelNames: ["action"],
+    registers: [registry],
+  });
   const securityScans = new Counter({
     name: "helix_security_scans_total",
     help: "Total terminal malware scan results by scanner and state.",
@@ -638,6 +664,11 @@ export function createPlatformMetrics(): PlatformMetrics {
       };
       operationalEvents.inc(labels);
       observeBounded(operationalDuration, input.durationSeconds, 24 * 60 * 60, labels);
+    },
+    recordMailDecision(input) {
+      mailDecisionRequests.inc({ provider: input.provider, outcome: input.outcome });
+      observeBounded(mailDecisionLatency, input.latencySeconds, 120, { provider: input.provider });
+      if (input.action !== undefined) mailDecisionActions.inc({ action: input.action });
     },
     addOperationalUnits(input) {
       const value = input.value ?? 1;

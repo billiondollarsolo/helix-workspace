@@ -477,6 +477,7 @@ export async function installAuth(context: Awaited<ReturnType<typeof installHttp
     mailCfg,
     identityMailTransport,
     tenantStorageSecretReader,
+    tenantSecretCipher,
     betterAuthConfig,
     betterAuthRuntime,
     betterAuthSessionIssuer,

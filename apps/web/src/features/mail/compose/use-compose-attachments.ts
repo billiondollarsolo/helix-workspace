@@ -8,6 +8,7 @@ import { trashDriveObject } from "@/features/drive/api";
 import { driveUploadStatusQueryOptions } from "@/features/drive/queries";
 import { uploadDriveFile } from "@/features/drive/upload";
 import { validateMailAttachmentSelection, type MailAttachment } from "../api";
+import { randomId } from "@/lib/random-id";
 
 type AttachmentState = "uploading" | "scanning" | "ready" | "blocked" | "failed";
 
@@ -142,7 +143,7 @@ export function useComposeAttachments(initial: readonly MailAttachment[]) {
       setError(policyError);
       if (policyError !== null) return;
       for (const file of selected) {
-        const key = crypto.randomUUID();
+        const key = randomId();
         const controller = new AbortController();
         controllers.current.set(key, controller);
         setEntries((current) => [

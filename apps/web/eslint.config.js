@@ -30,6 +30,15 @@ export default tseslint.config(
     rules: {
       ...helixBrowserRules,
       "helix-web/design-tokens": "error",
+      "no-restricted-properties": [
+        "error",
+        {
+          object: "crypto",
+          property: "randomUUID",
+          message:
+            "Use randomId() from @/lib/random-id: crypto.randomUUID is missing outside secure contexts (plain HTTP on a LAN).",
+        },
+      ],
       // Typing must never lose focus: no per-render component types, no keys
       // derived from values the row edits.
       "helix-web/no-nested-components": "error",

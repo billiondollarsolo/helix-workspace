@@ -5,6 +5,7 @@
 import { useSyncExternalStore } from "react";
 import type { MailAttachment } from "../api";
 import type { AddressListInput } from "./compose-fields";
+import { randomId } from "@/lib/random-id";
 
 export interface ComposeInit {
   readonly to?: AddressListInput;
@@ -58,7 +59,7 @@ export function openCompose(init: ComposeInit = {}): string {
     updateComposeWindow(existing.id, { minimized: false });
     return existing.id;
   }
-  const id = crypto.randomUUID();
+  const id = randomId();
   emit([
     ...windows.map((candidate) => ({ ...candidate, maximized: false })),
     { id, init, minimized: false, maximized: false },

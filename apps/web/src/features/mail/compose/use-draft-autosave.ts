@@ -12,6 +12,7 @@ import {
   wireBody,
   type ComposeFields,
 } from "./compose-fields";
+import { randomId } from "@/lib/random-id";
 
 export interface DraftRef {
   readonly id: string;
@@ -95,7 +96,7 @@ export function useDraftAutosave(input: {
         const current = draftRef.current;
         await write({
           ...body,
-          idempotencyKey: crypto.randomUUID(),
+          idempotencyKey: randomId(),
           ...(current === null ? {} : { id: current.id, expectedRevision: current.revision }),
         });
         savedPayloadRef.current = payload;

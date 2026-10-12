@@ -7,6 +7,7 @@ import { driveUploadStatusQueryOptions } from "@/features/drive/queries";
 import { assistantModelsQueryOptions, assistantToolsQueryOptions } from "./queries";
 import type { AssistantAttachment } from "./api";
 import { assistantModelNames } from "./model-name";
+import { randomId } from "@/lib/random-id";
 
 const MAX_FILES = 10;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -201,7 +202,7 @@ export function AssistantComposer({
       return;
     }
     const additions = files.map((file) => ({
-      id: crypto.randomUUID(),
+      id: randomId(),
       file,
       controller: new AbortController(),
     }));

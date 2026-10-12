@@ -27,6 +27,7 @@ import {
   useComposeAttachments,
 } from "./use-compose-attachments";
 import { useDraftAutosave, type DraftRef } from "./use-draft-autosave";
+import { randomId } from "@/lib/random-id";
 
 export interface ComposerOptions {
   readonly initial: ComposeFields;
@@ -136,7 +137,7 @@ export function useComposer(options: ComposerOptions) {
       autosave.stop();
       const payload = JSON.stringify({ snapshot, sendAt, from: sender.from, target });
       if (attemptRef.current?.payload !== payload) {
-        attemptRef.current = { payload, key: crypto.randomUUID() };
+        attemptRef.current = { payload, key: randomId() };
       }
       const result = await sendComposed({
         target,

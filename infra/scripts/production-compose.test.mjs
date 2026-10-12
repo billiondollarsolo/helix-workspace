@@ -297,6 +297,12 @@ describe("production Compose overlay", () => {
     expect(helixEnvironment.NATS_TLS_CERT_FILE).toBe("/run/secrets/nats_client_cert");
     expect(helixEnvironment.NATS_TLS_KEY_FILE).toBe("/run/secrets/nats_client_key");
     const postgres = resolvedCompose.services.postgres;
+    // Only the TLS bootstrap starts as root; docker-entrypoint.sh drops to postgres.
+    expect(postgres.user).toBe("0:0");
+    expect(postgres.entrypoint.join(" ")).toContain("exec docker-entrypoint.sh postgres");
+    for (const service of ["nats", "meilisearch", "cerbos", "spamd", "clamav"]) {
+      expect(resolvedCompose.services[service].user, `${service} image user`).toBeUndefined();
+    }
     expect(postgres.entrypoint.join(" ")).toContain("ssl=on");
     expect(postgres.entrypoint.join(" ")).toContain("hostnossl all all 0.0.0.0/0 reject");
     expect(postgres.secrets.map((secret) => secret.source)).toEqual(

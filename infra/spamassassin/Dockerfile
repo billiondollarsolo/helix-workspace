@@ -43,7 +43,25 @@ RUN rules_archive=/tmp/Mail-SpamAssassin-rules-4.0.2.r1928015.tgz \
     && test -s /var/lib/spamassassin/4.000002/updates_spamassassin_org/10_default_prefs.cf \
     && test -s /var/lib/spamassassin/4.000002/updates_spamassassin_org/72_active.cf
 
+# Run as an unprivileged spamd account (UID/GID 10001). The upstream runit
+# services start spamd with a root privilege drop and refresh rules from a root
+# crontab; Helix replaces them with equivalents that need no privileges.
+RUN addgroup -S -g 10001 spamd \
+    && adduser -S -D -H -u 10001 -G spamd -h /var/lib/spamassassin -s /sbin/nologin spamd \
+    && chmod 0755 /init.sh \
+    && rm -rf /etc/service/crond \
+    && install -d -o spamd -g spamd -m 0755 /etc/service/sa-update /run/spamd \
+    && chown spamd:spamd /etc/service/spamassassin \
+    && for cf in trusted_networks internal_networks rdns; do \
+         install -o spamd -g spamd -m 0644 /dev/null "/etc/mail/spamassassin/${cf}.cf"; \
+       done \
+    && chown -R spamd:spamd /var/lib/spamassassin /etc/mail/spamassassin/sa-update-keys
+
+COPY --chmod=0755 spamd-run.sh /etc/service/spamassassin/run
+COPY --chmod=0755 sa-update-run.sh /etc/service/sa-update/run
 COPY --chmod=0755 entrypoint.sh /usr/local/bin/helix-spamassassin-entrypoint
+
+USER 10001:10001
 
 ENTRYPOINT ["/usr/local/bin/helix-spamassassin-entrypoint"]
 CMD ["/init.sh"]

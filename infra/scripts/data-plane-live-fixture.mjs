@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -121,8 +121,13 @@ export function waitHealthy(environment, project, service, timeoutMs = 180_000) 
   throw new Error(`${service} did not become healthy before timeout`);
 }
 
+// The services run as unprivileged users (redis 999, postgres 70, nats 10001) that
+// differ from the uid running this drill, so the run-scoped secrets they mount must
+// be world-readable. They live in a 0700 mkdtemp directory deleted after the run.
+const MOUNTED_SECRET_MODE = 0o644;
+
 function writeSecret(directory, name, value) {
-  writeFileSync(join(directory, name), `${value}\n`, { mode: 0o600 });
+  writeFileSync(join(directory, name), `${value}\n`, { mode: MOUNTED_SECRET_MODE });
 }
 
 function generateCertificateAuthority(directory, generation) {
@@ -223,6 +228,10 @@ export function installPki(secretsDirectory, generation) {
   copyFileSync(nats.key, join(secretsDirectory, "nats_server_key"));
   copyFileSync(natsClient.cert, join(secretsDirectory, "nats_client_cert"));
   copyFileSync(natsClient.key, join(secretsDirectory, "nats_client_key"));
+  // openssl writes keys 0600 and copies keep that mode; the services must read them.
+  for (const name of readdirSync(secretsDirectory, { withFileTypes: true })) {
+    if (name.isFile()) chmodSync(join(secretsDirectory, name.name), MOUNTED_SECRET_MODE);
+  }
   return ca.caCert;
 }
 

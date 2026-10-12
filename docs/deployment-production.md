@@ -161,6 +161,51 @@ deployment must use a rehearsed logical dump/restore or `pg_upgrade`; changing o
 Record the source and target versions, backup hashes, restore duration, verification results, and
 the exact promoted image digest in the release packet.
 
+### Dependency image users
+
+Every Helix-built dependency image runs as an unprivileged user:
+
+| Service      | UID:GID       | Writable paths                                                   |
+| ------------ | ------------- | ---------------------------------------------------------------- |
+| PostgreSQL   | `70:70`       | `/var/lib/postgresql`, `/var/run/postgresql`                     |
+| ClamAV       | `100:101`     | `/var/lib/clamav`, `/etc/clamav`, `/run/clamav`                  |
+| NATS         | `10001:10001` | `/data`                                                          |
+| Meilisearch  | `10001:10001` | `/meili_data` (database, dumps, snapshots)                       |
+| Cerbos       | `10001:10001` | `/tmp`, `/.cache`                                                |
+| SpamAssassin | `10001:10001` | `/var/lib/spamassassin`, `/run/spamd`, three network `.cf` files |
+
+Compose mounts secret files with their host owner and mode. The PostgreSQL TLS bootstrap is the one
+step that starts as root (`user: "0:0"` in the production overlay): it copies the `0600` secret
+files into a postgres-owned directory, and the official entrypoint then switches to UID 70 before
+the server starts. NATS reads `nats_server_cert`, `nats_server_key`, and `nats_ca`, and
+Meilisearch reads `meili_master_key`, directly as UID 10001, the same UID that reads the Helix
+application secrets, so those files must be readable by UID 10001.
+
+Meilisearch now keeps its database in `/meili_data`, the mounted `meili-data` volume. Earlier
+images wrote it to `/data.ms` in the container layer, so it was lost whenever the container was
+recreated and could not start on the overlay's read-only root filesystem. After upgrading, rebuild
+the indexes with the scoped `/api/admin/search/reindex` reconciliation.
+
+**Upgrading existing volumes.** New volumes take their ownership from the image. Volumes written by
+the earlier root images must be handed to the new users once, before the new images start.
+PostgreSQL needs no change because its cluster directory is already owned by UID 70. ClamAV's
+earlier entrypoint already gave its database to `clamav`, so its step is only a safeguard. Stop the
+services, then run each step with the service's own image and volume:
+
+```sh
+compose="docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.production.yml"
+$compose stop nats meilisearch spamd clamav
+$compose run --rm --no-deps --user 0:0 --cap-add CHOWN --entrypoint chown nats -R 10001:10001 /data
+$compose run --rm --no-deps --user 0:0 --cap-add CHOWN --entrypoint chown meilisearch -R 10001:10001 /meili_data
+$compose run --rm --no-deps --user 0:0 --cap-add CHOWN --entrypoint chown spamd -R 10001:10001 /var/lib/spamassassin
+$compose run --rm --no-deps --user 0:0 --cap-add CHOWN --entrypoint chown clamav -R 100:101 /var/lib/clamav
+$compose up -d nats meilisearch spamd clamav
+```
+
+For a local development stack, run the same steps with only `-f docker-compose.yml` and add
+`--profile mail-security` for `spamd` and `clamav`. Without this step NATS exits on a permission
+error, and Meilisearch, SpamAssassin rule updates, and ClamAV fail to write their data.
+
 After building, execute the same runtime contract used by CI:
 
 ```sh
@@ -303,7 +348,8 @@ barman-cloud as a sidecar, which is why the operand does not bundle it. The in-c
 ## Secret files
 
 Create a root/operator-owned directory outside source control, mode `0700`, containing these
-non-empty files with mode `0600`:
+non-empty files with mode `0600`. Each file must be readable by the UID of the services that use it
+(see [Dependency image users](#dependency-image-users)):
 
 | File                           | Content                                  |
 | ------------------------------ | ---------------------------------------- |

@@ -9,7 +9,10 @@ FROM ${RUNTIME_BASE} AS runtime
 
 RUN apk add --no-cache \
       libcrypto3=3.5.9-r0 \
-      libssl3=3.5.9-r0
+      libssl3=3.5.9-r0 \
+    && addgroup -S -g 10001 meilisearch \
+    && adduser -S -D -H -u 10001 -G meilisearch -h /meili_data -s /sbin/nologin meilisearch \
+    && install -d -o meilisearch -g meilisearch -m 0750 /meili_data
 
 LABEL org.opencontainers.image.title="helix-meilisearch" \
       org.opencontainers.image.description="Meilisearch 1.51.0 on a patched minimal runtime" \
@@ -22,6 +25,11 @@ ENV MEILI_HTTP_ADDR=0.0.0.0:7700 \
 
 COPY --from=source /bin/meilisearch /bin/meilisearch
 COPY --from=source /usr/lib/libgcc_s.so.1 /usr/lib/libgcc_s.so.1
+
+# Like the upstream image, keep the database (data.ms), dumps, and snapshots
+# under /meili_data, where Compose mounts the meili-data volume.
+WORKDIR /meili_data
+USER 10001:10001
 
 EXPOSE 7700
 

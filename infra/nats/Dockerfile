@@ -28,7 +28,10 @@ FROM ${RUNTIME_BASE} AS runtime
 
 RUN apk add --no-cache \
       libcrypto3=3.5.9-r0 \
-      libssl3=3.5.9-r0
+      libssl3=3.5.9-r0 \
+    && addgroup -S -g 10001 nats \
+    && adduser -S -D -H -u 10001 -G nats -h /data -s /sbin/nologin nats \
+    && install -d -o nats -g nats -m 0750 /data
 
 LABEL org.opencontainers.image.title="helix-nats-server" \
       org.opencontainers.image.description="NATS 2.14.3 rebuilt with patched Go and x/crypto" \
@@ -37,6 +40,9 @@ LABEL org.opencontainers.image.title="helix-nats-server" \
       org.opencontainers.image.revision="9b17a586be69c9ff36e4c84a421ca47da410b561"
 
 COPY --from=build /out/nats-server /usr/local/bin/nats-server
+
+# JetStream state lives in /data (Compose mounts the nats-data volume there).
+USER 10001:10001
 
 EXPOSE 4222 6222 8222
 

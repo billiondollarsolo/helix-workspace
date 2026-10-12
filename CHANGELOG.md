@@ -315,6 +315,14 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Changed
 
+- The Helix-built dependency images run as unprivileged users: PostgreSQL as `postgres` (70),
+  ClamAV as `clamav` (100:101), and NATS, Meilisearch, Cerbos, and SpamAssassin as 10001.
+  SpamAssassin's runit services no longer need root; rules refresh daily without the root
+  crontab. The production PostgreSQL TLS bootstrap still starts as root to copy the `0600` secret
+  files, then drops to `postgres`. NATS and Meilisearch secret files must be readable by UID 10001.
+  **Upgrade:** existing `nats-data`, `meili-data`, `spamd-data`, and `clamav-data` volumes need a
+  one-time `chown`
+  ([Dependency image users](docs/deployment-production.md#dependency-image-users)).
 - Dependency refresh: GitHub Actions pins move to current releases (checkout 7.0.1, setup-node
   7.0.0, upload-artifact 7.0.1, pnpm/action-setup 6.1.0, attest 4.2.2), and Compose moves to
   Redis 8.10.2, RustFS 1.0.1 (the first stable line, replacing 1.0.0-beta.12), Mailpit 1.31.4,
@@ -464,6 +472,10 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Fixed
 
+- Meilisearch stored its database in the container layer (`/data.ms`) instead of the
+  `meili-data` volume, so indexes were lost when the container was recreated and the production
+  overlay's read-only root filesystem blocked startup. The image now works in `/meili_data`, as
+  upstream does. Run a search reindex after upgrading.
 - Chat opened in about 16 seconds on a seeded workspace because room and unread queries called
   `chat_permission_is_valid` without indexable predicates. They now narrow by the membership index
   first (about 150 ms), with the function still the authoritative check.

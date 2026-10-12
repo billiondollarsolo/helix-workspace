@@ -473,7 +473,9 @@ describe("production Compose overlay", () => {
     // and the deployment CA pinned.
     expect(caddyfile).toContain("@objects path /{$HELIX_STORAGE_BUCKET:helix-objects}/*");
     expect(caddyfile).toContain("header_up Host {host}");
-    expect(caddyfile).toContain("tls_trust_pool file /run/secrets/rustfs_ca");
+    expect(caddyfile).toContain(
+      "tls_trust_pool file {$HELIX_STORAGE_CA_FILE:/run/secrets/rustfs_ca}",
+    );
     expect(caddyfile).toContain("root * /srv");
     expect(caddyfile).toContain("try_files {path} /index.html");
     expect(caddyfile).toContain("file_server");

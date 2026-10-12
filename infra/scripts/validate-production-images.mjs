@@ -141,7 +141,7 @@ export function validateProductionImages(options, run = execFileSync) {
     name: "web",
     expectedEntrypoint: ["caddy"],
     expectedCommandPrefix: ["run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"],
-    requiredHealthFragment: "127.0.0.1/healthz",
+    requiredHealthFragment: "127.0.0.1:8081/healthz",
   });
 
   runApplicationContainerChecks(options.applicationImage, run);
@@ -151,6 +151,9 @@ export function validateProductionImages(options, run = execFileSync) {
     ["/tmp", "/config", "/data"],
     {
       HELIX_DOMAIN: "workspace.example.invalid",
+      // The object-store route pins a deployment CA that exists only as a
+      // mounted secret; any readable bundle lets the configuration validate.
+      HELIX_STORAGE_CA_FILE: "/etc/ssl/certs/ca-certificates.crt",
       HELIX_UPSTREAM: "http://127.0.0.1:3000",
     },
     run,

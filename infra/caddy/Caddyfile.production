@@ -50,7 +50,7 @@
 			header_up -X-Helix-Mfa-Verified
 			transport http {
 				tls_server_name rustfs
-				tls_trust_pool file /run/secrets/rustfs_ca
+				tls_trust_pool file {$HELIX_STORAGE_CA_FILE:/run/secrets/rustfs_ca}
 			}
 		}
 	}

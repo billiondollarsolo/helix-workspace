@@ -11,9 +11,9 @@ const statusInputSchema = z.object({}).strict();
 const adminConfigScope = "admin.config.read";
 
 /** How long one provider probe may take before the provider counts as unreachable. */
-export const ASSISTANT_PROBE_TIMEOUT_MS = 3_000;
+const ASSISTANT_PROBE_TIMEOUT_MS = 3_000;
 /** How long a probe outcome is reused before the providers are asked again. */
-export const ASSISTANT_PROBE_TTL_MS = 60_000;
+const ASSISTANT_PROBE_TTL_MS = 60_000;
 
 export const ASSISTANT_NOT_CONFIGURED_MEMBER_MESSAGE =
   "Helix AI isn't set up for this workspace yet. Ask your administrator to set up Helix AI.";
@@ -111,7 +111,7 @@ function providerSettings(providerIds: readonly string[], kind: "address" | "key
 }
 
 /** What an administrator does next, naming the setting behind each failing provider. */
-export function assistantUnavailableAdminMessage(
+function assistantUnavailableAdminMessage(
   status: Exclude<AssistantAvailability, { readonly available: true }>,
 ): string {
   if (status.reason === "not_configured") {

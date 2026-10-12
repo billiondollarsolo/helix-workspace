@@ -9,9 +9,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { SettingToggle } from "@/features/admin/console/widgets";
 import { Plus, Save, Shield, Sparkles, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useServerSeededDraft } from "@/lib/use-server-seeded-draft";
 import {
   PanelHeading,
   ErrorNotice,
@@ -79,6 +80,15 @@ export interface ProviderFormRow {
   /** When true, models appear in the Assistant model picker. */
   readonly offerInChat: boolean;
   readonly apiKeyConfigured: boolean;
+  /** Stable React key for the row; the editable id can't be the key or typing in it remounts the row.
+   *  Saved rows key on their stored id so a refetch keeps the same rows mounted. */
+  readonly rowKey?: string;
+}
+
+let nextProviderRowKey = 0;
+function providerRowKey(): string {
+  nextProviderRowKey += 1;
+  return `provider-row-${String(nextProviderRowKey)}`;
 }
 
 export interface FeatureRouteFormRow {
@@ -105,6 +115,7 @@ export function emptyProviderRow(index = 0): ProviderFormRow {
     enabled: true,
     offerInChat: true,
     apiKeyConfigured: false,
+    rowKey: providerRowKey(),
   };
 }
 
@@ -130,6 +141,7 @@ function providerRowsFrom(ai: AIConfigStatus | undefined): ProviderFormRow[] {
       enabled: true,
       offerInChat: true,
       apiKeyConfigured: ai.operatorLlm.apiKeyConfigured === true,
+      rowKey: "server:operator-default",
     },
   ];
 }
@@ -183,6 +195,7 @@ function providerToFormRow(provider: AIProviderConfig, index: number): ProviderF
     enabled: provider.enabled !== false,
     offerInChat: tags.includes("assistant") || tags.length === 0,
     apiKeyConfigured: cfg.apiKeyConfigured === true,
+    rowKey: `server:${provider.id || String(index)}`,
   };
 }
 
@@ -301,21 +314,18 @@ export function AIProvidersManagement() {
   const [formError, setFormError] = useState<string | null>(null);
   const [savedNotice, setSavedNotice] = useState<string | null>(null);
   const configQuery = useQuery(adminPlatformConfigQueryOptions());
-  const [editor, setEditor] = useState<AiProvidersEditorState>(() =>
-    editorStateFromAiConfig(undefined),
+  /* Refetches (realtime config events, another section's save) must not wipe
+     unsaved edits. `baseline` is the config the edit started from, so fields
+     left untouched are not sent back over someone else's newer value. */
+  const {
+    draft: editor,
+    setDraft: setEditor,
+    baseline,
+    markSaved,
+  } = useServerSeededDraft(
+    configQuery.data === undefined ? undefined : (configQuery.data.config.ai ?? null),
+    (ai) => editorStateFromAiConfig(ai ?? undefined),
   );
-  const [baseline, setBaseline] = useState<AiProvidersEditorState>(() =>
-    editorStateFromAiConfig(undefined),
-  );
-
-  useEffect(() => {
-    if (configQuery.data === undefined) {
-      return;
-    }
-    const next = editorStateFromAiConfig(configQuery.data.config.ai);
-    setEditor(next);
-    setBaseline(next);
-  }, [configQuery.data]);
 
   const saveMutation = useMutation({
     mutationFn: (ai: NonNullable<PlatformConfigPatch["ai"]>) => updatePlatformAiSettings(ai),
@@ -386,7 +396,9 @@ export function AIProvidersManagement() {
       return;
     }
     setFormError(null);
+    const submitted = editor;
     await saveMutation.mutateAsync(patch);
+    markSaved(submitted);
   };
 
   return (
@@ -438,7 +450,7 @@ export function AIProvidersManagement() {
         <div className="grid gap-4">
           {editor.providers.map((provider, index) => (
             <article
-              key={`${provider.id}-${String(index)}`}
+              key={provider.rowKey ?? String(index)}
               className="grid gap-3 rounded-md border border-border/80 p-3"
             >
               <div className="flex flex-wrap items-center justify-between gap-2">

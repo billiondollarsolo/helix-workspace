@@ -7,9 +7,10 @@ import { cn } from "@/lib/utils";
  * disable controls with an explicit reason — never a silent no-op.
  */
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
+import { useServerSeededDraft } from "@/lib/use-server-seeded-draft";
 import { AppStatusPanel, WorkspaceFlagsPanel } from "@/features/admin/console/app-settings";
 import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
 import { AdminField, AdminInput } from "@/features/admin/console/controls";
@@ -74,19 +75,16 @@ export function DriveAdminSection() {
   const controlsDisabled =
     unavailableReason !== null || lifecycleQuery.isPending || quotaQuery.isPending;
 
-  const [form, setForm] = useState<DriveLifecycleFormInput>({
-    trashRetentionDays: "30",
-    orphanGraceHours: "24",
-  });
+  /* Quota events and flag changes refetch this section; unsaved edits survive them. */
+  const lifecycleDraft = useServerSeededDraft(policy, (loaded): DriveLifecycleFormInput =>
+    loaded === undefined
+      ? { trashRetentionDays: "30", orphanGraceHours: "24" }
+      : lifecycleFormFromPolicy(loaded),
+  );
+  const { draft: form, setDraft: setForm } = lifecycleDraft;
   const [formError, setFormError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [confirmSave, setConfirmSave] = useState(false);
-
-  useEffect(() => {
-    if (policy !== undefined) {
-      setForm(lifecycleFormFromPolicy(policy));
-    }
-  }, [policy]);
 
   const saveMutation = useMutation({
     mutationFn: (input: Parameters<typeof setDriveLifecyclePolicy>[0]) =>
@@ -215,7 +213,10 @@ export function DriveAdminSection() {
             setConfirmSave(false);
             return;
           }
-          saveMutation.mutate(pendingLifecycle);
+          const submitted = form;
+          saveMutation.mutate(pendingLifecycle, {
+            onSuccess: () => lifecycleDraft.markSaved(submitted),
+          });
         }}
       >
         Save trash retention of {form.trashRetentionDays} days and orphan grace of{" "}

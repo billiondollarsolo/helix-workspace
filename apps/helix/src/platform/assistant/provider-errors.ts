@@ -6,7 +6,7 @@ import { OutboundHttpError } from "../outbound-http.js";
 
 export const ASSISTANT_PROVIDER_UNREACHABLE_MESSAGE =
   "Helix AI couldn't reach its AI provider. Try again in a moment; if it keeps happening, ask your administrator to check the Helix AI provider settings.";
-export const ASSISTANT_PROVIDER_MISSING_MESSAGE =
+const ASSISTANT_PROVIDER_MISSING_MESSAGE =
   "Helix AI has no available AI provider. Ask your administrator to set up Helix AI.";
 
 /**

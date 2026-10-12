@@ -1851,25 +1851,27 @@ export class PostgresChatStore
   }
 
   async search(input: ChatSearchRequest): Promise<readonly ChatSearchHit[]> {
+    // Visibility needs a grant, so read only granted rooms, then check matching rows.
     const rows = await this.sql<ChatSearchRow[]>`
-      select
-        m.thread_id,
-        m.id as message_id,
-        m.actor_id,
-        t.subject,
-        m.body,
-        m.sent_at
-      from messages m
-      join threads t on t.id = m.thread_id
-      where m.org_id = ${input.orgId}
-        and m.kind = 'chat'
-        and m.deleted_at is null
-        and (${input.roomId ?? null}::uuid is null or m.thread_id = ${input.roomId ?? null})
-        and (${input.query ?? ""} = '' or t.subject ilike ${`%${input.query ?? ""}%`} or m.body ilike ${`%${input.query ?? ""}%`})
-        and helix_chat_message_visible_to(
-          ${input.orgId}, ${input.actorId}, m.thread_id, m.sent_at
-        )
-      order by m.sent_at desc
+      with actor_rooms as materialized (
+        select resource_id as room_id from permissions
+        where org_id = ${input.orgId} and actor_id = ${input.actorId}
+          and resource_type = 'thread' and status = 'active'
+      ), matches as materialized (
+        select m.thread_id, m.id as message_id, m.actor_id, t.subject, m.body, m.sent_at
+        from messages m
+        join threads t on t.id = m.thread_id
+        where m.org_id = ${input.orgId}
+          and m.kind = 'chat'
+          and m.deleted_at is null
+          and m.thread_id in (select room_id from actor_rooms)
+          and t.id in (select room_id from actor_rooms)
+          and (${input.roomId ?? null}::uuid is null or m.thread_id = ${input.roomId ?? null})
+          and (${input.query ?? ""} = '' or t.subject ilike ${`%${input.query ?? ""}%`} or m.body ilike ${`%${input.query ?? ""}%`})
+      )
+      select * from matches
+      where helix_chat_message_visible_to(${input.orgId}, ${input.actorId}, thread_id, sent_at)
+      order by sent_at desc
       limit ${input.limit ?? 50}
     `;
     return rows.map(mapSearchHit);

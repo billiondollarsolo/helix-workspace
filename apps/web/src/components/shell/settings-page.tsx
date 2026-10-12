@@ -48,19 +48,27 @@ function SettingsDialog({ section, onSectionChange, onClose }: Omit<SettingsPage
     document.body.style.overflow = "hidden";
     /* Settings covers the whole app: the app behind it is inert and hidden
        (not unmounted, so drafts and scroll positions survive). */
-    const background = Array.from(dialogRef.current?.parentElement?.children ?? []).filter(
-      (node): node is HTMLElement => node instanceof HTMLElement && node !== dialogRef.current,
-    );
-    const restoreBackground = background.map((node) => {
+    const restoreBackground = new Map<HTMLElement, () => void>();
+    const conceal = (node: Node) => {
+      if (!(node instanceof HTMLElement) || node === dialogRef.current) return;
+      if (restoreBackground.has(node)) return;
       const { inert } = node;
       const { visibility } = node.style;
       node.inert = true;
       node.style.visibility = "hidden";
-      return () => {
+      restoreBackground.set(node, () => {
         node.inert = inert;
         node.style.visibility = visibility;
-      };
+      });
+    };
+    const parent = dialogRef.current?.parentElement ?? null;
+    for (const node of Array.from(parent?.children ?? [])) conceal(node);
+    /* The app keeps rendering behind Settings: a route that swaps its loading
+       state for its content mounts a new sibling, which must be hidden too. */
+    const backgroundObserver = new MutationObserver((records) => {
+      for (const record of records) record.addedNodes.forEach(conceal);
     });
+    if (parent !== null) backgroundObserver.observe(parent, { childList: true });
     queueMicrotask(() => {
       if (!cancelled) {
         const dialog = dialogRef.current;
@@ -104,7 +112,8 @@ function SettingsDialog({ section, onSectionChange, onClose }: Omit<SettingsPage
       cancelled = true;
       document.removeEventListener("keydown", onKeyDown);
       document.body.style.overflow = previousOverflow;
-      for (const restore of restoreBackground) restore();
+      backgroundObserver.disconnect();
+      for (const restore of restoreBackground.values()) restore();
       if (previousFocus?.isConnected === true) {
         previousFocus.focus();
       }

@@ -183,11 +183,12 @@ describe("0219 chat visibility room scope", { skip }, () => {
     const original = await reads("original", actors.member);
     expect(original.visible).toBe(false);
     expect(original.permissions).toBeGreaterThanOrEqual(filler.grants);
-    await expect(reads("scoped", actors.member)).resolves.toEqual({
-      visible: false,
-      permissions: 0,
-      settings: 0,
-    });
+    // The planner may probe the asked room's settings row before finding no grant,
+    // so allow that one row; anything more means the predicate scanned other rooms.
+    const scoped = await reads("scoped", actors.member);
+    expect(scoped.visible).toBe(false);
+    expect(scoped.permissions).toBe(0);
+    expect(scoped.settings).toBeLessThanOrEqual(1);
     // A member: exactly the one grant and the one room's settings.
     await expect(reads("scoped", filler.memberId)).resolves.toEqual({
       visible: true,

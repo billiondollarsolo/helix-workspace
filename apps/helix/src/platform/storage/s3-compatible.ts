@@ -159,7 +159,7 @@ class SdkS3CompatibleStorageClient implements S3CompatibleStorageClient {
       forcePathStyle: this.#config.forcePathStyle,
       maxAttempts: this.#config.maxAttempts,
       retryMode: "standard",
-      requestChecksumCalculation: "WHEN_SUPPORTED",
+      requestChecksumCalculation: "WHEN_REQUIRED", // presigned ones would hash an empty body
       responseChecksumValidation: "WHEN_SUPPORTED",
       requestHandler: new GuardedFetchHandler(this.#config.fetch),
       systemClockOffset: this.#config.now().getTime() - Date.now(),

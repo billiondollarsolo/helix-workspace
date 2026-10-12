@@ -12,6 +12,7 @@ import {
 import { useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useServerSeededDraft } from "@/lib/use-server-seeded-draft";
 import {
   tenantConfigQueryKeys,
   tenantConfigQueryOptions,
@@ -110,10 +111,7 @@ const emptyByoStorageState = {
 export function TenantConfigManagement() {
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
-  const [branding, setBranding] = useState<BrandingState>(emptyBrandingState);
-  const [byoStorage, setByoStorage] = useState<ByoStorageState>(emptyByoStorageState);
   const [storageHealth, setStorageHealth] = useState<TenantStorageHealthResult | null>(null);
-  const [migrationTarget, setMigrationTarget] = useState<TenantStorageMigrationTarget>("byo");
   const [migrationDryRun, setMigrationDryRun] = useState(true);
   const [migrationRequestConfirmed, setMigrationRequestConfirmed] = useState(false);
   const [storageMigration, setStorageMigration] = useState<TenantStorageMigrationJob | null>(null);
@@ -122,16 +120,30 @@ export function TenantConfigManagement() {
      landing mid-decision must not swap the job out from under the dialog. */
   const [cutoverTarget, setCutoverTarget] = useState<TenantStorageMigrationJob | null>(null);
   const query = useQuery(tenantConfigQueryOptions());
+  /* Each card keeps its own unsaved edits across refetches (flag events, the
+     other card's save) and re-seeds only when clean or after its own save. */
+  const brandingDraft = useServerSeededDraft(query.data, (config) =>
+    config === undefined ? emptyBrandingState : brandingStateFromConfig(config),
+  );
+  const byoStorageDraft = useServerSeededDraft(query.data, (config) =>
+    config === undefined ? emptyByoStorageState : byoStorageStateFromConfig(config),
+  );
+  const migrationTargetDraft = useServerSeededDraft(
+    query.data,
+    (config): TenantStorageMigrationTarget =>
+      config === undefined ? "byo" : defaultMigrationTarget(config),
+  );
+  const { draft: branding, setDraft: setBranding } = brandingDraft;
+  const { draft: byoStorage, setDraft: setByoStorage } = byoStorageDraft;
+  const { draft: migrationTarget, setDraft: setMigrationTarget } = migrationTargetDraft;
   const storageFieldsRef = useRef<HTMLDetailsElement>(null);
   const migrationRef = useRef<HTMLDetailsElement>(null);
 
+  // Consent is given against a specific config; a changed config has to be re-confirmed.
   useEffect(() => {
     if (query.data === undefined) {
       return;
     }
-    setBranding(brandingStateFromConfig(query.data));
-    setByoStorage(byoStorageStateFromConfig(query.data));
-    setMigrationTarget(defaultMigrationTarget(query.data));
     setMigrationRequestConfirmed(false);
     setCutoverTarget(null);
   }, [query.data]);
@@ -263,10 +275,14 @@ export function TenantConfigManagement() {
   }, [query.data]);
 
   const saveBranding = () => {
-    mutation.mutate({
-      branding: compactBlankStrings(branding),
-      reason: "admin settings update: branding",
-    });
+    const submitted = branding;
+    mutation.mutate(
+      {
+        branding: compactBlankStrings(submitted),
+        reason: "admin settings update: branding",
+      },
+      { onSuccess: () => brandingDraft.markSaved(submitted) },
+    );
   };
   const saveByoStorage = () => {
     const parsed = parseByoStorage(byoStorage);
@@ -282,7 +298,8 @@ export function TenantConfigManagement() {
       byo: { storage: parsed },
       reason: "admin settings update: byo storage",
     };
-    mutation.mutate(input);
+    const submitted = byoStorage;
+    mutation.mutate(input, { onSuccess: () => byoStorageDraft.markSaved(submitted) });
   };
   const testStorage = () => {
     setError(null);

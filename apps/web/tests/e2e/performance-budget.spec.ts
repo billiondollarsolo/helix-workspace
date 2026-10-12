@@ -39,6 +39,9 @@ test("stays responsive on a throttled low-end browser and network", async ({ con
   await page.getByLabel("Password", { exact: true }).fill("wrong-password");
   const interaction = performance.now();
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByRole("alert")).toHaveText("Invalid email or password.");
+  // The UI maps every credential failure to one message that never confirms the account.
+  await expect(page.getByRole("alert")).toHaveText(
+    "Wrong email or password. Try again or reset your password.",
+  );
   expect(performance.now() - interaction).toBeLessThan(interactionBudgetMs);
 });

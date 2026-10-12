@@ -7,6 +7,7 @@ import {
 } from "@helix/config/eslint";
 import tseslint from "typescript-eslint";
 import { helixWebPlugin } from "./eslint-rules/design-tokens.js";
+import { remountRules } from "./eslint-rules/react-remounts.js";
 
 export default tseslint.config(
   ...fileSizeConfigs,
@@ -24,11 +25,15 @@ export default tseslint.config(
     },
     plugins: {
       helix: helixBrowserPlugin,
-      "helix-web": helixWebPlugin,
+      "helix-web": { ...helixWebPlugin, rules: { ...helixWebPlugin.rules, ...remountRules } },
     },
     rules: {
       ...helixBrowserRules,
       "helix-web/design-tokens": "error",
+      // Typing must never lose focus: no per-render component types, no keys
+      // derived from values the row edits.
+      "helix-web/no-nested-components": "error",
+      "helix-web/no-editable-key": "error",
       // Measured geometry, transforms, and values from user data stay inline.
       // Static declarations belong in the token-backed stylesheet or utilities.
       "no-restricted-syntax": [
@@ -59,7 +64,12 @@ export default tseslint.config(
       "src/test/**/*.ts",
       "src/test/**/*.tsx",
     ],
-    rules: { ...helixTestRules, "helix-web/design-tokens": "off" },
+    rules: {
+      ...helixTestRules,
+      "helix-web/design-tokens": "off",
+      // Test harnesses declared inside a test body render once per test.
+      "helix-web/no-nested-components": "off",
+    },
   },
   {
     // Playwright E2E specs live outside the app tsconfig's `include`. Point the

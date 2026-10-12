@@ -52,7 +52,8 @@ acts as Avery, so API, MCP and k6 smokes see the same workspace.
   when object storage has server-side encryption, which chat requires.
 - **Calendar and Meet:** recurring 1:1s, stand-ups, weeklies and all-hands,
   one-off meetings, external invitations, holidays, out-of-office and focus
-  time, mixed RSVPs, shared and coloured calendars, working hours, and Meet
+  time, mixed RSVPs, team calendars per department plus shared "Company
+  holidays" and "On-call" calendars, working hours, and Meet
   rooms on most meetings, including finished meetings with participants and
   meetings later today.
 - **Contacts:** customers, vendors and personal contacts with labels, and a few
@@ -146,4 +147,5 @@ pnpm --filter @helix/app db:seed:demo -- --reset --size small
 ```
 
 `--reset` removes only the demo tenant. Other tenants in the same database are
-left alone.
+left alone. It also deletes Meilisearch shadow indexes whose reindex job no
+longer exists.

@@ -35,6 +35,7 @@ describe.runIf(enabled)("demo seed", () => {
 
       expect(first.seeded).toBe(true);
       expect(first.validation.counts).toMatchObject({ people: 60 });
+      expect(first.validation.counts.calendars).toBeGreaterThan(60);
       expect(first.validation.objectsChecked).toBeGreaterThan(400);
       expect(first.validation.driveContentChecked).toBeGreaterThan(100);
       expect(first.validation.indexed?.drive).toBe(first.validation.driveContentChecked);

@@ -7,6 +7,7 @@ import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { labelFill } from "./colors";
 import { pickerWeekStart, type WeekStartDay } from "./date-math";
+import type { CalendarManageAction } from "./calendar-manage-dialog";
 import type { CalendarSource } from "./event-model";
 
 function isoToLocalDate(iso: string): Date {
@@ -36,6 +37,7 @@ export function CalendarSidebar({
   onToggleCalendar,
   onShowOnly,
   onOpenSettings,
+  onManage,
   onRetry,
 }: {
   readonly anchor: string;
@@ -50,6 +52,7 @@ export function CalendarSidebar({
   readonly onToggleCalendar: (id: string) => void;
   readonly onShowOnly: (id: string) => void;
   readonly onOpenSettings: (calendar: CalendarSource) => void;
+  readonly onManage: (action: CalendarManageAction) => void;
   readonly onRetry: () => void;
 }) {
   const mine = calendars.filter((calendar) => calendar.group === "mine");
@@ -86,11 +89,13 @@ export function CalendarSidebar({
         <>
           <CalendarGroup
             title="My calendars"
+            onAdd={() => onManage({ kind: "create" })}
             calendars={mine}
             hidden={hidden}
             onToggle={onToggleCalendar}
             onShowOnly={onShowOnly}
             onOpenSettings={onOpenSettings}
+            onManage={onManage}
           />
           {other.length > 0 ? (
             <CalendarGroup
@@ -100,6 +105,7 @@ export function CalendarSidebar({
               onToggle={onToggleCalendar}
               onShowOnly={onShowOnly}
               onOpenSettings={onOpenSettings}
+              onManage={onManage}
             />
           ) : null}
         </>
@@ -110,25 +116,36 @@ export function CalendarSidebar({
 
 function CalendarGroup({
   title,
+  onAdd,
   calendars,
   hidden,
   onToggle,
   onShowOnly,
   onOpenSettings,
+  onManage,
 }: {
   readonly title: string;
+  readonly onAdd?: () => void;
   readonly calendars: readonly CalendarSource[];
   readonly hidden: ReadonlySet<string>;
   readonly onToggle: (id: string) => void;
   readonly onShowOnly: (id: string) => void;
   readonly onOpenSettings: (calendar: CalendarSource) => void;
+  readonly onManage: (action: CalendarManageAction) => void;
 }) {
   const headingId = useId();
   return (
     <section aria-labelledby={headingId}>
-      <h2 id={headingId} className="section-label m-0 py-1">
-        {title}
-      </h2>
+      <div className="flex items-center justify-between">
+        <h2 id={headingId} className="section-label m-0 py-1">
+          {title}
+        </h2>
+        {onAdd === undefined ? null : (
+          <Button variant="ghost" size="icon-xs" aria-label="Create new calendar" onClick={onAdd}>
+            <Plus aria-hidden="true" />
+          </Button>
+        )}
+      </div>
       {calendars.length === 0 ? (
         <p className="type-caption text-muted-foreground m-0 px-1">No calendars yet.</p>
       ) : (
@@ -141,6 +158,7 @@ function CalendarGroup({
               onToggle={() => onToggle(calendar.id)}
               onShowOnly={() => onShowOnly(calendar.id)}
               onOpenSettings={() => onOpenSettings(calendar)}
+              onManage={(kind) => onManage({ kind, calendar })}
             />
           ))}
         </ul>
@@ -155,12 +173,14 @@ function CalendarRow({
   onToggle,
   onShowOnly,
   onOpenSettings,
+  onManage,
 }: {
   readonly calendar: CalendarSource;
   readonly checked: boolean;
   readonly onToggle: () => void;
   readonly onShowOnly: () => void;
   readonly onOpenSettings: () => void;
+  readonly onManage: (kind: "rename" | "color" | "delete") => void;
 }) {
   const id = useId();
   return (
@@ -181,7 +201,14 @@ function CalendarRow({
         <MenuContent align="end">
           <MenuItem onSelect={onShowOnly}>Display this only</MenuItem>
           {canManageCalendar(calendar) ? (
-            <MenuItem onSelect={onOpenSettings}>Settings and sharing</MenuItem>
+            <>
+              <MenuItem onSelect={() => onManage("rename")}>Rename</MenuItem>
+              <MenuItem onSelect={() => onManage("color")}>Color</MenuItem>
+              <MenuItem onSelect={onOpenSettings}>Settings and sharing</MenuItem>
+            </>
+          ) : null}
+          {calendar.role === "owner" && !calendar.isDefault ? (
+            <MenuItem onSelect={() => onManage("delete")}>Delete</MenuItem>
           ) : null}
         </MenuContent>
       </Menu>

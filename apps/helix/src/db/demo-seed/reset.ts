@@ -1,6 +1,7 @@
 import type postgres from "postgres";
 import { purgeTenantSearch } from "../../platform/tenancy/tenant-deletion.js";
-import type { SearchEngine } from "../../platform/search/types.js";
+import { PostgresSearchDurabilityStore } from "../../platform/search/durable.js";
+import type { MeilisearchSearchEngine } from "../../platform/search/meilisearch.js";
 import type { TenantStorageResolver } from "../../platform/storage/index.js";
 
 /**
@@ -17,7 +18,7 @@ export async function resetDemoTenant(input: {
   readonly privilegedSql: postgres.Sql;
   readonly orgId: string;
   readonly storageResolver: TenantStorageResolver;
-  readonly search: SearchEngine | undefined;
+  readonly search: MeilisearchSearchEngine | undefined;
   readonly log: (message: string) => void;
 }): Promise<void> {
   const org = await input.privilegedSql<{ readonly id: string }[]>`
@@ -89,7 +90,14 @@ export async function resetDemoTenant(input: {
     await tx`delete from orgs where id = ${input.orgId}`;
     return deleted;
   });
+  // The reset removed the tenant's reindex jobs; their shadow indexes would otherwise stay.
+  const deletedShadowIndexes =
+    input.search === undefined
+      ? 0
+      : await new PostgresSearchDurabilityStore(input.privilegedSql).deleteOrphanedShadowIndexes(
+          input.search,
+        );
   input.log(
-    `reset removed ${String(rows)} rows, ${String(deletedObjects)} stored objects and ${String(deletedDocuments)} search documents`,
+    `reset removed ${String(rows)} rows, ${String(deletedObjects)} stored objects, ${String(deletedDocuments)} search documents and ${String(deletedShadowIndexes)} orphaned shadow indexes`,
   );
 }

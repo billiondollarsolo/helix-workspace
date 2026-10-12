@@ -1,6 +1,7 @@
 import type { Actor } from "@helix/sdk-types";
 import fastify, { type InjectOptions } from "fastify";
 import { describe, expect, it } from "vitest";
+import { UnusedCalendarStoreMethods } from "../../test-support/unused-calendar-store.js";
 import type { CalendarInvitationSender } from "./ics.js";
 import { createIcsCalendar } from "./ics.js";
 import { expandCalendarEventOccurrences } from "./recurrence.js";
@@ -1330,7 +1331,7 @@ class FakeInvitationSender implements CalendarInvitationSender {
   }
 }
 
-class FakeCalendarStore implements CalendarStore {
+class FakeCalendarStore extends UnusedCalendarStoreMethods implements CalendarStore {
   readonly #events = new Map<string, CalendarEventRecord>();
   readonly #calendarIds = new Set(["00000000-0000-4000-8000-000000000101"]);
   readonly #changes: {
@@ -1354,7 +1355,9 @@ class FakeCalendarStore implements CalendarStore {
       }
     | undefined;
 
-  constructor(private readonly actor: Actor) {}
+  constructor(private readonly actor: Actor) {
+    super();
+  }
 
   async createEvent(input: CreateCalendarEventInput): Promise<CalendarEventRecord> {
     const id = input.id ?? "00000000-0000-4000-8000-000000000999";
@@ -1575,6 +1578,7 @@ class FakeCalendarStore implements CalendarStore {
         group: "mine",
         writable: true,
         sortOrder: 0,
+        isDefault: true,
         eventCount: [...this.#events.values()].filter((event) => event.calendarId === id).length,
         syncVersion: this.#versions.get(id) ?? 0,
       }));
@@ -1586,10 +1590,6 @@ class FakeCalendarStore implements CalendarStore {
 
   async setCalendarMembership(): Promise<CalendarMembershipRecord | null> {
     return null;
-  }
-
-  async removeCalendarMembership(): Promise<boolean> {
-    return false;
   }
 
   requireEvent(eventId: string): CalendarEventRecord {

@@ -189,6 +189,47 @@ test.describe("/calendar feature flow", () => {
       await expect(chip).toHaveCount(0);
     });
 
+    test("creates, renames, recolors and deletes calendars from the sidebar", async ({ page }) => {
+      const calls = await openCalendar(page);
+      await page.getByRole("button", { name: "Create new calendar" }).click();
+      const dialog = page.getByRole("dialog", { name: "Create new calendar" });
+      await dialog.getByLabel("Name").fill("On-call");
+      await dialog.locator("label.cal-color-option", { hasText: "rose" }).click();
+      await dialog.getByRole("button", { name: "Create" }).click();
+      await expect(page.getByRole("checkbox", { name: "On-call" })).toBeVisible();
+      expect(calls.find((call) => call.tool === "calendar.calendar.create")?.body).toEqual({
+        name: "On-call",
+        color: "rose",
+      });
+
+      await page.getByRole("button", { name: "Options for On-call" }).click();
+      await page.getByRole("menuitem", { name: "Rename" }).click();
+      await page.getByRole("dialog", { name: "Rename calendar" }).getByLabel("Name").fill("Pager");
+      await page.getByRole("button", { name: "Save" }).click();
+      await expect(page.getByRole("checkbox", { name: "Pager" })).toBeVisible();
+
+      await page.getByRole("button", { name: "Options for Pager" }).click();
+      await page.getByRole("menuitem", { name: "Color" }).click();
+      await page
+        .getByRole("dialog", { name: "Calendar colour" })
+        .locator("label.cal-color-option", { hasText: "teal" })
+        .click();
+      await page.getByRole("button", { name: "Save" }).click();
+      await expect
+        .poll(
+          () =>
+            calls.find((call) => call.tool === "calendar.calendar.update" && call.body.color)?.body
+              .color,
+        )
+        .toBe("teal");
+
+      await page.getByRole("button", { name: "Options for Pager" }).click();
+      await page.getByRole("menuitem", { name: "Delete" }).click();
+      await expect(page.getByRole("dialog", { name: "Delete calendar" })).toContainText("Pager");
+      await page.getByRole("button", { name: "Delete", exact: true }).click();
+      await expect(page.getByRole("checkbox", { name: "Pager" })).toHaveCount(0);
+    });
+
     test("joins Helix Meet calls in the app and shows other meetings as plain links", async ({
       page,
     }) => {
@@ -280,6 +321,19 @@ async function mockCalendarBackend(
   extraEvents: readonly MockEvent[],
 ) {
   const events: MockEvent[] = [planningEvent(), ...extraEvents];
+  const calendars: Record<string, unknown>[] = [
+    {
+      id: CALENDAR_ID,
+      name: "Team planning",
+      color: "#0f766e",
+      role: "owner",
+      visible: true,
+      group: "mine",
+      writable: true,
+      timezone: "UTC",
+      isDefault: false,
+    },
+  ];
   await page.route("**/api/**", async (route) => {
     const request = route.request();
     const pathname = new URL(request.url()).pathname;
@@ -303,20 +357,34 @@ async function mockCalendarBackend(
     calls.push({ tool, body });
 
     if (tool === "calendar.calendars.list") {
-      await fulfillJson(route, {
-        calendars: [
-          {
-            id: CALENDAR_ID,
-            name: "Team planning",
-            color: "#0f766e",
-            role: "owner",
-            visible: true,
-            group: "mine",
-            writable: true,
-            timezone: "UTC",
-          },
-        ],
+      await fulfillJson(route, { calendars });
+      return;
+    }
+    if (tool === "calendar.calendar.create") {
+      const id = `00000000-0000-4000-8000-00000000099${String(calendars.length)}`;
+      calendars.push({
+        ...calendars[0],
+        id,
+        name: body.name,
+        color: body.color,
+        isDefault: false,
       });
+      await fulfillJson(route, { id, name: body.name, color: body.color });
+      return;
+    }
+    if (tool === "calendar.calendar.update") {
+      const target = calendars.find((calendar) => calendar.id === body.calendarId);
+      if (target !== undefined) {
+        if (typeof body.name === "string") target.name = body.name;
+        if (typeof body.color === "string") target.color = body.color;
+      }
+      await fulfillJson(route, {});
+      return;
+    }
+    if (tool === "calendar.calendar.delete") {
+      const index = calendars.findIndex((calendar) => calendar.id === body.calendarId);
+      if (index >= 0) calendars.splice(index, 1);
+      await fulfillJson(route, { deleted: true });
       return;
     }
     if (tool === "calendar.event.list") {

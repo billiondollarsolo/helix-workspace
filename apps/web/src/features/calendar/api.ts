@@ -171,6 +171,8 @@ export interface CalendarApiCalendar {
   readonly group: "mine" | "team";
   readonly writable?: boolean;
   readonly sortOrder?: number;
+  /** The owner's primary calendar; it cannot be deleted. */
+  readonly isDefault?: boolean;
   readonly eventCount?: number;
 }
 
@@ -305,6 +307,27 @@ export async function removeCalendarMembership(
   fetchImpl: CalendarApiFetch = authenticatedFetch,
 ): Promise<void> {
   await callCalendarTool<unknown>("calendar.memberships.remove", input, fetchImpl);
+}
+
+export async function createCalendar(
+  input: { readonly name: string; readonly color: string },
+  fetchImpl: CalendarApiFetch = authenticatedFetch,
+): Promise<{ readonly id: string; readonly name: string; readonly color: string }> {
+  return callCalendarTool("calendar.calendar.create", input, fetchImpl);
+}
+
+export async function updateCalendar(
+  input: { readonly calendarId: string; readonly name?: string; readonly color?: string },
+  fetchImpl: CalendarApiFetch = authenticatedFetch,
+): Promise<void> {
+  await callCalendarTool<unknown>("calendar.calendar.update", input, fetchImpl);
+}
+
+export async function deleteCalendar(
+  calendarId: string,
+  fetchImpl: CalendarApiFetch = authenticatedFetch,
+): Promise<void> {
+  await callCalendarTool<unknown>("calendar.calendar.delete", { calendarId }, fetchImpl);
 }
 
 export async function listCalendarEvents(

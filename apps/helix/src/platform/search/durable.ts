@@ -48,6 +48,8 @@ type SearchReindexJobStatus = "queued" | "processing" | "completed" | "cancelled
  * `shadow` rebuilds every organization into a new index and swaps it in;
  * `in_place` reindexes one organization (`targetOrgId`) into the live index.
  */
+const searchShadowIndexPrefix = "helix_search_shadow_";
+
 export type SearchReindexJobMode = "shadow" | "in_place";
 
 export interface SearchReindexJob {
@@ -173,11 +175,31 @@ export class PostgresSearchDurabilityStore implements SearchMutationQueue {
     return rows.map((row) => row.shadow_index_uid);
   }
 
+  /**
+   * Deletes the shadow indexes whose reindex job no longer exists (a job row
+   * removed by a tenant reset or purge leaves its index behind). Needs a
+   * connection that can see every job, such as the migration owner.
+   */
+  async deleteOrphanedShadowIndexes(engine: {
+    listIndexUids(prefix: string): Promise<readonly string[]>;
+    deleteIndex(uid: string): Promise<void>;
+  }): Promise<number> {
+    const uids = await engine.listIndexUids(searchShadowIndexPrefix);
+    if (uids.length === 0) return 0;
+    const known = await this.sql<{ shadow_index_uid: string }[]>`
+      select shadow_index_uid from search_reindex_jobs where shadow_index_uid in ${this.sql(uids)}
+    `;
+    const kept = new Set(known.map((row) => row.shadow_index_uid));
+    const orphans = uids.filter((uid) => !kept.has(uid));
+    for (const uid of orphans) await engine.deleteIndex(uid);
+    return orphans.length;
+  }
+
   async createJob(actor: Actor, input: SearchReindexRequest = {}): Promise<SearchReindexJob> {
     const types = searchReindexTypes;
     const batchSize = normalizeBatchSize(input.batchSize);
     const id = randomUUID();
-    const shadowIndexUid = `helix_search_shadow_${id.replaceAll("-", "")}`;
+    const shadowIndexUid = `${searchShadowIndexPrefix}${id.replaceAll("-", "")}`;
     const rows = await this.sql<JobRow[]>`
       insert into search_reindex_jobs (
         id, org_id, requested_by_actor_id, target_org_id, types, batch_size,

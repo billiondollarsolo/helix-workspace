@@ -1,6 +1,5 @@
-/* "Settings and sharing" for a calendar the viewer owns or manages. The
-   calendar API supports sharing with specific people; name and colour are
-   read-only until it supports changing them. */
+/* "Settings and sharing" for a calendar the viewer owns or manages. Name and
+   colour are changed from the calendar's options menu. */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Trash2 } from "lucide-react";

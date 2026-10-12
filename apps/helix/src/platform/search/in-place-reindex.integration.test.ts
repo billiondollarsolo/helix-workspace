@@ -136,4 +136,15 @@ describe.skipIf(SKIP)("search reindex jobs (0216)", () => {
       totalDocuments: 0n,
     });
   });
+
+  it("deletes only the shadow indexes whose job no longer exists", async () => {
+    const job = await asAdmin(() => store.createJob(admin));
+    const deleted: string[] = [];
+    const orphan = "helix_search_shadow_00000000000000000000000000000000";
+    const count = await new PostgresSearchDurabilityStore(owner).deleteOrphanedShadowIndexes({
+      listIndexUids: async () => [job.shadowIndexUid ?? "", orphan],
+      deleteIndex: async (uid) => void deleted.push(uid),
+    });
+    expect({ count, deleted }).toEqual({ count: 1, deleted: [orphan] });
+  });
 });

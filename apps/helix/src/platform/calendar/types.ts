@@ -53,6 +53,8 @@ export interface CalendarListEntry {
   /** True when the actor may create/update events on this calendar. */
   readonly writable: boolean;
   readonly sortOrder: number;
+  /** The owner's primary calendar: it cannot be deleted. */
+  readonly isDefault: boolean;
   readonly eventCount: number;
   /** Monotonic CalDAV collection revision used by ETag and sync-token. */
   readonly syncVersion: number;

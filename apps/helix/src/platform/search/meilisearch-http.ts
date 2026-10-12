@@ -97,6 +97,42 @@ class MeilisearchHttpClient implements MeilisearchClientLike {
     throw new Error(`Meilisearch task ${String(uid)} timed out`);
   }
 
+  async listIndexUids(): Promise<readonly string[]> {
+    const uids: string[] = [];
+    for (;;) {
+      const page = await requestJson(
+        this.#baseUrl,
+        this.#fetch,
+        this.#apiKey,
+        "GET",
+        `/indexes?limit=200&offset=${String(uids.length)}`,
+      );
+      const results =
+        isObject(page) && Array.isArray(page.results)
+          ? page.results.flatMap((result: unknown) =>
+              isObject(result) && typeof result.uid === "string" ? [result.uid] : [],
+            )
+          : [];
+      uids.push(...results);
+      if (results.length < 200) return uids;
+    }
+  }
+
+  async deleteIndex(uid: string): Promise<unknown> {
+    try {
+      return await requestJson(
+        this.#baseUrl,
+        this.#fetch,
+        this.#apiKey,
+        "DELETE",
+        `/indexes/${encodePathSegment(uid)}`,
+      );
+    } catch (error) {
+      if (error instanceof MeilisearchHttpError && error.status === 404) return null;
+      throw error;
+    }
+  }
+
   async swapIndexes(indexes: readonly [string, string]): Promise<unknown> {
     return requestJson(this.#baseUrl, this.#fetch, this.#apiKey, "POST", "/swap-indexes", [
       { indexes },
@@ -173,7 +209,7 @@ async function requestJson(
   baseUrl: URL,
   fetchImpl: typeof fetch,
   apiKey: string | undefined,
-  method: "GET" | "POST" | "PATCH",
+  method: "GET" | "POST" | "PATCH" | "DELETE",
   path: string,
   body?:
     | JsonObject

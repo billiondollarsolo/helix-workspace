@@ -15,6 +15,12 @@
 // with your mail provider's credential before starting Helix.
 // mail_provider_webhook_secret is random; replace it if your provider issues
 // its own signing secret.
+//
+// The optional Meet install (docker-compose.meet.yml) needs a few more files.
+// Add them to an existing directory, signed by the same private CA:
+//
+//   node infra/scripts/generate-production-secrets.mjs --add-meet \
+//     --dir /srv/helix-secrets --meet-host meet.example.com
 
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -33,6 +39,135 @@ const LEAF_DAYS = 825;
 
 export const OPERATOR_PLACEHOLDER = "REPLACE_WITH_PROVIDER_VALUE";
 
+/** The XMPP names Prosody serves inside the Meet network, and its service name. */
+const MEET_XMPP_HOSTS = [
+  "meet.jitsi",
+  "auth.meet.jitsi",
+  "muc.meet.jitsi",
+  "internal-muc.meet.jitsi",
+  "jitsi-prosody",
+];
+
+const randomSecret = (bytes = 48) => randomBytes(bytes).toString("base64url");
+
+/** Issues leaf certificates from the deployment CA, working in `pki`. */
+function leafIssuer(pki, caCert, caKey) {
+  return (name, hosts, usage) => {
+    const key = join(pki, `${name}.key`);
+    const csr = join(pki, `${name}.csr`);
+    const cert = join(pki, `${name}.pem`);
+    const extensions = join(pki, `${name}.ext`);
+    writeFileSync(
+      extensions,
+      [
+        "basicConstraints=critical,CA:FALSE",
+        `extendedKeyUsage=${usage}`,
+        ...(hosts.length === 0
+          ? []
+          : [`subjectAltName=${hosts.map((host) => `DNS:${host}`).join(",")}`]),
+        "",
+      ].join("\n"),
+    );
+    openssl([
+      "req",
+      "-newkey",
+      "rsa:2048",
+      "-nodes",
+      "-keyout",
+      key,
+      "-out",
+      csr,
+      "-subj",
+      `/CN=${hosts[0] ?? name}`,
+    ]);
+    openssl([
+      "x509",
+      "-req",
+      "-in",
+      csr,
+      "-CA",
+      caCert,
+      "-CAkey",
+      caKey,
+      "-CAcreateserial",
+      "-out",
+      cert,
+      "-days",
+      String(LEAF_DAYS),
+      "-extfile",
+      extensions,
+    ]);
+    return { key, cert };
+  };
+}
+
+function installer(target) {
+  return (source, name) => {
+    execFileSync("cp", [source, join(target, name)]);
+    chmodSync(join(target, name), FILE_MODE);
+  };
+}
+
+/**
+ * Adds the files docker-compose.meet.yml mounts to a directory this script
+ * created earlier. Nothing that exists is replaced, so the rest of a live
+ * deployment keeps its credentials.
+ */
+export function addMeetSecrets({ directory, meetHost }) {
+  const target = resolve(directory);
+  const caCert = join(target, "ca", "ca.pem");
+  const caKey = join(target, "ca", "ca.key");
+  if (!existsSync(caCert) || !existsSync(caKey)) {
+    throw new Error(
+      `${target} has no ca/ca.pem and ca/ca.key. Run this in the directory the secrets were generated in, with its CA put back.`,
+    );
+  }
+  const random = [
+    "meet_jwt_secret",
+    "meet_webhook_secret",
+    "jitsi_jicofo_auth_password",
+    "jitsi_jicofo_component_secret",
+    "jitsi_jvb_auth_password",
+    "jitsi_turn_shared_secret",
+  ];
+  const issued = [
+    "jitsi_xmpp_ca",
+    "jitsi_xmpp_cert",
+    "jitsi_xmpp_key",
+    "jitsi_turn_cert",
+    "jitsi_turn_key",
+  ];
+  const existing = [...random, ...issued].filter((name) => existsSync(join(target, name)));
+  if (existing.length > 0) {
+    throw new Error(
+      `${target} already holds Meet secrets (${existing.join(", ")}). Refusing to replace them.`,
+    );
+  }
+  for (const name of random) {
+    writeFileSync(join(target, name), `${randomSecret()}\n`, { mode: FILE_MODE });
+  }
+  const pki = join(target, ".pki-work");
+  mkdirSync(pki, { mode: 0o700 });
+  try {
+    const leaf = leafIssuer(pki, caCert, caKey);
+    const install = installer(target);
+    // Prosody's certificate, verified by the bridge and the conference focus.
+    const xmpp = leaf("jitsi_xmpp", MEET_XMPP_HOSTS, "serverAuth");
+    install(caCert, "jitsi_xmpp_ca");
+    install(xmpp.cert, "jitsi_xmpp_cert");
+    install(xmpp.key, "jitsi_xmpp_key");
+    // TURN over TLS (port 5349). Browsers verify this one: replace both files
+    // with a publicly trusted certificate for the Meet hostname. Plain TURN
+    // on port 3478 works without it.
+    const turn = leaf("jitsi_turn", [meetHost], "serverAuth");
+    install(turn.cert, "jitsi_turn_cert");
+    install(turn.key, "jitsi_turn_key");
+  } finally {
+    rmSync(pki, { recursive: true, force: true });
+  }
+  return { directory: target, files: [...random, ...issued].sort() };
+}
+
 export function generateProductionSecrets({ directory, mailHost }) {
   const target = resolve(directory);
   if (existsSync(target) && readdirSync(target).length > 0) {
@@ -44,7 +179,7 @@ export function generateProductionSecrets({ directory, mailHost }) {
   chmodSync(target, 0o700);
   const write = (name, value) =>
     writeFileSync(join(target, name), `${value}\n`, { mode: FILE_MODE });
-  const secret = (bytes = 48) => randomBytes(bytes).toString("base64url");
+  const secret = randomSecret;
 
   const postgresAppPassword = secret();
   const postgresMigrationPassword = secret();
@@ -96,57 +231,8 @@ export function generateProductionSecrets({ directory, mailHost }) {
       "-addext",
       "keyUsage=critical,keyCertSign,cRLSign",
     ]);
-    const leaf = (name, hosts, usage) => {
-      const key = join(pki, `${name}.key`);
-      const csr = join(pki, `${name}.csr`);
-      const cert = join(pki, `${name}.pem`);
-      const extensions = join(pki, `${name}.ext`);
-      writeFileSync(
-        extensions,
-        [
-          "basicConstraints=critical,CA:FALSE",
-          `extendedKeyUsage=${usage}`,
-          ...(hosts.length === 0
-            ? []
-            : [`subjectAltName=${hosts.map((host) => `DNS:${host}`).join(",")}`]),
-          "",
-        ].join("\n"),
-      );
-      openssl([
-        "req",
-        "-newkey",
-        "rsa:2048",
-        "-nodes",
-        "-keyout",
-        key,
-        "-out",
-        csr,
-        "-subj",
-        `/CN=${hosts[0] ?? name}`,
-      ]);
-      openssl([
-        "x509",
-        "-req",
-        "-in",
-        csr,
-        "-CA",
-        caCert,
-        "-CAkey",
-        caKey,
-        "-CAcreateserial",
-        "-out",
-        cert,
-        "-days",
-        String(LEAF_DAYS),
-        "-extfile",
-        extensions,
-      ]);
-      return { key, cert };
-    };
-    const install = (source, name) => {
-      execFileSync("cp", [source, join(target, name)]);
-      chmodSync(join(target, name), FILE_MODE);
-    };
+    const leaf = leafIssuer(pki, caCert, caKey);
+    const install = installer(target);
     for (const service of ["postgres", "redis", "nats", "rustfs"]) {
       const issued = leaf(service, [service], "serverAuth");
       install(caCert, `${service}_ca`);
@@ -182,9 +268,30 @@ function openssl(args) {
 
 if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const { values } = parseArgs({
-    options: { dir: { type: "string" }, "mail-host": { type: "string" } },
+    options: {
+      dir: { type: "string" },
+      "mail-host": { type: "string" },
+      "add-meet": { type: "boolean" },
+      "meet-host": { type: "string" },
+    },
     strict: true,
   });
+  if (values["add-meet"] === true) {
+    if (values.dir === undefined || values["meet-host"] === undefined) {
+      console.error(
+        "Usage: generate-production-secrets.mjs --add-meet --dir <existing secrets directory> --meet-host <Meet hostname>",
+      );
+      process.exit(2);
+    }
+    try {
+      const added = addMeetSecrets({ directory: values.dir, meetHost: values["meet-host"] });
+      console.log(`Added ${String(added.files.length)} Meet secret files to ${added.directory}.`);
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : error);
+      process.exit(1);
+    }
+    process.exit(0);
+  }
   if (values.dir === undefined || values["mail-host"] === undefined) {
     console.error(
       "Usage: generate-production-secrets.mjs --dir <new empty directory> --mail-host <mail hostname>",

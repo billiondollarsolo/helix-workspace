@@ -90,3 +90,4 @@
 # when the deployment sets the matching variable; otherwise an empty file is
 # imported and nothing is served.
 import optional/passwords{$HELIX_PASSWORDS_SITE:}.caddy
+import optional/meet{$HELIX_MEET_SITE:}.caddy

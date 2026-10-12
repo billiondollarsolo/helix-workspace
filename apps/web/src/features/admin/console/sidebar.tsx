@@ -163,10 +163,10 @@ export function AdminSidebar({
 }
 
 /* Shown only while live updates are down, so a dead connection never reads as
-   a quiet system. */
+   a quiet system. A section with no live updates has nothing to report. */
 function AdminRealtimeIndicator() {
   const state = useAdminRealtimeState();
-  if (state === "live") {
+  if (state === "live" || state === "idle") {
     return null;
   }
   return (

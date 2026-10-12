@@ -13,6 +13,7 @@ import {
   signInWithOidc,
   signOut,
 } from "./auth";
+import { settleSecondFactorStepUp, subscribeSecondFactorStepUp } from "./second-factor-step-up";
 
 describe("web auth helpers", () => {
   beforeEach(() => {
@@ -280,6 +281,63 @@ describe("web auth helpers", () => {
     const call = fetchMock.mock.calls[0];
     expect(call?.[0]).toBe("/api/auth/sign-out");
     expect(call?.[1]?.method).toBe("POST");
+  });
+
+  it("asks for 2-step verification and resends a refused administrator request", async () => {
+    document.cookie = `helix_csrf=${"d".repeat(43)}; Path=/`;
+    const unsubscribe = subscribeSecondFactorStepUp(() => {
+      queueMicrotask(() => settleSecondFactorStepUp(true));
+    });
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        Response.json({ error: { code: "admin_mfa_required" } }, { status: 403 }),
+      )
+      .mockResolvedValueOnce(Response.json({ invited: true }, { status: 201 }));
+
+    const response = await authenticatedFetch("/api/admin/users/invite", {
+      method: "POST",
+      body: JSON.stringify({ email: "new@example.com" }),
+    });
+    unsubscribe();
+
+    expect(response.status).toBe(201);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1]?.[1]?.body).toBe(fetchMock.mock.calls[0]?.[1]?.body);
+  });
+
+  it("verifies a lapsed admin session in place instead of leaving the page", async () => {
+    const unsubscribe = subscribeSecondFactorStepUp(() => {
+      queueMicrotask(() => settleSecondFactorStepUp(true));
+    });
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        Response.json({ error: { code: "session_reauthentication_required" } }, { status: 401 }),
+      )
+      .mockResolvedValueOnce(Response.json({ users: [] }));
+
+    const response = await authenticatedFetch("/api/admin/users");
+    unsubscribe();
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(window.location.pathname).not.toBe("/login");
+  });
+
+  it("returns the refusal when the person does not verify", async () => {
+    const unsubscribe = subscribeSecondFactorStepUp(() => {
+      queueMicrotask(() => settleSecondFactorStepUp(false));
+    });
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(Response.json({ error: { code: "admin_mfa_required" } }, { status: 403 }));
+
+    const response = await authenticatedFetch("/api/admin/users");
+    unsubscribe();
+
+    expect(response.status).toBe(403);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("re-verifies once when concurrent requests hit an expired session", async () => {

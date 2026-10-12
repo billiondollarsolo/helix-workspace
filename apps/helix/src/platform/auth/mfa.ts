@@ -501,6 +501,10 @@ export type AdminMfaDecision =
 
 const ADMIN_MFA_ALLOWED: AdminMfaDecision = { allowed: true };
 
+/** Shown to the administrator; the web app answers it with a verification prompt. */
+export const ADMIN_MFA_REQUIRED_MESSAGE =
+  "Administrator actions need a recent 2-step verification. Verify with your authenticator app or passkey, then try again.";
+
 /**
  * Decide whether an admin-scoped request may proceed under the configured
  * tier's MFA policy.
@@ -528,6 +532,6 @@ export function evaluateAdminMfa(input: {
     allowed: false,
     statusCode: 403,
     code: "admin_mfa_required",
-    message: `Tier '${input.tier}' requires a verified MFA factor for admin-scoped requests.`,
+    message: ADMIN_MFA_REQUIRED_MESSAGE,
   };
 }

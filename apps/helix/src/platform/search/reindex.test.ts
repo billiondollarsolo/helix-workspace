@@ -211,7 +211,7 @@ describe("SearchReindexService", () => {
     );
     if (mailSource === undefined) throw new Error("Mail reindex source missing");
 
-    const documents = await mailSource.collect({});
+    const documents = await mailSource.collect({ orgId: "11111111-1111-4111-8111-111111111111" });
 
     expect(documents.map((document) => document.id)).toEqual([
       `mail:actor-a:${messageId}`,

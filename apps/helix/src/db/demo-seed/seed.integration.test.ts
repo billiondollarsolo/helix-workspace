@@ -4,9 +4,10 @@ import { loadMigrationEnv } from "../../config/env.js";
 import { createMigrationSqlClient, createSqlClient } from "../client.js";
 import { seedDemo } from "./index.js";
 
-// Needs Postgres (DATABASE_URL, which the live-database setup points at a fresh
-// copy of the migrated template), RustFS, ClamAV and Meilisearch, so it runs in
-// the live demo-data CI job rather than the unit suite.
+// Needs Postgres (DATABASE_URL naming the helix_app runtime role and
+// HELIX_MIGRATION_DATABASE_URL the owner, which the live-database setup point at
+// a fresh copy of the migrated template), RustFS, ClamAV and Meilisearch, so it
+// runs in the live demo-data CI job rather than the unit suite.
 const enabled = process.env.HELIX_DEMO_SEED_INTEGRATION === "1";
 const now = new Date();
 now.setUTCSeconds(0, 0);
@@ -38,6 +39,8 @@ describe.runIf(enabled)("demo seed", () => {
       expect(first.validation.driveContentChecked).toBeGreaterThan(100);
       expect(first.validation.indexed?.drive).toBe(first.validation.driveContentChecked);
       expect(first.validation.indexed?.mail).toBeGreaterThan(0);
+      expect(first.validation.indexed?.chat).toBeGreaterThan(0);
+      expect(first.validation.indexed?.calendar).toBeGreaterThan(0);
       expect(first.validation.reconciledDocuments).toBeGreaterThan(0);
       expect(first.validation.auditRecords).toBeGreaterThan(0);
       expect(first.validation.loginsChecked).toBeGreaterThanOrEqual(3);

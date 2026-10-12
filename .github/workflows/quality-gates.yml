@@ -323,7 +323,8 @@ jobs:
           HELIX_DEMO_SEED_INTEGRATION: "1"
           HELIX_REQUIRE_LIVE_SUITES: "1"
           HELIX_TEST_DATABASE_TEMPLATE: postgres://helix:helix_dev_password@127.0.0.1:39532/helix_demo_template
-          DATABASE_URL: postgres://helix:helix_dev_password@127.0.0.1:39532/helix_demo_template
+          # Application writes as the runtime role, as in production.
+          DATABASE_URL: postgres://helix_app:helix_app_local@127.0.0.1:39532/helix_demo_template
           HELIX_MIGRATION_DATABASE_URL: postgres://helix:helix_dev_password@127.0.0.1:39532/helix_demo_template
           MEILI_HOST: http://127.0.0.1:39533
           MEILI_MASTER_KEY: helix_dev_meili_master_key
@@ -339,7 +340,8 @@ jobs:
 
       - name: Seed the demo workspace
         env:
-          DATABASE_URL: postgres://helix:helix_dev_password@127.0.0.1:39532/helix_demo_smoke
+          DATABASE_URL: postgres://helix_app:helix_app_local@127.0.0.1:39532/helix_demo_smoke
+          HELIX_MIGRATION_DATABASE_URL: postgres://helix:helix_dev_password@127.0.0.1:39532/helix_demo_smoke
           MEILI_HOST: http://127.0.0.1:39533
           MEILI_MASTER_KEY: helix_dev_meili_master_key
           RUSTFS_ENDPOINT: http://127.0.0.1:39534

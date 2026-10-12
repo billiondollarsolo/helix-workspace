@@ -138,7 +138,8 @@ proof from the deployed backup backend.
    If the app server is not running yet but the restored database and Meilisearch are reachable from the operator shell, use the local reindex command instead:
 
    ```sh
-   DATABASE_URL=postgres://helix:...@127.0.0.1:28432/helix \
+   DATABASE_URL=postgres://helix_app:...@127.0.0.1:28432/helix \
+   HELIX_MIGRATION_DATABASE_URL=postgres://helix:...@127.0.0.1:28432/helix \
    MEILI_HOST=http://127.0.0.1:28436 \
    MEILI_MASTER_KEY=<key> \
    pnpm --filter @helix/app db:reindex:search -- --all
@@ -161,7 +162,8 @@ proof from the deployed backup backend.
    The underlying command remains useful when services are already running:
 
    ```sh
-   DATABASE_URL=postgres://helix:...@127.0.0.1:28432/helix \
+   DATABASE_URL=postgres://helix_app:...@127.0.0.1:28432/helix \
+   HELIX_MIGRATION_DATABASE_URL=postgres://helix:...@127.0.0.1:28432/helix \
    RUSTFS_ENDPOINT=http://127.0.0.1:28437 \
    MEILI_HOST=http://127.0.0.1:28436 \
    MEILI_MASTER_KEY=<key> \

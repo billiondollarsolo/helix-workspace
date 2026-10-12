@@ -1898,12 +1898,11 @@ export class PostgresChatStore
         array(
           select distinct permission.actor_id::text
           from permissions permission
-          where chat_permission_is_valid(
-            permission,
-            m.org_id,
-            permission.actor_id,
-            m.thread_id
-          )
+          where permission.org_id = m.org_id
+            and permission.resource_type = 'thread'
+            and permission.resource_id = m.thread_id
+            and permission.status = 'active'
+            and chat_permission_is_valid(permission, m.org_id, permission.actor_id, m.thread_id)
             and helix_chat_message_visible_to(
               m.org_id, permission.actor_id, m.thread_id, m.sent_at
             )

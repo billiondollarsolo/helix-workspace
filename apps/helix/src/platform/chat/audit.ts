@@ -1,11 +1,13 @@
 import type { JsonObject } from "@helix/sdk-types";
-import { computeAuditHash } from "../audit/hash.js";
-import { toSqlJson } from "../util/sql.js";
+import { insertAuditActivity } from "../audit/append.js";
 import type { ChatSql } from "./authorization.js";
 
 const FORBIDDEN_AUDIT_KEYS = /(?:body|content|html|markdown|text)/iu;
 
-/** Appends a serialized, content-free Chat record to the platform hash chain. */
+/**
+ * Appends a content-free Chat record to the platform hash chain inside the
+ * caller's tenant transaction; the activity trigger chains and serializes it.
+ */
 export async function appendChatAudit(
   sql: ChatSql,
   input: {
@@ -19,39 +21,15 @@ export async function appendChatAudit(
 ): Promise<void> {
   const metadata = input.metadata ?? {};
   assertContentFreeAudit(metadata);
-  await sql`select pg_advisory_xact_lock(hashtextextended(${input.orgId}, 77331))`;
-  const previousRows = await sql<readonly { readonly this_hash: string }[]>`
-    select this_hash
-    from activity
-    where org_id = ${input.orgId}
-    order by created_at desc, id desc
-    limit 1
-    for update
-  `;
-  const prevHash = previousRows[0]?.this_hash ?? null;
-  const createdAt = new Date();
-  const { thisHash } = computeAuditHash(
-    {
-      actorId: input.actorId,
-      verb: input.verb,
-      objectType: input.objectType,
-      objectId: input.objectId,
-      metadata,
-      createdAt: createdAt.toISOString(),
-    },
-    prevHash,
-  );
-  await sql`
-    insert into activity (
-      org_id, actor_id, verb, object_type, object_id,
-      payload, prev_hash, this_hash, created_at
-    )
-    values (
-      ${input.orgId}, ${input.actorId}, ${input.verb}, ${input.objectType},
-      ${input.objectId}, ${sql.json(toSqlJson(metadata))}, ${prevHash},
-      ${thisHash}, ${createdAt}
-    )
-  `;
+  await insertAuditActivity(sql, {
+    orgId: input.orgId,
+    actorId: input.actorId,
+    verb: input.verb,
+    objectType: input.objectType,
+    objectId: input.objectId,
+    traceId: null,
+    metadata,
+  });
 }
 
 export function assertContentFreeAudit(value: JsonObject): void {

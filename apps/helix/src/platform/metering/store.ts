@@ -1,5 +1,9 @@
 import type { JsonObject, MeteringEventPayload } from "@helix/sdk-types";
 import type postgres from "postgres";
+import {
+  detachedFromTenantPostgresContext,
+  withTenantPostgresContext,
+} from "../tenancy/postgres-roles.js";
 
 export interface StoredMeteringEvent {
   readonly id: string;
@@ -52,19 +56,28 @@ interface MeteringEventRow {
 export class PostgresMeteringEventStore implements MeteringEventStore {
   constructor(private readonly sql: postgres.Sql) {}
 
-  async insertEvent(event: MeteringEventInsert): Promise<StoredMeteringEvent> {
-    const rows = await this.sql<MeteringEventRow[]>`
-      insert into metering_events (org_id, event_type, quantity, metadata, occurred_at)
-      values (
-        ${event.orgId},
-        ${event.eventType},
-        ${event.quantity},
-        ${this.sql.json(event.metadata)},
-        ${event.occurredAt ?? new Date()}
-      )
-      returning id, org_id, event_type, quantity::text as quantity, metadata, occurred_at, rolled_up_at
-    `;
-    return toStoredMeteringEvent(rows[0]);
+  /**
+   * Stores one event in its own transaction under the event's tenant context.
+   * Ingest is a bus consumer: an in-process bus runs it on the publisher's
+   * async context, so it is detached to behave as it does behind NATS.
+   */
+  insertEvent(event: MeteringEventInsert): Promise<StoredMeteringEvent> {
+    return detachedFromTenantPostgresContext(() =>
+      withTenantPostgresContext(this.sql, { orgId: event.orgId }, async (tx) => {
+        const rows = await tx<MeteringEventRow[]>`
+          insert into metering_events (org_id, event_type, quantity, metadata, occurred_at)
+          values (
+            ${event.orgId},
+            ${event.eventType},
+            ${event.quantity},
+            ${tx.json(event.metadata)},
+            ${event.occurredAt ?? new Date()}
+          )
+          returning id, org_id, event_type, quantity::text as quantity, metadata, occurred_at, rolled_up_at
+        `;
+        return toStoredMeteringEvent(rows[0]);
+      }),
+    );
   }
 
   async insertEvents(

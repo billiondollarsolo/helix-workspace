@@ -1,5 +1,6 @@
 import type postgres from "postgres";
 import { createSearchEngine } from "../../bootstrap/search.js";
+import { assertTenantSafeDatabaseRole } from "../client.js";
 import { buildRoster, COMPANY, loginPerson } from "./company.js";
 import { DemoDns } from "./dns.js";
 import { seedAliases, seedOrgStructure, seedPeople, type Directory } from "./directory.js";
@@ -52,6 +53,20 @@ export interface DemoSeedSummary {
 type Logger = (message: string) => void;
 
 /**
+ * Application writes go through the RLS-bound runtime role, exactly as the API
+ * runs in production; only the reset uses the owner connection.
+ */
+async function assertRuntimeRole(sql: postgres.Sql): Promise<void> {
+  try {
+    await assertTenantSafeDatabaseRole(sql);
+  } catch (error) {
+    throw new DemoSeedError(
+      `${error instanceof Error ? error.message : String(error)} The demo seed writes as the application runtime role, like the API in production: set DATABASE_URL to it (local stack: postgres://helix_app:helix_app_local@127.0.0.1:28432/helix) and HELIX_MIGRATION_DATABASE_URL to the owner.`,
+    );
+  }
+}
+
+/**
  * Seeds (or, when already seeded, re-validates) the Quillfeather Labs demo
  * tenant. Content goes through the platform stores; nothing here writes rows
  * that the application could not have written itself.
@@ -63,6 +78,7 @@ export async function seedDemo(input: {
   readonly log: Logger;
 }): Promise<DemoSeedSummary> {
   const started = Date.now();
+  await assertRuntimeRole(input.sql);
   const preset = DEMO_PRESETS[input.options.size];
   const mode = input.options.accountsOnly ? "accounts" : "full";
   const phases: { name: string; seconds: number; detail: string }[] = [];

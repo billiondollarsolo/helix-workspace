@@ -287,6 +287,12 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Changed
 
+- The demo seed writes as the `helix_app` runtime role, like the API in production, and refuses a
+  privileged `DATABASE_URL`; only `--reset` uses the owner connection
+  (`HELIX_MIGRATION_DATABASE_URL`). Its validation now reindexes Chat too and fails when any
+  reindexed type projects no documents.
+- A person's first calendar is named after them instead of "Calendar".
+
 - **Breaking (Helm chart 1.0.0):** CloudNativePG values changed. Replace `cloudnativepg.imageName`
   with `cloudnativepg.image.{repository,digest}` (PostgreSQL 18 operand), rename
   `backup.barmanObjectStore.wal.additionalCommandArgs` to `wal.archiveAdditionalCommandArgs`, and
@@ -419,6 +425,28 @@ All notable changes to Helix Workspace are documented here. This file follows
   closed. A live test now keeps the database catalog equal to the app's scope catalog.
 
 ### Fixed
+
+- Chat writes failed under the runtime role with "permission denied for table activity": Chat
+  audit and tenant provisioning computed the audit hash chain in the application with
+  `SELECT … FOR UPDATE`. Both now append through the same insert as every other audit entry, and
+  the database trigger chains and serializes it per organization. The tenant provisioning steps
+  (storage prefix, owner, bootstrap seed) also failed row-level security under the runtime role;
+  each now runs in the new organization's tenant context.
+- Indexing one Chat message took up to ~0.6 s because the history visibility check scanned every
+  permission row in the database; it now reads only the room's grants (about 18× faster on the
+  demo workspace), with identical results.
+- With Redis and NATS unset, metering ingest failed row-level security; each event is now stored
+  in its own organization's tenant context.
+- "Durable search projection failed: index_not_found" after offboarding someone (including after
+  seeding): live index changes were mirrored into a queued shadow reindex before its index
+  existed. The indexer now creates a shadow index before writing to it.
+- Under the runtime role, the search reconciliation pass (and any reindex without an
+  organization) read no rows through row-level security and then pruned every Drive document from
+  the index as stale. Cross-tenant reindexing now loads each organization's records in that
+  organization's context.
+- Drive "Shared with me" listed only items shared from the owner's top level; folders and files
+  shared from inside another folder now appear.
+- Several first events created at once for the same person could each create a separate calendar.
 
 - Seeded Drive and Mail bytes were written outside the tenant's storage prefix, so a full search
   reindex failed at Drive and the search reconciliation worker failed at startup with "Search

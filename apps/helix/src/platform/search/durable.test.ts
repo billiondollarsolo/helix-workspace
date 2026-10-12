@@ -43,6 +43,41 @@ describe("SearchMutationWorker", () => {
     expect(completed).toEqual([1n]);
     expect(shadow.upserts.flat().map((document) => document.id)).toEqual(["drive:1"]);
   });
+
+  it("creates a queued shadow job's index before mirroring a delete into it", async () => {
+    const mutations: ClaimedSearchMutation[] = [1n, 2n].map((id) => ({
+      id,
+      orgId: "org-1",
+      mutation: { delete: [`chat:${String(id)}`] },
+      attemptCount: 1,
+      leaseToken: "lease",
+    }));
+    const completed: bigint[] = [];
+    const failed: bigint[] = [];
+    let claimed = false;
+    const store = {
+      claimMutations: async () => (claimed ? [] : ((claimed = true), mutations)),
+      activeShadowIndexUids: async () => ["helix_search_shadow_queued"],
+      completeMutation: async (item: ClaimedSearchMutation) => void completed.push(item.id),
+      failMutation: async (item: ClaimedSearchMutation) => void failed.push(item.id),
+      withTenant: async (_orgId: string, callback: () => Promise<unknown>) => callback(),
+      withMutationSwapLock: async (callback: () => Promise<unknown>) => callback(),
+    };
+    // Queued by offboarding: the shadow worker has not created the index yet.
+    const shadow = new FakeEngine(false, false);
+    const worker = new SearchMutationWorker({
+      store: store as never,
+      engine: new FakeEngine(),
+      shadowEngine: () => shadow,
+    });
+
+    await worker.drainOnce();
+
+    expect(failed).toEqual([]);
+    expect(completed).toEqual([1n, 2n]);
+    expect(shadow.deletes).toEqual([["chat:1"], ["chat:2"]]);
+    expect(shadow.ensureIndexCalls).toBe(1);
+  });
 });
 
 describe("SearchShadowReindexWorker", () => {
@@ -132,7 +167,16 @@ function baseJob(): SearchReindexJob {
 class FakeEngine implements SearchEngine {
   readonly id = "fake";
   readonly upserts: IndexDocument[][] = [];
-  constructor(private failOnce = false) {}
+  readonly deletes: string[][] = [];
+  ensureIndexCalls = 0;
+  constructor(
+    private failOnce = false,
+    private exists = true,
+  ) {}
+  async ensureIndex(): Promise<void> {
+    this.ensureIndexCalls += 1;
+    this.exists = true;
+  }
   async index(document: IndexDocument): Promise<void> {
     await this.upsert([document]);
   }
@@ -143,7 +187,10 @@ class FakeEngine implements SearchEngine {
     }
     this.upserts.push([...documents]);
   }
-  async delete(): Promise<void> {}
+  async delete(ids: readonly string[]): Promise<void> {
+    if (!this.exists) throw new Error("index_not_found");
+    this.deletes.push([...ids]);
+  }
   async search(request: SearchRequest): Promise<SearchResponse> {
     return { hits: [], query: request.query };
   }

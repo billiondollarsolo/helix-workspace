@@ -85,7 +85,15 @@ Postgres is the bottleneck.
 The seed needs Postgres (migrated), RustFS, ClamAV and, for search, Meilisearch,
 all on loopback addresses; it refuses to run with `NODE_ENV=production`.
 
+The seed writes as the application runtime role, the way the API runs in
+production: `DATABASE_URL` must name `helix_app` (NOSUPERUSER, NOBYPASSRLS,
+owning nothing), so every write passes the same row-level security, grants and
+triggers as a real request. Only `--reset` uses the owner connection,
+`HELIX_MIGRATION_DATABASE_URL`. The seed refuses a privileged `DATABASE_URL`.
+
 ```sh
+export DATABASE_URL=postgres://helix_app:helix_app_local@127.0.0.1:28432/helix
+export HELIX_MIGRATION_DATABASE_URL=postgres://helix:helix_dev_password@127.0.0.1:28432/helix
 export MAIL_CLAMAV_ENABLED=true MAIL_CLAMAV_HOST=127.0.0.1 MAIL_CLAMAV_PORT=28460
 pnpm --filter @helix/app db:seed:demo -- --size small
 ```
@@ -122,8 +130,9 @@ Every run ends by checking what it built and fails loudly if anything is off:
 - every Drive file loads with its contents the way search does;
 - one pass of the Drive maintenance worker, after which storage accounting has
   nothing left to correct;
-- a full search reindex of Mail, Drive and Calendar and a Drive reconciliation
-  pass, both clean (Chat is indexed by the API's event indexer when it starts);
+- a full search reindex of Mail, Chat, Drive and Calendar in the tenant's
+  context, each projecting documents, and the API's cross-tenant Drive
+  reconciliation pass, both clean;
 - the audit hash chain verifies;
 - the documented sign-ins accept their passwords.
 

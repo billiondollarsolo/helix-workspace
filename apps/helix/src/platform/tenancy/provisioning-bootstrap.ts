@@ -1,6 +1,7 @@
 import type postgres from "postgres";
 import type { JsonObject } from "@helix/sdk-types";
-import { computeAuditHash } from "../audit/hash.js";
+import { insertAuditActivity } from "../audit/append.js";
+import { withTenantPostgresContext } from "./postgres-roles.js";
 
 export const tenantBootstrapSeedStepName = "tenant_bootstrap_seeded";
 
@@ -35,7 +36,9 @@ export class PostgresTenantBootstrapSeedStore implements TenantBootstrapSeedStor
     readonly orgId: string;
     readonly ownerEmail: string;
   }): Promise<TenantBootstrapSeedRecord> {
-    return this.sql.begin((tx) => seedTenantBootstrap(tx, input));
+    return withTenantPostgresContext(this.sql, { orgId: input.orgId }, (tx) =>
+      seedTenantBootstrap(tx, input),
+    );
   }
 }
 
@@ -131,51 +134,15 @@ async function ensureBootstrapActivity(
     return false;
   }
 
-  const previousRows = await sql<{ readonly this_hash: string }[]>`
-    select this_hash from activity
-    where org_id = ${input.orgId}
-    order by created_at desc, id desc
-    limit 1
-    for update
-  `;
-  const prevHash = previousRows[0]?.this_hash ?? null;
-  const createdAt = new Date();
-  const payload = bootstrapActivityPayload();
-  const { thisHash } = computeAuditHash(
-    {
-      actorId: input.ownerActorId,
-      verb: "tenant.bootstrap.seeded",
-      objectType: "tenant",
-      objectId: input.orgId,
-      metadata: payload,
-      createdAt: createdAt.toISOString(),
-    },
-    prevHash,
-  );
-  await sql`
-    insert into activity (
-      org_id,
-      actor_id,
-      verb,
-      object_type,
-      object_id,
-      payload,
-      prev_hash,
-      this_hash,
-      created_at
-    )
-    values (
-      ${input.orgId},
-      ${input.ownerActorId},
-      'tenant.bootstrap.seeded',
-      'tenant',
-      ${input.orgId},
-      ${sql.json(payload)},
-      ${prevHash},
-      ${thisHash},
-      ${createdAt}
-    )
-  `;
+  await insertAuditActivity(sql, {
+    orgId: input.orgId,
+    actorId: input.ownerActorId,
+    verb: "tenant.bootstrap.seeded",
+    objectType: "tenant",
+    objectId: input.orgId,
+    traceId: null,
+    metadata: bootstrapActivityPayload(),
+  });
   return true;
 }
 

@@ -176,7 +176,9 @@ jobs:
           MAIL_CLAMAV_PORT: "28460"
         run: |
           pnpm --filter @helix/app db:migrate
-          pnpm --filter @helix/app db:seed:demo -- --accounts-only --size small
+          DATABASE_URL=postgres://helix_app:helix_app_local@127.0.0.1:28432/helix \
+            HELIX_MIGRATION_DATABASE_URL=postgres://helix:helix_dev_password@127.0.0.1:28432/helix \
+            pnpm --filter @helix/app db:seed:demo -- --accounts-only --size small
           pnpm --filter @helix/app db:seed:oauth
 
       - name: Prepare S3 contract bucket

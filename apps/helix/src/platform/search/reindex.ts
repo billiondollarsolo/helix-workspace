@@ -291,74 +291,93 @@ interface PostgresSourceOptions<Record> {
   readonly load: (id: string, orgId?: string) => Promise<Record | readonly Record[] | null>;
   readonly map: (record: Record) => IndexDocument;
 }
+/**
+ * Every collection walks `collectPage`. Without an organization it pages ids
+ * across tenants through the migration-owned id function and loads each org's
+ * records in that org's tenant context, so the RLS-bound runtime role sees the
+ * same rows a privileged session would; with one, it reads within the caller's
+ * tenant context.
+ */
 function postgresSource<Record>(options: PostgresSourceOptions<Record>): SearchReindexSource {
-  return {
-    type: options.type,
-    collect: async ({ orgId }) => {
+  const collectPage: NonNullable<SearchReindexSource["collectPage"]> = async ({
+    orgId,
+    batchSize,
+    cursor,
+  }) => {
+    if (orgId === undefined) {
+      const rows = await collectDurableIdPage(options.sql, options.type, batchSize, cursor);
       const documents: IndexDocument[] = [];
-      for await (const batch of collectPostgresDocumentBatches({ ...options, orgId })) {
-        documents.push(...batch);
+      const rowsByOrg = new Map<string, (typeof rows)[number][]>();
+      for (const row of rows) {
+        const orgRows = rowsByOrg.get(row.orgId) ?? [];
+        orgRows.push(row);
+        rowsByOrg.set(row.orgId, orgRows);
       }
-      return documents;
-    },
-    collectBatches: ({ orgId, batchSize }) =>
-      collectPostgresDocumentBatches({
-        ...options,
-        orgId,
-        pageSize: batchSize,
-      }),
-    collectPage: async ({ orgId, batchSize, cursor }) => {
-      if (orgId === undefined) {
-        const rows = await collectDurableIdPage(options.sql, options.type, batchSize, cursor);
-        const documents: IndexDocument[] = [];
-        const rowsByOrg = new Map<string, (typeof rows)[number][]>();
-        for (const row of rows) {
-          const orgRows = rowsByOrg.get(row.orgId) ?? [];
-          orgRows.push(row);
-          rowsByOrg.set(row.orgId, orgRows);
-        }
-        for (const [rowOrgId, orgRows] of rowsByOrg) {
-          await withTenantIoSagaPostgresContext(
-            options.sql,
-            { orgId: rowOrgId, serviceContext: true },
-            async () => {
-              documents.push(
-                ...(await collectDocuments(
-                  orgRows.map((row) => row.id),
-                  (id) => options.load(id, rowOrgId),
-                  options.map,
-                )),
-              );
-            },
-          );
-        }
-        const last = rows.at(-1);
-        return {
-          documents,
-          done: rows.length < batchSize,
-          ...(last === undefined ? {} : { cursor: { id: last.id, updatedAt: last.cursorAt } }),
-        };
+      for (const [rowOrgId, orgRows] of rowsByOrg) {
+        await withTenantIoSagaPostgresContext(
+          options.sql,
+          { orgId: rowOrgId, serviceContext: true },
+          async () => {
+            documents.push(
+              ...(await collectDocuments(
+                orgRows.map((row) => row.id),
+                (id) => options.load(id, rowOrgId),
+                options.map,
+              )),
+            );
+          },
+        );
       }
-      const rows = await collectIdPage({
-        sql: options.sql,
-        tableName: options.tableName,
-        predicate: options.predicate,
-        orgId,
-        limit: batchSize,
-        cursor,
-      });
-      const documents = await collectDocuments(
-        rows.map((row) => row.id),
-        (id) => options.load(id, orgId),
-        options.map,
-      );
       const last = rows.at(-1);
       return {
         documents,
         done: rows.length < batchSize,
         ...(last === undefined ? {} : { cursor: { id: last.id, updatedAt: last.cursorAt } }),
       };
+    }
+    const rows = await collectIdPage({
+      sql: options.sql,
+      tableName: options.tableName,
+      predicate: options.predicate,
+      orgId,
+      limit: batchSize,
+      cursor,
+    });
+    const documents = await collectDocuments(
+      rows.map((row) => row.id),
+      (id) => options.load(id, orgId),
+      options.map,
+    );
+    const last = rows.at(-1);
+    return {
+      documents,
+      done: rows.length < batchSize,
+      ...(last === undefined ? {} : { cursor: { id: last.id, updatedAt: last.cursorAt } }),
+    };
+  };
+  async function* collectBatches(input: {
+    readonly orgId?: string | undefined;
+    readonly batchSize: number;
+  }): AsyncIterable<readonly IndexDocument[]> {
+    let cursor: SearchReindexCursor | undefined;
+    for (;;) {
+      const page = await collectPage({ ...input, cursor });
+      if (page.documents.length > 0) yield page.documents;
+      if (page.done || page.cursor === undefined) return;
+      cursor = page.cursor;
+    }
+  }
+  return {
+    type: options.type,
+    collect: async ({ orgId }) => {
+      const documents: IndexDocument[] = [];
+      for await (const batch of collectBatches({ orgId, batchSize: options.pageSize })) {
+        documents.push(...batch);
+      }
+      return documents;
     },
+    collectBatches,
+    collectPage,
   };
 }
 // Keyset cursors must keep PostgreSQL's microsecond precision: a JS Date drops it,
@@ -391,41 +410,6 @@ async function collectDurableIdPage(
     )
   `;
   return rows.map((row) => ({ id: row.id, orgId: row.org_id, cursorAt: row.cursor_at }));
-}
-async function* collectPostgresDocumentBatches<Record>(
-  options: PostgresSourceOptions<Record> & {
-    readonly orgId?: string | undefined;
-  },
-): AsyncIterable<readonly IndexDocument[]> {
-  let cursor: SearchReindexCursor | undefined;
-  for (;;) {
-    const rows = await collectIdPage({
-      sql: options.sql,
-      tableName: options.tableName,
-      predicate: options.predicate,
-      orgId: options.orgId,
-      limit: options.pageSize,
-      cursor,
-    });
-    if (rows.length === 0) {
-      return;
-    }
-    const ids = rows.map((row) => row.id);
-    const documents = await collectDocuments(
-      ids,
-      (id) => options.load(id, options.orgId),
-      options.map,
-    );
-    if (documents.length > 0) {
-      yield documents;
-    }
-    if (ids.length < options.pageSize) {
-      return;
-    }
-    const last = rows.at(-1);
-    if (last === undefined) return;
-    cursor = { id: last.id, updatedAt: last.cursorAt };
-  }
 }
 async function collectDocuments<Record>(
   ids: readonly string[],

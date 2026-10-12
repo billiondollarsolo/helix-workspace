@@ -31,6 +31,7 @@ test("re-verifies an expired admin session once and returns to the requested pag
             actorId: "00000000-0000-4000-8000-000000000111",
             email: "admin@example.test",
             name: "Avery Park",
+            scopes: ["*"],
           },
         },
       });

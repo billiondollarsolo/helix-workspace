@@ -9,6 +9,7 @@
  *
  * Evidence companion: `docs/architecture/mvp-tool-channel-inventory.md`.
  */
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { Actor, ToolDefinition, ToolSideEffect } from "@helix/sdk-types";
 import { createChatToolDefinitions } from "../chat/tools.js";
@@ -199,5 +200,21 @@ describe("MVP tool surface matrix (E3.6 / E4.6 / E5.6 / E9.1)", () => {
       expect(tool.permission).toBe(anchor.permission);
       expect(evaluateToolPolicyFirewall(agentPolicyInput(tool)).outcome).toBe("queue-confirmation");
     }
+  });
+
+  it("keeps the evidence inventory in sync with the factory definitions", () => {
+    const inventory = readFileSync(
+      new URL("../../../../../docs/architecture/mvp-tool-channel-inventory.md", import.meta.url),
+      "utf8",
+    );
+    const documented = new Map(
+      [...inventory.matchAll(/^\| `([^`]+)` +\| `([^`]+)` +\| ([a-z_]+) +\|/gmu)].map(
+        (match) => [match[1], `${match[2] ?? ""} ${match[3] ?? ""}`] as const,
+      ),
+    );
+    const drift = tools
+      .filter((tool) => documented.get(tool.id) !== `${tool.permission} ${tool.sideEffects}`)
+      .map((tool) => `${tool.id}: ${tool.permission} ${tool.sideEffects}`);
+    expect(drift).toEqual([]);
   });
 });

@@ -1,13 +1,14 @@
-import { LogOut as SignOutIcon, X as XIcon } from "lucide-react";
+import { LogOut as SignOutIcon, Shield as ShieldIcon, X as XIcon } from "lucide-react";
 /* ProfileMenu — the account card behind the top-bar avatar: who is signed in,
-   a way to manage the account, and sign out. Appearance lives in Quick
-   settings. */
+   a way to manage the account, the Admin console for admins, and sign out.
+   Appearance lives in Quick settings. */
 
 import type { SettingsSectionId } from "@/components/shell/overlay-context";
 import { Avatar } from "@/components/ui/avatar";
+import { hasAdminConsoleAccess } from "@/features/admin/admin-console-data";
 import { sessionUserQueryOptions, signOut } from "@/lib/auth";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRouter } from "@tanstack/react-router";
+import { Link, useRouter } from "@tanstack/react-router";
 import { Popover } from "radix-ui";
 import { useState } from "react";
 
@@ -24,6 +25,7 @@ export function ProfileMenu({ openSettings }: ProfileMenuProps) {
   const sessionQuery = useQuery(sessionUserQueryOptions());
   const displayName = sessionQuery.data?.name ?? sessionQuery.data?.email ?? "Signed in";
   const displayEmail = sessionQuery.data?.email ?? "";
+  const isAdmin = hasAdminConsoleAccess(sessionQuery.data?.scopes ?? []);
 
   const handleSignOut = async (): Promise<void> => {
     if (signingOut) {
@@ -72,9 +74,21 @@ export function ProfileMenu({ openSettings }: ProfileMenuProps) {
           >
             Manage your account
           </button>
+          {isAdmin ? (
+            <Link
+              to="/admin"
+              className="account-card-row"
+              onClick={() => {
+                setOpen(false);
+              }}
+            >
+              <ShieldIcon size={16} aria-hidden="true" />
+              Admin console
+            </Link>
+          ) : null}
           <button
             type="button"
-            className="account-card-signout"
+            className="account-card-row"
             disabled={signingOut}
             onClick={() => {
               void handleSignOut();

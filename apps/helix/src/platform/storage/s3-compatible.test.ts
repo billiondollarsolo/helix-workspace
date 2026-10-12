@@ -669,6 +669,10 @@ describe("S3-compatible storage", () => {
     expect(parsed.searchParams.get("partNumber")).toBe("2");
     expect(parsed.searchParams.get("uploadId")).toBe("up-1");
     expect(parsed.searchParams.get("X-Amz-Signature")).toBeTruthy();
+    // A presign-time checksum covers an empty body and makes S3 reject the real part.
+    expect(
+      [...parsed.searchParams.keys()].filter((name) => /^x-amz-(sdk-)?checksum/iu.test(name)),
+    ).toEqual([]);
   });
 
   it("completeMultipartUpload POSTs CompleteMultipartUpload XML", async () => {

@@ -8,9 +8,10 @@
 
 import { AppStatusPanel } from "@/features/admin/console/app-settings";
 import { formatDuration } from "@/features/admin/console/format";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
+import { useServerSeededDraft } from "@/lib/use-server-seeded-draft";
 import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
 import { AdminField, AdminInput } from "@/features/admin/console/controls";
 import {
@@ -85,12 +86,18 @@ export function ChatAdminSection() {
     retentionFailure === null ? null : describeChatAdminUnavailable(retentionFailure.error);
   const controlsDisabled = unavailableReason !== null || retentionQuery.isPending;
 
-  const [retentionForm, setRetentionForm] = useState<ChatRetentionFormInput>({
-    retentionDays: "2555",
-    editWindowMinutes: "1440",
-    deleteWindowMinutes: "1440",
-    roomId: "",
-  });
+  /* Legal-hold toggles and other refetches must not wipe unsaved retention edits. */
+  const retentionDraft = useServerSeededDraft(policy, (loaded): ChatRetentionFormInput =>
+    loaded === undefined
+      ? {
+          retentionDays: "2555",
+          editWindowMinutes: "1440",
+          deleteWindowMinutes: "1440",
+          roomId: "",
+        }
+      : retentionFormFromPolicy(loaded),
+  );
+  const { draft: retentionForm, setDraft: setRetentionForm } = retentionDraft;
   const [formError, setFormError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [exportForm, setExportForm] = useState<ChatExportFormInput>({
@@ -104,12 +111,6 @@ export function ChatAdminSection() {
   const [confirmRetention, setConfirmRetention] = useState(false);
   const [confirmHold, setConfirmHold] = useState<"enable" | "disable" | null>(null);
   const [confirmExport, setConfirmExport] = useState(false);
-
-  useEffect(() => {
-    if (policy !== undefined) {
-      setRetentionForm(retentionFormFromPolicy(policy));
-    }
-  }, [policy]);
 
   const retentionMutation = useMutation({
     mutationFn: (input: Parameters<typeof setChatRetentionPolicy>[0]) =>
@@ -449,7 +450,10 @@ export function ChatAdminSection() {
             setConfirmRetention(false);
             return;
           }
-          retentionMutation.mutate(pendingRetentionInput);
+          const submitted = retentionForm;
+          retentionMutation.mutate(pendingRetentionInput, {
+            onSuccess: () => retentionDraft.markSaved(submitted),
+          });
         }}
       >
         Keep messages for {formatDuration(Number(retentionForm.retentionDays) * 86_400)}, editable

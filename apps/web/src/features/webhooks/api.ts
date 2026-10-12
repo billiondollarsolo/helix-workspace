@@ -7,6 +7,7 @@ import type {
   WebhookDelivery,
   WebhookDeliveryStatus,
 } from "./types";
+import { randomId } from "@/lib/random-id";
 
 export type WebhookDeliveryListInput = DeliveryListInput & {
   readonly webhookId?: string;
@@ -263,7 +264,7 @@ async function inboundTestHeaders(
     return {
       ...jsonHeaders,
       "x-github-event": "ping",
-      "x-github-delivery": crypto.randomUUID(),
+      "x-github-delivery": randomId(),
       "x-hub-signature-256": `sha256=${await hmacSha256Hex(secret, body)}`,
     };
   }
@@ -278,7 +279,7 @@ async function inboundTestHeaders(
       ...jsonHeaders,
       "x-gitlab-token": secret,
       "x-gitlab-event": "Push Hook",
-      "x-gitlab-event-uuid": crypto.randomUUID(),
+      "x-gitlab-event-uuid": randomId(),
     };
   }
   if (source === "grafana") {

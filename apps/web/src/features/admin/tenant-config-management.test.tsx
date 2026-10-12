@@ -275,6 +275,51 @@ describe("TenantConfigManagement", () => {
     expect(patchBody()).not.toHaveProperty("branding");
   });
 
+  it("keeps unsaved branding edits and focus when the BYO storage card saves", async () => {
+    let current = tenantConfigPayload;
+    fetchMock.mockImplementation((_input, init) => {
+      if (init?.method === "PATCH") {
+        current = {
+          ...tenantConfigPayload,
+          tenantConfig: {
+            ...tenantConfigPayload.tenantConfig,
+            byo: {
+              storage: { ...tenantConfigPayload.tenantConfig.byo.storage, bucket: "acme-saved" },
+            },
+          },
+        };
+      }
+      return Promise.resolve(Response.json(current));
+    });
+
+    await render();
+
+    await waitFor(() => {
+      expect(inputByLabel("Display name").value).toBe("Acme");
+      expect(inputByLabel("Bucket").value).toBe("acme-helix-data");
+    });
+    const displayName = inputByLabel("Display name");
+    await act(async () => {
+      setInputValue(inputByLabel("Bucket"), "acme-saved");
+      setInputValue(displayName, "Acme (unsaved)");
+      displayName.focus();
+      buttonByLabel("Save BYO storage").click();
+      await Promise.resolve();
+    });
+
+    // The sibling save invalidates tenant config; its refetch carries the new bucket.
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.filter((call) => call[1]?.method === "PATCH")).toHaveLength(1);
+      expect(fetchMock.mock.calls.filter((call) => call[1]?.method !== "PATCH")).toHaveLength(2);
+    });
+    await waitFor(() => {
+      expect(inputByLabel("Bucket").value).toBe("acme-saved");
+    });
+    expect(inputByLabel("Display name")).toBe(displayName);
+    expect(displayName.value).toBe("Acme (unsaved)");
+    expect(document.activeElement).toBe(displayName);
+  });
+
   it("tests BYO storage and renders the returned health result", async () => {
     fetchMock.mockImplementation((_input, init) => {
       if (init?.method === "POST") {

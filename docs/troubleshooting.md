@@ -241,11 +241,10 @@ non-personal tier such as `HELIX_SECURITY_TIER=business`, use
 `REDIS_URL` when validating Redis-backed counters. If the response is not `429`,
 confirm the seeded actor type is `agent` or `service_account`; if metrics fail,
 check `/metrics` for `helix_agent_tool_limiter_denials_total`.
-With `--drive-docs-calendar-smoke`, the smoke run creates live workspace data:
+With `--drive-calendar-smoke`, the smoke run creates live workspace data:
 a Drive text object uploaded through a presigned URL, finalized, and read back
-through MCP, a Docs document with title update/comment/export/MCP read, and
-a Calendar event that goes through pending approval, list, RSVP, free/busy, and
-MCP read. Mint the token with `drive.write`, `docs.write`, `docs.comment`,
+through MCP, and a Calendar event that goes through pending approval, list, RSVP, free/busy, and
+MCP read. Mint the token with `drive.read`, `drive.write`, `calendar.read`,
 `calendar.write`, `calendar.write:respond`, and `calendar.read:freebusy`. If the
 Drive MCP byte read fails, check that the app was started with `RUSTFS_ENDPOINT`;
 if Calendar create returns `403`, reseed the local OAuth client.
@@ -253,18 +252,18 @@ If `drive.upload` does not return a presigned URL, treat it as intended
 fail-closed behavior. Start the API with `RUSTFS_ENDPOINT`, or configure
 tenant BYO storage plus `credentials_secret_handle` and its tenant-scoped secret reader before
 retrying.
-With `--drive-docs-calendar-search-smoke`, the same live data smoke also runs
-`POST /api/admin/search/reindex` and verifies each created Drive, Docs, and
+With `--drive-calendar-search-smoke`, the same live data smoke also runs
+`POST /api/admin/search/reindex` and verifies each created Drive and
 Calendar record through POST and read-safe GET `search.query`. If a unified
 search check times out, verify Meilisearch is configured and the admin reindex
 route returns `status: "completed"`. Automatic event indexing uses the
 configured event bus: local single-process stacks use the in-memory bus when
 `NATS_URL` is absent, while distributed release evidence should set `NATS_URL`.
-With `--drive-docs-calendar-event-search-smoke`, the same mutation/search path
+With `--drive-calendar-event-search-smoke`, the same mutation/search path
 skips `POST /api/admin/search/reindex` and relies on outbox delivery through
 the event bus into the search event indexer. If it times out, inspect
-`outbox.delivered_at` and `outbox.last_error` for `activity.drive.*`,
-`activity.docs.*`, and `activity.calendar.*` rows. On NATS-backed stacks, also
+`outbox.delivered_at` and `outbox.last_error` for `activity.drive.*`
+and `activity.calendar.*` rows. On NATS-backed stacks, also
 check NATS monitor `/connz?subs=1` for a `helix.>` subscription.
 With `--cli-checks`, the smoke run also shells through the built `helix` CLI
 against the same API, bearer token, and trace token. If it fails with a missing

@@ -53,43 +53,48 @@ export function createAssistantAIRouter(
     }
     return router;
   }
+  /** Providers the Assistant may offer: tagged for it (or untagged) and
+   *  allowed for standard data under the current security tier. */
+  function assistantProviders(): readonly LLMProviderCapability[] {
+    const active = current();
+    const configured = currentConfig?.providers ?? [];
+    return active.listProviders().filter((provider) => {
+      const definition = configured.find((entry) => entry.id === provider.id);
+      return (
+        provider.id !== "assistant.local" &&
+        (definition === undefined ||
+          !definition.tags?.length ||
+          definition.tags.includes("assistant")) &&
+        providerAllowedForClassification(provider, "standard", {
+          tier: options.securityTier,
+          localAiOnly: tierDefaults[options.securityTier].localAiOnly,
+          ...(currentConfig?.privacy?.classificationGating === undefined
+            ? {}
+            : { classificationEnabled: currentConfig.privacy.classificationGating }),
+        })
+      );
+    });
+  }
   return {
     chat: (request: ChatRequest, context?: Partial<AICallContext>) =>
       current().chat(request, context),
     chatStream: (request: ChatRequest, context?: Partial<AICallContext>) =>
       current().chatStream(request, context),
+    assistantProviders,
     async listModels() {
-      const active = current();
+      const providers = assistantProviders();
       const configured = currentConfig?.providers ?? [];
       const rows = await Promise.all(
-        active
-          .listProviders()
-          .filter((provider) => {
-            const definition = configured.find((entry) => entry.id === provider.id);
-            return (
-              provider.id !== "assistant.local" &&
-              (definition === undefined ||
-                !definition.tags?.length ||
-                definition.tags.includes("assistant")) &&
-              providerAllowedForClassification(provider, "standard", {
-                tier: options.securityTier,
-                localAiOnly: tierDefaults[options.securityTier].localAiOnly,
-                ...(currentConfig?.privacy?.classificationGating === undefined
-                  ? {}
-                  : { classificationEnabled: currentConfig.privacy.classificationGating }),
-              })
-            );
-          })
-          .map(async (provider) => {
-            const definition = configured.find((entry) => entry.id === provider.id);
-            const label = definition?.config?.displayName;
-            return (await provider.models()).map((model) => ({
-              id: `${provider.id}/${model.id}`,
-              label: `${typeof label === "string" ? label : provider.id} · ${model.displayName ?? model.id}`,
-              providerId: provider.id,
-              model: model.id,
-            }));
-          }),
+        providers.map(async (provider) => {
+          const definition = configured.find((entry) => entry.id === provider.id);
+          const label = definition?.config?.displayName;
+          return (await provider.models()).map((model) => ({
+            id: `${provider.id}/${model.id}`,
+            label: `${typeof label === "string" ? label : provider.id} · ${model.displayName ?? model.id}`,
+            providerId: provider.id,
+            model: model.id,
+          }));
+        }),
       );
       const models = rows.flat();
       const route = currentConfig?.routing?.rules?.find(

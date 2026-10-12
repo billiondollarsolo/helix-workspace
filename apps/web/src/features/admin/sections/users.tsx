@@ -1,6 +1,11 @@
 /* Admin › Directory › Users. */
 
-import { Copy as CopyIcon, Download as DownloadIcon, Users as UsersIcon } from "lucide-react";
+import {
+  Copy as CopyIcon,
+  Download as DownloadIcon,
+  UserPlus as UserPlusIcon,
+  Users as UsersIcon,
+} from "lucide-react";
 import { useDebouncedCallback } from "@tanstack/react-pacer";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -37,6 +42,7 @@ import {
 } from "@/features/admin/console/primitives";
 import { RelativeTime, RowMenu } from "@/features/admin/console/widgets";
 import { UserActionDialog, UserActionMenuItems, type UserAction } from "./user-actions";
+import { UserInviteDialog } from "./user-invite-dialog";
 import { actorTypeLabel, UserDetailsSheet } from "./user-details-sheet";
 import { UserStatusChip } from "./user-suspension-dialog";
 
@@ -90,6 +96,7 @@ const ROLE_FILTERS = ["all", ...USER_ROLES] as const satisfies readonly RoleFilt
 const STATUS_FILTERS = [
   "all",
   "active",
+  "invited",
   "suspended",
   "removed",
 ] as const satisfies readonly StatusFilter[];
@@ -160,6 +167,7 @@ export function AdminUsers() {
   const statusFilter = resolveClosedSearchParam(search.status, STATUS_FILTERS, "all");
   const openUserId = search.user ?? null;
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  const [inviting, setInviting] = useState(false);
   const [pendingAction, setPendingAction] = useState<{
     readonly user: DirectoryUser;
     readonly action: UserAction;
@@ -252,15 +260,20 @@ export function AdminUsers() {
           )
         }
         actions={
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => downloadCsv(filtered)}
-            disabled={filtered.length === 0}
-          >
-            <DownloadIcon aria-hidden="true" /> Download
-          </Button>
+          <>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => downloadCsv(filtered)}
+              disabled={filtered.length === 0}
+            >
+              <DownloadIcon aria-hidden="true" /> Download
+            </Button>
+            <Button type="button" size="sm" onClick={() => setInviting(true)}>
+              <UserPlusIcon aria-hidden="true" /> Invite people
+            </Button>
+          </>
         }
       />
 
@@ -345,6 +358,7 @@ export function AdminUsers() {
           >
             <option value="all">All statuses</option>
             <option value="active">Active</option>
+            <option value="invited">Invited</option>
             <option value="suspended">Suspended</option>
             <option value="removed">Removed</option>
           </AdminSelect>
@@ -485,6 +499,7 @@ export function AdminUsers() {
           onClose={() => setPendingAction(null)}
         />
       )}
+      {inviting ? <UserInviteDialog onClose={() => setInviting(false)} /> : null}
     </>
   );
 }

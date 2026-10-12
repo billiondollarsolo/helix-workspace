@@ -19,7 +19,7 @@ ADD --checksum=sha256:${CERBOS_ARCHIVE_SHA256} \
 
 RUN tar -xzf /tmp/cerbos.tar.gz --strip-components=1 \
     && rm /tmp/cerbos.tar.gz \
-    && go get google.golang.org/grpc@v1.83.2 golang.org/x/net@v0.60.0 \
+    && go get google.golang.org/grpc@v1.83.2 golang.org/x/net@v0.60.0 github.com/go-git/go-git/v6@v6.0.0-alpha.5 \
     && go mod verify \
     && CGO_ENABLED=0 go build \
       -trimpath \
@@ -28,7 +28,9 @@ RUN tar -xzf /tmp/cerbos.tar.gz --strip-components=1 \
         -X github.com/cerbos/cerbos/internal/util.Commit=${CERBOS_COMMIT} \
         -X github.com/cerbos/cerbos/internal/util.BuildDate=${CERBOS_BUILD_DATE}" \
       -o /out/cerbos \
-      ./cmd/cerbos
+      ./cmd/cerbos \
+    && install -d -m 1777 /out/rootfs/tmp \
+    && install -d -o 10001 -g 10001 -m 0750 /out/rootfs/.cache
 
 FROM scratch AS runtime
 
@@ -43,6 +45,11 @@ ENV CERBOS_CONFIG=__default__
 
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=build /out/cerbos /cerbos
+COPY --from=build /out/rootfs/ /
+
+# Scratch has no account database; run as the same fixed unprivileged UID/GID
+# as the Helix runtime. HOME defaults to /, so the writable cache is /.cache.
+USER 10001:10001
 
 EXPOSE 3592 3593
 VOLUME ["/policies", "/tmp", "/.cache"]

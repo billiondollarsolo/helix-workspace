@@ -57,6 +57,7 @@ ${workspaceLines("account")}
   helix calendar event-respond [--event-id <id>] [--response <accepted|declined|tentative>] [--json [JSON]]
   helix calendar event-list [--calendar-id <id>] [--start <iso>] [--end <iso>] [--limit <number>] [--json [JSON]]
   helix calendar find-time [--attendee <email>] [--attendee-email <email>] [--attendee-actor-id <id>] [--duration-minutes <number>] [--step-minutes <number>] [--limit <number>] [--start <iso>] [--end <iso>] [--json [JSON]]
+${workspaceLines("calendar")}
   helix webhook outbound create [--name <name>] [--url <url>] [--secret <secret>] [--event-subject <subject>] [--header <name=value>] [--headers <json-object>] [--metadata <json-object>] [--enabled] [--disabled] [--json [JSON]]
   helix webhook outbound update [--id <id>] [--name <name>] [--url <url>] [--secret <secret>] [--event-subject <subject>] [--header <name=value>] [--headers <json-object>] [--metadata <json-object>] [--enabled] [--disabled] [--json [JSON]]
   helix webhook outbound delete [--id <id>] [--json [JSON]]
@@ -78,6 +79,8 @@ ${workspaceLines("account")}
   helix admin agent-credentials revoke --credential-id <id> [--json [JSON]]
   helix admin users list [--query <text>] [--type <user|agent|service_account|system>] [--include-disabled] [--limit <number>] [--cursor <cursor>]
   helix admin users <suspend|restore> --actor-id <id>
+  helix admin users invite --email <email> [--name <name>] [--admin]
+  helix admin users <resend-invite|revoke-invite> --actor-id <id>
   helix admin audit list [--actor-id <id>] [--object-id <id>] [--object-type <type>] [--verb <verb>] [--limit <number>] [--cursor <cursor>]
   helix backup create
   helix restore --from <backup-id> --target-db <isolated-db> --target-bucket <isolated-bucket> --idempotency-key <key> [--encrypted]

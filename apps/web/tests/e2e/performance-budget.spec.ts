@@ -31,13 +31,17 @@ test("stays responsive on a throttled low-end browser and network", async ({ con
 
   const coldStart = performance.now();
   await page.goto("/login", { waitUntil: "networkidle" });
-  await expect(page.getByRole("heading", { name: "Sign in to Helix" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sign in", exact: true })).toBeVisible();
   expect(performance.now() - coldStart).toBeLessThan(coldStartBudgetMs);
 
   await page.getByLabel("Email", { exact: true }).fill("admin@helix.local");
+  await page.getByRole("button", { name: "Next", exact: true }).click();
   await page.getByLabel("Password", { exact: true }).fill("wrong-password");
   const interaction = performance.now();
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByRole("alert")).toHaveText("Invalid email or password.");
+  // The UI maps every credential failure to one message that never confirms the account.
+  await expect(page.getByRole("alert")).toHaveText(
+    "Wrong email or password. Try again or reset your password.",
+  );
   expect(performance.now() - interaction).toBeLessThan(interactionBudgetMs);
 });

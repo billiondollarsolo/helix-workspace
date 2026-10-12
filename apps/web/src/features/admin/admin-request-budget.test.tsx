@@ -49,7 +49,9 @@ vi.mock("@/lib/auth", async () => {
  *     (src/components/shell/surface-frame.tsx — `unreadCountQueryOptions()`)
  *  2. GET /api/core-apps for the app rail
  *     (src/features/apps/use-enabled-apps.ts — `coreAppsShellQueryOptions()`)
- *  Neither is conditional, so a section never gets the whole 5 — it gets what
+ *  3. assistant.status behind the Helix AI entry points
+ *     (src/features/assistant/use-assistant-availability.ts)
+ *  None is conditional, so a section never gets the whole 5 — it gets what
  *  is left. */
 /* Re-exported from the shared module rather than restated, so this harness and
    the pacing that reads the same number can never disagree about it. Only
@@ -67,10 +69,11 @@ const SECTION_REQUEST_BUDGET = CLIENT_STARTUP_REQUEST_BUDGET - SHELL_BASELINE_RE
  *  `/v1/api/core-apps` is listed even though it does not fire here: this harness
  *  mounts `AdminConsole`, and `SurfaceFrame` renders the topbar but not the app
  *  rail that owns that query. In the running app the rail is always mounted,
- *  which is why the baseline is 2 and not 1. */
+ *  which is why the baseline counts it. */
 const SHELL_REQUEST_PREFIXES = [
   "/v1/api/core-apps",
   "/v1/api/tools/notifications.unread-count",
+  "/v1/api/tools/assistant.status",
 ] as const;
 
 /** Sections that cannot be measured through this harness.

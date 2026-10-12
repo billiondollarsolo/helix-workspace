@@ -10,6 +10,18 @@ const base = {
 };
 
 describe("mailConfig", () => {
+  it("sends plaintext only to local development sinks, never in production", () => {
+    expect(mailConfig(loadEnv({ ...base, MAIL_SMTP_HOST: "mailpit" })).outbound).toMatchObject({
+      requireTls: false,
+    });
+    const production = {
+      ...loadEnv({ ...base, MAIL_SMTP_HOST: "mailpit" }),
+      NODE_ENV: "production",
+    };
+    expect(mailConfig(production as never).outbound).not.toHaveProperty("requireTls");
+    expect(mailConfig(loadEnv(base)).outbound).not.toHaveProperty("requireTls");
+  });
+
   it("derives the from-domain and outbound host from validated env", () => {
     const cfg = mailConfig(loadEnv(base));
     expect(cfg.fromDomain).toBe("helix.test");

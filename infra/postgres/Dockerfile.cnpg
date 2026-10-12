@@ -35,7 +35,24 @@ RUN tar -xzf /tmp/pgvector.tar.gz --strip-components=1 \
     && make OPTFLAGS="" with_llvm=no \
     && make OPTFLAGS="" with_llvm=no install DESTDIR=/out
 
-FROM ${CNPG_POSTGRES_BASE} AS runtime
+FROM ${CNPG_POSTGRES_BASE} AS operand
+
+USER root
+COPY --from=build /out/usr/lib/postgresql/18/lib/ /usr/lib/postgresql/18/lib/
+COPY --from=build /out/usr/share/postgresql/18/extension/ /usr/share/postgresql/18/extension/
+
+# The base image's ssl-cert package generates a snakeoil key pair that is never
+# used (CloudNativePG mounts its own server and client certificates). Deleting it
+# in a later layer would still ship it in the base layer, so the runtime stage
+# below copies the cleaned filesystem into a single layer instead.
+RUN rm -f /etc/ssl/private/ssl-cert-snakeoil.key /etc/ssl/certs/ssl-cert-snakeoil.pem
+
+FROM scratch AS runtime
+
+COPY --from=operand / /
+
+# Restates the base image's runtime config, which a scratch stage does not inherit.
+ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/lib/postgresql/18/bin
 
 LABEL org.opencontainers.image.title="helix-postgres-cnpg" \
       org.opencontainers.image.description="CloudNativePG PostgreSQL 18 operand with pgvector 0.8.5" \
@@ -44,7 +61,5 @@ LABEL org.opencontainers.image.title="helix-postgres-cnpg" \
       org.opencontainers.image.revision="159b79aaad5983fb7459c1e3df2897fbb2d11788" \
       org.opencontainers.image.version="0.8.5"
 
-COPY --from=build /out/usr/lib/postgresql/18/lib/ /usr/lib/postgresql/18/lib/
-COPY --from=build /out/usr/share/postgresql/18/extension/ /usr/share/postgresql/18/extension/
-
 USER 26
+CMD ["bash"]

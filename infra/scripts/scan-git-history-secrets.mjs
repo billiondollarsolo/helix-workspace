@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createPrivateKey, generateKeyPairSync } from "node:crypto";
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import process from "node:process";
 
 const PRIVATE_KEY =
@@ -10,6 +11,9 @@ const CREDENTIALS = [
   /\bghp_[0-9A-Za-z]{36}\b/u,
   /\bxox[baprs]-[0-9A-Za-z-]{20,}\b/u,
 ];
+// AWS's published SigV4 test vector key is not a credential; only that fixture may use it.
+const AWS_DOCUMENTATION_KEY = ["AKIA", "IOSFODNN7EXAMPLE"].join("");
+const AWS_DOCUMENTATION_KEY_PATH = "apps/helix/src/platform/drive/s3/sigv4.test.ts";
 
 if (process.argv.includes("--self-test")) selfTest();
 
@@ -18,12 +22,19 @@ if (!process.argv.includes("--self-test-only")) {
   const objects = reachableObjects();
   const blobs = batch(objects.map(({ oid }) => oid)).filter(({ type }) => type === "blob");
   const paths = new Map(objects.map(({ oid, path }) => [oid, path]));
+  const reviewedKeys = reviewedHistoricalPrivateKeys();
   const findings = batch(
     blobs.map(({ oid }) => oid),
     true,
-  ).flatMap(({ oid, body }) =>
-    secretKinds(body.toString("utf8")).map((kind) => ({ kind, oid, path: paths.get(oid) })),
-  );
+  )
+    .flatMap(({ oid, body }) =>
+      secretKinds(body.toString("utf8"), paths.get(oid)).map((kind) => ({
+        kind,
+        oid,
+        path: paths.get(oid),
+      })),
+    )
+    .filter(({ kind, oid }) => !(kind === "usable private key" && reviewedKeys.has(oid)));
 
   if (findings.length > 0) {
     for (const { kind, oid, path } of findings) {
@@ -91,7 +102,26 @@ function git(args) {
   });
 }
 
-function secretKinds(source) {
+// Private keys already reviewed in the gitleaks baseline are pinned to their exact blob:
+// the same path with different content, or a key at any other path, still fails.
+function reviewedHistoricalPrivateKeys() {
+  const oids = new Set();
+  for (const line of readFileSync(".gitleaksignore", "utf8").split("\n")) {
+    const match = /^([0-9a-f]{40}):([^:]+):private-key:[1-9][0-9]*$/u.exec(line.trim());
+    if (match === null) continue;
+    try {
+      oids.add(git(["rev-parse", "--verify", "--quiet", `${match[1]}:${match[2]}`]).trim());
+    } catch {
+      // A baseline entry for a commit that is not in this clone cannot excuse anything.
+    }
+  }
+  return oids;
+}
+
+function secretKinds(source, path) {
+  if (path === AWS_DOCUMENTATION_KEY_PATH) {
+    source = source.replaceAll(AWS_DOCUMENTATION_KEY, "AWS_DOCUMENTATION_KEY");
+  }
   const kinds = [];
   for (const match of source.matchAll(PRIVATE_KEY)) {
     try {
@@ -120,5 +150,13 @@ function selfTest() {
   assert.deepEqual(secretKinds(`token=${["ghp", "_", "a".repeat(36)].join("")}`), [
     "provider credential",
   ]);
+  const otherAwsKey = `AKIA${"A".repeat(16)}`;
+  assert.deepEqual(secretKinds(AWS_DOCUMENTATION_KEY, AWS_DOCUMENTATION_KEY_PATH), []);
+  assert.deepEqual(secretKinds(AWS_DOCUMENTATION_KEY, "other.ts"), ["provider credential"]);
+  assert.deepEqual(
+    secretKinds(`${AWS_DOCUMENTATION_KEY}\n${otherAwsKey}`, AWS_DOCUMENTATION_KEY_PATH),
+    ["provider credential"],
+  );
+  assert.deepEqual(secretKinds(privateKey, AWS_DOCUMENTATION_KEY_PATH), ["usable private key"]);
   process.stdout.write("Git history secret scanner self-test passed.\n");
 }

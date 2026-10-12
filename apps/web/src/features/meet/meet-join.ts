@@ -13,6 +13,7 @@ import {
 } from "./api";
 import type { JitsiInitialMedia } from "./jitsi-external-api";
 import type { MeetCallSession } from "./meet-shell";
+import { randomId } from "@/lib/random-id";
 
 /** What "Join now" on the pre-join screen enters. */
 export type MeetJoinTarget =
@@ -114,7 +115,7 @@ function createRecordingConsent(): MeetRecordingConsent {
     recordingNoticeAccepted: true,
     recordingNoticeVersion: MEET_RECORDING_NOTICE_VERSION,
     deviceId: meetDeviceId(),
-    joinGrantId: crypto.randomUUID(),
+    joinGrantId: randomId(),
   };
 }
 
@@ -123,10 +124,10 @@ function meetDeviceId(): string {
   try {
     const existing = localStorage.getItem(key);
     if (existing !== null) return existing;
-    const created = crypto.randomUUID();
+    const created = randomId();
     localStorage.setItem(key, created);
     return created;
   } catch {
-    return crypto.randomUUID();
+    return randomId();
   }
 }

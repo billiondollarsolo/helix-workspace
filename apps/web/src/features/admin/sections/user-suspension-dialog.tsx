@@ -24,6 +24,7 @@ import { StatusChip } from "@/features/admin/console/primitives";
 
 const STATUS_CHIP: Record<UserStatus, { readonly tone: string; readonly label: string }> = {
   active: { tone: "success", label: "Active" },
+  invited: { tone: "info", label: "Invited" },
   suspended: { tone: "warning", label: "Suspended" },
   removed: { tone: "danger", label: "Removed" },
 };

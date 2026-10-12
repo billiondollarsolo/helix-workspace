@@ -69,11 +69,7 @@ describe("mail server env config", () => {
           MAIL_SMTP_SECURE: "false",
         }),
       ),
-    ).toEqual({
-      host: "mailpit",
-      port: 1025,
-      secure: false,
-    });
+    ).toEqual({ host: "mailpit", port: 1025, secure: false, requireTls: false });
   });
 
   it("starts the in-process SMTP receiver only when explicitly enabled", () => {

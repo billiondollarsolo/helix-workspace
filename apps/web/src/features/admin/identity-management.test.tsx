@@ -88,6 +88,38 @@ describe("IdentityManagement", () => {
     });
   });
 
+  it("keeps spaces typed into claim selectors and trims them when saving", async () => {
+    fetchMock.mockImplementation((_input, init) =>
+      init?.method === "POST"
+        ? Promise.resolve(
+            Response.json({ idpConfig: oidc, localLoginRecovery: identity.localLoginRecovery }),
+          )
+        : Promise.resolve(Response.json(identity)),
+    );
+    await render();
+    await waitFor(() => expect(input("IdP display name").value).toBe(""));
+    const selector = () => input("Display name claim selector");
+    await act(() => {
+      for (const text of ["$['full", "$['full ", "$['full name'] "]) change(selector(), text);
+      return Promise.resolve();
+    });
+    expect(selector().value).toBe("$['full name'] ");
+    await act(() => {
+      change(input("IdP display name"), "Acme OIDC");
+      change(input("OIDC issuer URL"), "https://idp.example.com");
+      change(input("OIDC client ID"), "helix");
+      change(input("OIDC private-key secret handle"), "oidc-private-key");
+      button("Add IdP").click();
+      return Promise.resolve();
+    });
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(([, init]) => init?.method === "POST");
+      expect(JSON.parse(typeof call?.[1]?.body === "string" ? call[1].body : "")).toMatchObject({
+        attrMapping: { displayName: "$['full name']" },
+      });
+    });
+  });
+
   it("reports the production OIDC runtime as ready", async () => {
     fetchMock.mockImplementation((request) =>
       requestUrl(request).endsWith("/test-login")

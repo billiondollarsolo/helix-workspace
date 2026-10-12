@@ -18,6 +18,7 @@ import {
   type ChatRealtimeClient,
   type ChatRealtimeEvent,
 } from "./api";
+import { randomId } from "@/lib/random-id";
 
 type ChatConnectionState = "idle" | "connecting" | "open" | "reconnecting" | "closed";
 
@@ -330,10 +331,7 @@ export function useChatRealtime(options: UseChatRealtimeOptions): ChatRealtimeSt
       if (active === undefined || client === null || !client.isOpen()) {
         return false;
       }
-      const clientMessageId =
-        typeof crypto !== "undefined" && "randomUUID" in crypto
-          ? crypto.randomUUID()
-          : `c-${String(now())}-${Math.random().toString(36).slice(2)}`;
+      const clientMessageId = randomId();
       const pending: PendingChatMessage = {
         clientMessageId,
         roomId: active,

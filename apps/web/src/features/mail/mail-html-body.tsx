@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { randomId } from "@/lib/random-id";
 
 const MESSAGE_TYPE = "helix-mail-renderer";
 const MIN_HEIGHT = 120;
@@ -16,7 +17,7 @@ export function MailHtmlBody({ html, source, plainBody, remoteContentBlocked }: 
   const [view, setView] = useState<"html" | "plain" | "source">("html");
   const [height, setHeight] = useState(240);
   const [pendingLink, setPendingLink] = useState<string | null>(null);
-  const channel = useMemo(() => crypto.randomUUID(), []);
+  const channel = useMemo(() => randomId(), []);
   const documentHtml = useMemo(() => buildMailHtmlDocument(html, channel), [channel, html]);
   const plain = useMemo(() => plainBody ?? textFromMailHtml(html), [html, plainBody]);
 
@@ -115,7 +116,7 @@ export function MailHtmlBody({ html, source, plainBody, remoteContentBlocked }: 
 }
 
 export function buildMailHtmlDocument(html: string, channel: string): string {
-  const nonce = crypto.randomUUID();
+  const nonce = randomId();
   const css = `:root{color-scheme:light}body{margin:0;color:#202124;background:#fff;font:14px/1.6 system-ui,sans-serif;overflow-wrap:anywhere}img{display:none}table{max-width:100%;border-collapse:collapse}td,th{padding:.25rem;text-align:left}pre{white-space:pre-wrap}a{color:#1558d6;text-decoration:underline;cursor:pointer}summary{cursor:pointer;color:#5f6368;margin:.5rem 0}`;
   const script = `const channel=decodeURIComponent(document.currentScript.dataset.channel);const send=(kind,value)=>parent.postMessage({type:${JSON.stringify(MESSAGE_TYPE)},channel,kind,value},'*');for(const quote of document.querySelectorAll('blockquote,.gmail_quote')){if(quote.closest('details[data-helix-quote]'))continue;const details=document.createElement('details');details.dataset.helixQuote='';const summary=document.createElement('summary');summary.textContent='Show quoted text';quote.before(details);details.append(summary,quote)}const resize=()=>send('height',document.documentElement.scrollHeight);document.addEventListener('click',event=>{const link=event.target instanceof Element?event.target.closest('a[data-helix-href]'):null;if(!link)return;event.preventDefault();send('link',link.getAttribute('data-helix-href'))});document.addEventListener('toggle',resize,true);resize();`;
   const csp = `default-src 'none'; base-uri 'none'; connect-src 'none'; form-action 'none'; frame-src 'none'; img-src 'none'; media-src 'none'; object-src 'none'; style-src 'nonce-${nonce}'; style-src-attr 'unsafe-inline'; script-src 'nonce-${nonce}'`;

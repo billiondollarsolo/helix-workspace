@@ -1,3 +1,4 @@
+import type { Actor } from "@helix/sdk-types";
 import { type FastifyInstance } from "fastify";
 import type { SessionActorResolver } from "../api/actor.js";
 import { isRecord } from "../platform/util/json.js";
@@ -86,6 +87,7 @@ export function registerBetterAuthRoutes(
                 name: actor.displayName,
                 actorId: actor.id,
                 orgId: actor.orgId,
+                scopes: sessionScopes(actor),
               },
             });
           }
@@ -174,4 +176,18 @@ function jsonRecord(value: string | null): Record<string, unknown> | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * The permissions the signed-in actor holds org-wide: direct scopes plus
+ * org-scoped role grants, less org-scoped denials. The web shell reads these
+ * only to decide which entry points to show (the Admin console is offered to
+ * admins alone); every request is still authorized server-side.
+ */
+function sessionScopes(actor: Actor): readonly string[] {
+  const orgBindings = (actor.roleBindings ?? []).filter((binding) => binding.scope.type === "org");
+  const denied = new Set(orgBindings.flatMap((binding) => binding.deny));
+  return [
+    ...new Set([...(actor.scopes ?? []), ...orgBindings.flatMap((binding) => binding.allow)]),
+  ].filter((scope) => !denied.has(scope));
 }

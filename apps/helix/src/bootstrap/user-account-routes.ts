@@ -1,4 +1,8 @@
 import { registerAccountSecurityRoutes } from "../platform/auth/account-security-routes.js";
+import {
+  PostgresAdminUserInviteStore,
+  registerAdminUserInviteRoutes,
+} from "../platform/auth/admin-user-invites.js";
 import { registerAdminUsersRoutes } from "../platform/auth/admin-users.js";
 import { PostgresActorOffboardingStore } from "../platform/auth/actor-offboarding.js";
 import { PostgresProfileStore, registerProfileRoutes } from "../platform/auth/profile.js";
@@ -15,11 +19,25 @@ export async function registerUserAccountRoutes(context: Awaited<ReturnType<type
     sessionActorResolver,
     auditStore,
     betterAuthRuntime,
+    bootEnv,
+    orgStore,
+    outboxStore,
   } = context;
   await registerAdminUsersRoutes(app, {
     store: adminUsersStore,
     actorFromRequest: actorFromAuthenticatedRequest,
     offboarding: new PostgresActorOffboardingStore(sql),
+  });
+  await registerAdminUserInviteRoutes(app, {
+    store: new PostgresAdminUserInviteStore(sql),
+    orgs: orgStore,
+    outbox: outboxStore,
+    actorFromRequest: actorFromAuthenticatedRequest,
+    publicBaseUrl:
+      bootEnv.HELIX_PUBLIC_URL ??
+      bootEnv.BETTER_AUTH_URL ??
+      bootEnv.PUBLIC_BASE_URL ??
+      "http://localhost:3000",
   });
   registerProfileRoutes(app, {
     store: new PostgresProfileStore(sql),

@@ -30,6 +30,15 @@ The API exposes `POST /v1/api/admin/users/:actorId/suspend` and
 each person's last sign-in to this workspace (`lastSignInAt` in
 `GET /v1/api/admin/users`).
 
+Invitations have matching routes and CLI commands:
+
+- `POST /v1/api/admin/users/invite` —
+  `helix admin users invite --email <email> [--name <name>] [--admin]`
+- `POST /v1/api/admin/users/:actorId/invite/resend` and `/invite/revoke` —
+  `helix admin users <resend-invite|revoke-invite> --actor-id <id>`
+
+Only a full administrator (`admin.*`) can invite another administrator.
+
 ## Preview and hand over an account
 
 1. In **Admin → Users**, open the user or agent's details and select **Offboard

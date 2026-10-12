@@ -7,6 +7,7 @@
 
 import { queryOptions } from "@tanstack/react-query";
 import {
+  fetchAssistantStatus,
   listAssistantConversations,
   listAssistantModels,
   listAssistantTools,
@@ -66,6 +67,16 @@ export function assistantToolsQueryOptions() {
     queryKey: [ASSISTANT_QUERY_ROOT, "tools"],
     queryFn: listAssistantTools,
     staleTime: 30_000,
+    throwOnError: false,
+  });
+}
+
+/** `assistant.status`. The API re-probes providers at most once a minute. */
+export function assistantStatusQueryOptions() {
+  return queryOptions({
+    queryKey: [ASSISTANT_QUERY_ROOT, "status"],
+    queryFn: fetchAssistantStatus,
+    staleTime: 60_000,
     throwOnError: false,
   });
 }

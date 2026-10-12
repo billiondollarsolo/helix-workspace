@@ -6,7 +6,12 @@ import {
   registerAssistantTools,
   type AssistantCitationAccess,
 } from "../platform/assistant/index.js";
+import {
+  createAssistantAvailabilityCheck,
+  registerAssistantStatusTool,
+} from "../platform/assistant/availability.js";
 import { ASSISTANT_RETRIEVAL_FLAG } from "../platform/assistant/context-policy.js";
+import { withAssistantProviderErrors } from "../platform/assistant/provider-errors.js";
 import { PostgresAssistantFeedbackStore } from "../platform/assistant/message-annotations.js";
 import type { TenantConfigFeatureFlagProvider } from "../platform/feature-flags/provider.js";
 import { resolveSearchSourceDocument } from "../platform/search/source-documents.js";
@@ -84,7 +89,7 @@ export function installAssistantRuntime(
 
   const orchestrator = new AssistantOrchestrator({
     store: assistantStore,
-    ai: assistantAi,
+    ai: withAssistantProviderErrors(assistantAi),
     listModels: () => assistantAi.listModels(),
     getMaxToolRounds: () => ai()?.assistant?.maxToolRounds ?? 128,
     webSearchEnabled: (classification) =>
@@ -126,6 +131,11 @@ export function installAssistantRuntime(
 
   if (coreApps.shouldRegister("assistant")) {
     registerAssistantTools(tools, { store: assistantStore, orchestrator, feedback });
+    registerAssistantStatusTool(tools, {
+      check: createAssistantAvailabilityCheck({
+        providers: () => assistantAi.assistantProviders(),
+      }),
+    });
   }
   return orchestrator;
 }

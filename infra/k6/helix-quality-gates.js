@@ -340,6 +340,9 @@ export function mcp() {
     "MCP tool catalog contains expected marker": (res) =>
       !__ENV.MCP_EXPECT || responseContains(res, __ENV.MCP_EXPECT),
   });
+  // MCP clients list tools once per session, not in a tight loop; an unpaced loop
+  // over the ~1.7 MB catalog monopolizes the API event loop like the metrics scrape.
+  sleep(1);
 }
 
 export function otelHealth() {

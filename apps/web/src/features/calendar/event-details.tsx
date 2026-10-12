@@ -132,6 +132,7 @@ export function EventDetails({
         {canEdit ? (
           <>
             <Button
+              type="button"
               variant="ghost"
               size="icon-sm"
               aria-label="Edit event"
@@ -141,6 +142,7 @@ export function EventDetails({
               <Pencil aria-hidden="true" />
             </Button>
             <Button
+              type="button"
               variant="ghost"
               size="icon-sm"
               aria-label="Delete event"
@@ -153,6 +155,7 @@ export function EventDetails({
         ) : null}
         {onEmailGuests !== undefined && guestEmails.length > 0 ? (
           <Button
+            type="button"
             variant="ghost"
             size="icon-sm"
             aria-label="Email guests"
@@ -163,6 +166,7 @@ export function EventDetails({
           </Button>
         ) : null}
         <Button
+          type="button"
           variant="ghost"
           size="icon-sm"
           aria-label="Close"

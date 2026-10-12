@@ -156,6 +156,81 @@ describe("DriveAdminSection", () => {
     });
   });
 
+  it("keeps unsaved lifecycle edits and focus when a refetch brings newer server values", async () => {
+    let policy = { trashRetentionDays: 30, orphanGraceHours: 24 };
+    fetchMock.mockImplementation((input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const body = url.includes("drive.quota.usage")
+        ? {
+            orgId: "11111111-1111-4111-8111-111111111111",
+            usedBytes: 1024,
+            limitBytes: 2048,
+            unlimited: false,
+            percentUsed: 50,
+          }
+        : {
+            orgId: "11111111-1111-4111-8111-111111111111",
+            ...policy,
+            updatedByActorId: null,
+            updatedAt: null,
+            configured: true,
+          };
+      return Promise.resolve(Response.json(body));
+    });
+
+    await act(() => {
+      root.render(
+        createElement(
+          QueryClientProvider,
+          { client: queryClient },
+          createElement(DriveAdminSection),
+        ),
+      );
+      return Promise.resolve();
+    });
+
+    const field = (label: string) =>
+      [...container.querySelectorAll<HTMLLabelElement>("label")]
+        .find((candidate) => candidate.textContent.includes(label))
+        ?.querySelector("input") ?? null;
+    await waitFor(() => {
+      expect(field("Trash retention")?.disabled).toBe(false);
+      expect(field("Trash retention")?.value).toBe("30");
+    });
+    const retention = field("Trash retention");
+    if (retention === null) throw new Error("trash retention input missing");
+
+    retention.focus();
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(
+        retention,
+        "90",
+      );
+      retention.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    const summaryBefore = container.textContent;
+    // Someone else saves a different policy; a quota event refetches this section.
+    policy = { trashRetentionDays: 45, orphanGraceHours: 6 };
+    await act(async () => {
+      await queryClient.refetchQueries({ queryKey: ["admin", "drive"] });
+    });
+    expect(
+      queryClient.getQueryData<{ trashRetentionDays: number }>(["admin", "drive", "lifecycle"])
+        ?.trashRetentionDays,
+    ).toBe(45);
+    // The refreshed policy summary has rendered, so the form saw the new server value.
+    await waitFor(() => {
+      expect(container.textContent).not.toBe(summaryBefore);
+    });
+
+    expect(field("Trash retention")).toBe(retention);
+    expect(retention.value).toBe("90");
+    expect(document.activeElement).toBe(retention);
+    expect(field("Orphan grace")?.value).toBe("24");
+  });
+
   it("surfaces missing-scope unavailability without silent controls", async () => {
     fetchMock.mockResolvedValue(
       new Response(JSON.stringify({ error: "forbidden" }), {

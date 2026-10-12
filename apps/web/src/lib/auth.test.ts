@@ -182,6 +182,28 @@ describe("web auth helpers", () => {
     },
   );
 
+  it("reads the actor's scopes from the session, keeping only strings", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      Response.json({
+        user: {
+          id: "user-1",
+          name: "A",
+          email: "a@example.test",
+          actorId: "actor-1",
+          scopes: ["mail.read", 7, "admin.users.read"],
+        },
+      }),
+    );
+    await expect(getSessionUser(fetchMock)).resolves.toMatchObject({
+      actorId: "actor-1",
+      scopes: ["mail.read", "admin.users.read"],
+    });
+    fetchMock.mockResolvedValue(
+      Response.json({ user: { id: "user-1", name: "A", email: "a@example.test" } }),
+    );
+    expect(await getSessionUser(fetchMock)).not.toHaveProperty("scopes");
+  });
+
   it("treats a real unauthorized session as signed out", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 401 }));
     await expect(getSessionUser(fetchMock)).resolves.toBeNull();

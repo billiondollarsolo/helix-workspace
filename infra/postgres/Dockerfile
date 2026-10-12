@@ -58,3 +58,10 @@ LABEL org.opencontainers.image.title="helix-postgres-pgvector" \
 
 COPY --from=build /out/ /
 COPY --from=gosu-build /out/gosu /usr/local/bin/gosu
+
+# Run as the official image's unprivileged postgres account (UID/GID 70). The
+# upstream entrypoint initializes and starts the cluster without root when the
+# data and socket directories are writable; both are owned by postgres in the
+# base image. An explicit root start (the production TLS bootstrap) still drops
+# to this account through gosu before the server runs.
+USER 70:70

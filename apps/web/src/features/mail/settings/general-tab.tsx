@@ -4,6 +4,7 @@
 
 import type { AccountPreferences } from "@helix/contracts";
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { InlineError } from "@/components/ui/inline-error";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -67,6 +68,9 @@ function PreferenceRows() {
   const retry = useRetry(accountPreferencesQueryOptions().queryKey);
   const save = useSetAccountPreferences();
   const { openSettings } = useShellOverlays();
+  /* Shown at once: the cache's optimistic update lands a tick after the click,
+     so a controlled radio would snap back to the old value in between. */
+  const [pending, setPending] = useState<Partial<MailPreferences>>({});
 
   if (preferences.data === undefined) {
     return preferences.error === null ? (
@@ -81,11 +85,22 @@ function PreferenceRows() {
     );
   }
 
-  const { language, timeZone, mail } = preferences.data;
-  const setMail = (patch: Partial<MailPreferences>) =>
+  const { language, timeZone } = preferences.data;
+  const mail = { ...preferences.data.mail, ...pending };
+  const setMail = (patch: Partial<MailPreferences>) => {
+    setPending((current) => ({ ...current, ...patch }));
     save.mutate(
       { mail: patch },
       {
+        // Clear only what this save set; a newer click on the same row stays.
+        onSettled: () =>
+          setPending((current) =>
+            Object.fromEntries(
+              Object.entries(current).filter(
+                ([key, value]) => patch[key as keyof MailPreferences] !== value,
+              ),
+            ),
+          ),
         onError: (error) =>
           notify({
             tone: "error",
@@ -94,6 +109,7 @@ function PreferenceRows() {
           }),
       },
     );
+  };
   const browserLanguage = typeof navigator === "undefined" ? "en" : navigator.language;
   const deviceZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 

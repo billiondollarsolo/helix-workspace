@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { AssistantSurface } from "@/features/assistant/assistant-surface";
+import { AssistantRoute } from "@/features/assistant/assistant-route";
 import { optionalStringSearchParam, optionalUuidSearchParam } from "@/lib/search-params";
 
 export interface ShellAssistantRouteSearch {
@@ -10,7 +10,7 @@ export interface ShellAssistantRouteSearch {
 }
 
 export const Route = createFileRoute("/_shell/assistant/")({
-  component: AssistantSurface,
+  component: AssistantRoute,
   validateSearch: (search): ShellAssistantRouteSearch => {
     const conversation =
       optionalUuidSearchParam(search.conversation) ??

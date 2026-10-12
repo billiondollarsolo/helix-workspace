@@ -150,6 +150,58 @@ export async function acceptSignupOnboardingInvite(
   );
 }
 
+export interface AdminInvitePreview {
+  readonly email: string;
+  readonly displayName: string;
+  readonly workspaceName: string;
+  readonly expiresAt: string;
+  readonly passwordMinLength: number;
+}
+
+const adminInvitePreviewSchema = z.object({
+  email: z.string(),
+  displayName: z.string(),
+  workspaceName: z.string(),
+  expiresAt: z.string(),
+  passwordMinLength: z.number().int().positive(),
+});
+
+/** The pending administrator invitation for this link, or null when the link is
+ *  not one (it may be a signed-in onboarding invitation instead). */
+export async function inspectAdminInvite(
+  token: string,
+  fetchImpl: SignupFetch = fetch,
+  options: { readonly signal?: AbortSignal } = {},
+): Promise<AdminInvitePreview | null> {
+  const response = await fetchImpl("/v1/api/invites/inspect", {
+    method: "POST",
+    credentials: "include",
+    headers: jsonHeaders,
+    body: JSON.stringify({ token }),
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
+  });
+  if (response.status === 404) return null;
+  return parseResponse(response, "open invitation", adminInvitePreviewSchema);
+}
+
+/** Choose a password for an administrator invitation and join the workspace. */
+export async function acceptAdminInvite(
+  input: { readonly token: string; readonly password: string },
+  fetchImpl: SignupFetch = fetch,
+): Promise<{ readonly email: string }> {
+  const response = await fetchImpl("/v1/api/invites/accept", {
+    method: "POST",
+    credentials: "include",
+    headers: jsonHeaders,
+    body: JSON.stringify(input),
+  });
+  return parseResponse(
+    response,
+    "accept invitation",
+    z.object({ status: z.literal("accepted"), email: z.string() }),
+  );
+}
+
 async function parseResponse<T>(
   response: Response,
   action: string,

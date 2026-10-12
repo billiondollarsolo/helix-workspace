@@ -1,7 +1,14 @@
 import { createFileRoute, notFound } from "@tanstack/react-router";
+import { AdminAccessRequired } from "@/features/admin/admin-access-required";
 import { AdminConsole } from "@/features/admin/admin-console";
 import { prefetchAdminSectionData } from "@/features/admin/console/section-loaders";
-import { isAdminSectionId, type AdminSectionId } from "@/features/admin/admin-console-data";
+import {
+  hasAdminConsoleAccess,
+  isAdminSectionId,
+  type AdminSectionId,
+} from "@/features/admin/admin-console-data";
+import { useAdminAccess } from "@/features/admin/use-admin-access";
+import { sessionUserQueryOptions, type SessionUser } from "@/lib/auth";
 import {
   validateAdminSectionSearch,
   type AdminSectionSearch,
@@ -51,6 +58,12 @@ export const Route = createFileRoute("/_shell/admin/$section")({
    * This also runs under `preloadRoute`, so hovering a sidebar link now warms
    * the data as well as the code. */
   loader: ({ context, params }) => {
+    // The shell has already loaded the session; skip requests the API would refuse.
+    const session = context.queryClient.getQueryData<SessionUser | null>(
+      sessionUserQueryOptions().queryKey,
+    );
+    if (session !== undefined && session !== null && !hasAdminConsoleAccess(session.scopes ?? []))
+      return;
     void prefetchAdminSectionData(context.queryClient, params.section);
   },
   component: AdminSectionRoute,
@@ -58,5 +71,7 @@ export const Route = createFileRoute("/_shell/admin/$section")({
 
 function AdminSectionRoute() {
   const { section } = Route.useParams();
+  const access = useAdminAccess();
+  if (!access.isLoading && !access.isAdmin) return <AdminAccessRequired />;
   return <AdminConsole section={section} />;
 }

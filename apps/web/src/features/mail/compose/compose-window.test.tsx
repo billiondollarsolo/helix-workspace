@@ -108,7 +108,7 @@ describe("compose window", () => {
     expect(window?.textContent).not.toMatch(/recovered|different server draft/iu);
     expect(api.getMailDraft).not.toHaveBeenCalled();
     // Focus starts in To for a new message.
-    expect(document.activeElement?.getAttribute("role")).toBe("combobox");
+    await waitFor(() => document.activeElement?.getAttribute("role") === "combobox", "To focused");
     expect(await axeViolations(window)).toEqual([]);
   });
 

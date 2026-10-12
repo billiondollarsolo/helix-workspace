@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
+import { act, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { profileQueryKeys } from "@/lib/profile";
 import { axeViolations, settle, unmountAll } from "@/test/ui";
@@ -86,6 +86,32 @@ describe("SettingsPage", () => {
     expect(document.body.style.overflow).toBe("");
     expect(document.activeElement).toBe(opener);
     opener.remove();
+  });
+
+  it("also hides app content that mounts behind it while it is open", async () => {
+    let showContent = () => {};
+    function Background() {
+      const [ready, setReady] = useState(false);
+      showContent = () => setReady(true);
+      return ready ? <main>Loaded content</main> : <p>Loading</p>;
+    }
+    mockApi({ "/api/tools/account.preferences.get": preferences, "/api/profile": { profile } });
+    renderWithClient(
+      <div>
+        <Background />
+        <SettingsPage open section="profile" onSectionChange={vi.fn()} onClose={vi.fn()} />
+      </div>,
+      (client) => client.setQueryData(profileQueryKeys.current, profile),
+    );
+    await settle();
+    expect(document.querySelector("p")?.inert).toBe(true);
+
+    // A route swapping its loading state for content mounts a new sibling.
+    act(() => showContent());
+    await settle();
+    const content = document.querySelector("main");
+    expect(content?.inert).toBe(true);
+    expect(content?.style.visibility).toBe("hidden");
   });
 
   it("groups the sections Workspace-style and opens the one you pick", async () => {

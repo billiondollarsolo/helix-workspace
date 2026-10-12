@@ -43,6 +43,7 @@ import { AssistantThreadList } from "./assistant-thread-list";
 import { AssistantRequestError } from "./tool-limit";
 import { hydrateConversation } from "./conversation-history";
 import { sessionUserQueryOptions } from "@/lib/auth";
+import { randomId } from "@/lib/random-id";
 function toThread(item: AssistantConversationListItem): AssistantThread {
   const updatedAtMs = Date.parse(item.updatedAt);
   return {
@@ -158,7 +159,7 @@ export function AssistantSurface() {
         queryKey: [ASSISTANT_QUERY_ROOT, "conversation", threadId],
       });
       setHasMessages(true);
-      const turnId = `turn-${crypto.randomUUID()}`;
+      const turnId = `turn-${randomId()}`;
       const userMessage: AssistantChatMessage = {
         id: `${turnId}-user`,
         role: "user",

@@ -8,6 +8,21 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Added
 
+- Administrator invitations. Admin → Users has **Invite people** (email, optional name, Member or
+  Administrator; only an `admin.*` holder can invite an administrator). The person receives a
+  7-day link, chooses a password on `/signup/invite`, and is signed in; until then they appear as
+  **Invited** with Resend and Withdraw actions. Links are single-use, scoped to the issuing
+  tenant, replaced on resend, and every step is audited (`identity.user.invited`,
+  `invite_resent`, `invite_revoked`, `invite_accepted`). People provisioned through SCIM keep
+  signing in through their identity provider.
+- An **Admin console** link in the account menu for administrators. Admin no longer appears in
+  the launcher, bottom navigation, or command palette for other people, and `/admin` explains
+  that admin access is required.
+- `assistant.status` reports whether the configured AI provider answers (cached reachability
+  probe). Helix AI entry points are hidden when no provider works, `/assistant` explains what to
+  configure, and an unreachable provider returns an actionable error instead of "Tool invocation
+  failed."
+
 - Multiple calendars. People can create extra calendars (name and a colour from the shared label
   palette), rename and recolour them, and delete them; the default calendar cannot be deleted.
   New tools `calendar.calendar.create`, `calendar.calendar.update` and `calendar.calendar.delete`
@@ -16,6 +31,11 @@ All notable changes to Helix Workspace are documented here. This file follows
   calendar's menu gets Rename, Color and Delete. The demo seed adds a team calendar per department
   (owned by the lead, writable by the members), "Company holidays" and an "On-call" rotation with
   their events.
+- CLI parity for invitations and calendars:
+  `helix admin users invite --email <email> [--name <name>] [--admin]`,
+  `helix admin users <resend-invite|revoke-invite> --actor-id <id>`, and
+  `helix calendar <calendar-list|calendar-create|calendar-update|calendar-delete>` (deleting a
+  calendar returns a pending action to approve, exit code 6).
 - One demo seed, `pnpm --filter @helix/app db:seed:demo` (`--size small|medium|large`, `--reset`,
   `--accounts-only`), builds Quillfeather Labs: 60–120 people with departments, groups and suspended, offboarded and invited accounts, plus Mail (threads, external mail with
   SPF/DKIM/DMARC evidence, receipts with attachments, labels, filters, drafts, scheduled sends,
@@ -295,6 +315,24 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Changed
 
+- The Helix-built dependency images run as unprivileged users: PostgreSQL as `postgres` (70),
+  ClamAV as `clamav` (100:101), and NATS, Meilisearch, Cerbos, and SpamAssassin as 10001.
+  SpamAssassin's runit services no longer need root; rules refresh daily without the root
+  crontab. The production PostgreSQL TLS bootstrap still starts as root to copy the `0600` secret
+  files, then drops to `postgres`. NATS and Meilisearch secret files must be readable by UID 10001.
+  **Upgrade:** existing `nats-data`, `meili-data`, `spamd-data`, and `clamav-data` volumes need a
+  one-time `chown`
+  ([Dependency image users](docs/deployment-production.md#dependency-image-users)).
+- Dependency refresh: GitHub Actions pins move to current releases (checkout 7.0.1, setup-node
+  7.0.0, upload-artifact 7.0.1, pnpm/action-setup 6.1.0, attest 4.2.2), and Compose moves to
+  Redis 8.10.2, RustFS 1.0.1 (the first stable line, replacing 1.0.0-beta.12), Mailpit 1.31.4,
+  Caddy 2.11.7, coturn 4.18.0 and current observability images. The RustFS health check now reads
+  `/health/ready`, because 1.0.1 no longer reports readiness from the liveness endpoint.
+- Dependabot groups only minor and patch npm updates, so major upgrades arrive as individual pull
+  requests, and no longer watches the removed LibreOffice integration directories.
+- The README leads with the product and a working local quick start; detailed launch disclosures
+  live in the release scope, linked from a new documentation index and development guide.
+
 - The demo seed writes as the `helix_app` runtime role, like the API in production, and refuses a
   privileged `DATABASE_URL`; only `--reset` uses the owner connection
   (`HELIX_MIGRATION_DATABASE_URL`). Its validation now reindexes Chat too and fails when any
@@ -433,6 +471,27 @@ All notable changes to Helix Workspace are documented here. This file follows
   closed. A live test now keeps the database catalog equal to the app's scope catalog.
 
 ### Fixed
+
+- Meilisearch stored its database in the container layer (`/data.ms`) instead of the
+  `meili-data` volume, so indexes were lost when the container was recreated and the production
+  overlay's read-only root filesystem blocked startup. The image now works in `/meili_data`, as
+  upstream does. Run a search reindex after upgrading.
+- Chat opened in about 16 seconds on a seeded workspace because room and unread queries called
+  `chat_permission_is_valid` without indexable predicates. They now narrow by the membership index
+  first (about 150 ms), with the function still the authoritative check.
+- Local development mail never reached Mailpit because outbound SMTP always required STARTTLS.
+  Outside production, plaintext is allowed only to loopback or the Compose `mailpit` service.
+- Image scans ignore findings that have no released upstream fix; fixable High/Critical findings
+  still fail the gate.
+- The demo administrator holds `admin.*`, so it is a full workspace administrator.
+- The local quick start pointed `HELIX_DEFAULT_ORG_ID` at an empty organization, so sign-in
+  succeeded but every workspace request returned 403, and used `localhost` for `RUSTFS_ENDPOINT`,
+  which the outbound request guard rejects. It now targets the demo tenant and `127.0.0.1`.
+- CI: the live auth smoke requests `profile.read` (needed by `app.passwords.list`), the
+  performance journey follows the staged sign-in, the secret scan exempts only the published AWS
+  SigV4 test vector, and contracts coverage is restored with account and contacts schema tests.
+- Timing-dependent web tests (profile photo removal, compose focus, admin suspend/restore) wait
+  for the UI instead of asserting before it renders.
 
 - The metering rollup worker produced no totals under the `helix_app` runtime role because it read
   `metering_events` without a tenant context. It now rolls up each organization inside that

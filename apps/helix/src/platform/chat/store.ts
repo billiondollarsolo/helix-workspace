@@ -944,18 +944,24 @@ export class PostgresChatStore
           )
           from permissions p
           join actors a on a.id = p.actor_id and a.org_id = p.org_id
-          where chat_permission_is_valid(p, ${input.orgId}, p.actor_id, t.id)
+          where p.org_id = t.org_id and p.resource_type = 'thread' and p.resource_id = t.id
+            and p.status = 'active' and chat_permission_is_valid(p, ${input.orgId}, p.actor_id, t.id)
         ) as members
       from threads t
       left join chat_room_settings s on s.thread_id = t.id
       where t.org_id = ${input.orgId}
         and t.kind in ('chat_room', 'chat_dm')
         and (${query} = '' or coalesce(s.name, t.subject, '') ilike ${`%${query}%`} or coalesce(s.topic, '') ilike ${`%${query}%`})
+        -- Indexed pre-filter so the threads RLS policy only runs on the actor's rooms.
+        and t.id = any(array(select candidate.resource_id from permissions candidate
+          where candidate.org_id = ${input.orgId} and candidate.actor_id = ${input.actorId}
+            and candidate.resource_type = 'thread' and candidate.status = 'active'))
         and exists (
           select 1 from permissions access_grant
-          where chat_permission_is_valid(
-            access_grant, ${input.orgId}, ${input.actorId}, t.id
-          )
+          where access_grant.org_id = ${input.orgId} and access_grant.actor_id = ${input.actorId}
+            and access_grant.resource_type = 'thread' and access_grant.resource_id = t.id
+            and access_grant.status = 'active'
+            and chat_permission_is_valid(access_grant, ${input.orgId}, ${input.actorId}, t.id)
         )
       order by t.updated_at desc
       limit ${input.limit ?? 50}
@@ -1138,12 +1144,10 @@ export class PostgresChatStore
         where exists (
           select 1
           from permissions grant_row
-          where chat_permission_is_valid(
-            grant_row,
-            ${input.orgId},
-            ${input.actorId},
-            ${input.roomId}
-          )
+          where grant_row.org_id = ${input.orgId} and grant_row.actor_id = ${input.actorId}
+            and grant_row.resource_type = 'thread' and grant_row.resource_id = ${input.roomId}
+            and grant_row.status = 'active'
+            and chat_permission_is_valid(grant_row, ${input.orgId}, ${input.actorId}, ${input.roomId})
         )
         on conflict (org_id, actor_id, thread_id, client_message_id)
           where kind = 'chat' and client_message_id is not null
@@ -1163,12 +1167,10 @@ export class PostgresChatStore
             and exists (
               select 1
               from permissions grant_row
-              where chat_permission_is_valid(
-                grant_row,
-                ${input.orgId},
-                ${input.actorId},
-                messages.thread_id
-              )
+              where grant_row.org_id = ${input.orgId} and grant_row.actor_id = ${input.actorId}
+                and grant_row.resource_type = 'thread' and grant_row.resource_id = messages.thread_id
+                and grant_row.status = 'active'
+                and chat_permission_is_valid(grant_row, ${input.orgId}, ${input.actorId}, messages.thread_id)
             )
           limit 1
         `;
@@ -1387,9 +1389,10 @@ export class PostgresChatStore
           and pin.org_id = ${input.orgId}
           and exists (
             select 1 from permissions grant_row
-            where chat_permission_is_valid(
-              grant_row, ${input.orgId}, ${input.actorId}, pin.thread_id
-            )
+            where grant_row.org_id = ${input.orgId} and grant_row.actor_id = ${input.actorId}
+              and grant_row.resource_type = 'thread' and grant_row.resource_id = pin.thread_id
+              and grant_row.status = 'active'
+              and chat_permission_is_valid(grant_row, ${input.orgId}, ${input.actorId}, pin.thread_id)
           )
         returning pin.message_id
       `;
@@ -1603,12 +1606,10 @@ export class PostgresChatStore
           on settings.thread_id = thread.id
          and settings.org_id = thread.org_id
         join permissions membership
-          on chat_permission_is_valid(
-            membership,
-            ${input.orgId},
-            ${input.actorId},
-            thread.id
-          )
+          on membership.org_id = ${input.orgId} and membership.actor_id = ${input.actorId}
+         and membership.resource_type = 'thread' and membership.resource_id = thread.id
+         and membership.status = 'active'
+         and chat_permission_is_valid(membership, ${input.orgId}, ${input.actorId}, thread.id)
         where message.id = ${input.messageId}
           and message.org_id = ${input.orgId}
           and message.thread_id = ${input.roomId}
@@ -1714,12 +1715,10 @@ export class PostgresChatStore
         and exists (
           select 1
           from permissions requester
-          where chat_permission_is_valid(
-            requester,
-            ${input.orgId},
-            ${input.actorId},
-            receipt.thread_id
-          )
+          where requester.org_id = ${input.orgId} and requester.actor_id = ${input.actorId}
+            and requester.resource_type = 'thread' and requester.resource_id = receipt.thread_id
+            and requester.status = 'active'
+            and chat_permission_is_valid(requester, ${input.orgId}, ${input.actorId}, receipt.thread_id)
         )
         and (
           coalesce(settings.read_receipts_enabled, true)
@@ -1728,12 +1727,10 @@ export class PostgresChatStore
         and exists (
           select 1
           from permissions membership
-          where chat_permission_is_valid(
-            membership,
-            receipt.org_id,
-            receipt.actor_id,
-            receipt.thread_id
-          )
+          where membership.org_id = receipt.org_id and membership.actor_id = receipt.actor_id
+            and membership.resource_type = 'thread' and membership.resource_id = receipt.thread_id
+            and membership.status = 'active'
+            and chat_permission_is_valid(membership, receipt.org_id, receipt.actor_id, receipt.thread_id)
         )
       order by receipt.updated_at desc
     `;
@@ -1854,25 +1851,27 @@ export class PostgresChatStore
   }
 
   async search(input: ChatSearchRequest): Promise<readonly ChatSearchHit[]> {
+    // Visibility needs a grant, so read only granted rooms, then check matching rows.
     const rows = await this.sql<ChatSearchRow[]>`
-      select
-        m.thread_id,
-        m.id as message_id,
-        m.actor_id,
-        t.subject,
-        m.body,
-        m.sent_at
-      from messages m
-      join threads t on t.id = m.thread_id
-      where m.org_id = ${input.orgId}
-        and m.kind = 'chat'
-        and m.deleted_at is null
-        and (${input.roomId ?? null}::uuid is null or m.thread_id = ${input.roomId ?? null})
-        and (${input.query ?? ""} = '' or t.subject ilike ${`%${input.query ?? ""}%`} or m.body ilike ${`%${input.query ?? ""}%`})
-        and helix_chat_message_visible_to(
-          ${input.orgId}, ${input.actorId}, m.thread_id, m.sent_at
-        )
-      order by m.sent_at desc
+      with actor_rooms as materialized (
+        select resource_id as room_id from permissions
+        where org_id = ${input.orgId} and actor_id = ${input.actorId}
+          and resource_type = 'thread' and status = 'active'
+      ), matches as materialized (
+        select m.thread_id, m.id as message_id, m.actor_id, t.subject, m.body, m.sent_at
+        from messages m
+        join threads t on t.id = m.thread_id
+        where m.org_id = ${input.orgId}
+          and m.kind = 'chat'
+          and m.deleted_at is null
+          and m.thread_id in (select room_id from actor_rooms)
+          and t.id in (select room_id from actor_rooms)
+          and (${input.roomId ?? null}::uuid is null or m.thread_id = ${input.roomId ?? null})
+          and (${input.query ?? ""} = '' or t.subject ilike ${`%${input.query ?? ""}%`} or m.body ilike ${`%${input.query ?? ""}%`})
+      )
+      select * from matches
+      where helix_chat_message_visible_to(${input.orgId}, ${input.actorId}, thread_id, sent_at)
+      order by sent_at desc
       limit ${input.limit ?? 50}
     `;
     return rows.map(mapSearchHit);
@@ -2017,7 +2016,8 @@ async function selectRoomForActor(
         )
         from permissions p
         join actors a on a.id = p.actor_id and a.org_id = p.org_id
-        where chat_permission_is_valid(p, ${orgId}, p.actor_id, t.id)
+        where p.org_id = t.org_id and p.resource_type = 'thread' and p.resource_id = t.id
+          and p.status = 'active' and chat_permission_is_valid(p, ${orgId}, p.actor_id, t.id)
       ) as members
     from threads t
     left join chat_room_settings s on s.thread_id = t.id
@@ -2026,7 +2026,10 @@ async function selectRoomForActor(
       and t.kind in ('chat_room', 'chat_dm')
       and exists (
         select 1 from permissions access_grant
-        where chat_permission_is_valid(access_grant, ${orgId}, ${actorId}, t.id)
+        where access_grant.org_id = ${orgId} and access_grant.actor_id = ${actorId}
+          and access_grant.resource_type = 'thread' and access_grant.resource_id = t.id
+          and access_grant.status = 'active'
+          and chat_permission_is_valid(access_grant, ${orgId}, ${actorId}, t.id)
       )
     limit 1
   `;
@@ -2327,12 +2330,10 @@ async function grantRoomAccess(
         or exists (
           select 1
           from permissions grantor_grant
-          where chat_permission_is_valid(
-            grantor_grant,
-            ${input.orgId},
-            ${input.grantedByActorId},
-            ${input.roomId}
-          )
+          where grantor_grant.org_id = ${input.orgId} and grantor_grant.actor_id = ${input.grantedByActorId}
+            and grantor_grant.resource_type = 'thread' and grantor_grant.resource_id = ${input.roomId}
+            and grantor_grant.status = 'active'
+            and chat_permission_is_valid(grantor_grant, ${input.orgId}, ${input.grantedByActorId}, ${input.roomId})
             and (
               grantor_grant.role = 'owner'
               or (${input.role} = 'member' and grantor_grant.role = 'moderator')
@@ -2357,12 +2358,10 @@ async function grantRoomAccess(
         ${input.role} = 'owner'
         or not exists (
           select 1 from permissions existing
-          where chat_permission_is_valid(
-            existing,
-            ${input.orgId},
-            ${input.actorId},
-            ${input.roomId}
-          )
+          where existing.org_id = ${input.orgId} and existing.actor_id = ${input.actorId}
+            and existing.resource_type = 'thread' and existing.resource_id = ${input.roomId}
+            and existing.status = 'active'
+            and chat_permission_is_valid(existing, ${input.orgId}, ${input.actorId}, ${input.roomId})
             and existing.role = 'owner'
         )
       )

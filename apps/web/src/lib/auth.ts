@@ -22,6 +22,9 @@ export interface SessionUser {
   readonly name: string;
   readonly actorId: string | null;
   readonly twoFactorEnabled?: boolean;
+  /** The actor's org-wide scopes, for deciding which entry points to show.
+   *  The API authorizes every request on its own. */
+  readonly scopes?: readonly string[];
 }
 
 export interface PasskeyRecord {
@@ -84,6 +87,23 @@ export async function authenticatedFetch(
 }
 
 /** A full navigation drops actor-scoped UI/cache after confirmed session loss. */
+/**
+ * Fetch for pages that work signed in or signed out (invitation links): sends
+ * the CSRF token when one is available, because a browser that already holds a
+ * session cookie must prove its mutations, and never redirects on 401.
+ */
+export async function sessionOptionalFetch(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> {
+  const headers = new Headers(init?.headers);
+  if (!SAFE_METHODS.has((init?.method ?? "GET").toUpperCase())) {
+    const token = await browserCsrfToken().catch(() => null);
+    if (token !== null) headers.set("x-helix-csrf-token", token);
+  }
+  return fetch(versionedApiInput(input), { ...init, credentials: "include", headers });
+}
+
 export function redirectToLogin(reauthenticate = false): void {
   if (
     typeof window === "undefined" ||
@@ -397,6 +417,11 @@ function sessionUserFromOutput(output: unknown): SessionUser | null {
           ? user.actor_id
           : null,
     twoFactorEnabled: user.twoFactorEnabled === true,
+    ...(Array.isArray(user.scopes)
+      ? {
+          scopes: user.scopes.filter((scope): scope is string => typeof scope === "string"),
+        }
+      : {}),
   };
 }
 

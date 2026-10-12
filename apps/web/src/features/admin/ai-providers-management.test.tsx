@@ -403,4 +403,70 @@ describe("AIProvidersManagement", () => {
       expect(steps?.value).toBe("32");
     });
   });
+
+  it("keeps a provider row mounted while its id is edited and after a sibling is removed", async () => {
+    const provider = (id: string) => ({
+      id,
+      plugin: "com.helix.ai-provider-openai-compat@^1.0.0",
+      tags: ["assistant"],
+      enabled: true,
+      config: { baseUrl: "https://llm.example/v1", defaultModel: "m", models: ["m"] },
+    });
+    fetchMock.mockImplementation((input) => {
+      const url = requestUrl(input);
+      if (url.includes("/api/admin/platform-config")) {
+        return Promise.resolve(
+          Response.json({
+            config: {
+              security: { tier: "business" },
+              ai: { providers: [provider("first"), provider("second")] },
+            },
+            readiness: { ready: true, requirements: [] },
+          }),
+        );
+      }
+      return Promise.reject(new Error(`Unexpected request: ${url}`));
+    });
+
+    await renderPage();
+    const idInput = (position: number) =>
+      container.querySelector<HTMLInputElement>(
+        `input[aria-label="Provider ${String(position)} id"]`,
+      );
+    await waitFor(() => {
+      expect(idInput(2)?.value).toBe("second");
+    });
+
+    const typeInto = async (input: HTMLInputElement, value: string) => {
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(
+          input,
+          value,
+        );
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        await Promise.resolve();
+      });
+    };
+
+    const second = idInput(2);
+    if (second === null) throw new Error("second provider id input missing");
+    second.focus();
+    await typeInto(second, "second-x");
+    // The id is not the row key, so the row (and the focused input) survive the keystroke.
+    expect(idInput(2)).toBe(second);
+    expect(second.value).toBe("second-x");
+    expect(document.activeElement).toBe(second);
+
+    const removeFirst = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Remove provider first"]',
+    );
+    await act(async () => {
+      removeFirst?.click();
+      await Promise.resolve();
+    });
+    // The surviving row keeps its DOM node and its edited value.
+    expect(idInput(2)).toBeNull();
+    expect(idInput(1)).toBe(second);
+    expect(second.value).toBe("second-x");
+  });
 });

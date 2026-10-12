@@ -128,10 +128,18 @@ encryption attestation env flags before continuing.
 Production does **not** use the local seed accounts from `scripts/dev-up.sh`
 (`admin@helix.local` is for development evidence only).
 
-The 1.0 pilot uses an operator-provisioned first organization owner. Complete the
-controlled bootstrap procedure, then use Admin invitations for additional users.
-Recipients accept their invitation and complete email verification. Public
-self-service signup and onboarding routes are absent.
+The 1.0 pilot requires an operator-provisioned first organization owner. This
+runbook assumes that a deployment-specific bootstrap procedure has already been
+validated. Public self-service account and workspace creation are absent.
+
+**Adding people:** in **Admin → Users**, choose **Invite people**, enter the person's
+email address, and choose Member or Administrator (only a full administrator,
+`admin.*`, can invite another administrator). Helix emails a link that expires in
+7 days; the person opens it, chooses a password, and is signed in. Until then the
+person appears as **Invited**, and the row menu can resend or withdraw the
+invitation. The same actions are available from the CLI (`helix admin users invite --email <address>`).
+Invitation email uses the managed mail provider; finish sections 4 and 5, then confirm one test
+invitation arrives before inviting the pilot cohort.
 
 Then:
 

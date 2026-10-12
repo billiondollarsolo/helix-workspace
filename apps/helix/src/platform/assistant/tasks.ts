@@ -82,7 +82,7 @@ export function registerTaskTools(registry: RuntimeToolRegistry): void {
       description:
         "Create a checklist of steps for this conversation. Call once at the start of multi-step work.",
       permission: "assistant.write",
-      sideEffects: "read",
+      sideEffects: "write",
       inputSchema: zodToolSchema(
         z.object({ titles: z.array(z.string().trim().min(1).max(200)).min(1).max(20) }).strict(),
         {
@@ -103,7 +103,7 @@ export function registerTaskTools(registry: RuntimeToolRegistry): void {
       id: "tasks.update",
       description: "Update one checklist item by id (pending, in_progress, completed, cancelled).",
       permission: "assistant.write",
-      sideEffects: "read",
+      sideEffects: "write",
       inputSchema: zodToolSchema(
         z.object({ id: z.string().uuid(), status: z.enum(taskStatuses) }).strict(),
         {

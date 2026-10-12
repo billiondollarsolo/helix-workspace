@@ -87,7 +87,11 @@ describe("Better Auth tenant profile projection", () => {
         });
         expect(resolve).toHaveBeenCalledTimes(resolves);
         if (expectedName === "Tenant name") {
-          expect(response.json().user).toMatchObject({ actorId: actor.id, orgId: tenant.orgId });
+          expect(response.json().user).toMatchObject({
+            actorId: actor.id,
+            orgId: tenant.orgId,
+            scopes: [],
+          });
         } else {
           expect(response.json()).toEqual(nativeSession);
         }
@@ -98,6 +102,50 @@ describe("Better Auth tenant profile projection", () => {
       }
     },
   );
+
+  it("projects the actor's org-wide scopes so the shell can gate admin entry points", async () => {
+    const app = fastify();
+    app.decorateRequest("tenant", null);
+    app.addHook("preHandler", async (request) => {
+      request.tenant = tenant;
+    });
+    const scopedActor: Actor = {
+      ...actor,
+      scopes: ["mail.read", "admin.audit.read"],
+      roleBindings: [
+        {
+          roleId: "org-admin",
+          allow: ["admin.users.read", "admin.audit.read"],
+          deny: ["mail.read"],
+          scope: { type: "org" },
+        },
+        {
+          roleId: "group-admin",
+          allow: ["admin.groups.write"],
+          deny: [],
+          scope: { type: "group", id: "group-1" },
+        },
+      ],
+    };
+    registerBetterAuthRoutes(
+      app,
+      {
+        api: { getSession: async () => nativeSession },
+        handler: async () => Response.json(nativeSession),
+      },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { resolve: async () => scopedActor },
+    );
+    try {
+      const response = await app.inject("/api/auth/get-session");
+      expect(response.json().user.scopes).toEqual(["admin.audit.read", "admin.users.read"]);
+    } finally {
+      await app.close();
+    }
+  });
 
   it("preserves signed-out sessions without attempting actor resolution", async () => {
     const app = fastify();

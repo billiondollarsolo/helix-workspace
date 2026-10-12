@@ -1,26 +1,36 @@
 import { Link } from "@tanstack/react-router";
 import { ArrowRight, CheckCircle2, Loader2, TriangleAlert } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { AuthCard } from "@/features/auth/auth-card";
-import { LocalLoginPanel } from "@/features/auth/login-panel";
+import { AuthForm, AuthInput, LocalLoginPanel, SubmitButton } from "@/features/auth/login-panel";
 import {
   discoverSignInMethod,
   getSessionUser,
+  sessionOptionalFetch,
   signInWithEmail,
   type AuthFetch,
   type SessionUser,
 } from "@/lib/auth";
-import { acceptSignupOnboardingInvite, type SignupOnboardingInviteAcceptResponse } from "./api";
+import {
+  acceptAdminInvite,
+  acceptSignupOnboardingInvite,
+  inspectAdminInvite,
+  type AdminInvitePreview,
+  type SignupOnboardingInviteAcceptResponse,
+} from "./api";
 
 interface SignupInviteShellProps {
   readonly token: string;
   readonly fetchImpl?: AuthFetch;
   readonly getSession?: (fetchImpl?: AuthFetch) => Promise<SessionUser | null>;
   readonly signIn?: typeof signInWithEmail;
+  /** Where a newly joined person lands; replaced in tests. */
+  readonly onJoined?: () => void;
 }
 
 type InviteState =
   | { readonly status: "checking" }
+  | { readonly status: "set_password"; readonly invite: AdminInvitePreview }
   | { readonly status: "sign_in" }
   | { readonly status: "accepting" }
   | { readonly status: "accepted"; readonly result: SignupOnboardingInviteAcceptResponse }
@@ -28,9 +38,10 @@ type InviteState =
 
 export function SignupInviteShell({
   token,
-  fetchImpl = fetch,
+  fetchImpl = sessionOptionalFetch,
   getSession = getSessionUser,
   signIn = signInWithEmail,
+  onJoined = () => window.location.assign("/mail"),
 }: SignupInviteShellProps) {
   const [state, setState] = useState<InviteState>({ status: "checking" });
   const acceptedTokenRef = useRef<string | null>(null);
@@ -69,23 +80,46 @@ export function SignupInviteShell({
 
   useEffect(() => {
     let active = true;
-    void getSession(fetchImpl)
-      .then((user) => {
+    const continueWithSession = () =>
+      getSession(fetchImpl)
+        .then((user) => {
+          if (!active) return;
+          if (user === null) {
+            setState({ status: "sign_in" });
+            return;
+          }
+          acceptInvite(token);
+        })
+        .catch(() => {
+          if (active) setState({ status: "sign_in" });
+        });
+    // An administrator's invitation is accepted by choosing a password; any
+    // other invitation link is accepted by the signed-in person.
+    void (token.trim().length === 0 ? Promise.resolve(null) : inspectAdminInvite(token, fetchImpl))
+      .catch(() => null)
+      .then((invite) => {
         if (!active) return;
-        if (user === null) {
-          setState({ status: "sign_in" });
-          return;
-        }
-        acceptInvite(token);
-      })
-      .catch(() => {
-        if (active) setState({ status: "sign_in" });
+        if (invite === null) return continueWithSession();
+        setState({ status: "set_password", invite });
       });
     return () => {
       active = false;
       activeInviteRequestRef.current?.abort();
     };
   }, [acceptInvite, fetchImpl, getSession, token]);
+
+  if (state.status === "set_password") {
+    return (
+      <SetPasswordPanel
+        invite={state.invite}
+        onSubmit={async (password) => {
+          const accepted = await acceptAdminInvite({ token, password }, fetchImpl);
+          await signIn({ email: accepted.email, password }, fetchImpl);
+          onJoined();
+        }}
+      />
+    );
+  }
 
   if (state.status === "sign_in") {
     return (
@@ -173,4 +207,82 @@ function continuePathForState(state: InviteState): string {
 
 function continueLabelForState(state: InviteState): string {
   return state.status === "accepted" ? "Go to Helix" : "Sign in";
+}
+
+function SetPasswordPanel({
+  invite,
+  onSubmit,
+}: {
+  readonly invite: AdminInvitePreview;
+  readonly onSubmit: (password: string) => Promise<void>;
+}) {
+  const errorId = useId();
+  const [password, setPassword] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const errorProps = error === null ? {} : { invalid: true, describedBy: errorId };
+
+  const submit = () => {
+    if (password.length < invite.passwordMinLength) {
+      setError(`Use at least ${String(invite.passwordMinLength)} characters.`);
+      return;
+    }
+    if (password !== confirmation) {
+      setError("The passwords don’t match.");
+      return;
+    }
+    setError(null);
+    setBusy(true);
+    onSubmit(password).catch((caught: unknown) => {
+      setBusy(false);
+      setError(caught instanceof Error ? caught.message : "Your account couldn’t be set up.");
+    });
+  };
+
+  return (
+    <AuthCard
+      title={`Join ${invite.workspaceName}`}
+      subtitle={`Choose a password for ${invite.email}.`}
+    >
+      <AuthForm legend="Choose your password" onSubmit={submit}>
+        <AuthInput
+          label="Password"
+          name="new-password"
+          type={showPassword ? "text" : "password"}
+          autoComplete="new-password"
+          value={password}
+          onChange={setPassword}
+          autoFocus
+          {...errorProps}
+        />
+        <AuthInput
+          label="Confirm password"
+          name="confirm-password"
+          type={showPassword ? "text" : "password"}
+          autoComplete="new-password"
+          value={confirmation}
+          onChange={setConfirmation}
+          {...errorProps}
+        />
+        <label className="auth-check">
+          <input
+            type="checkbox"
+            checked={showPassword}
+            onChange={(event) => setShowPassword(event.target.checked)}
+          />
+          <span>Show password</span>
+        </label>
+        {error === null ? null : (
+          <p id={errorId} className="auth-error" role="alert">
+            {error}
+          </p>
+        )}
+        <div className="auth-actions">
+          <SubmitButton busy={busy}>Join workspace</SubmitButton>
+        </div>
+      </AuthForm>
+    </AuthCard>
+  );
 }

@@ -90,10 +90,15 @@ describe("Profile home and photo", () => {
       "Choose a PNG, JPEG or WebP image.",
     );
 
-    Array.from(document.querySelectorAll("button"))
-      .find((button) => button.textContent === "Remove photo")
-      ?.click();
-    await settle();
+    act(() => {
+      Array.from(document.querySelectorAll("button"))
+        .find((button) => button.textContent === "Remove photo")
+        ?.click();
+    });
+    await vi.waitFor(async () => {
+      await settle();
+      expect(file?.labels?.[0]?.textContent).toBe("Add photo");
+    });
     expect(calls.find((call) => call.path === "/api/profile")?.body).toEqual({
       avatarDataUrl: null,
     });

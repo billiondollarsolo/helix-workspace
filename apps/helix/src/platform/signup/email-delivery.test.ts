@@ -114,6 +114,79 @@ describe("signup onboarding invite email delivery", () => {
     expect(sent[0]?.subject).toBe("Join acme workspace on Helix");
   });
 
+  it("renders an administrator's invitation as account setup in the named workspace", () => {
+    const envelope = renderSignupOnboardingInviteEmail({
+      payload: adminInvitePayload(),
+      from: { address: "no-reply@helix.example", name: "Helix" },
+    });
+
+    expect(envelope).toMatchObject({
+      to: [{ address: "ada@example.com" }],
+      subject: "Join Acme Corp on Helix",
+      attachments: [],
+    });
+    expect(envelope.text).toContain("An administrator invited you to Acme Corp.");
+    expect(envelope.text).toContain("choose your password");
+    expect(envelope.text).toContain("https://acme.helix.example/signup/invite?token=token");
+    expect(envelope.text).not.toContain("SSO");
+    expect(envelope.html).toContain("Set up your account");
+    expect(envelope.html).toContain("Join Acme Corp");
+    expect(envelope.html).not.toContain("Open acme workspace");
+  });
+
+  it("delivers every administrator invitation, keyed by its delivery key", async () => {
+    const sent: { envelope: MailOutboundEnvelope; idempotencyKey: string | undefined }[] = [];
+    const transport: OutboundMailTransport = {
+      async send(envelope, options) {
+        sent.push({ envelope, idempotencyKey: options.idempotencyKey });
+        return { providerMessageId: `message-${String(sent.length)}`, deliveryMetadata: {} };
+      },
+    };
+    const events = new InMemoryEventBus();
+    const worker = new SignupOnboardingInviteEmailWorker({
+      events,
+      transport,
+      from: { address: "signup@helix.example", name: "Helix" },
+    });
+
+    await worker.start();
+    await events.publish(signupOnboardingInviteEmailSubject, adminInvitePayload("key-1"));
+    // A resend to the same person is a separate delivery.
+    await events.publish(signupOnboardingInviteEmailSubject, adminInvitePayload("key-2"));
+    await events.publish(signupOnboardingInviteEmailSubject, invitePayload());
+    await worker.stop();
+
+    expect(sent.map((entry) => entry.idempotencyKey)).toEqual([
+      "admin-invite:11111111-1111-4111-8111-111111111111:key-1",
+      "admin-invite:11111111-1111-4111-8111-111111111111:key-2",
+      "signup-invite:11111111-1111-4111-8111-111111111111:22222222-2222-4222-8222-222222222222",
+    ]);
+    expect(sent[0]?.envelope.subject).toBe("Join Acme Corp on Helix");
+  });
+
+  it("parses administrator invitation payloads and drops malformed optional fields", () => {
+    expect(parseSignupOnboardingInviteEmailPayload(adminInvitePayload())).toEqual(
+      adminInvitePayload(),
+    );
+    expect(
+      parseSignupOnboardingInviteEmailPayload({
+        ...adminInvitePayload(),
+        deliveryKey: 42,
+        workspaceName: null,
+      }),
+    ).toEqual({
+      orgId: "11111111-1111-4111-8111-111111111111",
+      orgSlug: "acme",
+      actorId: "22222222-2222-4222-8222-222222222222",
+      email: "ada@example.com",
+      inviteUrl: "https://acme.helix.example/signup/invite?token=token",
+      source: "admin",
+    });
+    expect(() =>
+      parseSignupOnboardingInviteEmailPayload({ ...adminInvitePayload(), source: "other" }),
+    ).toThrow("Invalid signup onboarding invite email payload.");
+  });
+
   it("rejects malformed onboarding invite payloads before sending", () => {
     expect(() => parseSignupOnboardingInviteEmailPayload({ source: "signup" })).toThrow(
       "Invalid signup onboarding invite email payload.",
@@ -142,5 +215,14 @@ function invitePayload(
     email: overrides.email ?? "ada@example.com",
     inviteUrl: overrides.inviteUrl ?? "https://acme.helix.example/signup/invite?token=token",
     source: "signup",
+  };
+}
+
+function adminInvitePayload(deliveryKey = "delivery-1"): SignupOnboardingInviteEmailPayload {
+  return {
+    ...invitePayload(),
+    source: "admin",
+    deliveryKey,
+    workspaceName: "Acme Corp",
   };
 }

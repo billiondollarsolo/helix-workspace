@@ -1,6 +1,7 @@
 /**
- * Flag wrappers for mail labels and scheduled sends, contacts, personal account
- * preferences and app passwords, and the chat Home/Mentions views. Creating an
+ * Flag wrappers for mail labels and scheduled sends, contacts, calendar
+ * collections, personal account preferences and app passwords, and the chat
+ * Home/Mentions views. Creating an
  * app password needs a signed-in web session, so the CLI cannot mint one; use
  * Settings → App passwords.
  */
@@ -212,6 +213,32 @@ const COMMANDS: Readonly<Record<string, Readonly<Record<string, CommandSpec>>>> 
       toolId: "app.passwords.revoke",
       usage: "helix account app-password-revoke --password-id <id> [--json [JSON]]",
       flags: { strings: { "--password-id": "passwordId" }, required: ["passwordId"] },
+    },
+  },
+  // Calendar collections. Like the event commands, required fields are
+  // validated server-side; deleting a calendar (and its events) returns a
+  // pending action to approve with `helix action approve`.
+  calendar: {
+    "calendar-list": {
+      toolId: "calendar.calendars.list",
+      usage: "helix calendar calendar-list [--json [JSON]]",
+      flags: {},
+    },
+    "calendar-create": {
+      toolId: "calendar.calendar.create",
+      usage: "helix calendar calendar-create [--name <name>] [--color <color>] [--json [JSON]]",
+      flags: { strings: { "--name": "name", "--color": "color" } },
+    },
+    "calendar-update": {
+      toolId: "calendar.calendar.update",
+      usage:
+        "helix calendar calendar-update [--calendar-id <id>] [--name <name>] [--color <color>] [--json [JSON]]",
+      flags: { strings: { "--calendar-id": "calendarId", "--name": "name", "--color": "color" } },
+    },
+    "calendar-delete": {
+      toolId: "calendar.calendar.delete",
+      usage: "helix calendar calendar-delete [--calendar-id <id>] [--json [JSON]]",
+      flags: { strings: { "--calendar-id": "calendarId" } },
     },
   },
   chat: {

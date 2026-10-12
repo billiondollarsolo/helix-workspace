@@ -30,7 +30,7 @@ export interface AdminUserRecord {
   readonly email: string | null;
   readonly displayName: string;
   readonly scopes: readonly string[];
-  /** `suspended` can be restored; `removed` was offboarded or deprovisioned. */
+  /** `invited` has not joined yet; `suspended` can be restored; `removed` was offboarded or deprovisioned. */
   readonly status: AdminUserStatus;
   readonly disabledAt: string | null;
   /** When the person last signed in to this workspace; null if never. */
@@ -39,7 +39,7 @@ export interface AdminUserRecord {
   readonly updatedAt: string;
 }
 
-type AdminUserStatus = "active" | "suspended" | "removed";
+type AdminUserStatus = "active" | "invited" | "suspended" | "removed";
 
 export interface AdminUserLifecycleResult {
   readonly actorId: string;
@@ -105,6 +105,10 @@ export class PostgresAdminUsersStore implements AdminUsersStore {
         actor.disabled_at,
         membership.status as membership_status,
         membership.last_sign_in_at,
+        exists (
+          select 1 from identity_provider_subjects provider
+          where provider.subject_id = membership.subject_id
+        ) as sign_in_linked,
         actor.created_at,
         actor.updated_at
       from actors actor
@@ -407,6 +411,8 @@ interface AdminUserRow {
   readonly disabled_at: Date | null;
   readonly membership_status: "active" | "suspended" | "deprovisioned" | null;
   readonly last_sign_in_at: Date | null;
+  /** Absent in rows built before sign-in links were read; treated as linked. */
+  readonly sign_in_linked?: boolean;
   readonly created_at: Date;
   readonly updated_at: Date;
 }
@@ -414,7 +420,9 @@ interface AdminUserRow {
 function adminUserStatus(row: AdminUserRow): AdminUserStatus {
   if (row.membership_status === "suspended") return "suspended";
   if (row.membership_status === "deprovisioned") return "removed";
-  return row.disabled_at === null ? "active" : "removed";
+  if (row.disabled_at !== null) return "removed";
+  // A person whose membership has no sign-in linked yet has not accepted their invitation.
+  return row.type === "user" && row.sign_in_linked === false ? "invited" : "active";
 }
 
 function mapAdminUserRow(row: AdminUserRow): AdminUserRecord {

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
+import { act, type AnchorHTMLAttributes, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -15,6 +15,15 @@ const { navigate, invalidate, clear } = vi.hoisted(() => ({
 
 vi.mock("@tanstack/react-router", () => ({
   useRouter: () => ({ navigate, invalidate }),
+  Link: ({
+    to,
+    children,
+    ...props
+  }: { to: string; children: ReactNode } & AnchorHTMLAttributes<HTMLAnchorElement>) => (
+    <a href={to} {...props}>
+      {children}
+    </a>
+  ),
 }));
 
 vi.mock("@tanstack/react-query", () => ({
@@ -75,6 +84,28 @@ describe("ProfileMenu", () => {
     const { card, openSettings } = openCard();
     act(() => buttonIn(card, "Manage your account")?.click());
     expect(openSettings).toHaveBeenCalledWith("profile");
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it("offers the Admin console only to admins", () => {
+    const { card } = openCard();
+    expect(card.textContent).not.toContain("Admin console");
+    act(() => root.unmount());
+    root = createRoot(container);
+
+    vi.mocked(useQuery).mockReturnValue({
+      data: {
+        name: "Mira Chen",
+        email: "mira@helix.test",
+        scopes: ["mail.read", "admin.users.read"],
+      },
+    } as never);
+    const { card: adminCard } = openCard();
+    const link = Array.from(adminCard.querySelectorAll("a")).find(
+      (anchor) => anchor.textContent?.trim() === "Admin console",
+    );
+    expect(link?.getAttribute("href")).toBe("/admin");
+    act(() => link?.click());
     expect(document.querySelector('[role="dialog"]')).toBeNull();
   });
 

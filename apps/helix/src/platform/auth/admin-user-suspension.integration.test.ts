@@ -210,7 +210,8 @@ describe.skipIf(!live)("admin user suspension and last sign-in", () => {
       scopes: ["admin.users"],
     };
     await expect(users.setSuspended(foreignOperator, memberId, true)).resolves.toBeNull();
-    await expect(listed(memberId)).resolves.toMatchObject({ status: "active" });
+    // Unchanged: the fixture member never linked a sign-in, so they read as invited.
+    await expect(listed(memberId)).resolves.toMatchObject({ status: "invited" });
   });
 
   it("keeps removed accounts closed", async () => {

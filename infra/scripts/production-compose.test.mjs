@@ -198,11 +198,11 @@ describe("production Compose overlay", () => {
     ).toEqual({
       postgres: promotedImages.postgres,
       redis:
-        "redis:8.8.3-alpine@sha256:0b2b77d3ea5078274795e3177cdbdada8b96316684a38911d528534ed679b5ec",
+        "redis:8.10.2-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0",
       nats: promotedImages.nats,
       meilisearch: promotedImages.meilisearch,
       rustfs:
-        "rustfs/rustfs:1.0.0-beta.12@sha256:41fe89380f4120a337790c02af192c3fe7bb55c3edc2e6e9357b487b47c6ab21",
+        "rustfs/rustfs:1.0.1@sha256:1803faef57627e2d9c2e7d89d655d712ddded5389040054987163043fecb6a3c",
       cerbos: promotedImages.cerbos,
       spamd: promotedImages.spamassassin,
       clamav: promotedImages.clamav,
@@ -297,6 +297,12 @@ describe("production Compose overlay", () => {
     expect(helixEnvironment.NATS_TLS_CERT_FILE).toBe("/run/secrets/nats_client_cert");
     expect(helixEnvironment.NATS_TLS_KEY_FILE).toBe("/run/secrets/nats_client_key");
     const postgres = resolvedCompose.services.postgres;
+    // Only the TLS bootstrap starts as root; docker-entrypoint.sh drops to postgres.
+    expect(postgres.user).toBe("0:0");
+    expect(postgres.entrypoint.join(" ")).toContain("exec docker-entrypoint.sh postgres");
+    for (const service of ["nats", "meilisearch", "cerbos", "spamd", "clamav"]) {
+      expect(resolvedCompose.services[service].user, `${service} image user`).toBeUndefined();
+    }
     expect(postgres.entrypoint.join(" ")).toContain("ssl=on");
     expect(postgres.entrypoint.join(" ")).toContain("hostnossl all all 0.0.0.0/0 reject");
     expect(postgres.secrets.map((secret) => secret.source)).toEqual(

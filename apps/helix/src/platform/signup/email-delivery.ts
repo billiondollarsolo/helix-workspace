@@ -18,10 +18,15 @@ export interface SignupVerificationEmailPayload extends JsonObject {
 export interface SignupOnboardingInviteEmailPayload extends JsonObject {
   readonly orgId: string;
   readonly orgSlug: string;
+  /** The person who sent the invitation. */
   readonly actorId: string;
   readonly email: string;
   readonly inviteUrl: string;
-  readonly source: "signup";
+  /** `admin`: an administrator invited a new person, who sets a password to join. */
+  readonly source: "signup" | "admin";
+  /** Unique per invitation sent, so each resend is delivered. */
+  readonly deliveryKey?: string;
+  readonly workspaceName?: string;
 }
 
 export interface SignupVerificationEmailWorkerOptions {
@@ -137,7 +142,10 @@ export class SignupOnboardingInviteEmailWorker {
         productName: this.productName,
       });
       return await this.options.transport.send(message, {
-        idempotencyKey: `signup-invite:${payload.orgId}:${payload.actorId}`,
+        idempotencyKey:
+          payload.deliveryKey === undefined
+            ? `signup-invite:${payload.orgId}:${payload.actorId}`
+            : `admin-invite:${payload.orgId}:${payload.deliveryKey}`,
       });
     } catch (error) {
       this.onError?.(error);
@@ -195,7 +203,10 @@ export function renderSignupOnboardingInviteEmail(input: {
   readonly productName?: string;
 }): MailOutboundEnvelope {
   const productName = input.productName ?? "Helix";
-  const workspaceName = workspaceLabel(input.payload.orgSlug);
+  const workspaceName = input.payload.workspaceName ?? workspaceLabel(input.payload.orgSlug);
+  if (input.payload.source === "admin") {
+    return renderAdminInviteEmail({ ...input, productName, workspaceName });
+  }
   const text = [
     `Join ${workspaceName} on ${productName}`,
     "",
@@ -219,6 +230,47 @@ export function renderSignupOnboardingInviteEmail(input: {
     footer: "If you were not expecting this invitation, you can ignore this email.",
   });
 
+  return {
+    from: input.from,
+    to: [{ address: input.payload.email }],
+    cc: [],
+    bcc: [],
+    subject: `Join ${workspaceName} on ${productName}`,
+    text,
+    html,
+    attachments: [],
+  };
+}
+
+function renderAdminInviteEmail(input: {
+  readonly payload: SignupOnboardingInviteEmailPayload;
+  readonly from: MailOutboundEnvelope["from"];
+  readonly productName: string;
+  readonly workspaceName: string;
+}): MailOutboundEnvelope {
+  const { productName, workspaceName } = input;
+  const text = [
+    `Join ${workspaceName} on ${productName}`,
+    "",
+    `An administrator invited you to ${workspaceName}.`,
+    "Open this link to choose your password and sign in. It expires in 7 days:",
+    input.payload.inviteUrl,
+    "",
+    "If you were not expecting this invitation, you can ignore this email.",
+  ].join("\n");
+  const html = renderBrandedEmailHtml({
+    productName,
+    preheader: `You were invited to ${workspaceName}.`,
+    eyebrow: "Workspace invitation",
+    title: `Join ${workspaceName}`,
+    body: [
+      `An administrator invited you to ${workspaceName} on ${productName}.`,
+      "Choose your password to finish setting up your account. The link expires in 7 days.",
+    ],
+    ctaLabel: "Set up your account",
+    ctaUrl: input.payload.inviteUrl,
+    footer: "If you were not expecting this invitation, you can ignore this email.",
+  });
   return {
     from: input.from,
     to: [{ address: input.payload.email }],
@@ -269,15 +321,28 @@ export function parseSignupOnboardingInviteEmailPayload(
     typeof (value as { readonly actorId?: unknown }).actorId === "string" &&
     typeof (value as { readonly email?: unknown }).email === "string" &&
     typeof (value as { readonly inviteUrl?: unknown }).inviteUrl === "string" &&
-    (value as { readonly source?: unknown }).source === "signup"
+    ((value as { readonly source?: unknown }).source === "signup" ||
+      (value as { readonly source?: unknown }).source === "admin")
   ) {
+    const record = value as {
+      readonly orgId: string;
+      readonly orgSlug: string;
+      readonly actorId: string;
+      readonly email: string;
+      readonly inviteUrl: string;
+      readonly source: "signup" | "admin";
+      readonly deliveryKey?: unknown;
+      readonly workspaceName?: unknown;
+    };
     return {
-      orgId: (value as { readonly orgId: string }).orgId,
-      orgSlug: (value as { readonly orgSlug: string }).orgSlug,
-      actorId: (value as { readonly actorId: string }).actorId,
-      email: (value as { readonly email: string }).email,
-      inviteUrl: (value as { readonly inviteUrl: string }).inviteUrl,
-      source: "signup",
+      orgId: record.orgId,
+      orgSlug: record.orgSlug,
+      actorId: record.actorId,
+      email: record.email,
+      inviteUrl: record.inviteUrl,
+      source: record.source,
+      ...(typeof record.deliveryKey === "string" ? { deliveryKey: record.deliveryKey } : {}),
+      ...(typeof record.workspaceName === "string" ? { workspaceName: record.workspaceName } : {}),
     };
   }
   throw new Error("Invalid signup onboarding invite email payload.");

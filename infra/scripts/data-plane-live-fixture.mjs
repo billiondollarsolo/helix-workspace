@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -11,7 +11,7 @@ const natsBoxImage =
 const postgresClientImage =
   "postgres:18.6-alpine3.24@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873";
 const redisClientImage =
-  "redis:8.8.3-alpine@sha256:0b2b77d3ea5078274795e3177cdbdada8b96316684a38911d528534ed679b5ec";
+  "redis:8.10.2-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0";
 const secretNames = [
   "database_url",
   "migration_database_url",
@@ -121,8 +121,13 @@ export function waitHealthy(environment, project, service, timeoutMs = 180_000) 
   throw new Error(`${service} did not become healthy before timeout`);
 }
 
+// The services run as unprivileged users (redis 999, postgres 70, nats 10001) that
+// differ from the uid running this drill, so the run-scoped secrets they mount must
+// be world-readable. They live in a 0700 mkdtemp directory deleted after the run.
+const MOUNTED_SECRET_MODE = 0o644;
+
 function writeSecret(directory, name, value) {
-  writeFileSync(join(directory, name), `${value}\n`, { mode: 0o600 });
+  writeFileSync(join(directory, name), `${value}\n`, { mode: MOUNTED_SECRET_MODE });
 }
 
 function generateCertificateAuthority(directory, generation) {
@@ -223,6 +228,10 @@ export function installPki(secretsDirectory, generation) {
   copyFileSync(nats.key, join(secretsDirectory, "nats_server_key"));
   copyFileSync(natsClient.cert, join(secretsDirectory, "nats_client_cert"));
   copyFileSync(natsClient.key, join(secretsDirectory, "nats_client_key"));
+  // openssl writes keys 0600 and copies keep that mode; the services must read them.
+  for (const name of readdirSync(secretsDirectory, { withFileTypes: true })) {
+    if (name.isFile()) chmodSync(join(secretsDirectory, name.name), MOUNTED_SECRET_MODE);
+  }
   return ca.caCert;
 }
 

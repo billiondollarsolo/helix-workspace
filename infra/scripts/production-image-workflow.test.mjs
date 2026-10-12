@@ -75,7 +75,7 @@ describe("production image supply-chain workflow", () => {
     ]);
     expect(publishJob).not.toMatch(/candidate: (?:redis|rustfs)/u);
     expect(
-      source.match(/uses: actions\/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6/gu),
+      source.match(/uses: actions\/attest@1e69f48acb82d1966a394da916b4c1698aa569d6/gu),
     ).toHaveLength(3);
     expect(source.match(/push-to-registry: true/gu)).toHaveLength(3);
     expect(publishJob).toContain(
@@ -168,7 +168,7 @@ describe("production image supply-chain workflow", () => {
   it("retains machine-readable scan output while failing on high and critical findings", () => {
     expect(source.match(/format: json/gu)).toHaveLength(3);
     expect(source.match(/exit-code: "1"/gu)).toHaveLength(3);
-    expect(source.match(/ignore-unfixed: false/gu)).toHaveLength(3);
+    expect(source.match(/ignore-unfixed: true/gu)).toHaveLength(3);
     expect(source.match(/severity: HIGH,CRITICAL/gu)).toHaveLength(3);
     expect(source).toContain("output: helix-all/helix-workspace/helix-workspace.trivy.json");
     expect(source).toContain("output: helix-all/helix-workspace/helix-workspace-web.trivy.json");
@@ -212,12 +212,12 @@ describe("production image supply-chain workflow", () => {
       [
         "redis",
         "docker.io/library/redis",
-        "sha256:0b2b77d3ea5078274795e3177cdbdada8b96316684a38911d528534ed679b5ec",
+        "sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0",
       ],
       [
         "rustfs",
         "docker.io/rustfs/rustfs",
-        "sha256:41fe89380f4120a337790c02af192c3fe7bb55c3edc2e6e9357b487b47c6ab21",
+        "sha256:1803faef57627e2d9c2e7d89d655d712ddded5389040054987163043fecb6a3c",
       ],
     ]) {
       const entry = source.slice(

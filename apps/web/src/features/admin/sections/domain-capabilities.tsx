@@ -7,6 +7,7 @@ import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive
 import { MutationError, StatusChip } from "@/features/admin/console/primitives";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { useServerSeededDraft } from "@/lib/use-server-seeded-draft";
 import {
   domainsQueryKeys,
   rotateDomainChallenge,
@@ -40,8 +41,11 @@ export function DomainCapabilitiesPanel({
   const { domain } = entry;
   const queryClient = useQueryClient();
   const [disableMail, setDisableMail] = useState(false);
-  const [identityMode, setIdentityMode] = useState(domain.identityMode);
-  const [aliasTarget, setAliasTarget] = useState(domain.aliasTargetDomainId ?? "");
+  // Seeded from the server but kept across refetches (verify, toggles) while edited.
+  const identityModeDraft = useServerSeededDraft(domain.identityMode, (mode) => mode);
+  const aliasTargetDraft = useServerSeededDraft(domain.aliasTargetDomainId, (id) => id ?? "");
+  const { draft: identityMode, setDraft: setIdentityMode } = identityModeDraft;
+  const { draft: aliasTarget, setDraft: setAliasTarget } = aliasTargetDraft;
   const targets = domains.filter(
     ({ domain: candidate }) =>
       candidate.id !== domain.id &&
@@ -123,10 +127,19 @@ export function DomainCapabilitiesPanel({
             className="my-3 space-y-3"
             onSubmit={(event) => {
               event.preventDefault();
-              update.mutate({
-                identityMode,
-                aliasTargetDomainId: identityMode === "alias" ? aliasTarget : null,
-              });
+              const submitted = { identityMode, aliasTarget };
+              update.mutate(
+                {
+                  identityMode,
+                  aliasTargetDomainId: identityMode === "alias" ? aliasTarget : null,
+                },
+                {
+                  onSuccess: () => {
+                    identityModeDraft.markSaved(submitted.identityMode);
+                    aliasTargetDraft.markSaved(submitted.aliasTarget);
+                  },
+                },
+              );
             }}
           >
             <AdminField label="Domain identity mode">

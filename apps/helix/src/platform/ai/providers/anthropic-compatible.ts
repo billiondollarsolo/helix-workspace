@@ -23,6 +23,11 @@ import {
   usageFromAnthropic,
   type ProviderRequestConfig,
 } from "./shared.js";
+import {
+  probeProviderEndpoint,
+  type ProbeableLLMProvider,
+  type ProviderProbeResult,
+} from "./probe.js";
 
 export interface AnthropicCompatibleProviderConfig {
   readonly id: string;
@@ -43,7 +48,7 @@ export function createAnthropicCompatibleProvider(
   return new AnthropicCompatibleProvider(config);
 }
 
-class AnthropicCompatibleProvider implements LLMProviderCapability {
+class AnthropicCompatibleProvider implements ProbeableLLMProvider {
   readonly id: string;
   readonly protocol = "anthropic-compatible" as const;
 
@@ -113,6 +118,14 @@ class AnthropicCompatibleProvider implements LLMProviderCapability {
 
   async models(): Promise<readonly ModelInfo[]> {
     return this.#models;
+  }
+
+  /** `GET {baseUrl}/models` — the Anthropic model listing. */
+  probe(signal: AbortSignal): Promise<ProviderProbeResult> {
+    return probeProviderEndpoint(joinUrl(this.#baseUrl, "models"), {
+      ...this.#requestConfig(),
+      signal,
+    });
   }
 
   async countTokens(text: string): Promise<number> {

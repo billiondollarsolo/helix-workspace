@@ -22,22 +22,23 @@ with registry digests captured by the image-security workflow.
 
 ## Stateful and security-sensitive services
 
-| Component             |       Version | Upgrade posture                                                                                                                                                                                                                                    |
-| --------------------- | ------------: | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| PostgreSQL / pgvector |  18.4 / 0.8.5 | Major PostgreSQL upgrades require a new volume plus dump/restore or a rehearsed `pg_upgrade`. Never swap the image over a PostgreSQL 17 directory.                                                                                                 |
-| Redis                 |         8.8.1 | AOF is enabled. Back up and validate persistence before promotion.                                                                                                                                                                                 |
-| NATS Server           |        2.14.3 | Rebuilt from a checksum-verified commit with the pinned Go toolchain.                                                                                                                                                                              |
-| Meilisearch           |        1.51.0 | Use dump/import or rebuild indexes from PostgreSQL; do not reuse an incompatible data directory.                                                                                                                                                   |
-| Cerbos                |        0.54.0 | Rebuilt from a checksum-verified commit; the policy compiler image is also digest-pinned.                                                                                                                                                          |
-| RustFS                | 1.0.0-beta.11 | Upstream still has no stable release. This is a recorded exception, pinned by digest, and must not be presented as stable. Re-evaluate each release or replace it with an approved stable S3-compatible provider before a higher-assurance launch. |
-| SpamAssassin          |         4.0.2 | The immutable source-image digest and Apache rules archive checksum are both verified.                                                                                                                                                             |
-| ClamAV                |         1.5.3 | Current stable image. The official image is amd64-only, so deployment architecture remains explicit.                                                                                                                                               |
-| Mailpit               |        1.30.6 | Development/test SMTP only; pinned by digest.                                                                                                                                                                                                      |
+| Component             |      Version | Upgrade posture                                                                                                                                                                                                                          |
+| --------------------- | -----------: | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PostgreSQL / pgvector | 18.6 / 0.8.5 | Major PostgreSQL upgrades require a new volume plus dump/restore or a rehearsed `pg_upgrade`. Never swap the image over a PostgreSQL 17 directory.                                                                                       |
+| Redis                 |       8.10.2 | AOF is enabled. Back up and validate persistence before promotion.                                                                                                                                                                       |
+| NATS Server           |       2.14.3 | Rebuilt from a checksum-verified commit with the pinned Go toolchain.                                                                                                                                                                    |
+| Meilisearch           |       1.51.0 | Use dump/import or rebuild indexes from PostgreSQL; do not reuse an incompatible data directory.                                                                                                                                         |
+| Cerbos                |       0.54.0 | Rebuilt from a checksum-verified commit; the policy compiler image is also digest-pinned.                                                                                                                                                |
+| RustFS                |        1.0.1 | Stable 1.0 line, pinned by digest. The Compose readiness probe uses `/health/ready`; 1.0.1 no longer reports readiness from the liveness endpoint. Production promotion still requires a clean High/Critical image scan for this digest. |
+| SpamAssassin          |        4.0.2 | The immutable source-image digest and Apache rules archive checksum are both verified.                                                                                                                                                   |
+| ClamAV                |        1.5.4 | Current stable image. The official image is amd64-only, so deployment architecture remains explicit.                                                                                                                                     |
+| Mailpit               |       1.31.4 | Development/test SMTP only; pinned by digest.                                                                                                                                                                                            |
 
 ## Optional and operational containers
 
-The checked-in optional profiles pin Caddy 2.11.4, Jitsi `stable-11031`, OpenTelemetry Collector
-Contrib 0.157.0, Prometheus 3.13.1, Alertmanager 0.33.1, Tempo 3.0.2, Loki 3.7.4, Grafana 13.1.1,
+The checked-in optional profiles pin Caddy 2.11.7, Jitsi `stable-11031`, coturn 4.18.0,
+OpenTelemetry Collector Contrib 0.162.0, Prometheus 3.15.0, Alertmanager 0.34.1, Tempo 3.1.0,
+Loki 3.7.8, Grafana 13.2.3,
 k6 2.1.0, and ZAP 2.17.0 by immutable digest. These components remain outside the storage-only MVP
 unless their profile or evidence command is explicitly enabled.
 
@@ -49,7 +50,6 @@ unless their profile or evidence command is explicitly enabled.
 - The shipped Workspace web app uses React 19.2.8.
 - TypeScript stays on 5.9.3 as described above. `@types/node` stays on the Node 24 line even though
   Node 26 types exist.
-- RustFS is the only prerelease service exception and is tracked separately above.
 
 ## Transitive dependency controls
 

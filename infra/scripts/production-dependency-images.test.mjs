@@ -11,6 +11,7 @@ const dockerfiles = {
   "postgres-cnpg": readFileSync(resolve("infra/postgres/Dockerfile.cnpg"), "utf8"),
 };
 const spamassassinEntrypoint = readFileSync(resolve("infra/spamassassin/entrypoint.sh"), "utf8");
+const spamdRun = readFileSync(resolve("infra/spamassassin/spamd-run.sh"), "utf8");
 const dataPlaneFixture = readFileSync(resolve("infra/scripts/data-plane-live-fixture.mjs"), "utf8");
 const workspaceDockerfile = readFileSync(resolve("infra/docker/Dockerfile"), "utf8");
 const SHA256 = "[a-f0-9]{64}";
@@ -73,7 +74,7 @@ describe("production dependency image build contracts", () => {
   it("pins data-plane validation clients to the production service lines", () => {
     expect(dataPlaneFixture).toContain("natsio/nats-box:0.19.7@sha256:");
     expect(dataPlaneFixture).toContain("postgres:18.6-alpine3.24@sha256:");
-    expect(dataPlaneFixture).toContain("redis:8.8.3-alpine@sha256:");
+    expect(dataPlaneFixture).toContain("redis:8.10.2-alpine@sha256:");
     expect(dataPlaneFixture).not.toMatch(/(?:postgres|redis):(?:17|7)-alpine/u);
   });
   it("repackages Meilisearch into a minimal patched runtime from an immutable source image", () => {
@@ -109,7 +110,7 @@ describe("production dependency image build contracts", () => {
     expect(spamassassinEntrypoint).toContain(
       'if [ ! -s "${active_rules}/updates_spamassassin_org/72_active.cf" ]',
     );
-    expect(spamassassinEntrypoint).toContain('cp -a "${baked_rules}/." "${active_rules}/"');
+    expect(spamassassinEntrypoint).toContain('cp -R "${baked_rules}/." "${active_rules}/"');
     expect(dockerfiles.spamassassin).toContain("c-ares=1.34.8-r0");
   });
   it("rebuilds ClamAV on its pinned upstream image with patched pcre2", () => {
@@ -117,6 +118,31 @@ describe("production dependency image build contracts", () => {
       new RegExp(`^ARG SOURCE_IMAGE=clamav/clamav:1\\.5\\.4@sha256:${SHA256}$`, "mu"),
     );
     expect(dockerfiles.clamav).toContain("apk add --no-cache --upgrade pcre2=10.49-r0");
-    expect(dockerfiles.clamav).not.toMatch(/^(?:ENTRYPOINT|CMD|USER) /mu);
+    expect(dockerfiles.clamav).not.toMatch(/^(?:ENTRYPOINT|CMD) /mu);
+  });
+  it("runs every dependency image as a fixed unprivileged user", () => {
+    const expectedUsers = {
+      postgres: "70:70",
+      clamav: "100:101",
+      nats: "10001:10001",
+      meilisearch: "10001:10001",
+      cerbos: "10001:10001",
+      spamassassin: "10001:10001",
+      "postgres-cnpg": "26",
+    };
+    for (const [name, dockerfile] of Object.entries(dockerfiles)) {
+      const users = [...dockerfile.matchAll(/^USER (\S+)$/gmu)].map((match) => match[1]);
+      expect(users.at(-1), `${name} final USER`).toBe(expectedUsers[name]);
+    }
+    expect(dockerfiles.meilisearch).toMatch(/^WORKDIR \/meili_data$/mu);
+    expect(dockerfiles.nats).toContain("install -d -o nats -g nats -m 0750 /data");
+    expect(dockerfiles.cerbos).toContain("install -d -o 10001 -g 10001 -m 0750 /out/rootfs/.cache");
+    expect(dockerfiles.clamav).toContain("chown -R clamav:clamav /etc/clamav /run/lock");
+    expect(dockerfiles.spamassassin).toContain("rm -rf /etc/service/crond");
+    expect(dockerfiles.spamassassin).toContain(
+      "COPY --chmod=0755 spamd-run.sh /etc/service/spamassassin/run",
+    );
+    expect(spamdRun).not.toMatch(/\s-u\s|\s-g\s/u);
+    expect(spamdRun).toContain('--pidfile "${pidfile}"');
   });
 });

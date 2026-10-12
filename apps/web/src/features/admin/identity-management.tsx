@@ -770,7 +770,10 @@ function buildCreateInput(form: IdpFormState) {
   if (form.displayName.trim().length === 0) {
     throw new Error("Display name is required.");
   }
-  const attrMapping = parseJsonObject(form.attrMappingJson, "Attribute mapping JSON");
+  const mapping = Object.entries(parseJsonObject(form.attrMappingJson, "Attribute mapping JSON"));
+  const attrMapping = Object.fromEntries(
+    mapping.map(([k, v]) => [k, typeof v === "string" ? v.trim() : v]),
+  );
   const config = compactObject({ issuer: form.issuer.trim(), clientId: form.clientId.trim() });
   if (form.issuer.trim().length === 0 || form.clientId.trim().length === 0) {
     throw new Error("Issuer URL and client ID are required.");
@@ -848,15 +851,15 @@ function updateAttributeMappingJson(
   selector: string,
 ): string {
   const mapping = safeParseJsonObject(mappingJson) ?? {};
-  const nextSelector = selector.trim();
-  if (nextSelector.length === 0) {
+  // Kept as typed (trimming per keystroke dropped spaces); saving trims selectors.
+  if (selector.trim().length === 0) {
     return JSON.stringify(
       Object.fromEntries(Object.entries(mapping).filter(([key]) => key !== attribute)),
       null,
       2,
     );
   } else {
-    mapping[attribute] = nextSelector;
+    mapping[attribute] = selector;
   }
   return JSON.stringify(mapping, null, 2);
 }

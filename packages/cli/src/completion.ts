@@ -331,7 +331,7 @@ const adminFamilyActions: Record<string, readonly string[]> = {
   "app-passwords": ["list", "create", "revoke"],
   "agent-credentials": ["list", "create", "rotate", "revoke"],
   credentials: ["list", "create", "rotate", "revoke"],
-  users: ["list", "suspend", "restore"],
+  users: ["list", "suspend", "restore", "invite", "resend-invite", "revoke-invite"],
   audit: ["list"],
   "audit-log": ["list"],
 };
@@ -372,6 +372,11 @@ const adminActionFlags: Record<string, readonly string[]> = {
   "credentials:revoke": ["--credential-id", "--json"],
   "credentials:rotate": ["--credential-id", "--expires-at", "--certificate-fingerprint", "--json"],
   "users:list": ["--query", "--type", "--include-disabled", "--limit", "--cursor"],
+  "users:suspend": ["--actor-id"],
+  "users:restore": ["--actor-id"],
+  "users:invite": ["--email", "--name", "--admin"],
+  "users:resend-invite": ["--actor-id"],
+  "users:revoke-invite": ["--actor-id"],
   "audit:list": ["--actor-id", "--object-id", "--object-type", "--verb", "--limit", "--cursor"],
   "audit-log:list": ["--actor-id", "--object-id", "--object-type", "--verb", "--limit", "--cursor"],
 };

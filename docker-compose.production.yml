@@ -288,6 +288,11 @@ services:
       - postgres_ca
       - postgres_server_cert
       - postgres_server_key
+    # The image runs as postgres (UID 70). This TLS bootstrap alone starts as
+    # root to copy the operator-owned 0600 secret files into a postgres-owned
+    # directory; docker-entrypoint.sh then drops to postgres through gosu, so
+    # the server never runs as root.
+    user: "0:0"
     entrypoint:
       - /bin/sh
       - -euc

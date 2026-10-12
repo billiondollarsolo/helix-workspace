@@ -33,7 +33,7 @@ interface ApiUser {
   readonly email: string | null;
   readonly displayName: string;
   readonly scopes: readonly string[];
-  readonly status: "active" | "suspended" | "removed";
+  readonly status: "active" | "invited" | "suspended" | "removed";
   readonly disabledAt: string | null;
   readonly lastSignInAt: string | null;
   readonly createdAt: string;
@@ -453,6 +453,31 @@ describe("AdminUsers", () => {
     expect(requests.at(-1)?.searchParams.get("includeDisabled")).toBe("false");
   });
 
+  it("shows people who have not joined yet as Invited and filters them", async () => {
+    await renderWith([
+      apiUser({ id: "u-1", displayName: "Live One" }),
+      apiUser({ id: "u-2", displayName: "Pending Two", status: "invited" }),
+    ]);
+    expect(container.querySelector(".admin-user-row .chip.info")?.textContent).toBe("Invited");
+
+    await selectValue("Status", "invited");
+    await waitFor(() => {
+      expect(visibleUsers()).toEqual(["Pending Two"]);
+    });
+    await selectValue("Status", "active");
+    await waitFor(() => {
+      expect(visibleUsers()).toEqual(["Live One"]);
+    });
+  });
+
+  it("opens the invite dialog from the toolbar", async () => {
+    await renderWith([apiUser({ id: "u-1", displayName: "Person" })]);
+    await click(button("Invite people"));
+    await waitFor(() => {
+      expect(document.body.textContent).toContain("Send invitation");
+    });
+  });
+
   it("sends the account type to the server and ignores one it would reject", async () => {
     await renderWith([
       apiUser({ id: "u-1", displayName: "Person" }),
@@ -491,6 +516,7 @@ describe("AdminUsers", () => {
         status: "removed",
         disabledAt: "2026-01-15T00:00:00Z",
       }),
+      apiUser({ id: "u-4", displayName: "Pending", status: "invited" }),
     ]);
 
     expect(await openRowMenu("Person")).toEqual([
@@ -506,6 +532,12 @@ describe("AdminUsers", () => {
     expect(await openRowMenu("Gone")).toEqual(["Edit profile", "Mail addresses", "Restore user…"]);
     await key("Escape");
     expect(await openRowMenu("Former")).toEqual(["Edit profile", "Mail addresses"]);
+    await key("Escape");
+    expect(await openRowMenu("Pending")).toEqual([
+      "Edit profile",
+      "Resend invitation",
+      "Withdraw invitation…",
+    ]);
   });
 
   it("shows the last sign-in instead of the date added", async () => {
@@ -556,18 +588,23 @@ describe("AdminUsers", () => {
       await click(item as HTMLElement);
     };
     const confirmIn = async (label: string) => {
-      const dialog = document.querySelector<HTMLElement>('[role="alertdialog"]');
-      const action = [...(dialog?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(
-        (element) => element.textContent?.trim() === label,
-      );
-      if (action === undefined) throw new Error(`No ${label} button in the confirmation`);
-      await click(action);
+      let action: HTMLButtonElement | undefined;
+      await waitFor(() => {
+        const dialog = document.querySelector<HTMLElement>('[role="alertdialog"]');
+        action = [...(dialog?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(
+          (element) => element.textContent?.trim() === label,
+        );
+        if (action === undefined) throw new Error(`No ${label} button in the confirmation`);
+      });
+      await click(action as HTMLButtonElement);
     };
 
     await choose("Suspend user…");
-    expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain(
-      "signed out on every device",
-    );
+    await waitFor(() => {
+      expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain(
+        "signed out on every device",
+      );
+    });
     expect(posts).toEqual([]);
     await confirmIn("Suspend");
     await waitFor(() => {

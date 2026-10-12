@@ -75,6 +75,10 @@ Production assertions impose additional requirements; follow the [deployment gui
 | `HELIX_DRIVE_SCAN_RETRY_DELAY_MS`                  | Optional     | `30000`                                                     |
 | `HELIX_DRIVE_SCAN_RETRY_INTERVAL_MS`               | Optional     | `10000`                                                     |
 | `HELIX_DRIVE_SCANNER_KIND`                         | Optional     | —                                                           |
+| `HELIX_EDGE_ADMIN_SOCKET`                          | Optional     | —                                                           |
+| `HELIX_EDGE_CERT_DIR`                              | Optional     | —                                                           |
+| `HELIX_EDGE_PROBE_ADDRESS`                         | Optional     | —                                                           |
+| `HELIX_EDGE_TLS_SOURCE`                            | Optional     | —                                                           |
 | `HELIX_GLOBAL_READ_ONLY`                           | Optional     | —                                                           |
 | `HELIX_IMAGE`                                      | Optional     | —                                                           |
 | `HELIX_LOCAL_DEMO_ANCHOR_DATE`                     | Optional     | —                                                           |

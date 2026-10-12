@@ -11,8 +11,9 @@ Usage: infra/scripts/production-boot-smoke.sh [options]
 
 Boots the production Compose stack from nothing on this host and proves the
 path a new deployment takes: generated secrets, one `up -d`, HTTPS at the edge,
-first administrator, 2-step verification, an emailed invitation, and a Drive
-upload, download, and malware rejection.
+first administrator, 2-step verification, an emailed invitation, a Drive
+upload, download, and malware rejection, and replacing the HTTPS certificate
+from the Admin console.
 
 Images are built from this checkout; nothing is pulled from the Helix registry
 and nothing is published beyond 127.0.0.1. Everything the run creates is
@@ -241,6 +242,8 @@ if [[ "$TLS_MODE" == internal ]]; then
     [[ $((SECONDS - started)) -lt 900 ]] || die "Caddy never issued its internal CA"
     sleep 2
   done
+  # A certificate uploaded later in this run is signed by the deployment CA.
+  cat "$SECRETS/ca/ca.pem" >>"$EDGE_CA"
 fi
 
 BASE="https://$DOMAIN"
@@ -251,7 +254,10 @@ edge() {
 api() {
   local path=$1
   shift
-  edge -b "$JAR" -c "$JAR" -H "origin: $BASE" -H 'content-type: application/json' \
+  # A JSON content type on a request without a body is refused.
+  local content_type='accept: application/json'
+  [[ " $* " == *" -d "* ]] && content_type='content-type: application/json'
+  edge -b "$JAR" -c "$JAR" -H "origin: $BASE" -H "$content_type" \
     -H "x-helix-csrf-token: ${CSRF:-}" "$BASE$path" "$@"
 }
 status_of() { api "$@" -o "$WORK/last.json" -w '%{http_code}'; }
@@ -393,6 +399,80 @@ expect "malware upload is rejected by the scanner" "$FINALIZE_STATUS" 409
 expect "rejected file cannot be downloaded" \
   "$(edge -b "$JAR" -H "origin: $BASE" -o /dev/null -w '%{http_code}' \
     "$BASE/v1/api/drive/objects/$OBJECT_ID/content?download=1")" 404
+
+# --- HTTPS certificate managed from the Admin console -----------------------
+
+edge_issuer() {
+  echo | openssl s_client -connect "127.0.0.1:$HTTPS_PORT" -servername "$DOMAIN" 2>/dev/null |
+    openssl x509 -noout -issuer 2>/dev/null
+}
+wait_for_issuer() {
+  local expected=$1
+  for _ in {1..30}; do
+    [[ "$(edge_issuer)" == *"$expected"* ]] && return 0
+    sleep 2
+  done
+  return 1
+}
+certificate_body() {
+  node -e '
+    const { readFileSync } = require("node:fs");
+    const [certificate, key, ca] = process.argv.slice(1).map((path) => readFileSync(path, "utf8"));
+    process.stdout.write(JSON.stringify({ certificatePem: certificate + ca, privateKeyPem: key }));
+  ' "$WORK/$1.pem" "$WORK/$1.key" "$SECRETS/ca/ca.pem"
+}
+certificate_field() { api /v1/api/admin/edge/certificate | json "certificate.$1"; }
+
+issue_certificate uploaded "$DOMAIN"
+certificate_body uploaded >"$WORK/uploaded.json"
+if [[ "$TLS_MODE" == files ]]; then
+  expect "the console says the certificate comes from server files" \
+    "$(certificate_field source)" deployment-files
+  expect "a certificate provided as files cannot be replaced from the console" \
+    "$(status_of /v1/api/admin/edge/certificate -X PUT -d "@$WORK/uploaded.json")" 409
+else
+  expect "the console can manage the certificate" "$(certificate_field manageable)" true
+  issue_certificate elsewhere "elsewhere.$DOMAIN"
+  certificate_body elsewhere >"$WORK/elsewhere.json"
+  expect "a certificate for another name is refused" \
+    "$(status_of /v1/api/admin/edge/certificate -X PUT -d "@$WORK/elsewhere.json")" 400
+  if grep -q "It must cover $DOMAIN" "$WORK/last.json"; then
+    pass "the refusal says which name the certificate must cover"
+  else
+    fail "the refusal says which name the certificate must cover ($(head -c 200 "$WORK/last.json"))"
+  fi
+
+  expect "an administrator uploads a certificate" \
+    "$(status_of /v1/api/admin/edge/certificate -X PUT -d "@$WORK/uploaded.json")" 200
+  if grep -q 'PRIVATE KEY' "$WORK/last.json"; then
+    fail "the private key is never returned"
+  else
+    pass "the private key is never returned"
+  fi
+  if wait_for_issuer "Helix deployment internal CA"; then
+    pass "the edge serves the uploaded certificate without a restart"
+  else
+    fail "the edge serves the uploaded certificate without a restart ($(edge_issuer))"
+  fi
+  expect "the console reports it applied" "$(certificate_field applied)" true
+  expect "the workspace still answers over verified HTTPS" \
+    "$(edge -o /dev/null -w '%{http_code}' "$BASE/readyz")" 200
+
+  compose restart caddy >/dev/null 2>&1
+  if wait_for_issuer "Helix deployment internal CA"; then
+    pass "a restarted edge still serves the uploaded certificate"
+  else
+    fail "a restarted edge still serves the uploaded certificate ($(edge_issuer))"
+  fi
+
+  expect "an administrator goes back to automatic certificates" \
+    "$(status_of /v1/api/admin/edge/certificate -X DELETE)" 200
+  if wait_for_issuer "Caddy Local Authority"; then
+    pass "the edge returns to its own certificate"
+  else
+    fail "the edge returns to its own certificate ($(edge_issuer))"
+  fi
+fi
 
 if [[ "$FAILURES" -gt 0 ]]; then
   compose logs --tail 60 helix >&2 || true

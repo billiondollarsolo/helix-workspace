@@ -97,7 +97,8 @@ Run every command from the repository root on the deployment host.
    Do **not** put passwords or API keys in this file.
 
 4. Choose where the HTTPS certificate comes from. With nothing set, Caddy obtains one from
-   Let's Encrypt. To serve your own, see
+   Let's Encrypt, and an administrator can later upload the organization's own under
+   **Admin → Domains**. To deliver certificate files to the server instead, see
    [TLS certificates](../deployment-production.md#tls-certificates) and add
    `-f docker-compose.tls-files.yml` to every command below.
 

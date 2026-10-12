@@ -8,6 +8,17 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Added
 
+- Manage the HTTPS certificate from the Admin console. **Admin → Domains → HTTPS certificate**
+  shows the certificate the workspace serves, who issued it, and when it expires. In the
+  production Compose stack an administrator can upload the organization's own certificate and key
+  (checked for the right name, validity, chain order, and a matching key, with the reason for any
+  refusal), which the edge starts serving within seconds and without a restart, or go back to
+  automatic certificates. The key is stored encrypted and never returned; uploads and removals are
+  audited (`edge.tls.certificate_uploaded`, `edge.tls.certificate_removed`); the console and the
+  application log warn from 30 days before an uploaded certificate expires. New routes `GET`,
+  `PUT`, and `DELETE /api/admin/edge/certificate`; new settings `HELIX_EDGE_TLS_SOURCE`,
+  `HELIX_EDGE_CERT_DIR`, `HELIX_EDGE_ADMIN_SOCKET`, and `HELIX_EDGE_PROBE_ADDRESS`; migration
+  `0223_edge_tls_certificate`.
 - Single-host production deployment that starts from one command.
   `infra/scripts/generate-production-secrets.mjs` writes every secret file and the internal
   service certificates; the production Compose overlay now provisions object storage (TLS, a KMS

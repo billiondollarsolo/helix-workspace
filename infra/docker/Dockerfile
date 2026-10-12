@@ -107,8 +107,8 @@ RUN apk add --no-cache \
       libssl3=3.5.9-r0 \
     && addgroup -g 10001 -S helix \
     && adduser -u 10001 -S -D -G helix helix \
-    && mkdir -p /config /data /srv \
-    && chown -R 10001:10001 /config /data /srv
+    && mkdir -p /config /data /srv /run/helix-edge-certs /run/caddy-admin \
+    && chown -R 10001:10001 /config /data /srv /run/helix-edge-certs /run/caddy-admin
 
 # Caddy keeps certificates and its autosaved config under these. Without them it
 # falls back to the home directory, which is read-only in production.

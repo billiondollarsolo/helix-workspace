@@ -10,6 +10,10 @@
 # The chain must cover HELIX_DOMAIN. Caddy runs as UID 10001 and must be able to
 # read both files. After replacing them, run: docker compose ... restart caddy
 services:
+  # Admin → Domains shows this certificate but cannot replace it.
+  helix:
+    environment:
+      HELIX_EDGE_TLS_SOURCE: files
   caddy:
     environment:
       HELIX_CADDY_TLS: /run/secrets/tls_cert /run/secrets/tls_key

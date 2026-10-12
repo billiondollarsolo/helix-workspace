@@ -82,6 +82,9 @@ const FILE_BACKED_ENV = {
   MAIL_SMTP_RECEIVER_TLS_CA_FILE: "MAIL_SMTP_RECEIVER_TLS_CA",
   MAIL_PROVIDER_WEBHOOK_SECRET_FILE: "MAIL_PROVIDER_WEBHOOK_SECRET",
   HELIX_DATA_ENCRYPTION_KEY_FILE: "HELIX_DATA_ENCRYPTION_KEY",
+  AUDIT_IMMUTABLE_S3_ACCESS_KEY_FILE: "AUDIT_IMMUTABLE_S3_ACCESS_KEY",
+  AUDIT_IMMUTABLE_S3_SECRET_KEY_FILE: "AUDIT_IMMUTABLE_S3_SECRET_KEY",
+  AUDIT_IMMUTABLE_S3_ANCHOR_SECRET_FILE: "AUDIT_IMMUTABLE_S3_ANCHOR_SECRET",
   MEET_JITSI_JWT_SECRET_FILE: "MEET_JITSI_JWT_SECRET",
   MEET_JITSI_WEBHOOK_SHARED_SECRET_FILE: "MEET_JITSI_WEBHOOK_SHARED_SECRET",
   JITSI_JWT_SECRET_FILE: "JITSI_JWT_SECRET",
@@ -97,7 +100,7 @@ const MAX_SECRET_FILE_BYTES = 64 * 1024;
  * inline secret cannot silently win. Errors name only the environment
  * variable; file paths and secret contents are never included.
  */
-function resolveFileBackedEnvironment(
+export function resolveFileBackedEnvironment(
   source: Record<string, string | undefined>,
   fileBackedEnv: Readonly<Record<string, string>> = FILE_BACKED_ENV,
 ): Record<string, string | undefined> {
@@ -224,6 +227,7 @@ function optionalEnvironmentValue(value: string | undefined): string | undefined
   return normalized === undefined || normalized.length === 0 ? undefined : normalized;
 }
 let cached: Env | undefined;
+let cachedRuntimeEnvironment: Readonly<NodeJS.ProcessEnv> | undefined;
 /** Memoized validated env for app code. Prefer injecting `loadEnv` in tests. */
 export function env(): Env {
   if (cached !== undefined) {
@@ -234,9 +238,30 @@ export function env(): Env {
   cached = loaded;
   return cached;
 }
+/**
+ * The process environment with the documented `*_FILE` secrets resolved, for
+ * the injectable adapters that accept a whole environment record (Better Auth,
+ * Vault, plugin `secretEnv` references, audit destinations, AI providers).
+ *
+ * Production mounts secrets as files and removes the inline variables, so
+ * handing those adapters raw `process.env` would silently drop
+ * `BETTER_AUTH_SECRET`, `DATABASE_URL`, and the other file-backed values.
+ * The record is a frozen snapshot taken after {@link env} validated the same
+ * inputs; `process.env` itself is never mutated, so resolved secrets are not
+ * inherited by child processes.
+ */
+export function runtimeEnvironment(): Readonly<NodeJS.ProcessEnv> {
+  if (cachedRuntimeEnvironment !== undefined) {
+    return cachedRuntimeEnvironment;
+  }
+  env();
+  cachedRuntimeEnvironment = Object.freeze(resolveFileBackedEnvironment(process.env));
+  return cachedRuntimeEnvironment;
+}
 /** Test helper — clears the memoized env so subsequent `env()` re-parses. */
 export function resetEnvCacheForTests(): void {
   cached = undefined;
+  cachedRuntimeEnvironment = undefined;
 }
 const operationalControlEnvSchema = envSchema.pick({
   HELIX_AGENT_WRITES_ENABLED: true,

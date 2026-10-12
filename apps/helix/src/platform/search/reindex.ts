@@ -4,7 +4,7 @@ import { PostgresCalendarStore } from "../calendar/index.js";
 import { chatRecordToIndexDocument } from "../chat/search/indexer.js";
 import { PostgresChatStore } from "../chat/index.js";
 import { driveRecordToIndexDocument } from "../drive/search/indexer.js";
-import { PostgresDriveStore } from "../drive/index.js";
+import { createDriveSearchProjectionReader } from "../drive/index.js";
 import { mailRecordToIndexDocument } from "../mail/search/indexer.js";
 import { PostgresMailStore } from "../mail/index.js";
 import { withTenantIoSagaPostgresContext } from "../tenancy/postgres-roles.js";
@@ -239,7 +239,9 @@ export function createPostgresSearchReindexSources(
 ): readonly SearchReindexSource[] {
   const mail = new PostgresMailStore(sql);
   const chat = new PostgresChatStore(sql);
-  const drive = new PostgresDriveStore(sql);
+  // Metadata-only: a reindex never stores bytes, so it must not require the
+  // write path's production antivirus scanner.
+  const drive = createDriveSearchProjectionReader(sql);
   const calendar = new PostgresCalendarStore(sql);
   const pageSize = normalizeBatchSize(options.pageSize);
   return [

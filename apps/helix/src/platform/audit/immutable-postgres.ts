@@ -1,4 +1,5 @@
 import type { JsonObject } from "@helix/sdk";
+import { withTenantPostgresContext } from "../tenancy/postgres-roles.js";
 import { createHash } from "node:crypto";
 import type postgres from "postgres";
 import type { ImmutableAuditActivityRecord, ImmutableAuditShipResult } from "./immutable-s3.js";
@@ -47,8 +48,14 @@ export class PostgresWormAuditShipper implements AuditBatchShipper {
     for (const record of records) {
       assertRecord(record);
     }
+    // The table enforces tenant row-level security, so the batch runs in its
+    // organization's context. The shipping worker groups records by org.
+    const orgId = records[0]?.orgId;
+    if (orgId === undefined || records.some((record) => record.orgId !== orgId)) {
+      throw new TypeError("WORM Postgres audit shipper requires one organization per batch");
+    }
 
-    await this.sql.begin(async (tx) => {
+    await withTenantPostgresContext(this.sql, { orgId }, async (tx) => {
       for (const record of records) {
         const prevHash = record.prevHash ?? record.previousHash ?? null;
         await tx`
@@ -114,21 +121,29 @@ export class PostgresWormAuditReader {
   constructor(private readonly sql: postgres.Sql) {}
 
   async countForOrg(orgId: string): Promise<number> {
-    const rows = await this.sql<{ readonly record_count: number }[]>`
-      select count(*)::int as record_count
-      from audit_immutable_postgres
-      where org_id = ${orgId}
-    `;
+    const rows = await withTenantPostgresContext(
+      this.sql,
+      { orgId },
+      (tx) => tx<{ readonly record_count: number }[]>`
+        select count(*)::int as record_count
+        from audit_immutable_postgres
+        where org_id = ${orgId}
+      `,
+    );
     return rows[0]?.record_count ?? 0;
   }
 
   async listHashesForOrg(orgId: string): Promise<readonly string[]> {
-    const rows = await this.sql<{ readonly this_hash: string }[]>`
-      select this_hash
-      from audit_immutable_postgres
-      where org_id = ${orgId}
-      order by record_created_at asc, record_id asc
-    `;
+    const rows = await withTenantPostgresContext(
+      this.sql,
+      { orgId },
+      (tx) => tx<{ readonly this_hash: string }[]>`
+        select this_hash
+        from audit_immutable_postgres
+        where org_id = ${orgId}
+        order by record_created_at asc, record_id asc
+      `,
+    );
     return rows.map((row) => row.this_hash);
   }
 }

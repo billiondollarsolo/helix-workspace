@@ -1,0 +1,24 @@
+# Serve your own TLS certificate instead of obtaining one from Let's Encrypt.
+#
+#   docker compose --env-file .env.production \
+#     -f docker-compose.yml -f docker-compose.production.yml \
+#     -f docker-compose.tls-files.yml up -d
+#
+# Put the PEM files in HELIX_PRODUCTION_SECRETS_DIR:
+#   tls_cert  the certificate followed by its intermediate chain
+#   tls_key   the private key (unencrypted)
+# The chain must cover HELIX_DOMAIN. Caddy runs as UID 10001 and must be able to
+# read both files. After replacing them, run: docker compose ... restart caddy
+services:
+  caddy:
+    environment:
+      HELIX_CADDY_TLS: /run/secrets/tls_cert /run/secrets/tls_key
+    secrets:
+      - tls_cert
+      - tls_key
+
+secrets:
+  tls_cert:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/tls_cert
+  tls_key:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/tls_key

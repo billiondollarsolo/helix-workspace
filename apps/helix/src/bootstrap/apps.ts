@@ -1,10 +1,15 @@
+import { runtimeEnvironment } from "../config/env.js";
 import { type FastifyRequest } from "fastify";
 import {
   toolInvocationPrincipalFromRequest,
   unauthenticatedActor,
   type SessionActorResolver,
 } from "../api/actor.js";
-import { envFlag, tenantRootHostFromPublicUrl } from "../bootstrap/env.js";
+import {
+  envFlag,
+  meetDeploymentConfigured,
+  tenantRootHostFromPublicUrl,
+} from "../bootstrap/env.js";
 import {
   InMemoryAICostLimiter,
   ioredisAICostClient,
@@ -93,7 +98,7 @@ export async function installApps(context: Awaited<ReturnType<typeof installAuth
 
   const platformConfig = new PlatformConfigAdminService(
     platformConfigStore,
-    process.env,
+    runtimeEnvironment(),
     eventBus,
     securityPoliciesStore,
   );
@@ -102,7 +107,7 @@ export async function installApps(context: Awaited<ReturnType<typeof installAuth
   // runtime hot-reload, so a NATS-published change re-merges env + Postgres
   // overrides identically.
   const configSources = [
-    new EnvConfigSource(process.env),
+    new EnvConfigSource(runtimeEnvironment()),
     new PostgresOverrideConfigSource(platformConfigStore),
   ];
 
@@ -128,8 +133,7 @@ export async function installApps(context: Awaited<ReturnType<typeof installAuth
       : undefined,
     siemEnabled: envFlag("AUDIT_SIEM_SYSLOG_ENABLED", false),
     siemRegion: bootEnv.HELIX_SIEM_REGION,
-    meetConfigured:
-      bootEnv.MEET_JITSI_PUBLIC_URL !== undefined || bootEnv.MEET_JITSI_DOMAIN !== undefined,
+    meetConfigured: meetDeploymentConfigured(bootEnv),
     meetRegion: bootEnv.MEET_JITSI_REGION,
     ai: runtimeConfiguration.current.ai,
   });
@@ -312,7 +316,7 @@ export async function installApps(context: Awaited<ReturnType<typeof installAuth
     get embeddingProvider() {
       return createAssistantEmbeddingProvider(
         runtimeConfiguration.current.ai,
-        process.env,
+        runtimeEnvironment(),
         undefined,
         runtimeConfiguration.current.security,
       );
@@ -327,7 +331,7 @@ export async function installApps(context: Awaited<ReturnType<typeof installAuth
   // in-app-enforceable control (Tier 2+ audit shipping, Tier 3 Vault/SIEM) is
   // missing, and emit explicit warnings for controls that genuinely cannot be
   // verified in-app (internal mTLS, encryption at rest). Tier 1 never blocks.
-  const tierReadiness = evaluateTierReadiness(securityTier, process.env);
+  const tierReadiness = evaluateTierReadiness(securityTier, runtimeEnvironment());
 
   for (const warning of tierReadiness.warnings) {
     app.log.warn(

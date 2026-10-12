@@ -270,6 +270,8 @@ export function productionEnvironment(secretsDirectory, project) {
     HELIX_PRODUCTION_SECRETS_DIR: secretsDirectory,
     HELIX_COMPOSE_PROJECT_NAME: project,
     HELIX_DOMAIN: "workspace.example.test",
+    HELIX_REGION: "eu-test",
+    HELIX_DEFAULT_ORG_NAME: "Example Workspace",
     HELIX_MFA_ASSERTION_ISSUER: "https://auth.example.test",
     HELIX_MFA_ASSERTION_AUDIENCE: "helix-workspace",
     MAIL_PROVIDER: "postmark",

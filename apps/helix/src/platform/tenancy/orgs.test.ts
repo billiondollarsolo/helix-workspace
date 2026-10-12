@@ -113,6 +113,35 @@ describe("PostgresOrgStore", () => {
     expect(recording.calls[2]?.text).not.toContain("on conflict (id)");
   });
 
+  it("gives the migration-seeded default org its configured name", async () => {
+    const recording = createRecordingSql([[orgRow()], [orgRow({ displayName: "Acme Workspace" })]]);
+    const store = new PostgresOrgStore(recording.sql);
+
+    await expect(
+      store.getOrCreateDefaultOrg({ displayName: "Acme Workspace" }),
+    ).resolves.toMatchObject({ id: DEFAULT_ORG_ID, displayName: "Acme Workspace" });
+
+    expect(recording.calls).toHaveLength(2);
+    expect(recording.calls[1]?.text).toContain("update orgs");
+    expect(recording.calls[1]?.text).toContain("and display_name = ?");
+    expect(recording.calls[1]?.values).toEqual([
+      "Acme Workspace",
+      DEFAULT_ORG_ID,
+      DEFAULT_ORG_DISPLAY_NAME,
+    ]);
+  });
+
+  it("keeps a default org name that was chosen after the first start", async () => {
+    const recording = createRecordingSql([[orgRow({ displayName: "Renamed Later" })]]);
+    const store = new PostgresOrgStore(recording.sql);
+
+    await expect(
+      store.getOrCreateDefaultOrg({ displayName: "Acme Workspace" }),
+    ).resolves.toMatchObject({ displayName: "Renamed Later" });
+
+    expect(recording.calls).toHaveLength(1);
+  });
+
   it("returns the stored default org without re-inserting once it exists", async () => {
     const recording = createRecordingSql([[orgRow()]]);
     const store = new PostgresOrgStore(recording.sql);

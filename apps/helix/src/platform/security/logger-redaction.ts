@@ -79,6 +79,25 @@ export function helixLoggerOptions(level: string): LoggerOptions {
         remoteAddress: request.ip,
         remotePort: request.socket?.remotePort,
       }),
+      // Most call sites log failures as `{ error }`. Pino only knows `err`, so
+      // without this an Error prints as `{}` and operators cannot see the cause.
+      error: serializeLoggedError,
     },
   };
+}
+
+function serializeLoggedError(value: unknown): unknown {
+  if (!(value instanceof Error)) return value;
+  const code = (value as { code?: unknown }).code;
+  return {
+    type: value.name,
+    message: scrubCredentials(value.message),
+    ...(typeof code === "string" || typeof code === "number" ? { code } : {}),
+    ...(value.stack === undefined ? {} : { stack: scrubCredentials(value.stack) }),
+  };
+}
+
+/** Connection errors can echo a URL; never log its embedded credentials. */
+function scrubCredentials(text: string): string {
+  return text.replace(/\/\/[^@\s/]+@/gu, "//***@");
 }

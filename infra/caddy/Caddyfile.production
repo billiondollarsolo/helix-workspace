@@ -5,9 +5,23 @@
 	}
 }
 
+# Container health probe. The site below redirects plain HTTP to HTTPS, so the
+# probe needs its own unpublished plain-HTTP listener.
+:8081 {
+	respond /healthz "ok" 200
+	respond 404
+}
+
 {$HELIX_DOMAIN} {
+	# Certificate source. Empty: automatic HTTPS (Let's Encrypt, ZeroSSL).
+	# "<cert> <key>": operator-provided PEM files. "internal": Caddy's local CA,
+	# for tests only. See docs/deployment-production.md.
+	tls {$HELIX_CADDY_TLS:} {
+		protocols tls1.2 tls1.3
+	}
+
 	# S3 clients verify Content-Length and checksums of raw object bytes.
-	@compressible not path /v1/s3 /v1/s3/*
+	@compressible not path /v1/s3 /v1/s3/* /{$HELIX_STORAGE_BUCKET:helix-objects}/*
 	encode @compressible zstd gzip
 
 	header {
@@ -21,6 +35,24 @@
 		Cross-Origin-Resource-Policy "same-origin"
 		Origin-Agent-Cluster "?1"
 		-Server
+	}
+
+	# Presigned Drive and Mail object URLs. Browsers cannot reach the bundled
+	# object store, so its bucket path is served here. Every request must carry
+	# a valid S3 signature; the Host header is passed through because it is
+	# part of that signature.
+	@objects path /{$HELIX_STORAGE_BUCKET:helix-objects}/*
+	handle @objects {
+		reverse_proxy {$HELIX_STORAGE_UPSTREAM:https://rustfs:9000} {
+			# Caddy rewrites Host to the upstream for HTTPS backends; the
+			# signature covers the public host, so keep it.
+			header_up Host {host}
+			header_up -X-Helix-Mfa-Verified
+			transport http {
+				tls_server_name rustfs
+				tls_trust_pool file /run/secrets/rustfs_ca
+			}
+		}
 	}
 
 	@health path /healthz /readyz

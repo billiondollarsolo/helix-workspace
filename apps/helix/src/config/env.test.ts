@@ -1,8 +1,15 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { loadEnv, loadMigrationEnv, loadSeedEnv } from "./env.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { getBetterAuthRuntimeConfig } from "./auth.js";
+import {
+  loadEnv,
+  loadMigrationEnv,
+  loadSeedEnv,
+  resetEnvCacheForTests,
+  runtimeEnvironment,
+} from "./env.js";
 const base = {
   DATABASE_URL: "postgres://u:p@localhost:5432/helix",
   REDIS_URL: "redis://localhost:6379",
@@ -190,6 +197,42 @@ describe("loadEnv", () => {
     expect((caught as Error).message).not.toContain(missingPath);
   });
 });
+describe("runtimeEnvironment", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    resetEnvCacheForTests();
+  });
+
+  it("hands file-backed secrets to environment-record adapters without mutating process.env", () => {
+    const directory = mkdtempSync(join(tmpdir(), "helix-env-test-"));
+    temporaryDirectories.push(directory);
+    const authSecretPath = join(directory, "better_auth_secret");
+    const databaseUrlPath = join(directory, "database_url");
+    writeFileSync(authSecretPath, "file-backed-better-auth-secret-0123456789abcdef\n", {
+      mode: 0o600,
+    });
+    writeFileSync(databaseUrlPath, "postgres://helix_app:file-secret@postgres:5432/helix\n", {
+      mode: 0o600,
+    });
+    vi.stubEnv("BETTER_AUTH_SECRET", undefined);
+    vi.stubEnv("BETTER_AUTH_SECRET_FILE", authSecretPath);
+    vi.stubEnv("DATABASE_URL", undefined);
+    vi.stubEnv("DATABASE_URL_FILE", databaseUrlPath);
+    resetEnvCacheForTests();
+
+    const resolved = runtimeEnvironment();
+
+    expect(resolved.BETTER_AUTH_SECRET).toBe("file-backed-better-auth-secret-0123456789abcdef");
+    expect(getBetterAuthRuntimeConfig(resolved)).toMatchObject({
+      secret: "file-backed-better-auth-secret-0123456789abcdef",
+      databaseUrl: "postgres://helix_app:file-secret@postgres:5432/helix",
+    });
+    expect(Object.isFrozen(resolved)).toBe(true);
+    expect(process.env.BETTER_AUTH_SECRET).toBeUndefined();
+    expect(process.env.DATABASE_URL).toBeUndefined();
+  });
+});
+
 describe("loadMigrationEnv", () => {
   it("loads the production database URL from the dedicated secret file", () => {
     const directory = mkdtempSync(join(tmpdir(), "helix-migration-env-test-"));

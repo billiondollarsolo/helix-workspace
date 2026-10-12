@@ -110,6 +110,11 @@ RUN apk add --no-cache \
     && mkdir -p /config /data /srv \
     && chown -R 10001:10001 /config /data /srv
 
+# Caddy keeps certificates and its autosaved config under these. Without them it
+# falls back to the home directory, which is read-only in production.
+ENV XDG_DATA_HOME=/data \
+    XDG_CONFIG_HOME=/config
+
 COPY --from=caddy-build /out/caddy /usr/bin/caddy
 COPY --chown=10001:10001 infra/caddy/Caddyfile.production /etc/caddy/Caddyfile
 COPY --from=web-build --chown=10001:10001 /app/apps/web/dist/ /srv/
@@ -119,7 +124,7 @@ USER 10001:10001
 EXPOSE 80 443
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD ["wget", "--spider", "-q", "http://127.0.0.1/healthz"]
+    CMD ["wget", "--spider", "-q", "http://127.0.0.1:8081/healthz"]
 
 ENTRYPOINT ["caddy"]
 CMD ["run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]

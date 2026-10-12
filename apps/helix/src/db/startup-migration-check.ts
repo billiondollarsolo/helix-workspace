@@ -1,5 +1,5 @@
 import type postgres from "postgres";
-import { createSqlClient, resolveDatabaseUrl } from "./client.js";
+import { createSqlClient } from "./client.js";
 import {
   listPendingMigrations,
   listUnknownAppliedMigrations,
@@ -54,7 +54,7 @@ export async function assertNoPendingStartupMigrations(
   // Application replicas perform this read-only check with the least-privilege
   // runtime credential. The elevated migration credential belongs only to the
   // one-shot migrator process.
-  const sql = options.createSql?.() ?? createSqlClient(resolveDatabaseUrl());
+  const sql = options.createSql?.() ?? createSqlClient();
   try {
     const sources = await (options.resolveSources?.() ?? resolvePlatformMigrationSources());
     const [pending, unknown] = await Promise.all([

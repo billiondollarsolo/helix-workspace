@@ -252,6 +252,7 @@ Production assertions impose additional requirements; follow the [deployment gui
 | `RUSTFS_ENDPOINT`                                  | Optional     | —                                                           |
 | `RUSTFS_OBJECT_LOCK_MODE`                          | Optional     | —                                                           |
 | `RUSTFS_OBJECT_LOCK_RETENTION_DAYS`                | Optional     | —                                                           |
+| `RUSTFS_PUBLIC_ENDPOINT`                           | Optional     | —                                                           |
 | `RUSTFS_REGION`                                    | Optional     | `us-east-1`                                                 |
 | `RUSTFS_SECRET_KEY`                                | Optional     | Set explicitly in production                                |
 | `RUSTFS_SERVER_SIDE_ENCRYPTION`                    | Optional     | —                                                           |

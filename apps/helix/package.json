@@ -7,6 +7,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "db:migrate": "tsx src/db/migrate.ts",
+    "db:bootstrap:owner": "tsx src/db/bootstrap-owner.ts",
+    "db:provision:object-store": "tsx src/db/provision-object-store.ts",
     "db:reindex:search": "tsx src/db/reindex-search.ts",
     "db:backfill:mail-receiving-domain": "tsx src/db/backfill-mail-receiving-domain.ts",
     "db:seed:demo": "tsx src/db/demo-seed/cli.ts",

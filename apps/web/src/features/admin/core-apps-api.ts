@@ -28,7 +28,7 @@ interface CoreAppShellEntry {
 }
 
 /** The optional password manager: installed by the deployment, turned on by an admin. */
-export interface PasswordsStatus {
+interface PasswordsStatus {
   readonly installed: boolean;
   readonly enabled: boolean;
   /** Where to open it; null unless it is both installed and turned on. */

@@ -290,7 +290,7 @@ export function chatOrganizationRoomsQueryOptions(
   });
 }
 
-export async function listChatOrganizationRooms(
+async function listChatOrganizationRooms(
   includeAgentOnly: boolean,
   fetchImpl: AuthFetch = authenticatedFetch,
 ): Promise<ChatOrganizationRooms> {

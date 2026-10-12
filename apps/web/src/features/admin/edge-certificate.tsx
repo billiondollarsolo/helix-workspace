@@ -91,6 +91,12 @@ export function EdgeCertificatePanel() {
     );
   }
 
+  /* No HTTPS edge to speak of, as in local development over plain HTTP: there
+     is no certificate to show and nothing here can change that. */
+  if (!status.manageable && status.served === null && status.source === "automatic") {
+    return null;
+  }
+
   const shown = status.served ?? status.uploaded;
   const days = shown === null ? null : daysLeft(shown, now);
   /* An automatic certificate renews itself about a month before it expires,

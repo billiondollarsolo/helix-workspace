@@ -525,6 +525,11 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Fixed
 
+- `db:migrate` names the database it is about to change (`Migrating helix on 127.0.0.1:5432 as
+helix_migrator.`). It reads only the process environment and otherwise uses the local
+  development default, which on a host with several stacks can be the wrong database.
+- Admin → Domains no longer shows an HTTPS certificate panel where there is no HTTPS edge to
+  describe or manage, as in local development over plain HTTP.
 - The production Compose stack starts. It previously could not: the application was missing
   required region and workspace settings, object storage had no TLS, encryption key, or bucket,
   the Business tier had no immutable audit destination, the sign-in database pool connected

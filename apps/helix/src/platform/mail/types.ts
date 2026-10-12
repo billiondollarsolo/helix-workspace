@@ -1,5 +1,6 @@
 import type { AIClassification, JsonObject } from "@helix/sdk-types";
 import type { MailCategoryTab } from "./category.js";
+import type { MailDecisionEvidence } from "./decision/evidence.js";
 
 /**
  * Logical mail folders surfaced in the UI's left rail. These are *views* over
@@ -87,9 +88,19 @@ export interface MailThreadRowRecord {
   readonly snoozedUntil: string | null;
   /** Up to four distinct senders (recipients for drafts), oldest first. */
   readonly participants: readonly MailThreadParticipant[];
-  /** Who filed this thread into Spam (from message scan metadata). */
+  /** Who filed this thread into Spam (from message scan metadata or the decision model). */
   readonly spamCatcher?:
-    "spamd" | "ai" | "rules" | "user" | "virus" | "scanner-policy" | "auth-failure" | null;
+    | "spamd"
+    | "ai"
+    | "rules"
+    | "user"
+    | "virus"
+    | "scanner-policy"
+    | "auth-failure"
+    | "decision-model"
+    | null;
+  /** Decision-model evidence on the latest message (enforce mode only). */
+  readonly decision?: MailDecisionEvidence | undefined;
 }
 
 /** A send scheduled for later that has not been handed off yet. */
@@ -449,6 +460,8 @@ export interface MailThreadMessage {
   readonly references?: readonly string[] | undefined;
   readonly replyTo?: readonly MailEnvelopeAddress[] | undefined;
   readonly subject?: string | undefined;
+  /** Decision-model evidence for this message (enforce mode only). */
+  readonly decision?: MailDecisionEvidence | undefined;
 }
 
 export interface MailThreadAttachment {

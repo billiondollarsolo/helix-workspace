@@ -49,8 +49,28 @@ export const mailSpamCatcherSchema = z.enum([
   "virus",
   "scanner-policy",
   "auth-failure",
+  "decision-model",
 ]);
 export type MailSpamCatcher = z.infer<typeof mailSpamCatcherSchema>;
+
+/**
+ * Evidence from the organization's AI decision model (Admin → Mail → Spam
+ * filtering, enforce mode). `phishing` asks for a strong warning; `action` is
+ * what Helix changed in the mailbox (`none` when nothing moved).
+ */
+export const mailDecisionEvidenceSchema = z.object({
+  provider: z.string(),
+  model: z.string(),
+  verdict: z.enum(["legitimate", "spam", "phishing", "scam"]),
+  confidence: z.number().min(0).max(1).nullable(),
+  phishing: z.boolean(),
+  action: z.enum(["none", "spam", "phishing", "category"]),
+  category: z.enum(["primary", "updates", "promotions", "social"]).nullable(),
+  needsReply: z.boolean().nullable(),
+  urgency: z.enum(["can wait", "this week", "today"]).nullable(),
+  decidedAt: z.string(),
+});
+export type MailDecisionEvidence = z.infer<typeof mailDecisionEvidenceSchema>;
 
 export const mailThreadParticipantSchema = z.object({
   name: z.string(),
@@ -81,8 +101,10 @@ export const mailThreadRowSchema = z.object({
    * scheduled sends list their recipients instead.
    */
   participants: z.array(mailThreadParticipantSchema).max(4),
-  /** Who put this in Spam (spamd / AI beta / user). Omitted when not spam. */
+  /** Who put this in Spam (spamd / AI beta / decision model / user). Omitted when not spam. */
   spamCatcher: mailSpamCatcherSchema.nullable().optional(),
+  /** Decision-model evidence for the latest message, when the org runs it in enforce mode. */
+  decision: mailDecisionEvidenceSchema.optional(),
 });
 export type MailThreadRow = z.infer<typeof mailThreadRowSchema>;
 

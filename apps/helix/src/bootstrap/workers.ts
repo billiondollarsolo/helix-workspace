@@ -34,6 +34,7 @@ export async function installWorkers(context: Awaited<ReturnType<typeof installR
     enrichmentWorker,
     outboxWorker,
     outboundMailWorker,
+    mailDecisionWorker,
     signupVerificationEmailWorker,
     signupOnboardingInviteEmailWorker,
     smtpMailReceiverConfig,
@@ -94,6 +95,10 @@ export async function installWorkers(context: Awaited<ReturnType<typeof installR
 
   if (outboundMailWorker !== undefined) {
     leaderGatedWorkers.push({ name: "outbound-mail-worker", worker: outboundMailWorker });
+  }
+
+  if (mailDecisionWorker !== undefined) {
+    leaderGatedWorkers.push({ name: "mail-decision-worker", worker: mailDecisionWorker });
   }
 
   if (calendarInvitationDeliveryWorker !== undefined) {

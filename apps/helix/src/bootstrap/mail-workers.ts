@@ -9,6 +9,12 @@ import { tenantMailClaims } from "../platform/mail/outbound-claims.js";
 import { LocalMailTransport } from "../platform/mail/local-delivery.js";
 import { MailProviderConfigurationError } from "../platform/mail/errors.js";
 import {
+  DECISION_MODEL_FLAG,
+  resolveDecisionModelConfig,
+} from "../platform/mail/decision/config.js";
+import { PostgresMailDecisionStore } from "../platform/mail/decision/store.js";
+import { MailDecisionWorker } from "../platform/mail/decision/worker.js";
+import {
   DispatchTimeTransportResolver,
   KmsDkimPrivateKeyProtector,
   MailDeliveryError,
@@ -54,6 +60,8 @@ export async function installMailWorkers(context: Awaited<ReturnType<typeof inst
     mailQuarantineStore,
     driveStore,
     mailAttachmentIngestor,
+    tenantSecretCipher,
+    resourceClassificationService,
   } = context;
   const outboxWorker = new OutboxWorker({
     store: outboxStore,
@@ -310,6 +318,26 @@ export async function installMailWorkers(context: Awaited<ReturnType<typeof inst
           },
         });
 
+  // Post-storage AI decision model (per-org opt-in; fail-open; never blocks SMTP).
+  const mailDecisionStore = new PostgresMailDecisionStore(sql, tenantSecretCipher);
+  const mailDecisionWorker = !mailAppRegistered
+    ? undefined
+    : new MailDecisionWorker({
+        events: eventBus,
+        store: mailDecisionStore,
+        loadConfig: async (orgId) =>
+          resolveDecisionModelConfig(
+            (await orgStore.findById(orgId))?.featureFlags[DECISION_MODEL_FLAG],
+          ),
+        runForTenant: (orgId, operation) =>
+          withTenantPostgresContext(sql, { orgId }, () => operation()),
+        classifications: resourceClassificationService,
+        metrics,
+        onError: (error, { orgId }) => {
+          app.log.error({ error, orgId }, "Mail decision model worker error");
+        },
+      });
+
   const smtpSubmissionConfig = mailAppRegistered ? mailCfg.submission : undefined;
 
   const smtpSubmissionServer =
@@ -337,6 +365,8 @@ export async function installMailWorkers(context: Awaited<ReturnType<typeof inst
     outboundProviderStore,
     mailDeliveryEventStore,
     mailSecretProvider,
+    mailDecisionStore,
+    mailDecisionWorker,
     outboundMailWorker,
     signupVerificationEmailWorker,
     signupOnboardingInviteEmailWorker,

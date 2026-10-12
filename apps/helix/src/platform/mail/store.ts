@@ -276,6 +276,7 @@ export class PostgresMailStore
     readonly actorId: string;
     readonly threadId: string;
     readonly messageId?: string | null;
+    readonly mailboxActorId?: string;
     readonly label: "spam" | "ham";
     readonly source?: "user" | "auto_spamd" | "auto_ai" | "auto_rules";
     readonly evidence?: JsonObject;

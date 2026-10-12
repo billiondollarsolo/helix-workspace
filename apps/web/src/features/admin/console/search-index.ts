@@ -60,7 +60,7 @@ const SETTINGS: readonly Omit<AdminSettingEntry, "location">[] = [
     title: "Spam filtering",
     section: "mail",
     tab: "spam",
-    keywords: ["spamd", "junk", "threshold", "quarantine"],
+    keywords: ["spamd", "junk", "threshold", "quarantine", "phishing", "ai decision model"],
   },
   {
     title: "S3-compatible access",

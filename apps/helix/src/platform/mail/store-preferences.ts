@@ -149,24 +149,32 @@ export class MailPreferencesStore {
     readonly actorId: string;
     readonly threadId: string;
     readonly messageId?: string | null;
+    readonly mailboxActorId?: string;
     readonly label: "spam" | "ham";
     readonly source?: "user" | "auto_spamd" | "auto_ai" | "auto_rules";
     readonly evidence?: JsonObject;
   }): Promise<void> {
     try {
+      const messageIds =
+        input.messageId != null
+          ? [input.messageId]
+          : input.mailboxActorId === undefined
+            ? []
+            : await this.feedbackMessageIds(input.orgId, input.mailboxActorId, input.threadId);
       await this.sql`
         insert into mail_spam_feedback (
           org_id, actor_id, thread_id, message_id, label, source, evidence
         )
-        values (
+        select
           ${input.orgId},
           ${input.actorId},
           ${input.threadId},
-          ${input.messageId ?? null},
+          message_id,
           ${input.label},
           ${input.source ?? "user"},
           ${this.sql.json(toSqlJson(input.evidence ?? {}))}
-        )
+        from unnest(${this.sql.array(messageIds.length === 0 ? [null] : [...messageIds])}::uuid[])
+          as message_id
       `;
     } catch (error) {
       // Pre-migration deploys: do not fail spam mark/unmark on missing table.
@@ -176,6 +184,24 @@ export class MailPreferencesStore {
       }
       throw error;
     }
+  }
+
+  /** Messages delivered to this mailbox in the thread (newest first, bounded). */
+  private async feedbackMessageIds(
+    orgId: string,
+    mailboxActorId: string,
+    threadId: string,
+  ): Promise<readonly string[]> {
+    const rows = await this.sql<{ readonly id: string }[]>`
+      select m.id from messages m
+      join mail_message_deliveries d
+        on d.org_id = m.org_id and d.message_id = m.id and d.actor_id = ${mailboxActorId}
+      where m.org_id = ${orgId} and m.thread_id = ${threadId}
+        and m.kind = 'mail' and m.deleted_at is null
+      order by m.sent_at desc, m.id desc
+      limit 50
+    `;
+    return rows.map((row) => row.id);
   }
 
   async createFilter(input: CreateMailFilterInput): Promise<MailFilterRecord> {

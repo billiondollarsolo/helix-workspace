@@ -33,6 +33,12 @@ import {
   patchRoutingRule,
   setDefaultMailProvider,
 } from "./mail-admin-api";
+import {
+  fetchDecisionModel,
+  fetchDecisionModelReport,
+  saveDecisionModel,
+  testDecisionModelConnection,
+} from "./mail-decision-model-api";
 
 function respondWith(payload: unknown): AuthFetch {
   return vi.fn<AuthFetch>(() =>
@@ -186,6 +192,45 @@ const WIRE_CONTRACT: readonly WireRoute[] = [
     method: "GET",
     template: "/api/admin/mail/spam",
     call: (fetchImpl) => fetchSpamSettings(fetchImpl),
+  },
+  {
+    name: "fetchDecisionModel",
+    method: "GET",
+    template: "/api/admin/mail/decision-model",
+    call: (fetchImpl) => fetchDecisionModel(fetchImpl),
+  },
+  {
+    name: "saveDecisionModel",
+    method: "PUT",
+    template: "/api/admin/mail/decision-model",
+    call: (fetchImpl) =>
+      saveDecisionModel(
+        {
+          settings: {
+            mode: "off",
+            provider: "cloudflare",
+            spamThreshold: 0.9,
+            phishingThreshold: 0.8,
+            categoryThreshold: 0.75,
+            applyCategories: false,
+            dailyMessageCap: 5000,
+          },
+        },
+        fetchImpl,
+      ),
+  },
+  {
+    name: "testDecisionModelConnection",
+    method: "POST",
+    template: "/api/admin/mail/decision-model/test",
+    call: (fetchImpl) => testDecisionModelConnection({}, fetchImpl),
+  },
+  {
+    name: "fetchDecisionModelReport",
+    method: "GET",
+    template: "/api/admin/mail/decision-model/report?days=:days",
+    params: { days: "30" },
+    call: (fetchImpl) => fetchDecisionModelReport(30, fetchImpl),
   },
 ];
 

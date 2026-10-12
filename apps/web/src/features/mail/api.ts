@@ -3,6 +3,7 @@ import { callTool } from "@/lib/tool-call";
 import type {
   MailAddress,
   MailAttachmentInput,
+  MailDecisionEvidence,
   MailDraft,
   MailDraftSaveInput,
   MailFilter,
@@ -104,6 +105,8 @@ export interface MailThreadMessage {
   readonly remoteContentBlocked?: boolean;
   readonly hasAttachment: boolean;
   readonly attachments: readonly MailMessageAttachment[];
+  /** AI decision model evidence for this message (enforce mode only). */
+  readonly decision?: MailDecisionEvidence;
 }
 
 /** Attachment metadata on a message read; `downloadUrl` is the safe download route. */

@@ -1,6 +1,7 @@
 import type { JsonObject } from "@helix/sdk-types";
 import { classifyMailCategory, coerceMailCategory } from "./category.js";
 import { sanitizeMailHtml } from "./content-safety.js";
+import { readDecisionEvidence } from "./decision/evidence.js";
 import { mailAddress, mailAddressArray } from "./store-addresses.js";
 import type {
   MailFolderId,
@@ -77,7 +78,7 @@ export function mailPreviewText(message: {
   return text.replace(/\s+/gu, " ").trim().slice(0, PREVIEW_LENGTH);
 }
 
-function htmlPreviewText(html: string): string {
+export function htmlPreviewText(html: string): string {
   return html
     .replace(/<(style|script|head|title)\b[^>]*>[\s\S]*?<\/\1\s*>/giu, " ")
     .replace(/<[^>]*>/gu, " ")
@@ -117,6 +118,9 @@ export function mapThreadRow(row: MailThreadListRow, folder: MailFolderId): Mail
     catcherRaw === "auth-failure"
       ? catcherRaw
       : null;
+  const decision = readDecisionEvidence(row.metadata);
+  const decisionCatcher =
+    decision?.action === "spam" || decision?.action === "phishing" ? "decision-model" : null;
   return {
     threadId: row.thread_id,
     messageId: row.message_id,
@@ -140,7 +144,10 @@ export function mapThreadRow(row: MailThreadListRow, folder: MailFolderId): Mail
     participants: row.participants.map((participant) =>
       participant.isMe ? { ...participant, name: "me" } : participant,
     ),
-    ...(folder === "spam" || spamCatcher !== null ? { spamCatcher } : {}),
+    ...(folder === "spam" || spamCatcher !== null || decisionCatcher !== null
+      ? { spamCatcher: spamCatcher ?? decisionCatcher }
+      : {}),
+    ...(decision === undefined ? {} : { decision }),
   };
 }
 
@@ -192,6 +199,7 @@ export function mapThreadDetail(rows: readonly MailThreadRow[]): MailThreadDetai
 
 function mapThreadMessage(row: MailThreadRow): MailThreadMessage {
   const html = row.body_format === "html" ? sanitizeMailHtml(row.body).html : row.body;
+  const decision = readDecisionEvidence(row.metadata);
   return {
     id: row.message_id,
     from: mailAddress(row.metadata.from),
@@ -218,6 +226,7 @@ function mapThreadMessage(row: MailThreadRow): MailThreadMessage {
       ? { replyTo: mailAddressArray(row.metadata.replyTo) }
       : {}),
     ...(typeof row.metadata.subject === "string" ? { subject: row.metadata.subject } : {}),
+    ...(decision === undefined ? {} : { decision }),
   };
 }
 

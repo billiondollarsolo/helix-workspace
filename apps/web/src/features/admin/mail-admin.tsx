@@ -7,10 +7,10 @@ import {
   Globe as GlobeIcon,
   Key as KeyIcon,
   Plus as PlusIcon,
-  Shield as ShieldIcon,
   Trash2 as TrashIcon,
 } from "lucide-react";
 import { useAdminSectionTab } from "./admin-section-search";
+import { SpamFiltering } from "./mail-spam-filtering";
 import { AppStatusPanel, WorkspaceFlagsPanel } from "@/features/admin/console/app-settings";
 import { AdminTabs } from "@/features/admin/console/tabs";
 import {
@@ -27,7 +27,7 @@ import {
  *   - Outbound providers  — list, add (kind-specific config), choose default
  *   - Mail domains        — canonical verified domains and DKIM rotation
  *   - Deliverability      — DMARC aggregate report summary (pass/fail rates)
- *   - Spam filtering      — spamd threshold + daemon status (read view)
+ *   - Spam filtering      — spamd status and the AI decision model (`mail-spam-filtering.tsx`)
  *
  * Visual style matches the rest of the Admin console: tokens-only inline
  * styles, `.panel` / `.chip` / `.btn` classes, no hard-coded colors.
@@ -54,7 +54,6 @@ import {
   routingRulesQueryOptions,
   saveMailJournalSettings,
   setDefaultMailProvider,
-  spamSettingsQueryOptions,
   type MailOperations as MailOperationsData,
   type MailProviderConfig,
   type MailProviderKind,
@@ -927,98 +926,6 @@ function RoutingRules() {
           ))
         )}
       </div>
-    </>
-  );
-}
-
-/* ================================================================== */
-/* Spam filtering                                                     */
-/* ================================================================== */
-
-function SpamFiltering() {
-  const spamQuery = useQuery(spamSettingsQueryOptions());
-  const settings = spamQuery.data;
-
-  const daemonVariant =
-    settings?.daemonStatus === "running"
-      ? "success"
-      : settings?.daemonStatus === "stopped"
-        ? "danger"
-        : "warning";
-
-  return (
-    <>
-      <PanelHeading
-        title="Spam filtering"
-        subtitle="spamd thresholds and daemon status — configuration is environment-driven"
-      />
-
-      {spamQuery.isPending ? <LoadingState label="Loading spam settings…" /> : null}
-      {spamQuery.isError ? (
-        <ErrorNotice>Spam settings are unavailable or you lack the mail admin scope.</ErrorNotice>
-      ) : null}
-
-      {settings ? (
-        <>
-          <div className="panel p-4 mb-3 flex items-center gap-3">
-            <span className="text-muted-foreground">
-              <ShieldIcon size={16} />
-            </span>
-            <div className="flex-1">
-              <div className="type-body font-semibold">spamd daemon</div>
-              <div className="type-meta [color:var(--text-2)]">
-                Ruleset {settings.rulesetVersion ?? "—"}
-              </div>
-            </div>
-            <span className={`chip ${settings.enabled ? "success" : "warning"}`}>
-              <span className="chip-dot" />
-              {settings.enabled ? "Filtering on" : "Filtering off"}
-            </span>
-            <span className={`chip ${daemonVariant}`}>
-              <span className="chip-dot" />
-              {settings.daemonStatus}
-            </span>
-          </div>
-
-          <div className="grid [grid-template-columns:repeat(3,_1fr)] gap-3">
-            <div className="panel p-4">
-              <span className="type-caption text-muted-foreground font-semibold uppercase [letter-spacing:.06em]">
-                Spam threshold
-              </span>
-              <div className="type-h1 font-bold mt-2">{settings.threshold.toFixed(1)}</div>
-              <div className="type-caption text-muted-foreground mt-1">
-                Score above which mail is tagged as spam
-              </div>
-            </div>
-            <div className="panel p-4">
-              <span className="type-caption text-muted-foreground font-semibold uppercase [letter-spacing:.06em]">
-                Reject threshold
-              </span>
-              <div className="type-h1 font-bold mt-2">
-                {settings.rejectThreshold === null || settings.rejectThreshold === undefined
-                  ? "—"
-                  : settings.rejectThreshold.toFixed(1)}
-              </div>
-              <div className="type-caption text-muted-foreground mt-1">
-                Score above which mail is rejected outright
-              </div>
-            </div>
-            <div className="panel p-4">
-              <span className="type-caption text-muted-foreground font-semibold uppercase [letter-spacing:.06em]">
-                Tagged (24h)
-              </span>
-              <div className="type-h1 font-bold mt-2">
-                {settings.taggedLast24h === null || settings.taggedLast24h === undefined
-                  ? "—"
-                  : new Intl.NumberFormat("en-US").format(settings.taggedLast24h)}
-              </div>
-              <div className="type-caption text-muted-foreground mt-1">
-                Messages flagged as spam in the last day
-              </div>
-            </div>
-          </div>
-        </>
-      ) : null}
     </>
   );
 }

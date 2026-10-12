@@ -767,6 +767,19 @@
     font-size: var(--text-body-sm);
   }
 
+  /* Likely phishing: the one banner that has to stop someone before they click. */
+  .mail-banner-danger {
+    border-color: var(--danger);
+    background: var(--danger-soft);
+  }
+
+  .mail-banner-icon {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    color: var(--danger);
+  }
+
   .mail-messages {
     display: flex;
     flex-direction: column;

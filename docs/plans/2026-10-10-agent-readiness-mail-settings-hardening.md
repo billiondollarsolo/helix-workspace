@@ -375,6 +375,14 @@ TypeSafe Jev API — enabled per org by an admin, behind the "message content is
 <provider>" notice, with DLP-restricted mail never sent. Self-hosted Clef-flash is deferred; the
 `DecisionModelProvider` interface keeps it a configuration change later.
 
+**Implemented (hosted providers).** Admin → Mail → Spam filtering → AI decision model: Cloudflare
+Workers AI Clef / Clef-flash or TypeSafe Jev, per-org off / shadow / enforce, write-only sealed
+credential, post-storage fail-open worker, confidential and restricted mail never sent, verdicts in
+`mail_decision_verdicts`, and a report against SpamAssassin and user feedback (precision, recall,
+false-positive rate). The TypeSafe base URL accepts any HTTPS System One endpoint (OpenRouter today,
+self-hosted SGLang later). See
+[Mail security and reliability → AI decision model](../mail-security-and-reliability.md#ai-decision-model-per-organization-optional).
+
 ## Validation log
 
 Batch 1 landed on `agent-readiness-hardening` as five area branches (A–E) merged in, plus

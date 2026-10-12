@@ -216,16 +216,26 @@ describe("mail-admin-api", () => {
       jsonResponse({
         enabled: true,
         threshold: 5,
-        rejectThreshold: 12,
+        rejectThreshold: null,
         daemonStatus: "running",
-        rulesetVersion: "2026.05",
+        rulesetVersion: null,
         taggedLast24h: 12,
+        betaSecondPass: { enabled: true, model: "helix-spam-small" },
+        decisionModel: {
+          mode: "enforce",
+          provider: "typesafe",
+          model: "jev-latest",
+          credentialConfigured: true,
+        },
       }),
     );
 
     const result = await fetchSpamSettings(fetchImpl);
     expect(result.daemonStatus).toBe("running");
     expect(result.threshold).toBe(5);
+    expect(result.rejectThreshold).toBeNull();
+    expect(result.betaSecondPass).toEqual({ enabled: true, model: "helix-spam-small" });
+    expect(result.decisionModel.mode).toBe("enforce");
   });
 
   it("loads delivery operations and sends reasoned recovery actions", async () => {

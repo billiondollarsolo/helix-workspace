@@ -23,7 +23,8 @@ import { MailMessage, type MessageHandlers } from "./mail-message";
 import { printMessages } from "./mail-print";
 import { MailReplyPanel, type ReplyMode } from "./mail-reply-panel";
 import { MailScheduledBanner } from "./mail-scheduled-banner";
-import { isBetaSpamCatch, labelChipStyle } from "./mail-view-helpers";
+import { MailSpamEvidence } from "./mail-spam-evidence";
+import { labelChipStyle } from "./mail-view-helpers";
 
 /** Collapsed head and tail around the "N older messages" fold. */
 const FOLD_THRESHOLD = 4;
@@ -166,31 +167,7 @@ export function ThreadView({
             ))}
           </div>
           {folder === "scheduled" ? <MailScheduledBanner threadId={row.threadId} /> : null}
-          {isBetaSpamCatch(row) ? (
-            <div role="status" className="mail-banner">
-              <span className="flex-1">
-                {row.spamCatcher === "ai"
-                  ? "Caught by Helix AI spam (beta)."
-                  : "Caught by Helix spam rules (beta)."}{" "}
-                Was this correct?
-              </span>
-              {folder === "spam" ? (
-                <>
-                  <Button type="button" size="sm" onClick={() => onAction({ kind: "spam" })}>
-                    Yes, spam
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() => onAction({ kind: "notSpam" })}
-                  >
-                    No, not spam
-                  </Button>
-                </>
-              ) : null}
-            </div>
-          ) : null}
+          <MailSpamEvidence row={row} detail={detail} folder={folder} onAction={onAction} />
           {error === null ? null : (
             <InlineError
               variant="compact"

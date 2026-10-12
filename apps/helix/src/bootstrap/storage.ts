@@ -299,6 +299,7 @@ export async function installStorage(context: Awaited<ReturnType<typeof installA
     ...context,
     driveConfig,
     clamavScanner,
+    spamdScanner,
     inboundMailScanners,
     driveStorage,
     driveStorageResolver,

@@ -8,6 +8,17 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Added
 
+- AI decision model for mail spam and triage. Admin → Mail → Spam filtering can send a compact
+  summary of mail from outside senders to Cloudflare Workers AI Clef or TypeSafe Jev after it is
+  stored (never delaying delivery). Off by default; **Shadow** records verdicts only, **Enforce**
+  files confident spam, scam, and phishing into Spam for every recipient and can re-tab mail, and
+  never deletes. Confidential and restricted mail is never sent, a daily cap limits calls, provider
+  failures fail open, and the API key is write-only and encrypted per organization. A report
+  compares the model with SpamAssassin and with people's own Spam / Not spam actions (precision,
+  recall, false-positive rate, latency, cost). New routes `GET`/`PUT /api/admin/mail/decision-model`,
+  `POST /api/admin/mail/decision-model/test`, `GET /api/admin/mail/decision-model/report`, and the
+  `GET /api/admin/mail/spam` status the Spam filtering tab already expected; new metrics
+  `helix_mail_decision_*`. Spam / Not spam feedback now records the message IDs it applies to.
 - Administrator invitations. Admin → Users has **Invite people** (email, optional name, Member or
   Administrator; only an `admin.*` holder can invite an administrator). The person receives a
   7-day link, chooses a password on `/signup/invite`, and is signed in; until then they appear as

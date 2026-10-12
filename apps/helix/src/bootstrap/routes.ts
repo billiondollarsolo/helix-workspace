@@ -90,6 +90,8 @@ import {
   registerMailQuarantineAdminRoutes,
   registerOutboundMailAdminRoutes,
 } from "../platform/mail/index.js";
+import { registerMailDecisionAdminRoutes } from "../platform/mail/decision/admin-routes.js";
+import { buildDecisionModelReport } from "../platform/mail/decision/report.js";
 import { registerMeetRoutes } from "../platform/meet/index.js";
 import { registerSearchAdminRoutes } from "../platform/search/index.js";
 import { registerInviteRoutes } from "../platform/signup/routes.js";
@@ -177,6 +179,8 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
     outboundProviderStore,
     mailDeliveryEventStore,
     mailSecretProvider,
+    mailDecisionStore,
+    spamdScanner,
     tools,
     calendarInvitationSender,
     leaderGatedWorkers,
@@ -389,6 +393,14 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
       deliveryStore: mailDeliveryEventStore,
       actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
       auditSink: auditStore,
+    });
+    registerMailDecisionAdminRoutes(app, {
+      store: mailDecisionStore,
+      orgs: orgStore,
+      buildReport: (input) => buildDecisionModelReport(sql, input),
+      actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+      auditSink: auditStore,
+      spamd: spamdScanner,
     });
     const mailDeliveryAlertMonitor = new MailDeliveryAlertMonitor({
       store: mailDeliveryEventStore,

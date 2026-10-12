@@ -190,6 +190,8 @@ export interface MailStore {
     readonly actorId: string;
     readonly threadId: string;
     readonly messageId?: string | null;
+    /** Without `messageId`: record one row per message this mailbox received in the thread. */
+    readonly mailboxActorId?: string;
     readonly label: "spam" | "ham";
     readonly source?: "user" | "auto_spamd" | "auto_ai" | "auto_rules";
     readonly evidence?: JsonObject;

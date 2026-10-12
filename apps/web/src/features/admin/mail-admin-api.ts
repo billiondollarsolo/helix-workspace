@@ -10,7 +10,8 @@ import { authenticatedFetch, type AuthFetch } from "@/lib/auth";
  *  - `/domains`          — canonical mail-enabled domains + DKIM keys
  *  - `/dmarc`            — DMARC aggregate reports + deliverability summary
  *  - `/routing-rules`    — inbound routing rules (CRUD)
- *  - `/spam`             — spamd threshold + status (read view)
+ *  - `/spam`             — spamd threshold + status, AI second-pass summary (read view)
+ *  - `/decision-model*`  — see `mail-decision-model-api.ts`
  *
  * Every backend response is validated at the trust boundary with Zod so a
  * malformed payload can never reach the React tree.
@@ -204,14 +205,25 @@ export interface RoutingRuleInput {
 // ---------------------------------------------------------------------------
 
 const spamSettingsResponseSchema = z.object({
+  /** True when spamd is configured for this deployment. */
   enabled: z.boolean(),
   /** spamd score above which a message is treated as spam. */
   threshold: z.number(),
-  /** spamd score above which a message is rejected outright. */
-  rejectThreshold: z.number().nullish(),
-  daemonStatus: z.enum(["running", "stopped", "unknown"]),
-  rulesetVersion: z.string().nullish(),
-  taggedLast24h: z.number().int().nullish(),
+  /** spamd score above which a message is rejected outright; null when mail is never rejected. */
+  rejectThreshold: z.number().nullable(),
+  daemonStatus: z.enum(["running", "stopped"]),
+  rulesetVersion: z.string().nullable(),
+  /** Messages filed in Spam automatically (spamd, AI beta, or decision model) in the last day. */
+  taggedLast24h: z.number().int(),
+  /** Environment-driven AI second pass (beta). */
+  betaSecondPass: z.object({ enabled: z.boolean(), model: z.string().nullable() }),
+  /** Summary of the org's AI decision model (full settings: `/decision-model`). */
+  decisionModel: z.object({
+    mode: z.enum(["off", "shadow", "enforce"]),
+    provider: z.enum(["cloudflare", "typesafe"]),
+    model: z.string(),
+    credentialConfigured: z.boolean(),
+  }),
 });
 
 export type SpamSettingsResponse = z.infer<typeof spamSettingsResponseSchema>;

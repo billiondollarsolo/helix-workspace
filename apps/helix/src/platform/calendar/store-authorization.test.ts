@@ -89,7 +89,7 @@ describe("Postgres calendar authorization", () => {
   });
 
   it("rejects an inactive or cross-tenant organizer before creating event state", async () => {
-    const recording = recordingSql([[calendarRow()], []]);
+    const recording = recordingSql([[], [calendarRow()], []]);
     const store = new PostgresCalendarStore(recording.sql);
 
     await expect(
@@ -101,13 +101,15 @@ describe("Postgres calendar authorization", () => {
         endsAt: new Date("2026-09-02T13:00:00.000Z"),
       }),
     ).rejects.toThrow("active user");
-    expect(recording.calls[1]).toContain("org.status = 'active'");
-    expect(recording.calls[1]).toContain("actor.disabled_at is null");
+    expect(recording.calls[0]).toContain("pg_advisory_xact_lock");
+    expect(recording.calls[2]).toContain("org.status = 'active'");
+    expect(recording.calls[2]).toContain("actor.disabled_at is null");
     expect(recording.calls.some((call) => call.includes("insert into threads"))).toBe(false);
   });
 
   it("rejects an attendee actor without a canonical same-org identity", async () => {
     const recording = recordingSql([
+      [],
       [calendarRow()],
       [{ email: "owner@example.com" }],
       [{ id: "55555555-5555-4555-8555-555555555555" }],

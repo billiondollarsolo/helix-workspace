@@ -23,13 +23,15 @@ describe("PostgresTenantStorageNamespaceStore", () => {
     expect(objectStorePrefixStepName).toBe("object_store_prefix");
     expect(defaultObjectStorePrefix(orgId)).toBe(`tenants/${orgId}/`);
     expect(recording.transactions).toBe(1);
-    expect(recording.calls).toHaveLength(2);
-    expect(recording.calls[0]?.text).toContain("byo_config ? 'storage' as had_storage");
-    expect(recording.calls[0]?.text).toContain("for update");
-    expect(recording.calls[0]?.text).toContain("coalesce(target.byo_config -> 'storage'");
-    expect(recording.calls[1]?.text).toContain("insert into tenant_config_audit");
-    expect(recording.calls[1]?.text).toContain("tenant-provisioning:default-object-store-prefix");
-    expect(recording.calls[1]?.values).toEqual(
+    expect(recording.calls).toHaveLength(3);
+    expect(recording.calls[0]?.text).toContain("set_config('helix.org_id'");
+    expect(recording.calls[0]?.values).toContain(orgId);
+    expect(recording.calls[1]?.text).toContain("byo_config ? 'storage' as had_storage");
+    expect(recording.calls[1]?.text).toContain("for update");
+    expect(recording.calls[1]?.text).toContain("coalesce(target.byo_config -> 'storage'");
+    expect(recording.calls[2]?.text).toContain("insert into tenant_config_audit");
+    expect(recording.calls[2]?.text).toContain("tenant-provisioning:default-object-store-prefix");
+    expect(recording.calls[2]?.values).toEqual(
       expect.arrayContaining([orgId, defaultObjectStoreConfig(orgId)]),
     );
     for (const call of recording.calls) {
@@ -48,7 +50,7 @@ describe("PostgresTenantStorageNamespaceStore", () => {
     const record = await store.ensureDefaultObjectStorePrefix({ orgId });
 
     expect(record.storage).toEqual({ kind: "byo", provider: "aws-s3", prefix: "helix/" });
-    expect(recording.calls).toHaveLength(1);
+    expect(recording.calls).toHaveLength(2);
   });
 });
 function createRecordingSql(input: {

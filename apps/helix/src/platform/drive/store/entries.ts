@@ -98,7 +98,9 @@ export async function list(
     readonly acrossFolders?: boolean;
     /** Root-only Google Drive views. Ignored when listing a folder's children
      *  or when `acrossFolders` is set. `owned` is My Drive; `shared` is
-     *  Shared with me (share-roots only, not nested contents). */
+     *  Shared with me: every share-root (an item whose parent folder the
+     *  actor cannot read) wherever it sits in its owner's tree, not the
+     *  contents of shared folders. */
     readonly view?: "owned" | "shared" | null;
   },
 ): Promise<DriveEntryPage> {
@@ -161,7 +163,8 @@ export async function list(
             where not ${acrossFolders}
               and drive_folders.org_id = ${input.orgId}
               and (
-                (${input.folderId ?? null}::uuid is null and drive_folders.parent_folder_id is null)
+                ${sharedRoot}
+                or (${input.folderId ?? null}::uuid is null and drive_folders.parent_folder_id is null)
                 or drive_folders.parent_folder_id = ${input.folderId ?? null}
               )
               and (${input.includeTrashed ?? false} or drive_folders.deleted_at is null or drive_folders.deleted_at > page.snapshot_at)
@@ -227,7 +230,11 @@ export async function list(
               and (coalesce(o.metadata->>'status', 'ready') = 'ready'
                 or (o.owner_actor_id = ${input.actorId}
                   and o.metadata->>'status' in ('scan_pending', 'scan_processing', 'infected', 'quarantined', 'scan_failed', 'scan_dead_letter')))
-              and (${acrossFolders} or coalesce(o.metadata->>'folderId', '') = coalesce(${input.folderId ?? null}::text, ''))
+              and (
+                ${acrossFolders}
+                or ${sharedRoot}
+                or coalesce(o.metadata->>'folderId', '') = coalesce(${input.folderId ?? null}::text, '')
+              )
               and (${input.includeTrashed ?? false} or o.deleted_at is null or o.deleted_at > page.snapshot_at)
               and o.created_at <= page.snapshot_at
               and helix_drive_effective_role(

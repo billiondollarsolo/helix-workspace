@@ -38,6 +38,7 @@ Environment:
   RUSTFS_CONSOLE_PORT          Default: 39535
   CLAMAV_PORT                  Default: 39536
   DATABASE_URL, MEILI_HOST, MEILI_MASTER_KEY, RUSTFS_ENDPOINT, RUSTFS_* override
+  APP_DATABASE_URL             Runtime role the seed writes as (default: helix_app)
   HELIX_LIVE_DEMO_*            Mirrors the options above for CI/runbooks
 EOF
 }
@@ -64,6 +65,9 @@ RUSTFS_BUCKET=${RUSTFS_BUCKET:-helix-objects}
 CLAMAV_PORT=${CLAMAV_PORT:-39536}
 
 DATABASE_URL=${DATABASE_URL:-postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:$POSTGRES_PORT/$POSTGRES_DB}
+# The seed writes as the runtime role, like the API in production; the owner
+# connection above migrates and resets.
+APP_DATABASE_URL=${APP_DATABASE_URL:-postgres://helix_app:helix_app_local@127.0.0.1:$POSTGRES_PORT/$POSTGRES_DB}
 MEILI_HOST=${MEILI_HOST:-http://127.0.0.1:$MEILI_PORT}
 RUSTFS_ENDPOINT=${RUSTFS_ENDPOINT:-http://127.0.0.1:$RUSTFS_API_PORT}
 
@@ -196,10 +200,12 @@ server.listen(Number(port), "127.0.0.1");
 
 run_env_command() {
   local cmd=${1:?missing command}
+  local database_url=${2:-$DATABASE_URL}
   if [[ "$DRY_RUN" == "1" ]]; then
     printf '+ DATABASE_URL=<redacted> MEILI_HOST=%q RUSTFS_ENDPOINT=%q MAIL_CLAMAV_PORT=%q %s\n' "$MEILI_HOST" "$RUSTFS_ENDPOINT" "$CLAMAV_PORT" "$cmd"
   else
-    DATABASE_URL="$DATABASE_URL" \
+    DATABASE_URL="$database_url" \
+      HELIX_MIGRATION_DATABASE_URL="$DATABASE_URL" \
       MEILI_HOST="$MEILI_HOST" \
       MEILI_MASTER_KEY="$MEILI_MASTER_KEY" \
       RUSTFS_ENDPOINT="$RUSTFS_ENDPOINT" \
@@ -242,7 +248,7 @@ if bool_true "$RUN_MIGRATIONS"; then
 fi
 
 if bool_true "$RUN_SEED"; then
-  run_env_command "pnpm --filter @helix/app db:seed:demo -- --reset --size $(printf '%q' "$DEMO_SIZE")"
+  run_env_command "pnpm --filter @helix/app db:seed:demo -- --reset --size $(printf '%q' "$DEMO_SIZE")" "$APP_DATABASE_URL"
 else
   log "skipping db:seed:demo"
 fi

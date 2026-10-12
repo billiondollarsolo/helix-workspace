@@ -170,25 +170,26 @@ async function checkStorageAccounting(runtime: DemoRuntime): Promise<void> {
     throw new DemoSeedError(`Storage usage counter drifted by ${String(correction)} bytes.`);
 }
 
-/** A full reindex of the tenant, then the API's Drive reconciliation pass, both clean. */
-/**
- * Chat is left to the API's search event indexer, which drains the seeded
- * outbox on startup: projecting a chat message evaluates room visibility per
- * member against every grant in the database (up to ~0.6s for a company-wide
- * space), too slow to repeat here.
- */
-const REINDEXED: readonly SearchReindexType[] = ["mail", "drive", "calendar"];
+const REINDEXED: readonly SearchReindexType[] = ["mail", "chat", "drive", "calendar"];
 
-async function checkSearch(runtime: DemoRuntime, engine: SearchEngine) {
+/**
+ * A full reindex of the tenant in its tenant context, as the API's in-place
+ * reindex job runs it, then the API's cross-tenant Drive reconciliation pass.
+ * After a full seed every type must project documents: an empty projection
+ * means the runtime role could not read its sources.
+ */
+async function checkSearch(runtime: DemoRuntime, engine: SearchEngine, full: boolean) {
   const service = new SearchReindexService({
     engine,
     sources: createPostgresSearchReindexSources(runtime.sql),
   });
-  const result = await service.reindex({
-    orgId: runtime.orgId,
-    types: REINDEXED,
-    pruneStale: true,
-  });
+  const result = await runtime.tenant(() =>
+    service.reindex({ orgId: runtime.orgId, types: REINDEXED, pruneStale: true }),
+  );
+  const empty = REINDEXED.filter((type) => result.counts[type] === 0);
+  if (full && empty.length > 0) {
+    throw new DemoSeedError(`Search reindex projected no ${empty.join(", ")} documents.`);
+  }
   const reconciliation = await new SearchReconciliationWorker({ service }).reconcileOnce();
   return { counts: result.counts, reconciled: reconciliation.totalDocuments };
 }
@@ -231,7 +232,9 @@ export async function validateDemo(
   const search =
     engine === undefined
       ? null
-      : await step("search reindex and reconciliation", () => checkSearch(runtime, engine));
+      : await step("search reindex and reconciliation", () =>
+          checkSearch(runtime, engine, options.full),
+        );
   const audit = await step("audit chain", () =>
     verifyLatestAuditHashChain(runtime.audit, { orgId: runtime.orgId }),
   );

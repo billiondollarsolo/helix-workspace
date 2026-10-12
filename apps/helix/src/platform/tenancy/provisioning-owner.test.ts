@@ -34,15 +34,17 @@ describe("PostgresTenantOwnerActorStore", () => {
     });
     expect(initialOwnerActorStepName).toBe("initial_owner_actor_created");
     expect(initialOwnerActorScopes).toEqual(["admin.*"]);
-    expect(recording.calls).toHaveLength(1);
-    expect(recording.calls[0]?.text).toContain("insert into actors");
-    expect(recording.calls[0]?.text).toContain("on conflict (org_id, email) do update");
-    expect(recording.calls[0]?.text).toContain("'admin.*' = any(actors.scopes)");
-    expect(recording.calls[0]?.text).not.toContain('insert into "user"');
-    expect(recording.calls[0]?.text).not.toContain("insert into session");
-    expect(recording.calls[0]?.text).not.toContain("insert into account");
+    expect(recording.calls).toHaveLength(2);
+    expect(recording.calls[0]?.text).toContain("set_config('helix.org_id'");
     expect(recording.calls[0]?.values).toContain(orgId);
-    expect(recording.calls[0]?.values).toContain("owner@example.com");
+    expect(recording.calls[1]?.text).toContain("insert into actors");
+    expect(recording.calls[1]?.text).toContain("on conflict (org_id, email) do update");
+    expect(recording.calls[1]?.text).toContain("'admin.*' = any(actors.scopes)");
+    expect(recording.calls[1]?.text).not.toContain('insert into "user"');
+    expect(recording.calls[1]?.text).not.toContain("insert into session");
+    expect(recording.calls[1]?.text).not.toContain("insert into account");
+    expect(recording.calls[1]?.values).toContain(orgId);
+    expect(recording.calls[1]?.values).toContain("owner@example.com");
   });
 
   it("uses an explicit display name when supplied", async () => {
@@ -55,7 +57,7 @@ describe("PostgresTenantOwnerActorStore", () => {
       displayName: "  Owner Name  ",
     });
 
-    expect(recording.calls[0]?.values).toContain("Owner Name");
+    expect(recording.calls[1]?.values).toContain("Owner Name");
   });
 });
 function createRecordingSql() {

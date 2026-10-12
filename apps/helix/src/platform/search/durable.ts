@@ -386,12 +386,14 @@ export class SearchMutationWorker {
   private readonly owner = `search-index-${randomUUID()}`;
   private timer: NodeJS.Timeout | undefined;
   private active: Promise<number> | undefined;
+  /** Shadow indexes this worker has created or confirmed. */
+  private readonly readyShadowIndexes = new Set<string>();
 
   constructor(
     private readonly options: {
       readonly store: PostgresSearchDurabilityStore;
       readonly engine: SearchEngine;
-      readonly shadowEngine: (uid: string) => SearchEngine;
+      readonly shadowEngine: (uid: string) => SearchEngine & { ensureIndex(): Promise<void> };
       readonly intervalMs?: number | undefined;
       readonly maxAttempts?: number | undefined;
       readonly onError?: ((error: unknown) => void) | undefined;
@@ -422,7 +424,7 @@ export class SearchMutationWorker {
           await this.options.store.withMutationSwapLock(async () => {
             await applyMutation(this.options.engine, item.mutation, item.orgId);
             for (const uid of await this.options.store.activeShadowIndexUids()) {
-              await applyMutation(this.options.shadowEngine(uid), item.mutation, item.orgId);
+              await applyMutation(await this.shadowIndex(uid), item.mutation, item.orgId);
             }
           });
         });
@@ -438,6 +440,21 @@ export class SearchMutationWorker {
       }
     }
     return claimed.length;
+  }
+
+  /**
+   * A shadow job is active from the moment it is queued (offboarding queues
+   * one), but the shadow worker creates its index only when the backfill
+   * starts. Mirrored mutations must not wait for that: a delete into a missing
+   * index fails with index_not_found and would retry until the job runs.
+   */
+  private async shadowIndex(uid: string): Promise<SearchEngine> {
+    const engine = this.options.shadowEngine(uid);
+    if (!this.readyShadowIndexes.has(uid)) {
+      await engine.ensureIndex();
+      this.readyShadowIndexes.add(uid);
+    }
+    return engine;
   }
 
   private runScheduled(): Promise<number> {

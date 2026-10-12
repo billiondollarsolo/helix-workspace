@@ -197,7 +197,12 @@ if [[ $SEED -eq 1 ]]; then
   : > /tmp/helix-seed.log
   seed_args=(--size "${DEMO_SIZE:-medium}")
   [[ $RESEED -eq 1 ]] && seed_args+=(--reset)
-  if (cd apps/helix && MAIL_CLAMAV_ENABLED=true MAIL_CLAMAV_HOST="${MAIL_CLAMAV_HOST:-127.0.0.1}" \
+  # The seed writes as the runtime role, like the API in production; the
+  # owner connection from .env only resets.
+  seed_database_url=${SEED_DATABASE_URL:-postgres://helix_app:helix_app_local@127.0.0.1:${POSTGRES_PORT:-28432}/${POSTGRES_DB:-helix}}
+  if (cd apps/helix && HELIX_MIGRATION_DATABASE_URL="${HELIX_MIGRATION_DATABASE_URL:-$DATABASE_URL}" \
+    DATABASE_URL="$seed_database_url" \
+    MAIL_CLAMAV_ENABLED=true MAIL_CLAMAV_HOST="${MAIL_CLAMAV_HOST:-127.0.0.1}" \
     MAIL_CLAMAV_PORT="${MAIL_CLAMAV_PORT:-28460}" pnpm db:seed:demo -- "${seed_args[@]}") \
     >> /tmp/helix-seed.log 2>&1; then
     ok "demo workspace seeded — see http://localhost:${WEB_PORT}/mail"

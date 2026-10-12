@@ -27,16 +27,18 @@ describe("PostgresTenantBootstrapSeedStore", () => {
     expect(tenantBootstrapSeedStepName).toBe("tenant_bootstrap_seeded");
     expect(recording.transactions).toBe(1);
     expect(recording.calls).toHaveLength(5);
-    expect(recording.calls[0]?.text).toContain("from actors");
-    expect(recording.calls[0]?.text).toContain("lower(email)");
-    expect(recording.calls[0]?.values).toEqual(
+    expect(recording.calls[0]?.text).toContain("set_config('helix.org_id'");
+    expect(recording.calls[0]?.values).toEqual(expect.arrayContaining([orgId]));
+    expect(recording.calls[1]?.text).toContain("from actors");
+    expect(recording.calls[1]?.text).toContain("lower(email)");
+    expect(recording.calls[1]?.values).toEqual(
       expect.arrayContaining([orgId, "owner@example.com"]),
     );
-    expect(recording.calls[1]?.text).toContain("insert into permissions");
-    expect(recording.calls[1]?.text).toContain("resource_type = 'org'");
-    expect(recording.calls[1]?.text).toContain("where not exists");
-    expect(recording.calls[2]?.text).toContain("verb = 'tenant.bootstrap.seeded'");
-    expect(recording.calls[3]?.text).toContain("select this_hash from activity");
+    expect(recording.calls[2]?.text).toContain("insert into permissions");
+    expect(recording.calls[2]?.text).toContain("resource_type = 'org'");
+    expect(recording.calls[2]?.text).toContain("where not exists");
+    expect(recording.calls[3]?.text).toContain("verb = 'tenant.bootstrap.seeded'");
+    expect(recording.calls.some((call) => call.text.includes("for update"))).toBe(false);
     expect(recording.calls[4]?.text).toContain("insert into activity");
     expect(recording.calls[4]?.values).toEqual(
       expect.arrayContaining([
@@ -65,7 +67,7 @@ describe("PostgresTenantBootstrapSeedStore", () => {
       permissionSeeded: false,
       activitySeeded: false,
     });
-    expect(recording.calls).toHaveLength(3);
+    expect(recording.calls).toHaveLength(4);
     expect(recording.calls.some((call) => call.text.includes("insert into activity"))).toBe(false);
   });
 
@@ -85,7 +87,6 @@ function createRecordingSql(input: {
   readonly ownerExists?: boolean;
   readonly permissionExists?: boolean;
   readonly activityExists?: boolean;
-  readonly previousHash?: string | null;
 }) {
   const recording = sharedRecordingSql(({ text }) => {
     if (text.includes("from actors")) {
@@ -97,12 +98,8 @@ function createRecordingSql(input: {
     if (text.includes("verb = 'tenant.bootstrap.seeded'")) {
       return Promise.resolve(input.activityExists === true ? [{ id: "activity-1" }] : []);
     }
-    if (text.includes("select this_hash from activity")) {
-      return Promise.resolve(
-        input.previousHash === undefined || input.previousHash === null
-          ? []
-          : [{ this_hash: input.previousHash }],
-      );
+    if (text.includes("insert into activity")) {
+      return Promise.resolve([{ id: "activity-1", this_hash: "a".repeat(64) }]);
     }
     return Promise.resolve([]);
   }, "?");

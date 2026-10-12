@@ -26,10 +26,13 @@ describe("PostgresMeteringEventStore", () => {
       metadata: { jobId: "export-1" },
       occurredAt: "2026-05-24T12:00:00.000Z",
     });
-    expect(recording.calls).toHaveLength(1);
-    expect(recording.calls[0]?.text).toContain("insert into metering_events");
-    expect(recording.calls[0]?.text).toContain("quantity::text as quantity");
-    expect(recording.calls[0]?.values).toEqual([
+    expect(recording.beginCalls).toBe(1);
+    expect(recording.calls).toHaveLength(2);
+    expect(recording.calls[0]?.text).toContain("set_config('helix.org_id'");
+    expect(recording.calls[0]?.values).toEqual([orgId, ""]);
+    expect(recording.calls[1]?.text).toContain("insert into metering_events");
+    expect(recording.calls[1]?.text).toContain("quantity::text as quantity");
+    expect(recording.calls[1]?.values).toEqual([
       orgId,
       "export.completed",
       "1",

@@ -1,5 +1,6 @@
 import type postgres from "postgres";
 import type { JsonObject } from "@helix/sdk-types";
+import { withTenantPostgresContext } from "./postgres-roles.js";
 
 export const objectStorePrefixStepName = "object_store_prefix";
 
@@ -28,7 +29,9 @@ export class PostgresTenantStorageNamespaceStore implements TenantStorageNamespa
   async ensureDefaultObjectStorePrefix(input: {
     readonly orgId: string;
   }): Promise<TenantStorageNamespaceRecord> {
-    return this.sql.begin((tx) => seedDefaultObjectStorePrefix(tx, input.orgId));
+    return withTenantPostgresContext(this.sql, { orgId: input.orgId }, (tx) =>
+      seedDefaultObjectStorePrefix(tx, input.orgId),
+    );
   }
 }
 

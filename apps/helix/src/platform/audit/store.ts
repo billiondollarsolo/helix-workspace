@@ -1,6 +1,6 @@
 import type { AuditRecord, JsonObject } from "@helix/sdk";
 import type postgres from "postgres";
-import { toSqlJson } from "../util/sql.js";
+import { insertAuditActivity, type AuditAppendResult } from "./append.js";
 import type { ImmutableAuditActivityRecord } from "./immutable-s3.js";
 import {
   AUDIT_DENIED_VERB_PATTERN,
@@ -20,11 +20,6 @@ import type {
   AuditVerificationStore,
   ListAuditVerificationRecordsInput,
 } from "./verifier.js";
-
-export interface AuditAppendResult {
-  readonly id: string;
-  readonly thisHash: string;
-}
 
 type AuditAppendInput = Omit<AuditRecord, "actorId" | "metadata"> & {
   readonly orgId: string;
@@ -47,39 +42,17 @@ export class PostgresAuditStore
   async append(record: AuditAppendInput): Promise<AuditAppendResult> {
     return this.sql.begin(async (tx) => {
       await tx`select set_config('helix.org_id', ${record.orgId}, true)`;
-      const rows = await tx<{ readonly id: string; readonly this_hash: string }[]>`
-        insert into activity (
-          org_id,
-          actor_id,
-          verb,
-          object_type,
-          object_id,
-          trace_id,
-          payload,
-          prev_hash,
-          this_hash,
-          created_at
-        )
-        values (
-          ${record.orgId},
-          ${record.actorId},
-          ${record.verb},
-          ${record.objectType},
-          ${record.objectId ?? null},
-          ${record.trace?.traceId ?? null},
-          ${tx.json(toSqlJson(record.metadata ?? {}))},
-          null,
-          '',
-          ${new Date()}
-        )
-        returning id, this_hash
-      `;
+      const result = await insertAuditActivity(tx, {
+        orgId: record.orgId,
+        actorId: record.actorId,
+        verb: record.verb,
+        objectType: record.objectType,
+        objectId: record.objectId ?? null,
+        traceId: record.trace?.traceId ?? null,
+        metadata: record.metadata ?? {},
+      });
       this.options.onAppend?.(record);
-
-      return {
-        id: rows[0]?.id ?? "",
-        thisHash: rows[0]?.this_hash ?? "",
-      };
+      return result;
     });
   }
 

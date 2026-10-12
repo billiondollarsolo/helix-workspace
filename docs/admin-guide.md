@@ -234,8 +234,8 @@ configuration so `POST /api/admin/search/reindex` is registered; it queues the
 reindex job with stale pruning disabled for smoke safety and polls
 `GET /api/admin/search/reindex/jobs/<id>` until it reports `status: "completed"`.
 For local UI/API testing with realistic seeded data, run
-`pnpm --filter @helix/app db:seed:demo -- --size small` with `DATABASE_URL`,
-`RUSTFS_ENDPOINT`, Meilisearch and ClamAV (`MAIL_CLAMAV_ENABLED=true`) env set;
+`pnpm --filter @helix/app db:seed:demo -- --size small` with `DATABASE_URL`
+naming the `helix_app` runtime role, `HELIX_MIGRATION_DATABASE_URL`, `RUSTFS_ENDPOINT`, Meilisearch and ClamAV (`MAIL_CLAMAV_ENABLED=true`) env set;
 see [Demo data](demo-data.md) for what it creates, the sign-ins and the presets.
 Storage-less dev mode is metadata/editor-only. It can boot the app, but Drive
 byte finalization, MCP byte reads, WebDAV byte round-trips, and Meet recording

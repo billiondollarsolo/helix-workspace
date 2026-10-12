@@ -1,5 +1,6 @@
 import type postgres from "postgres";
 import type { JsonObject } from "@helix/sdk-types";
+import { withTenantPostgresContext } from "./postgres-roles.js";
 
 export const initialOwnerActorStepName = "initial_owner_actor_created";
 export const initialOwnerActorScopes = ["admin.*"] as const;
@@ -38,10 +39,11 @@ interface InitialOwnerActorRow {
 export class PostgresTenantOwnerActorStore implements TenantOwnerActorStore {
   constructor(private readonly sql: postgres.Sql) {}
 
-  async ensureInitialOwnerActor(input: InitialOwnerActorInput): Promise<InitialOwnerActorRecord> {
+  ensureInitialOwnerActor(input: InitialOwnerActorInput): Promise<InitialOwnerActorRecord> {
     const email = normalizeOwnerEmail(input.email);
     const metadata = initialOwnerMetadata(input.metadata);
-    const rows = await this.sql<InitialOwnerActorRow[]>`
+    return withTenantPostgresContext(this.sql, { orgId: input.orgId }, async (tx) => {
+      const rows = await tx<InitialOwnerActorRow[]>`
       insert into actors (
         org_id,
         type,
@@ -56,9 +58,9 @@ export class PostgresTenantOwnerActorStore implements TenantOwnerActorStore {
         'user',
         ${email},
         ${input.displayName?.trim() || email},
-        ${this.sql.array([...initialOwnerActorScopes], 1009)},
+        ${tx.array([...initialOwnerActorScopes], 1009)},
         null,
-        ${this.sql.json(metadata)}
+        ${tx.json(metadata)}
       )
       on conflict (org_id, email) do update
       set
@@ -71,7 +73,8 @@ export class PostgresTenantOwnerActorStore implements TenantOwnerActorStore {
         updated_at = now()
       returning id, org_id, type, email, display_name, scopes, metadata
     `;
-    return mapInitialOwnerActorRow(rows[0]);
+      return mapInitialOwnerActorRow(rows[0]);
+    });
   }
 }
 

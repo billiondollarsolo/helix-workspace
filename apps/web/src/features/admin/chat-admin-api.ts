@@ -12,6 +12,7 @@ import { ADMIN_QUERY_DEFAULTS } from "@/features/admin/console/request-budget";
  *  - `chat.retention.get` / `chat.retention.set`
  *  - `chat.legal_hold.set`
  *  - `chat.export.organization`
+ *  - `chat.room.list_organization` (the room pickers)
  *
  * Every tool response is validated at the trust boundary with Zod so a
  * malformed payload never reaches the React tree. Write tools require
@@ -70,6 +71,32 @@ const chatExportResultSchema = z.object({
 
 export type ChatExportResult = z.infer<typeof chatExportResultSchema>;
 
+const chatOrganizationRoomSchema = z.object({
+  id: uuidSchema,
+  kind: z.enum(["chat_room", "chat_dm"]),
+  name: z.string(),
+  privacy: z.enum(["discoverable", "restricted", "private"]),
+  memberCount: z.number().int(),
+  agentOnly: z.boolean(),
+  updatedAt: z.string(),
+});
+
+export type ChatOrganizationRoom = z.infer<typeof chatOrganizationRoomSchema>;
+
+const chatOrganizationRoomsSchema = z.object({
+  rooms: z.array(chatOrganizationRoomSchema),
+  privateRoomsVisible: z.boolean(),
+  hiddenPrivateCount: z.number().int(),
+});
+
+export type ChatOrganizationRooms = z.infer<typeof chatOrganizationRoomsSchema>;
+
+/** The most rooms one picker loads; the server returns the most recently active first. */
+export const CHAT_ROOM_PICKER_LIMIT = 200;
+
+/** The most rooms one export may name. */
+export const CHAT_EXPORT_ROOM_LIMIT = 100;
+
 export interface ChatRetentionFormInput {
   readonly retentionDays: string;
   readonly editWindowMinutes: string;
@@ -86,7 +113,8 @@ export interface ChatExportFormInput {
   readonly from: string;
   readonly to: string;
   readonly limit: string;
-  readonly roomIds: string;
+  /** Rooms to export; empty means every room. */
+  readonly roomIds: readonly string[];
 }
 
 export type MappedRetentionInput =
@@ -163,17 +191,8 @@ export function mapExportFormToToolInput(form: ChatExportFormInput): MappedExpor
   const limit = parsePositiveInt(form.limit, "Export limit", 1, 10_000);
   if (typeof limit === "string") return limit;
 
-  const roomIdsRaw = form.roomIds
-    .split(/[\s,]+/u)
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0);
-  if (roomIdsRaw.length > 100) {
-    return "Export accepts at most 100 room IDs.";
-  }
-  for (const roomId of roomIdsRaw) {
-    if (!uuidSchema.safeParse(roomId).success) {
-      return `Room ID "${roomId}" is not a valid UUID.`;
-    }
+  if (form.roomIds.length > CHAT_EXPORT_ROOM_LIMIT) {
+    return `Choose at most ${String(CHAT_EXPORT_ROOM_LIMIT)} rooms, or none to export every room.`;
   }
 
   const from = form.from.trim();
@@ -189,7 +208,7 @@ export function mapExportFormToToolInput(form: ChatExportFormInput): MappedExpor
   }
 
   return {
-    roomIds: roomIdsRaw,
+    roomIds: form.roomIds,
     limit,
     ...(from === "" ? {} : { from: new Date(from).toISOString() }),
     ...(to === "" ? {} : { to: new Date(to).toISOString() }),
@@ -215,6 +234,26 @@ export function formatRetentionSummary(policy: ChatRetentionPolicyView): string 
   return `Messages kept for ${formatDuration(policy.retentionDays * 86_400)} · editable for ${formatDuration(policy.editWindowSeconds)} · deletable for ${formatDuration(policy.deleteWindowSeconds)} · ${hold} · ${source}`;
 }
 
+/** How a room reads in a picker: its name, then what kind of room it is. */
+export function describeChatRoom(room: ChatOrganizationRoom): string {
+  const name =
+    room.name.trim() === ""
+      ? room.kind === "chat_dm"
+        ? "Direct message"
+        : "Untitled room"
+      : room.name;
+  const kind =
+    room.kind === "chat_dm"
+      ? "direct message"
+      : room.privacy === "private"
+        ? "private"
+        : room.privacy === "restricted"
+          ? "invitation only"
+          : null;
+  const tags = [...(kind === null ? [] : [kind]), ...(room.agentOnly ? ["agents only"] : [])];
+  return tags.length === 0 ? name : `${name} (${tags.join(", ")})`;
+}
+
 export function describeChatAdminUnavailable(error: Error): string {
   const message = error.message.toLowerCase();
   if (
@@ -234,7 +273,34 @@ export function describeChatAdminUnavailable(error: Error): string {
 
 export const chatAdminQueryKeys = {
   retention: (roomId?: string) => ["admin", "chat", "retention", roomId ?? "org-default"] as const,
+  /** `privateRoomsVisible` is in the key so flipping the setting reloads the list. */
+  rooms: (includeAgentOnly: boolean, privateRoomsVisible: boolean) =>
+    ["admin", "chat", "rooms", { includeAgentOnly, privateRoomsVisible }] as const,
 };
+
+export function chatOrganizationRoomsQueryOptions(
+  input: { readonly includeAgentOnly: boolean; readonly privateRoomsVisible: boolean },
+  fetchImpl: AuthFetch = authenticatedFetch,
+) {
+  return queryOptions({
+    ...ADMIN_QUERY_DEFAULTS,
+    queryKey: chatAdminQueryKeys.rooms(input.includeAgentOnly, input.privateRoomsVisible),
+    queryFn: () => listChatOrganizationRooms(input.includeAgentOnly, fetchImpl),
+    staleTime: 15_000,
+  });
+}
+
+export async function listChatOrganizationRooms(
+  includeAgentOnly: boolean,
+  fetchImpl: AuthFetch = authenticatedFetch,
+): Promise<ChatOrganizationRooms> {
+  const raw = await callTool<unknown>(
+    "chat.room.list_organization",
+    { includeAgentOnly, limit: CHAT_ROOM_PICKER_LIMIT },
+    { fetchImpl, autoApprove: false },
+  );
+  return parseToolOutput(raw, chatOrganizationRoomsSchema, "list Chat rooms");
+}
 
 export function chatRetentionQueryOptions(
   roomId?: string,

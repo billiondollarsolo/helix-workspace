@@ -8,6 +8,15 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Added
 
+- Choose Chat rooms by name in the Admin console. **Admin → Chat** retention, legal hold, and
+  export now offer a room picker instead of asking for room IDs, and choosing a room shows that
+  room's own policy. Private rooms and direct messages stay out of the pickers (only a count is
+  shown) until an administrator turns on **Administrators can see private rooms**, a workspace
+  setting that is off by default and audited like every other workspace setting
+  (`chat_admin_private_rooms`). **Show agent-only rooms** adds rooms whose members are all
+  agents, private or not. New tool `chat.room.list_organization` (`admin.chat`, read) returns
+  room names, kinds, and member counts, never messages. An export with no rooms chosen still
+  covers every room, including private ones, and the confirmation now says so.
 - Manage the HTTPS certificate from the Admin console. **Admin → Domains → HTTPS certificate**
   shows the certificate the workspace serves, who issued it, and when it expires. In the
   production Compose stack an administrator can upload the organization's own certificate and key

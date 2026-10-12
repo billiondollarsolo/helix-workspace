@@ -147,6 +147,7 @@ export const ADMIN_CONTROL_INVENTORY: readonly AdminControlInventoryEntry[] = [
       "tool:chat.retention.set",
       "tool:chat.legal_hold.set",
       "tool:chat.export.organization",
+      "tool:chat.room.list_organization",
     ],
     mode: "enforced",
     notes: "Admin Chat section uses real tools with confirmation gates.",

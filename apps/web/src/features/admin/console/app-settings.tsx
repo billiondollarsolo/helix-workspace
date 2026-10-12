@@ -4,7 +4,7 @@
  * because it affects everyone. */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { notify } from "@/components/ui/toast";
 import {
   coreAppsAdminQueryOptions,
@@ -93,13 +93,16 @@ function FlagToggle({ flag }: { readonly flag: WorkspaceFlag }) {
   );
 }
 
-/** Workspace switches for one app, in a settings card. */
+/** Workspace switches for one app, in a settings card. `children` are further
+ *  rows of the same list, for switches that are not stored workspace flags. */
 export function WorkspaceFlagsPanel({
   title,
   flags,
+  children,
 }: {
   readonly title: string;
   readonly flags: readonly WorkspaceFlag[];
+  readonly children?: ReactNode;
 }) {
   const queryClient = useQueryClient();
   const query = useQuery(tenantConfigQueryOptions());
@@ -124,6 +127,7 @@ export function WorkspaceFlagsPanel({
           {flags.map((flag) => (
             <FlagToggle key={flag.key} flag={flag} />
           ))}
+          {children}
         </div>
       )}
     </section>

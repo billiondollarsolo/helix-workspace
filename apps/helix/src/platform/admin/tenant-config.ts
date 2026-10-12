@@ -65,6 +65,7 @@ const featureFlagsSchema = z
     mail_outbound: z.boolean().optional(),
     calendar_import_invitations: z.boolean().optional(),
     drive_s3_api: z.boolean().optional(),
+    chat_admin_private_rooms: z.boolean().optional(),
     mail_inbound_policy: inboundAuthenticationPolicySchema.optional(),
   })
   .strict();

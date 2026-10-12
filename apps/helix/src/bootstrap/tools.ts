@@ -15,6 +15,10 @@ import {
   registerAccountPreferenceTools,
 } from "../platform/auth/account-preferences.js";
 import { registerAppPasswordTools } from "../platform/auth/app-passwords.js";
+import {
+  PostgresChatAdminRoomStore,
+  registerChatAdminRoomTools,
+} from "../platform/chat/admin-rooms.js";
 import { PostgresChatInboxStore, registerChatInboxTools } from "../platform/chat/inbox.js";
 import { PostgresUserAddressStore } from "../platform/auth/user-addresses.js";
 import {
@@ -401,6 +405,12 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
       ...(resourceClassifier === undefined ? {} : { classifyResource: resourceClassifier }),
     });
     registerChatInboxTools(tools, { store: new PostgresChatInboxStore(sql) });
+    registerChatAdminRoomTools(tools, {
+      store: new PostgresChatAdminRoomStore(sql),
+      adminsSeePrivateRooms: async (orgId) =>
+        (await loadEffectiveTenantConfig({ orgs: orgStore }, orgId))?.features
+          .chat_admin_private_rooms === true,
+    });
   }
 
   if (coreApps.shouldRegister("drive")) {

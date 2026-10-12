@@ -360,6 +360,11 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Changed
 
+- The Admin console asks for people, not account IDs. **AI costs** and mail **Routing rules**
+  ("Deliver to a person") use the people picker, and both lists show the person's name and
+  email instead of an ID; an override or rule whose account is gone reads "Removed account".
+  Messages that said "scope", "actor", or "tenant" now say what happened and what to do
+  ("Routing rules could not be loaded. You may not have permission to manage mail.").
 - The Helix-built dependency images run as unprivileged users: PostgreSQL as `postgres` (70),
   ClamAV as `clamav` (100:101), and NATS, Meilisearch, Cerbos, and SpamAssassin as 10001.
   SpamAssassin's runit services no longer need root; rules refresh daily without the root

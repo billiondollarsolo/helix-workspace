@@ -11,10 +11,10 @@ import { withAdminRouter } from "@/features/admin/console/test-router";
   true;
 
 describe("normalizeFormInput", () => {
-  it("rejects an invalid actor id", () => {
+  it("asks for a person before anything is saved", () => {
     expect(
       normalizeFormInput({ actorId: "not-a-uuid", actorDailyUsd: "", featureDailyUsd: "" }),
-    ).toBe("Actor ID must be a valid UUID.");
+    ).toBe("Choose the person this budget is for.");
   });
 
   it("treats blank budgets as tier defaults", () => {
@@ -49,7 +49,7 @@ describe("normalizeFormInput", () => {
         actorDailyUsd: "-1",
         featureDailyUsd: "",
       }),
-    ).toBe("Actor daily budget must be a non-negative number.");
+    ).toBe("Enter the daily budget as an amount of zero or more, or leave it empty.");
   });
 });
 
@@ -90,24 +90,57 @@ describe("AICostLimitsManagement", () => {
     vi.unstubAllGlobals();
   });
 
-  it("renders the per-user AI cost limits table from the admin API", async () => {
-    fetchMock.mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          tierDefault: { tier: "business", actorDailyUsd: 10, featureDailyUsd: null },
-          limits: [
-            {
-              actorId: "00000000-0000-0000-0000-0000000000aa",
-              actorDailyUsd: 25,
-              featureDailyUsd: null,
-              updatedByActorId: "00000000-0000-0000-0000-0000000000bb",
-              updatedAt: "2026-05-21T00:00:00.000Z",
-            },
-          ],
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      ),
-    );
+  it("lists overrides by the person's name, never by an account id", async () => {
+    const account = (id: string, displayName: string, email: string) => ({
+      id,
+      orgId: "00000000-0000-0000-0000-000000000001",
+      type: "user",
+      email,
+      displayName,
+      scopes: [],
+      status: "active",
+      disabledAt: null,
+      lastSignInAt: null,
+      createdAt: "2026-05-01T00:00:00.000Z",
+      updatedAt: "2026-05-01T00:00:00.000Z",
+    });
+    fetchMock.mockImplementation((input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      return Promise.resolve(
+        Response.json(
+          url.includes("/api/admin/users")
+            ? {
+                users: [
+                  account(
+                    "00000000-0000-0000-0000-0000000000aa",
+                    "Jordan Rivera",
+                    "jordan@example.test",
+                  ),
+                ],
+                nextCursor: null,
+              }
+            : {
+                tierDefault: { tier: "business", actorDailyUsd: 10, featureDailyUsd: null },
+                limits: [
+                  {
+                    actorId: "00000000-0000-0000-0000-0000000000aa",
+                    actorDailyUsd: 25,
+                    featureDailyUsd: null,
+                    updatedByActorId: "00000000-0000-0000-0000-0000000000bb",
+                    updatedAt: "2026-05-21T00:00:00.000Z",
+                  },
+                  {
+                    actorId: "00000000-0000-0000-0000-0000000000cc",
+                    actorDailyUsd: 5,
+                    featureDailyUsd: null,
+                    updatedByActorId: "00000000-0000-0000-0000-0000000000bb",
+                    updatedAt: "2026-05-21T00:00:00.000Z",
+                  },
+                ],
+              },
+        ),
+      );
+    });
 
     await act(() => {
       root.render(
@@ -121,12 +154,19 @@ describe("AICostLimitsManagement", () => {
     });
 
     await waitFor(() => {
-      expect(container.textContent ?? "").toContain("00000000-0000-0000-0000-0000000000aa");
+      expect(container.textContent ?? "").toContain("Jordan Rivera");
     });
+    expect(container.textContent).toContain("jordan@example.test");
+    // An override can outlive its account; it is still listed, and still clearable.
+    expect(container.textContent).toContain("Removed account");
+    expect(container.textContent).not.toMatch(/0000-0000-0000/u);
+    // The override is for a person someone picks, not an id someone pastes.
+    expect(container.querySelector('[role="combobox"]')).not.toBeNull();
+    expect(container.querySelector('input[aria-label="Actor ID"]')).toBeNull();
     // h1 from PageHeading, then two sibling h2 panels — no skipped levels.
     expect(headingOutline()).toEqual([
       "H1:AI costs",
-      "H2:Set a per-user override",
+      "H2:Give one person a different budget",
       "H2:Active overrides",
     ]);
     // A null tier budget is "no cap", not "tier default" — the tier row cannot
@@ -136,18 +176,16 @@ describe("AICostLimitsManagement", () => {
     );
     expect(container.textContent).toContain("$25.00");
     // Save owns the only filled button; the row action stays outlined.
-    expect(
-      buttonByLabel("Clear AI cost limit for 00000000-0000-0000-0000-0000000000aa").dataset.variant,
-    ).toBe("outline");
+    expect(buttonByLabel("Clear AI cost limit for Jordan Rivera").dataset.variant).toBe("outline");
     expect(buttonByText("Save limit").dataset.variant).toBe("default");
-    const requestInput = fetchMock.mock.calls[0]?.[0];
-    const requestUrl =
+    const requestUrls = fetchMock.mock.calls.map(([requestInput]) =>
       typeof requestInput === "string"
         ? requestInput
         : requestInput instanceof URL
           ? requestInput.toString()
-          : (requestInput?.url ?? "");
-    expect(requestUrl).toContain("/api/admin/ai/cost-limits");
+          : requestInput.url,
+    );
+    expect(requestUrls.some((url) => url.includes("/api/admin/ai/cost-limits"))).toBe(true);
   });
 
   it("explains an empty override list with a whole-panel empty state", async () => {
@@ -194,7 +232,7 @@ describe("AICostLimitsManagement", () => {
 
     await waitFor(() => {
       expect(container.querySelector('[role="alert"]')?.textContent).toContain(
-        "Cost limits are unavailable or admin AI scope is missing.",
+        "Cost limits could not be loaded. You may not have permission to manage AI costs.",
       );
     });
     expect(container.querySelector('[role="alert"]')?.getAttribute("data-slot")).toBe(

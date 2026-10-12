@@ -90,7 +90,36 @@ const routingPayload = {
       actionKind: "mailbox",
       action: { mailbox: "support-team" },
     },
+    {
+      id: "rule-2",
+      name: "Billing to Jordan",
+      isEnabled: true,
+      priority: 20,
+      match: { recipientPattern: "billing@helix.io" },
+      actionKind: "alias",
+      action: { aliasActorId: "00000000-0000-4000-8000-0000000000aa" },
+    },
   ],
+};
+
+// Shape of GET /api/admin/users, which names the account a rule delivers to.
+const directoryPayload = {
+  users: [
+    {
+      id: "00000000-0000-4000-8000-0000000000aa",
+      orgId: "00000000-0000-4000-8000-000000000001",
+      type: "user",
+      email: "jordan@helix.io",
+      displayName: "Jordan Rivera",
+      scopes: [],
+      status: "active",
+      disabledAt: null,
+      lastSignInAt: null,
+      createdAt: "2026-05-01T00:00:00.000Z",
+      updatedAt: "2026-05-01T00:00:00.000Z",
+    },
+  ],
+  nextCursor: null,
 };
 
 // Shape of GET /api/admin/mail/spam (apps/helix/src/platform/mail/decision/admin-routes.ts).
@@ -210,6 +239,9 @@ function routedFetch(): ReturnType<typeof vi.fn<typeof fetch>> {
     }
     if (url.includes("/api/admin/mail/routing-rules")) {
       return Promise.resolve(jsonResponse(routingPayload));
+    }
+    if (url.includes("/api/admin/users")) {
+      return Promise.resolve(jsonResponse(directoryPayload));
     }
     if (url.includes("/api/admin/mail/decision-model/report")) {
       return Promise.resolve(
@@ -455,6 +487,34 @@ describe("MailAdminSection", () => {
     expect(container.textContent).toContain("Stop processing later rules");
   });
 
+  it("names the person a rule delivers to and picks one instead of asking for an id", async () => {
+    vi.stubGlobal("fetch", routedFetch());
+
+    await render(createElement(MailAdminSection));
+    await clickButton("Routing rules");
+    await waitFor(() => expect(container.textContent).toContain("Jordan Rivera"));
+    expect(container.textContent).not.toContain("00000000-0000-4000-8000-0000000000aa");
+
+    await clickButton("Add rule");
+    expect(container.querySelector('[aria-label="Destination"]')).not.toBeNull();
+    expect(container.querySelector('[role="combobox"]')).toBeNull();
+    const action = container.querySelector<HTMLSelectElement>('[aria-label="Routing action"]');
+    if (action === null) throw new Error("No routing action field");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value")?.set?.call(
+        action,
+        "alias",
+      );
+      action.dispatchEvent(new Event("change", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(action.selectedOptions[0]?.textContent).toBe("Deliver to a person");
+    expect(container.querySelector('[role="combobox"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Destination"]')).toBeNull();
+    expect(container.textContent).toContain("Deliver to");
+  });
+
   it("shows spam filtering status, the AI decision model, and its report", async () => {
     vi.stubGlobal("fetch", routedFetch());
 
@@ -498,7 +558,9 @@ describe("MailAdminSection", () => {
     await render(createElement(MailAdminSection));
 
     await waitFor(() => {
-      expect(container.textContent).toContain("unavailable");
+      expect(container.textContent).toContain(
+        "Outbound providers could not be loaded. You may not have permission to manage mail.",
+      );
     });
   });
 });

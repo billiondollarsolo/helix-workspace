@@ -134,9 +134,17 @@ jobs:
             --bucket "$bucket" --versioning-configuration Status=Enabled
           aws --no-cli-pager --endpoint-url "$RUSTFS_ENDPOINT" s3api put-object \
             --bucket "$bucket" --key "$key" --body /tmp/helix-proof.bin >/dev/null
+          # On standard input: psql does not expand :'variables' in -c commands.
+          # The object belongs to the default organization the migrations
+          # create; objects of an unknown organization are refused.
           docker compose exec -T postgres psql -X -U helix -d helix -v ON_ERROR_STOP=1 \
-            -v key="$key" -v size="$size" -v sha="$sha" \
-            -c "insert into objects(org_id,kind,storage_key,mime_type,byte_size,sha256,metadata) values(gen_random_uuid(),'file',:'key','application/octet-stream',:'size',:'sha','{\"status\":\"ready\"}');"
+            -v key="$key" -v size="$size" -v sha="$sha" <<'SQL'
+          insert into objects (org_id, kind, storage_key, mime_type, byte_size, sha256, metadata)
+          values (
+            '00000000-0000-0000-0000-000000000000', 'file', :'key',
+            'application/octet-stream', :'size', :'sha', '{"status":"ready"}'
+          );
+          SQL
           echo "HELIX_BACKUP_RUSTFS_BUCKET=$bucket" >> "$GITHUB_ENV"
 
       - name: Create signed independent backup

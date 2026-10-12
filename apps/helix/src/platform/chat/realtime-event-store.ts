@@ -56,12 +56,17 @@ export class PostgresChatRoomEventLog implements ChatRoomEventLog {
             select exists (
               select 1
               from permissions grant_row
-              where chat_permission_is_valid(
-                grant_row,
-                ${input.orgId},
-                ${input.actorId},
-                ${input.roomId}
-              )
+              where grant_row.org_id = ${input.orgId}
+                and grant_row.actor_id = ${input.actorId}
+                and grant_row.resource_type = 'thread'
+                and grant_row.resource_id = ${input.roomId}
+                and grant_row.status = 'active'
+                and chat_permission_is_valid(
+                  grant_row,
+                  ${input.orgId},
+                  ${input.actorId},
+                  ${input.roomId}
+                )
             ) as authorized
           ), room_state as (
             select
@@ -102,12 +107,17 @@ export class PostgresChatRoomEventLog implements ChatRoomEventLog {
                     join chat_room_settings replay_settings
                       on replay_settings.org_id = replay_grant.org_id
                      and replay_settings.thread_id = replay_grant.resource_id
-                    where chat_permission_is_valid(
-                      replay_grant,
-                      ${input.orgId},
-                      ${input.actorId},
-                      ${input.roomId}
-                    )
+                    where replay_grant.org_id = ${input.orgId}
+                      and replay_grant.actor_id = ${input.actorId}
+                      and replay_grant.resource_type = 'thread'
+                      and replay_grant.resource_id = ${input.roomId}
+                      and replay_grant.status = 'active'
+                      and chat_permission_is_valid(
+                        replay_grant,
+                        ${input.orgId},
+                        ${input.actorId},
+                        ${input.roomId}
+                      )
                       and (
                         coalesce(replay_settings.metadata->>'historyPolicy', 'full') = 'full'
                         or (

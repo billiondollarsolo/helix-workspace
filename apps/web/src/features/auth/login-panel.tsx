@@ -330,7 +330,7 @@ function AccountChip({
   );
 }
 
-function AuthForm({
+export function AuthForm({
   legend,
   onSubmit,
   children,
@@ -356,7 +356,7 @@ function AuthForm({
   );
 }
 
-function AuthInput(props: {
+export function AuthInput(props: {
   readonly label: string;
   readonly name: string;
   readonly type?: string;
@@ -390,7 +390,7 @@ function AuthInput(props: {
   );
 }
 
-function SubmitButton({
+export function SubmitButton({
   busy,
   children,
 }: {

@@ -126,6 +126,28 @@ export function listAssistantModels(): Promise<AssistantModels> {
   }));
 }
 
+/**
+ * Whether Helix AI can answer: a model provider is configured and reachable.
+ * `message` says what to do, worded for the person asking (which setting to
+ * change for admins, whom to ask for members).
+ */
+export interface AssistantStatus {
+  readonly available: boolean;
+  readonly message: string | null;
+}
+
+export async function fetchAssistantStatus(): Promise<AssistantStatus> {
+  const output = await callAssistantTool<{
+    readonly available?: unknown;
+    readonly message?: unknown;
+  }>("assistant.status", {});
+  // Only an explicit `available: true` turns Helix AI on.
+  return {
+    available: output.available === true,
+    message: typeof output.message === "string" ? output.message : null,
+  };
+}
+
 export function getAssistantConversation(
   conversationId: string,
 ): Promise<AssistantTurnResponseWithPendingConfirmations> {

@@ -1,5 +1,6 @@
 import { hashPassword } from "better-auth/crypto";
 import { PostgresAccountPreferencesStore } from "../../platform/auth/account-preferences.js";
+import { WORKSPACE_MEMBER_SCOPES } from "../../platform/auth/member-scopes.js";
 import type { Permission } from "../../platform/permissions/scope-catalog.js";
 import {
   COMPANY,
@@ -53,33 +54,11 @@ export const ADMIN_SCOPES = [
   "admin.ai",
   "admin.chat",
   "admin.drive",
+  // The demo administrator is the workspace's global administrator.
+  "admin.*",
 ] as const satisfies readonly Permission[];
 
-const MEMBER_SCOPES = [
-  "platform.read",
-  "mail.read",
-  "mail.write",
-  "mail.send",
-  "mail.external",
-  "drive.read",
-  "drive.write",
-  "calendar.read",
-  "calendar.write",
-  "calendar.manage",
-  "calendar.external",
-  "chat.read",
-  "chat.post",
-  "chat.create",
-  "meet.read",
-  "meet.write",
-  "contacts.read",
-  "contacts.write",
-  "assistant.read",
-  "assistant.write",
-  "assistant.memory",
-  "notifications.read",
-  "notifications.write",
-] as const satisfies readonly Permission[];
+const MEMBER_SCOPES = WORKSPACE_MEMBER_SCOPES;
 
 export interface DirectoryGroup {
   readonly key: string;

@@ -10,6 +10,7 @@ import {
 /* Right side panel — the 44px tool rail + 320px mini panels. */
 import { ContactsPanel } from "@/components/people/contacts-panel";
 import { AssistantSidePanel } from "@/features/assistant/assistant-side-panel";
+import { useAssistantAvailability } from "@/features/assistant/use-assistant-availability";
 import { useNavigate } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
 export type SideTool = "calendar" | "contacts" | "ai";
@@ -152,9 +153,12 @@ export interface SidePanelRailProps {
   onToggle: (tool: SideTool) => void;
 }
 export function SidePanelRail({ activeTool, onToggle }: SidePanelRailProps) {
+  const assistant = useAssistantAvailability();
+  // Helix AI appears only while a model provider answers.
+  const tools = SIDE_TOOLS.filter((tool) => tool.id !== "ai" || assistant.available);
   return (
     <div className="side-panel-rail">
-      {SIDE_TOOLS.map((tool) => {
+      {tools.map((tool) => {
         const Icon = Icons[tool.icon];
         const active = activeTool === tool.id;
         return (
@@ -183,7 +187,8 @@ export interface SidePanelProps {
 }
 export function SidePanel({ activeTool, onClose }: SidePanelProps) {
   const navigate = useNavigate();
-  if (!activeTool) {
+  const assistant = useAssistantAvailability();
+  if (!activeTool || (activeTool === "ai" && !assistant.available)) {
     return null;
   }
   const view = MINI_VIEWS[activeTool];

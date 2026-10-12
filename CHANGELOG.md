@@ -8,6 +8,21 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Added
 
+- Administrator invitations. Admin → Users has **Invite people** (email, optional name, Member or
+  Administrator; only an `admin.*` holder can invite an administrator). The person receives a
+  7-day link, chooses a password on `/signup/invite`, and is signed in; until then they appear as
+  **Invited** with Resend and Withdraw actions. Links are single-use, scoped to the issuing
+  tenant, replaced on resend, and every step is audited (`identity.user.invited`,
+  `invite_resent`, `invite_revoked`, `invite_accepted`). People provisioned through SCIM keep
+  signing in through their identity provider.
+- An **Admin console** link in the account menu for administrators. Admin no longer appears in
+  the launcher, bottom navigation, or command palette for other people, and `/admin` explains
+  that admin access is required.
+- `assistant.status` reports whether the configured AI provider answers (cached reachability
+  probe). Helix AI entry points are hidden when no provider works, `/assistant` explains what to
+  configure, and an unreachable provider returns an actionable error instead of "Tool invocation
+  failed."
+
 - Multiple calendars. People can create extra calendars (name and a colour from the shared label
   palette), rename and recolour them, and delete them; the default calendar cannot be deleted.
   New tools `calendar.calendar.create`, `calendar.calendar.update` and `calendar.calendar.delete`
@@ -16,6 +31,11 @@ All notable changes to Helix Workspace are documented here. This file follows
   calendar's menu gets Rename, Color and Delete. The demo seed adds a team calendar per department
   (owned by the lead, writable by the members), "Company holidays" and an "On-call" rotation with
   their events.
+- CLI parity for invitations and calendars:
+  `helix admin users invite --email <email> [--name <name>] [--admin]`,
+  `helix admin users <resend-invite|revoke-invite> --actor-id <id>`, and
+  `helix calendar <calendar-list|calendar-create|calendar-update|calendar-delete>` (deleting a
+  calendar returns a pending action to approve, exit code 6).
 - One demo seed, `pnpm --filter @helix/app db:seed:demo` (`--size small|medium|large`, `--reset`,
   `--accounts-only`), builds Quillfeather Labs: 60–120 people with departments, groups and suspended, offboarded and invited accounts, plus Mail (threads, external mail with
   SPF/DKIM/DMARC evidence, receipts with attachments, labels, filters, drafts, scheduled sends,
@@ -444,6 +464,14 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Fixed
 
+- Chat opened in about 16 seconds on a seeded workspace because room and unread queries called
+  `chat_permission_is_valid` without indexable predicates. They now narrow by the membership index
+  first (about 150 ms), with the function still the authoritative check.
+- Local development mail never reached Mailpit because outbound SMTP always required STARTTLS.
+  Outside production, plaintext is allowed only to loopback or the Compose `mailpit` service.
+- Image scans ignore findings that have no released upstream fix; fixable High/Critical findings
+  still fail the gate.
+- The demo administrator holds `admin.*`, so it is a full workspace administrator.
 - The local quick start pointed `HELIX_DEFAULT_ORG_ID` at an empty organization, so sign-in
   succeeded but every workspace request returned 403, and used `localhost` for `RUSTFS_ENDPOINT`,
   which the outbound request guard rejects. It now targets the demo tenant and `127.0.0.1`.

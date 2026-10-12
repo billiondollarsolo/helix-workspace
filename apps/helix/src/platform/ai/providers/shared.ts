@@ -27,7 +27,7 @@ export interface ProviderRequestConfig {
   readonly signal?: AbortSignal;
 }
 
-class AIProviderRequestError extends Error {
+export class AIProviderRequestError extends Error {
   readonly statusCode: number;
   constructor(
     message: string,
@@ -75,7 +75,7 @@ export function joinUrl(baseUrl: string, path: string): URL {
   return new URL(path.replace(/^\//u, ""), base);
 }
 
-function bearerHeaders(apiKey: string | undefined): Record<string, string> {
+export function bearerHeaders(apiKey: string | undefined): Record<string, string> {
   if (apiKey === undefined || apiKey.length === 0) {
     return {};
   }

@@ -7,13 +7,14 @@ export const CLIENT_REQUEST_WINDOW_MS = 10_000;
 
 /** What the app shell spends before a section renders anything.
  *
- *  Two shared queries run on a cold load with the notifications panel closed:
+ *  Three shared queries run on a cold load with the notifications panel closed:
  *
  *    /api/core-apps                        (rail + launcher, use-enabled-apps.ts)
  *    /api/tools/notifications.unread-count (bell badge, surface-frame.tsx)
+ *    /api/tools/assistant.status           (Helix AI entry points, use-assistant-availability.ts)
  *
  *  The feed loads when opened. Session reads are exempt from this limit. */
-export const SHELL_BASELINE_REQUESTS = 2;
+export const SHELL_BASELINE_REQUESTS = 3;
 
 /** How many requests a section may fire in one second without help. */
 export const SECTION_REQUEST_BUDGET = CLIENT_STARTUP_REQUEST_BUDGET - SHELL_BASELINE_REQUESTS;

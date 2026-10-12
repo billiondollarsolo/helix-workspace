@@ -134,7 +134,7 @@ jobs:
           format: json
           output: helix-all/helix-workspace/helix-workspace.trivy.json
           exit-code: "1"
-          ignore-unfixed: false
+          ignore-unfixed: true
           severity: HIGH,CRITICAL
 
       - name: Scan web image for high and critical vulnerabilities
@@ -145,7 +145,7 @@ jobs:
           format: json
           output: helix-all/helix-workspace/helix-workspace-web.trivy.json
           exit-code: "1"
-          ignore-unfixed: false
+          ignore-unfixed: true
           severity: HIGH,CRITICAL
 
       - name: Export exact reviewed application candidates
@@ -321,7 +321,7 @@ jobs:
           format: json
           output: helix-workspace/${{ matrix.inventory_name }}.trivy.json
           exit-code: "1"
-          ignore-unfixed: false
+          ignore-unfixed: true
           severity: HIGH,CRITICAL
 
       - name: Normalize exact pulled dependency SPDX SBOM

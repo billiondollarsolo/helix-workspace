@@ -236,70 +236,83 @@ export class PostgresSignupVerifiedIdentityStore implements SignupVerifiedIdenti
     readonly passwordHash: string;
   }): Promise<SignupVerifiedIdentityRecord | null> {
     return this.sql.begin("isolation level serializable", async (sql) => {
-      const email = normalizeSignupEmail(input.email);
       await sql`select set_config('helix.org_id', ${input.orgId}, true)`;
-      const actorRows = await sql<SignupActorRow[]>`
-      select id, display_name
-      from actors
-      where org_id = ${input.orgId}
-        and type = 'user'
-        and disabled_at is null
-        and lower(email) = ${email}
-      for update
-      limit 1
-    `;
-      const actor = actorRows[0];
-      if (actor === undefined) {
-        return null;
-      }
-
-      const existingRows = await sql<BetterAuthUserRow[]>`
-      select id
-      from "user"
-      where lower(email) = ${email}
-      for update
-      limit 1
-      `;
-      const existingUser = existingRows[0];
-      const betterAuthUserId = existingUser?.id ?? `signup-${actor.id}`;
-      const activated = await sql<{ readonly actor_id: string | null }[]>`
-        select helix_activate_identity_membership(
-          'better-auth', ${betterAuthUserId}, ${input.orgId}, ${email}, ${actor.display_name}
-        ) as actor_id
-      `;
-      if (activated[0]?.actor_id !== actor.id) {
-        return null;
-      }
-      await sql`
-      insert into "user" (id, name, email, "emailVerified", "createdAt", "updatedAt")
-      values (${betterAuthUserId}, ${actor.display_name}, ${email}, true, now(), now())
-      on conflict (id) do update
-      set
-        name = excluded.name,
-        email = excluded.email,
-        "emailVerified" = true,
-        "updatedAt" = now()
-    `;
-      await sql`
-      insert into account (
-        id, "userId", "accountId", "providerId", issuer, password, "createdAt", "updatedAt"
-      )
-      values (
-        ${`${betterAuthUserId}-credential`},
-        ${betterAuthUserId},
-        ${betterAuthUserId},
-        'credential',
-        'local:credential',
-        ${input.passwordHash},
-        now(),
-        now()
-      )
-      on conflict ("providerId", "accountId") do nothing
-    `;
-
-      return { actorId: actor.id, betterAuthUserId };
+      return createCredentialUserForActor(sql, input);
     });
   }
+}
+
+/**
+ * Give the tenant's pending person (an enabled user actor with this email) a
+ * password sign-in and activate their identity membership. Runs inside the
+ * caller's transaction, which must already carry the tenant context; returns
+ * null when no such person exists or the email is linked to another person.
+ */
+export async function createCredentialUserForActor(
+  sql: postgres.TransactionSql,
+  input: { readonly orgId: string; readonly email: string; readonly passwordHash: string },
+): Promise<SignupVerifiedIdentityRecord | null> {
+  const email = normalizeSignupEmail(input.email);
+  const actorRows = await sql<SignupActorRow[]>`
+    select id, display_name
+    from actors
+    where org_id = ${input.orgId}
+      and type = 'user'
+      and disabled_at is null
+      and lower(email) = ${email}
+    for update
+    limit 1
+  `;
+  const actor = actorRows[0];
+  if (actor === undefined) {
+    return null;
+  }
+
+  const existingRows = await sql<BetterAuthUserRow[]>`
+    select id
+    from "user"
+    where lower(email) = ${email}
+    for update
+    limit 1
+  `;
+  const existingUser = existingRows[0];
+  const betterAuthUserId = existingUser?.id ?? `signup-${actor.id}`;
+  const activated = await sql<{ readonly actor_id: string | null }[]>`
+    select helix_activate_identity_membership(
+      'better-auth', ${betterAuthUserId}, ${input.orgId}, ${email}, ${actor.display_name}
+    ) as actor_id
+  `;
+  if (activated[0]?.actor_id !== actor.id) {
+    return null;
+  }
+  await sql`
+    insert into "user" (id, name, email, "emailVerified", "createdAt", "updatedAt")
+    values (${betterAuthUserId}, ${actor.display_name}, ${email}, true, now(), now())
+    on conflict (id) do update
+    set
+      name = excluded.name,
+      email = excluded.email,
+      "emailVerified" = true,
+      "updatedAt" = now()
+  `;
+  await sql`
+    insert into account (
+      id, "userId", "accountId", "providerId", issuer, password, "createdAt", "updatedAt"
+    )
+    values (
+      ${`${betterAuthUserId}-credential`},
+      ${betterAuthUserId},
+      ${betterAuthUserId},
+      'credential',
+      'local:credential',
+      ${input.passwordHash},
+      now(),
+      now()
+    )
+    on conflict ("providerId", "accountId") do nothing
+  `;
+
+  return { actorId: actor.id, betterAuthUserId };
 }
 
 export class PostgresSignupOwnerEmailLookup implements SignupOwnerEmailLookup {

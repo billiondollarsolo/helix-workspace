@@ -259,6 +259,7 @@ async function mockAccounts(page: Page, sourceType = "user") {
             actorId: "00000000-0000-4000-8000-000000000999",
             name: "Workspace admin",
             email: "admin@first.test",
+            scopes: ["*"],
           },
         },
       });

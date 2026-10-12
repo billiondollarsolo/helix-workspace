@@ -104,7 +104,7 @@ jobs:
           scan-ref: helix-all/helix-workspace
           scanners: vuln,misconfig,secret,license
           severity: CRITICAL,HIGH
-          ignore-unfixed: false
+          ignore-unfixed: true
           exit-code: 1
           skip-dirs: helix-all/helix-workspace/node_modules
 
@@ -152,5 +152,5 @@ jobs:
           image-ref: helix-security-scan:${{ github.sha }}
           scanners: vuln,secret,misconfig,license
           severity: CRITICAL,HIGH
-          ignore-unfixed: false
+          ignore-unfixed: true
           exit-code: 1

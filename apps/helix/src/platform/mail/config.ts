@@ -62,6 +62,8 @@ export interface MailSubmissionConfig extends Omit<
   readonly tlsCertFile: string;
 }
 
+const LOCAL_MAIL_SINK_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "mailpit"]);
+
 /** Build outbound SMTP config from validated env (mirrors legacy getOutboundMailConfig). */
 export function buildOutboundConfig(env: Env): OutboundMailConfig | undefined {
   const host = env.MAIL_SMTP_HOST ?? env.SES_SMTP_HOST;
@@ -77,6 +79,12 @@ export function buildOutboundConfig(env: Env): OutboundMailConfig | undefined {
     host,
     ...(port === undefined ? {} : { port }),
     ...(secureRaw === undefined ? {} : { secure: envFlag(secureRaw, false) }),
+    // Local development sinks such as Mailpit offer no STARTTLS. Only outside
+    // production, and only for loopback or the Compose `mailpit` service, may
+    // mail go to them in plaintext; every other relay must upgrade.
+    ...(env.NODE_ENV !== "production" && LOCAL_MAIL_SINK_HOSTS.has(host.toLowerCase())
+      ? { requireTls: false }
+      : {}),
     ...(user === undefined ? {} : { user }),
     ...(pass === undefined ? {} : { pass }),
   };

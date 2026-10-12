@@ -117,6 +117,7 @@ async function mockBackend(page: Page): Promise<void> {
           email: "mobile@helix.local",
           name: "Mobile User",
           actorId: "00000000-0000-4000-8000-000000000111",
+          scopes: ["*"],
         },
       });
       return;

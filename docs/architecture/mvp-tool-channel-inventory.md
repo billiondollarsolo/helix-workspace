@@ -1,6 +1,6 @@
 # MVP tool channel inventory (agents)
 
-**Date:** 2026-08-03
+**Date:** 2026-08-03 (tables refreshed 2026-10-12)
 
 **Tasks:** E3.6 (mail), E4.6 (drive), E5.6 (chat), E9.1 (tool surface inventory)
 
@@ -27,6 +27,8 @@ Factories used for this inventory (real registration paths, empty stores for def
 - `createChatToolDefinitions` — `apps/helix/src/platform/chat/tools.ts`
 - `createAgentOperationalControlTools` — `apps/helix/src/platform/tools/agent-operational-controls-tools.ts`
 
+The tables also list two companion registrations that ship with the same apps but sit outside the matrix factories: `registerChatInboxTools` (`chat.unread.list`, `chat.mentions.list` — `apps/helix/src/platform/chat/inbox.ts`) and `registerDriveS3KeyTools` (`drive.s3-keys.*` — `apps/helix/src/platform/drive/s3/tools.ts`).
+
 Channels that project the same registry (REST / MCP / tRPC / assistant / CLI) must not expose additional MVP mutation tools without the same policy path.
 
 ---
@@ -39,6 +41,9 @@ Channels that project the same registry (REST / MCP / tRPC / assistant / CLI) mu
 | `mail.alias.delete`         | `mail.admin`  | destructive            | unset                       | **queue-confirmation**                                                     |
 | `mail.alias.list`           | `mail.read`   | read                   | unset                       | allow-read                                                                 |
 | `mail.archive`              | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
+| `mail.delegate.grant`       | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
+| `mail.delegate.list`        | `mail.read`   | read                   | unset                       | allow-read                                                                 |
+| `mail.delegate.revoke`      | `mail.write`  | destructive            | unset                       | **queue-confirmation**                                                     |
 | `mail.delete`               | `mail.write`  | destructive            | unset                       | **queue-confirmation**                                                     |
 | `mail.draft.discard`        | `mail.write`  | destructive            | unset                       | **queue-confirmation**                                                     |
 | `mail.draft.get`            | `mail.read`   | read                   | unset                       | allow-read                                                                 |
@@ -49,27 +54,33 @@ Channels that project the same registry (REST / MCP / tRPC / assistant / CLI) mu
 | `mail.filter.list`          | `mail.read`   | read                   | unset                       | allow-read                                                                 |
 | `mail.filter.update`        | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
 | `mail.folders.list`         | `mail.read`   | read                   | unset                       | allow-read                                                                 |
+| `mail.forward`              | `mail.send`   | external_communication | true                        | **queue-confirmation**                                                     |
 | `mail.inbound.accept`       | `mail.system` | write                  | false                       | **queue-confirmation** for agents (system/service actors use trusted path) |
 | `mail.label.apply`          | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
-| `mail.labels.list`          | `mail.read`   | read                   | unset                       | allow-read                                                                 |
 | `mail.label.create`         | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
-| `mail.label.update`         | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
 | `mail.label.delete`         | `mail.write`  | destructive            | true                        | **queue-confirmation**                                                     |
-| `mail.scheduled.list`       | `mail.read`   | read                   | unset                       | allow-read                                                                 |
-| `mail.scheduled.reschedule` | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
-| `mail.scheduled.cancel`     | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
+| `mail.label.update`         | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
+| `mail.labels.list`          | `mail.read`   | read                   | unset                       | allow-read                                                                 |
 | `mail.outbound.cancel`      | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
 | `mail.outbound.get`         | `mail.read`   | read                   | unset                       | allow-read                                                                 |
 | `mail.outbound.retry`       | `mail.send`   | external_communication | true                        | **queue-confirmation**                                                     |
 | `mail.read.set`             | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
 | `mail.reply`                | `mail.send`   | external_communication | true                        | **queue-confirmation** (+ `mail.external` conditional scope)               |
+| `mail.restore`              | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
+| `mail.scheduled.cancel`     | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
+| `mail.scheduled.list`       | `mail.read`   | read                   | unset                       | allow-read                                                                 |
+| `mail.scheduled.reschedule` | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
 | `mail.search`               | `mail.read`   | read                   | unset                       | allow-read                                                                 |
 | `mail.send`                 | `mail.send`   | external_communication | true                        | **queue-confirmation** (+ `mail.external` conditional scope)               |
+| `mail.settings.get`         | `mail.read`   | read                   | unset                       | allow-read                                                                 |
+| `mail.settings.set`         | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
 | `mail.snooze`               | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
 | `mail.spam`                 | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
 | `mail.star.set`             | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
 | `mail.thread.get`           | `mail.read`   | read                   | unset                       | allow-read                                                                 |
 | `mail.threads.list`         | `mail.read`   | read                   | unset                       | allow-read                                                                 |
+| `mail.unarchive`            | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
+| `mail.unsnooze`             | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
 | `mail.vacation.get`         | `mail.read`   | read                   | unset                       | allow-read                                                                 |
 | `mail.vacation.set`         | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
 
@@ -77,40 +88,50 @@ Channels that project the same registry (REST / MCP / tRPC / assistant / CLI) mu
 
 ## drive.\*
 
-| Tool id                 | Permission     | sideEffects | Tool `confirmationRequired` | Agent confirmation expectation                          |
-| ----------------------- | -------------- | ----------- | --------------------------- | ------------------------------------------------------- |
-| `drive.access.list`     | `drive.read`   | read        | unset                       | allow-read                                              |
-| `drive.access.remove`   | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
-| `drive.access.update`   | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
-| `drive.comment.create`  | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
-| `drive.comment.delete`  | `drive.write`  | write       | true                        | **queue-confirmation**                                  |
-| `drive.comment.list`    | `drive.read`   | read        | unset                       | allow-read                                              |
-| `drive.comment.reopen`  | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
-| `drive.comment.resolve` | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
-| `drive.comment.update`  | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
-| `drive.create`          | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
-| `drive.delete`          | `drive.delete` | destructive | true                        | **queue-confirmation**                                  |
-| `drive.finalize`        | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
-| `drive.lifecycle.get`   | `admin.drive`  | read        | unset                       | allow-read                                              |
-| `drive.lifecycle.set`   | `admin.drive`  | write       | true                        | **queue-confirmation**                                  |
-| `drive.link.create`     | `drive.write`  | write       | true                        | **queue-confirmation**                                  |
-| `drive.link.list`       | `drive.read`   | read        | unset                       | allow-read                                              |
-| `drive.link.revoke`     | `drive.write`  | write       | true                        | **queue-confirmation**                                  |
-| `drive.list`            | `drive.read`   | read        | unset                       | allow-read (clean-read metadata only; no raw blob tool) |
-| `drive.move`            | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
-| `drive.quota.usage`     | `admin.drive`  | read        | unset                       | allow-read                                              |
-| `drive.rename`          | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
-| `drive.restore`         | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
-| `drive.search`          | `drive.read`   | read        | unset                       | allow-read                                              |
-| `drive.share`           | `drive.write`  | write       | true                        | **queue-confirmation**                                  |
-| `drive.star.set`        | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
-| `drive.storage.usage`   | `drive.read`   | read        | unset                       | allow-read                                              |
-| `drive.trash`           | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
-| `drive.upload`          | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
-| `drive.upload.complete` | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
-| `drive.upload.status`   | `drive.read`   | read        | unset                       | allow-read                                              |
-| `drive.versions.list`   | `drive.read`   | read        | unset                       | allow-read                                              |
-| `drive.versions.revert` | `drive.write`  | write       | true                        | **queue-confirmation**                                  |
+| Tool id                       | Permission     | sideEffects | Tool `confirmationRequired` | Agent confirmation expectation                          |
+| ----------------------------- | -------------- | ----------- | --------------------------- | ------------------------------------------------------- |
+| `drive.access.list`           | `drive.read`   | read        | unset                       | allow-read                                              |
+| `drive.access.remove`         | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
+| `drive.access.update`         | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
+| `drive.comment.create`        | `drive.read`   | write       | unset                       | **queue-confirmation**                                  |
+| `drive.comment.delete`        | `drive.read`   | write       | true                        | **queue-confirmation**                                  |
+| `drive.comment.evidence.list` | `drive.read`   | read        | unset                       | allow-read                                              |
+| `drive.comment.list`          | `drive.read`   | read        | unset                       | allow-read                                              |
+| `drive.comment.reopen`        | `drive.read`   | write       | unset                       | **queue-confirmation**                                  |
+| `drive.comment.resolve`       | `drive.read`   | write       | unset                       | **queue-confirmation**                                  |
+| `drive.comment.update`        | `drive.read`   | write       | unset                       | **queue-confirmation**                                  |
+| `drive.create`                | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
+| `drive.delete`                | `drive.delete` | destructive | true                        | **queue-confirmation**                                  |
+| `drive.finalize`              | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
+| `drive.folder.move`           | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
+| `drive.lifecycle.get`         | `admin.drive`  | read        | unset                       | allow-read                                              |
+| `drive.lifecycle.set`         | `admin.drive`  | write       | true                        | **queue-confirmation**                                  |
+| `drive.link.create`           | `drive.write`  | write       | true                        | **queue-confirmation**                                  |
+| `drive.link.list`             | `drive.read`   | read        | unset                       | allow-read                                              |
+| `drive.link.revoke`           | `drive.write`  | write       | true                        | **queue-confirmation**                                  |
+| `drive.list`                  | `drive.read`   | read        | unset                       | allow-read (clean-read metadata only; no raw blob tool) |
+| `drive.move`                  | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
+| `drive.quota.usage`           | `admin.drive`  | read        | unset                       | allow-read                                              |
+| `drive.rename`                | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
+| `drive.restore`               | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
+| `drive.s3-keys.create`        | `drive.write`  | write       | true                        | **queue-confirmation**                                  |
+| `drive.s3-keys.list`          | `drive.read`   | read        | unset                       | allow-read                                              |
+| `drive.s3-keys.revoke`        | `drive.write`  | destructive | true                        | **queue-confirmation**                                  |
+| `drive.search`                | `drive.read`   | read        | unset                       | allow-read                                              |
+| `drive.share`                 | `drive.write`  | write       | true                        | **queue-confirmation**                                  |
+| `drive.star.set`              | `drive.read`   | write       | unset                       | **queue-confirmation**                                  |
+| `drive.storage.usage`         | `drive.read`   | read        | unset                       | allow-read                                              |
+| `drive.trash`                 | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
+| `drive.upload`                | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
+| `drive.upload.complete`       | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
+| `drive.upload.status`         | `drive.read`   | read        | unset                       | allow-read                                              |
+| `drive.versions.list`         | `drive.read`   | read        | unset                       | allow-read                                              |
+| `drive.versions.revert`       | `drive.write`  | write       | true                        | **queue-confirmation**                                  |
+| `drive.view.get`              | `drive.read`   | read        | unset                       | allow-read                                              |
+| `drive.view.set`              | `drive.read`   | write       | unset                       | **queue-confirmation**                                  |
+| `drive.workflow.create`       | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
+| `drive.workflow.list`         | `drive.read`   | read        | unset                       | allow-read                                              |
+| `drive.workflow.transition`   | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
 
 Agent clean-read note: the Drive tool surface deliberately omits raw content/download tools; availability is metadata (`available` / upload state) rather than silent byte delivery of non-clean objects.
 
@@ -123,10 +144,13 @@ Agent clean-read note: the Drive tool surface deliberately omits raw content/dow
 | `chat.create_room`         | `chat.create` | write       | unset                       | **queue-confirmation**                                                                            |
 | `chat.delete`              | `chat.post`   | destructive | unset                       | **queue-confirmation**                                                                            |
 | `chat.edit`                | `chat.post`   | write       | unset                       | **queue-confirmation**                                                                            |
+| `chat.export`              | `chat.read`   | read        | unset                       | allow-read                                                                                        |
 | `chat.export.organization` | `admin.chat`  | read        | true                        | allow-read for agents at firewall (admin scope + tool confirmation for humans/export rate limits) |
+| `chat.import`              | `chat.create` | write       | unset                       | **queue-confirmation**                                                                            |
 | `chat.invite`              | `chat.create` | write       | unset                       | **queue-confirmation**                                                                            |
 | `chat.legal_hold.set`      | `admin.chat`  | write       | true                        | **queue-confirmation**                                                                            |
 | `chat.member.remove`       | `chat.create` | destructive | true                        | **queue-confirmation**                                                                            |
+| `chat.mentions.list`       | `chat.read`   | read        | unset                       | allow-read                                                                                        |
 | `chat.message.list`        | `chat.read`   | read        | unset                       | allow-read (room membership enforced in store)                                                    |
 | `chat.pin`                 | `chat.post`   | write       | unset                       | **queue-confirmation**                                                                            |
 | `chat.pins.list`           | `chat.read`   | read        | unset                       | allow-read                                                                                        |
@@ -134,13 +158,14 @@ Agent clean-read note: the Drive tool surface deliberately omits raw content/dow
 | `chat.reply_in_thread`     | `chat.post`   | write       | unset                       | **queue-confirmation**                                                                            |
 | `chat.retention.get`       | `admin.chat`  | read        | unset                       | allow-read                                                                                        |
 | `chat.retention.set`       | `admin.chat`  | write       | true                        | **queue-confirmation**                                                                            |
+| `chat.room.discover`       | `chat.read`   | read        | unset                       | allow-read                                                                                        |
+| `chat.room.join`           | `chat.create` | write       | unset                       | **queue-confirmation**                                                                            |
 | `chat.room.list`           | `chat.read`   | read        | unset                       | allow-read                                                                                        |
 | `chat.search`              | `chat.read`   | read        | unset                       | allow-read                                                                                        |
-| `chat.unread.list`         | `chat.read`   | read        | unset                       | allow-read                                                                                        |
-| `chat.mentions.list`       | `chat.read`   | read        | unset                       | allow-read                                                                                        |
 | `chat.send`                | `chat.post`   | write       | unset                       | **queue-confirmation**                                                                            |
 | `chat.thread.list`         | `chat.read`   | read        | unset                       | allow-read                                                                                        |
 | `chat.unpin`               | `chat.post`   | write       | unset                       | **queue-confirmation**                                                                            |
+| `chat.unread.list`         | `chat.read`   | read        | unset                       | allow-read                                                                                        |
 
 ---
 
@@ -170,7 +195,7 @@ Acceptance for this evidence package: matrix test green; every non-read tool abo
 Re-run:
 
 ```sh
-pnpm --filter helix exec vitest run src/platform/tools/mvp-tool-surface-matrix.test.ts
+pnpm --filter @helix/app exec vitest run src/platform/tools/mvp-tool-surface-matrix.test.ts
 ```
 
-If factories add/remove tools, update the tables in this file from the factory definitions and keep the test as the fail-closed check.
+The tables are maintained by hand. The matrix test fails when a factory tool id is missing from this file, so when factories add or remove tools, update the tables from the factory definitions (permission, `sideEffects`, `confirmationRequired`) and keep the test as the fail-closed check.

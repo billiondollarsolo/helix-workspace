@@ -41,6 +41,17 @@ export type HelixCommand =
       readonly actorId: string;
     }
   | {
+      readonly kind: "admin-user-invite";
+      readonly email: string;
+      readonly displayName?: string;
+      readonly role?: "member" | "admin";
+    }
+  | {
+      readonly kind: "admin-user-invitation";
+      readonly action: "resend" | "revoke";
+      readonly actorId: string;
+    }
+  | {
       readonly kind: "admin-audit-list";
       readonly actorId?: string;
       readonly objectId?: string;
@@ -1176,7 +1187,7 @@ function parseCalendarCommand(
 }
 
 const calendarUsage =
-  "Usage: helix calendar <event-create|event-update|event-delete|event-respond|event-list|find-time> [--json [JSON]]";
+  "Usage: helix calendar <event-create|event-update|event-delete|event-respond|event-list|find-time|calendar-list|calendar-create|calendar-update|calendar-delete> [--json [JSON]]";
 const calendarEventListUsage =
   "Usage: helix calendar event-list [--calendar-id <id>] [--start <iso>] [--end <iso>] [--limit <number>] [--json [JSON]]";
 
@@ -1607,6 +1618,44 @@ function parseAdminUsersCommand(action: string | undefined, args: readonly strin
     if (input.actorId === undefined) throw new CliUsageError(adminUsersLifecycleUsage);
     return { kind: "admin-user-lifecycle", action, actorId: input.actorId };
   }
+  if (action === "invite") {
+    const input: { email?: string; displayName?: string; admin?: boolean } = {};
+    parseAdminGetFlags(args, adminUsersInviteUsage, {
+      strings: new Map([
+        ["--email", "email"],
+        ["--name", "displayName"],
+      ]),
+      numbers: new Map<string, string>(),
+      booleans: new Map([["--admin", "admin"]]),
+      enums: new Map<string, ReadonlySet<string>>(),
+      enumFields: new Map<string, string>(),
+      input,
+    });
+    if (input.email === undefined) throw new CliUsageError(adminUsersInviteUsage);
+    return {
+      kind: "admin-user-invite",
+      email: input.email,
+      ...(input.displayName === undefined ? {} : { displayName: input.displayName }),
+      ...(input.admin === true ? { role: "admin" as const } : {}),
+    };
+  }
+  if (action === "resend-invite" || action === "revoke-invite") {
+    const input: { actorId?: string } = {};
+    parseAdminGetFlags(args, adminUsersInvitationUsage, {
+      strings: new Map([["--actor-id", "actorId"]]),
+      numbers: new Map<string, string>(),
+      booleans: new Map<string, string>(),
+      enums: new Map<string, ReadonlySet<string>>(),
+      enumFields: new Map<string, string>(),
+      input,
+    });
+    if (input.actorId === undefined) throw new CliUsageError(adminUsersInvitationUsage);
+    return {
+      kind: "admin-user-invitation",
+      action: action === "resend-invite" ? "resend" : "revoke",
+      actorId: input.actorId,
+    };
+  }
   if (action !== "list") {
     throw new CliUsageError(adminUsersUsage);
   }
@@ -1683,7 +1732,16 @@ const adminAgentCredentialsRevokeUsage =
 const adminUsersListUsage =
   "Usage: helix admin users list [--query <text>] [--type <user|agent|service_account|system>] [--include-disabled] [--limit <number>] [--cursor <cursor>]";
 const adminUsersLifecycleUsage = "Usage: helix admin users <suspend|restore> --actor-id <id>";
-const adminUsersUsage = `${adminUsersListUsage}\n${adminUsersLifecycleUsage}`;
+const adminUsersInviteUsage =
+  "Usage: helix admin users invite --email <email> [--name <name>] [--admin]";
+const adminUsersInvitationUsage =
+  "Usage: helix admin users <resend-invite|revoke-invite> --actor-id <id>";
+const adminUsersUsage = [
+  adminUsersListUsage,
+  adminUsersLifecycleUsage,
+  adminUsersInviteUsage,
+  adminUsersInvitationUsage,
+].join("\n");
 const adminAuditUsage =
   "Usage: helix admin audit list [--actor-id <id>] [--object-id <id>] [--object-type <type>] [--verb <verb>] [--limit <number>] [--cursor <cursor>]";
 const adminAuditListUsage = adminAuditUsage;

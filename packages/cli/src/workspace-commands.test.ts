@@ -31,6 +31,39 @@ describe("workspace command wrappers", () => {
     });
   });
 
+  it("maps calendar collection commands to the calendar tools", () => {
+    const calendarId = "11111111-1111-4111-8111-111111111111";
+    expect(parseCliArgs(["calendar", "calendar-list"])).toEqual({
+      kind: "tool-call",
+      toolId: "calendar.calendars.list",
+      json: { source: "empty" },
+    });
+    expect(
+      parseCliArgs(["calendar", "calendar-create", "--name", "Launch", "--color", "teal"]),
+    ).toEqual({
+      kind: "tool-call",
+      toolId: "calendar.calendar.create",
+      json: { source: "inline", value: '{"name":"Launch","color":"teal"}' },
+    });
+    expect(
+      parseCliArgs(["calendar", "calendar-update", "--calendar-id", calendarId, "--name", "Ops"]),
+    ).toMatchObject({
+      toolId: "calendar.calendar.update",
+      json: { value: `{"calendarId":"${calendarId}","name":"Ops"}` },
+    });
+    expect(parseCliArgs(["calendar", "calendar-delete", "--calendar-id", calendarId])).toEqual({
+      kind: "tool-call",
+      toolId: "calendar.calendar.delete",
+      json: { source: "inline", value: `{"calendarId":"${calendarId}"}` },
+    });
+    expect(() => parseCliArgs(["calendar", "calendar-create", "--title", "x"])).toThrow(
+      CliUsageError,
+    );
+    expect(scopedUsage(["calendar", "calendar-delete"])).toContain(
+      "helix calendar calendar-delete [--calendar-id <id>]",
+    );
+  });
+
   it("maps contacts commands to the contacts tools", () => {
     expect(
       parseCliArgs(["contacts", "create", "--given-name", "Ada", "--company", "Engines"]),

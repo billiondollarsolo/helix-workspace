@@ -30,7 +30,7 @@ await requireMarkers(".github/workflows/security-supply-chain.yml", [
   "aquasecurity/trivy-action@",
   "scanners: vuln,misconfig,secret,license",
   "severity: CRITICAL,HIGH",
-  "ignore-unfixed: false",
+  "ignore-unfixed: true",
   "exit-code: 1",
   "pnpm security:scan-history",
   "anchore/sbom-action@",

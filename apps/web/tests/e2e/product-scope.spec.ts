@@ -47,6 +47,33 @@ test.describe("workspace product scope", () => {
     await expect(rail.getByRole("link", { name: "Helix AI" })).toHaveCount(0);
   });
 
+  test("hides Admin from members and Helix AI while no provider answers", async ({ page }) => {
+    await seedBrowserSession(page, "storage-scope-token");
+    await mockBackend(page, { scopes: ["mail.read", "drive.read"], assistantAvailable: false });
+    await page.goto("/drive");
+    await expect(page.getByRole("main", { name: "Drive" })).toBeVisible();
+
+    await page.getByRole("button", { name: "Helix apps" }).click();
+    const launcher = page.getByRole("menu", { name: "Helix apps" });
+    const names = (await launcher.getByRole("menuitem").allTextContents()).map((name) =>
+      name.trim(),
+    );
+    expect(names).toEqual(["Mail", "Calendar", "Drive", "Chat", "Meet", "Contacts", "Search"]);
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("button", { name: "Helix AI" })).toHaveCount(0);
+
+    await page.getByRole("button", { name: /^Account:/ }).click();
+    await expect(page.getByRole("dialog", { name: "Account" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Admin console" })).toHaveCount(0);
+    await page.keyboard.press("Escape");
+
+    await page.goto("/admin/overview");
+    await expect(page.getByRole("heading", { name: "You need admin access" })).toBeVisible();
+    await page.goto("/assistant");
+    await expect(page.getByRole("heading", { name: "Helix AI is unavailable" })).toBeVisible();
+    await expect(page.getByText("Ask your administrator to set up Helix AI.")).toBeVisible();
+  });
+
   test("removed editor and viewer routes return 404", async ({ page }) => {
     await seedBrowserSession(page, "storage-scope-token");
     await mockBackend(page);
@@ -69,7 +96,10 @@ test.describe("workspace product scope", () => {
   });
 });
 
-async function mockBackend(page: Page): Promise<void> {
+async function mockBackend(
+  page: Page,
+  options: { readonly scopes?: readonly string[]; readonly assistantAvailable?: boolean } = {},
+): Promise<void> {
   await page.route("**/api/**", async (route) => {
     const pathname = new URL(route.request().url()).pathname;
     if (pathname === "/v1/api/auth/get-session") {
@@ -79,7 +109,16 @@ async function mockBackend(page: Page): Promise<void> {
           email: "scope@helix.local",
           name: "Product Scope User",
           actorId: "00000000-0000-4000-8000-000000000211",
+          scopes: options.scopes ?? ["*"],
         },
+      });
+      return;
+    }
+    if (pathname === "/v1/api/tools/assistant.status" && options.assistantAvailable === false) {
+      await fulfillJson(route, {
+        available: false,
+        reason: "unreachable",
+        message: "Helix AI is unavailable right now. Ask your administrator to set up Helix AI.",
       });
       return;
     }

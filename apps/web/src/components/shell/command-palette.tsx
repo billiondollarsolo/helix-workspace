@@ -8,6 +8,7 @@ import { ChevronRight as ChevronRightIcon, Search as SearchIcon } from "lucide-r
 
 import { APPS } from "@/components/apps";
 import { Avatar } from "@/components/ui/avatar";
+import { useEnabledApps } from "@/features/apps/use-enabled-apps";
 import type { GlobalSearchType } from "@/features/search/api";
 import {
   SEARCH_TYPE_LABELS,
@@ -127,6 +128,19 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
   const [index, setIndex] = useState(0);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const content = useContentSearch(query, open);
+  /* Same gating as the launcher: Admin only for admins, Helix AI only while
+     a provider answers, and no app the API does not serve. */
+  const enabled = useEnabledApps();
+  const adminEnabled = enabled.isEnabled("admin");
+  // Keyed on the ids, not the array: `isEnabled` is rebuilt every render and a
+  // fresh list would reset the highlighted option on each keystroke.
+  const enabledAppIds = APPS.filter((app) => enabled.isEnabled(app.id))
+    .map((app) => app.id)
+    .join(" ");
+  const enabledApps = useMemo(() => {
+    const ids = new Set(enabledAppIds.split(" "));
+    return APPS.filter((app) => ids.has(app.id));
+  }, [enabledAppIds]);
 
   const goto = useCallback(
     (route: string) => {
@@ -137,7 +151,7 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
 
   const items = useMemo<PaletteItem[]>(() => {
     const base: PaletteItem[] = [
-      ...APPS.map((app) => ({
+      ...enabledApps.map((app) => ({
         id: `app:${app.id}`,
         group: "Apps",
         title: `Go to ${app.name}`,
@@ -153,13 +167,17 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
         icon: "Settings",
         action: openSettings,
       },
-      {
-        id: "admin-console",
-        group: "Settings",
-        title: "Admin console",
-        icon: "Shield",
-        action: () => goto("/admin"),
-      },
+      ...(adminEnabled
+        ? [
+            {
+              id: "admin-console",
+              group: "Settings",
+              title: "Admin console",
+              icon: "Shield" as const,
+              action: () => goto("/admin"),
+            },
+          ]
+        : []),
       ...registeredCommands.map(commandPaletteItemFromPlatformCommand),
     ];
     if (!query) {
@@ -170,7 +188,7 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
       ...base.filter((item) => paletteItemMatchesQuery(item, lower)),
       ...contentItems(content, navigate),
     ];
-  }, [query, goto, navigate, openSettings, registeredCommands, content]);
+  }, [query, goto, navigate, openSettings, registeredCommands, content, enabledApps, adminEnabled]);
 
   useEffect(() => {
     if (!open) {

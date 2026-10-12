@@ -8,7 +8,10 @@ import { QUERY_RETRY_DEFAULTS } from "@/lib/query-retry";
 import { useEnabledApps } from "@/features/apps/use-enabled-apps";
 import { NotificationsPanel } from "./notifications-panel";
 
-vi.mock("@/lib/auth", () => ({ authenticatedFetch: vi.fn() }));
+vi.mock("@/lib/auth", () => ({
+  authenticatedFetch: vi.fn(),
+  sessionUserQueryOptions: () => ({ queryKey: ["session"], queryFn: () => Promise.resolve(null) }),
+}));
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
@@ -67,6 +70,7 @@ afterEach(() => {
 it("deduplicates shell app reads and defers the feed until opened, including invalidation while closed", async () => {
   await render(false);
   expect(requestsFor("core-apps")).toHaveLength(1);
+  expect(requestsFor("assistant.status")).toHaveLength(1);
   expect(requestsFor("notifications.list")).toHaveLength(0);
   await render(true);
   expect(requestsFor("notifications.list")).toHaveLength(1);

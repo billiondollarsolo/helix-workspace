@@ -114,7 +114,8 @@ pgvector 0.8.5, Redis 8.10.2, NATS 2.14.3, Meilisearch 1.51.0, RustFS 1.0.1, Cer
 0.54.0, SpamAssassin 4.0.2, and ClamAV 1.5.4. Registry images use immutable manifest digests.
 Helix-built dependency images use digest-pinned build/runtime bases, immutable source revisions,
 and verified source archives. CI builds or pulls every one of these images, produces an SPDX SBOM,
-runs a fail-closed High/Critical Trivy scan, and retains the machine-readable result. No locally
+runs a fail-closed High/Critical Trivy scan (findings without a released upstream fix are
+excluded and do not fail the gate), and retains the machine-readable result. No locally
 built image is pushed until both application scans and all nine dependency scans (the eight
 Compose services plus the CloudNativePG PostgreSQL operand) succeed. The
 publication job loads checksummed archives exported by the scan jobs, verifies their source

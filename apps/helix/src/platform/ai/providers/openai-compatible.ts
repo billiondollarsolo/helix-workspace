@@ -22,6 +22,11 @@ import {
   usageFromOpenAI,
   type ProviderRequestConfig,
 } from "./shared.js";
+import {
+  probeProviderEndpoint,
+  type ProbeableLLMProvider,
+  type ProviderProbeResult,
+} from "./probe.js";
 import { openAIRequest } from "./openai-tools.js";
 
 export interface OpenAICompatibleProviderConfig {
@@ -40,7 +45,7 @@ export function createOpenAICompatibleProvider(
   return new OpenAICompatibleProvider(config);
 }
 
-class OpenAICompatibleProvider implements LLMProviderCapability {
+class OpenAICompatibleProvider implements ProbeableLLMProvider {
   readonly id: string;
   readonly protocol = "openai-compatible" as const;
 
@@ -105,6 +110,14 @@ class OpenAICompatibleProvider implements LLMProviderCapability {
 
   async models(): Promise<readonly ModelInfo[]> {
     return this.#models;
+  }
+
+  /** `GET {baseUrl}/models` — answered by OpenAI, Ollama, vLLM and most gateways. */
+  probe(signal: AbortSignal): Promise<ProviderProbeResult> {
+    return probeProviderEndpoint(joinUrl(this.#baseUrl, "models"), {
+      ...this.#requestConfig(),
+      signal,
+    });
   }
 
   async countTokens(text: string): Promise<number> {

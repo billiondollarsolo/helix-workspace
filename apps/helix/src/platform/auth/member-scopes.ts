@@ -1,6 +1,45 @@
 import type { Actor, ActorRoleBinding } from "@helix/sdk-types";
 import type postgres from "postgres";
 import { actorHasPermission, parseActorRoleBindings } from "../permissions/roles.js";
+import type { Permission } from "../permissions/scope-catalog.js";
+
+/**
+ * The app scopes a person gets when they join a workspace as a member: the
+ * workspace apps plus Assistant and notifications. Admin invitations add
+ * `WORKSPACE_ADMIN_SCOPES`.
+ */
+export const WORKSPACE_MEMBER_SCOPES = [
+  "platform.read",
+  "mail.read",
+  "mail.write",
+  "mail.send",
+  "mail.external",
+  "drive.read",
+  "drive.write",
+  "calendar.read",
+  "calendar.write",
+  "calendar.manage",
+  "calendar.external",
+  "chat.read",
+  "chat.post",
+  "chat.create",
+  "meet.read",
+  "meet.write",
+  "contacts.read",
+  "contacts.write",
+  "assistant.read",
+  "assistant.write",
+  "assistant.memory",
+  "notifications.read",
+  "notifications.write",
+] as const satisfies readonly Permission[];
+
+/** Added to the member scopes for a person invited as an administrator. */
+export const WORKSPACE_ADMIN_SCOPES = [
+  "tools:read",
+  "tools:write",
+  "admin.*",
+] as const satisfies readonly Permission[];
 
 /**
  * Self-service scopes every active person holds through the built-in

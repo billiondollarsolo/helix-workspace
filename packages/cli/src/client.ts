@@ -96,6 +96,19 @@ export function buildHelixRequest(
         `/api/admin/users/${encodeURIComponent(command.actorId)}/${command.action}`,
         {},
       );
+    case "admin-user-invite":
+      return createRequest(env, "POST", "/api/admin/users/invite", {
+        email: command.email,
+        ...(command.displayName === undefined ? {} : { displayName: command.displayName }),
+        ...(command.role === undefined ? {} : { role: command.role }),
+      });
+    case "admin-user-invitation":
+      return createRequest(
+        env,
+        "POST",
+        `/api/admin/users/${encodeURIComponent(command.actorId)}/invite/${command.action}`,
+        {},
+      );
     case "admin-audit-list":
       return createRequest(env, "GET", withQuery("/api/admin/audit-log", command));
     case "backup-create":

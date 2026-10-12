@@ -328,8 +328,9 @@ describe("signup invite shell", () => {
   });
 
   it("retries invite acceptance after a transient backend failure", async () => {
-    const fetchImpl = vi
-      .fn<typeof fetch>()
+    // Not an administrator's invitation, so the signed-in acceptance runs.
+    const acceptResponses = vi
+      .fn<() => Promise<Response>>()
       .mockResolvedValueOnce(
         Response.json({ error: { message: "Invite service unavailable." } }, { status: 503 }),
       )
@@ -349,6 +350,11 @@ describe("signup invite shell", () => {
           },
         }),
       );
+    const fetchImpl = vi.fn<typeof fetch>((input) =>
+      urlForRequest(input) === "/v1/api/invites/inspect"
+        ? Promise.resolve(inviteNotFound())
+        : acceptResponses(),
+    );
 
     await act(async () => {
       root.render(
@@ -376,9 +382,214 @@ describe("signup invite shell", () => {
     });
 
     expect(container.textContent).toContain("You’re in");
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(acceptResponses).toHaveBeenCalledTimes(2);
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
   });
 });
+
+describe("administrator invitation", () => {
+  const preview = {
+    email: "ada@example.com",
+    displayName: "Ada",
+    workspaceName: "Acme",
+    expiresAt: "2026-10-19T00:00:00.000Z",
+    passwordMinLength: 8,
+  };
+  const signedIn = {
+    id: "user-1",
+    email: "ada@example.com",
+    name: "Ada",
+    actorId: "actor-1",
+  };
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+  });
+
+  afterEach(() => {
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+    vi.restoreAllMocks();
+  });
+
+  function adminInviteFetch(
+    accept: () => Response = () => Response.json({ status: "accepted", email: "ada@example.com" }),
+  ) {
+    return vi.fn<typeof fetch>((input) => {
+      const url = urlForRequest(input);
+      if (url === "/v1/api/invites/inspect") return Promise.resolve(Response.json(preview));
+      if (url === "/v1/api/invites/accept") return Promise.resolve(accept());
+      return Promise.resolve(
+        Response.json({ error: { message: "Unhandled request" } }, { status: 500 }),
+      );
+    });
+  }
+
+  async function renderShell(props: Partial<Parameters<typeof SignupInviteShell>[0]>) {
+    await act(async () => {
+      root.render(<SignupInviteShell token="admin-token" {...props} />);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+
+  function input(name: string): HTMLInputElement {
+    const element = container.querySelector<HTMLInputElement>(`input[name="${name}"]`);
+    if (element === null) throw new Error(`Missing input ${name}`);
+    return element;
+  }
+
+  function type(name: string, value: string): void {
+    const element = input(name);
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(
+        element,
+        value,
+      );
+      element.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
+  async function join(): Promise<void> {
+    const form = container.querySelector("form");
+    if (form === null) throw new Error("Password form was not rendered.");
+    await act(async () => {
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+
+  it("asks the invited person to choose a password instead of signing in", async () => {
+    const fetchImpl = adminInviteFetch();
+    const getSession = vi.fn(() => Promise.resolve(null));
+    await renderShell({ fetchImpl, getSession });
+
+    expect(container.querySelector("h1")?.textContent).toBe("Join Acme");
+    expect(container.textContent).toContain("Choose a password for ada@example.com.");
+    expect(container.textContent).toContain("Join workspace");
+    expect(input("new-password").type).toBe("password");
+    expect(input("confirm-password").type).toBe("password");
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "/v1/api/invites/inspect",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ token: "admin-token" }),
+      }),
+    );
+    // The token is the credential; no session is consulted.
+    expect(getSession).not.toHaveBeenCalled();
+
+    const show = [...container.querySelectorAll("label")].find(
+      (label) => label.textContent === "Show password",
+    );
+    act(() => {
+      show?.querySelector("input")?.click();
+    });
+    expect(input("new-password").type).toBe("text");
+    expect(input("confirm-password").type).toBe("text");
+  });
+
+  it("checks the password length and confirmation before joining", async () => {
+    const fetchImpl = adminInviteFetch();
+    const signIn = vi.fn(() => Promise.resolve(signedIn));
+    const onJoined = vi.fn();
+    await renderShell({ fetchImpl, signIn, onJoined });
+
+    type("new-password", "short");
+    type("confirm-password", "short");
+    await join();
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+      "Use at least 8 characters.",
+    );
+    expect(input("new-password").getAttribute("aria-invalid")).toBe("true");
+
+    type("new-password", "long enough password");
+    type("confirm-password", "long enough passw0rd");
+    await join();
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+      "The passwords don’t match.",
+    );
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(signIn).not.toHaveBeenCalled();
+    expect(onJoined).not.toHaveBeenCalled();
+  });
+
+  it("accepts, signs in with the new password and lands the person in the workspace", async () => {
+    const fetchImpl = adminInviteFetch();
+    const signIn = vi.fn(() => Promise.resolve(signedIn));
+    const onJoined = vi.fn();
+    await renderShell({ fetchImpl, signIn, onJoined });
+
+    type("new-password", "long enough password");
+    type("confirm-password", "long enough password");
+    await join();
+
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "/v1/api/invites/accept",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ token: "admin-token", password: "long enough password" }),
+      }),
+    );
+    expect(signIn).toHaveBeenCalledWith(
+      { email: "ada@example.com", password: "long enough password" },
+      fetchImpl,
+    );
+    expect(onJoined).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("explains why joining failed and lets the person try again", async () => {
+    const fetchImpl = adminInviteFetch(() =>
+      Response.json(
+        {
+          code: "existing_sign_in",
+          error:
+            "ada@example.com already has a Helix sign-in. Sign in with your existing password to join.",
+        },
+        { status: 409 },
+      ),
+    );
+    const signIn = vi.fn(() => Promise.resolve(signedIn));
+    const onJoined = vi.fn();
+    await renderShell({ fetchImpl, signIn, onJoined });
+
+    type("new-password", "long enough password");
+    type("confirm-password", "long enough password");
+    await join();
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+      "ada@example.com already has a Helix sign-in. Sign in with your existing password to join.",
+    );
+    expect(signIn).not.toHaveBeenCalled();
+    expect(onJoined).not.toHaveBeenCalled();
+    expect(container.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).not.toBe(
+      true,
+    );
+  });
+
+  it("falls back to the signed-in acceptance when the link is not an administrator's invitation", async () => {
+    const fetchImpl = vi.fn<typeof fetch>(() => Promise.resolve(inviteNotFound()));
+    const getSession = vi.fn(() => Promise.resolve(null));
+    await renderShell({ fetchImpl, getSession });
+
+    expect(getSession).toHaveBeenCalledTimes(1);
+    expect(container.querySelector("h1")?.textContent).toBe("Sign in");
+    expect(container.querySelector('input[type="email"]')).not.toBeNull();
+    expect(container.querySelector('input[name="confirm-password"]')).toBeNull();
+  });
+});
+
+function inviteNotFound(): Response {
+  return Response.json(
+    { code: "invite_invalid", error: "This invitation link is invalid." },
+    { status: 404 },
+  );
+}
 
 function clickButton(name: string): void {
   const button = [...container.querySelectorAll<HTMLButtonElement>("button")].find((candidate) =>

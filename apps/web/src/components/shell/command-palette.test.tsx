@@ -22,6 +22,12 @@ vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => navigateMock,
 }));
 
+const disabledApps = vi.hoisted(() => new Set<string>());
+
+vi.mock("@/features/apps/use-enabled-apps", () => ({
+  useEnabledApps: () => ({ isLoading: false, isEnabled: (id: string) => !disabledApps.has(id) }),
+}));
+
 vi.mock("@/features/search/use-content-search", () => ({
   useContentSearch: () => content.state ?? idleContent,
 }));
@@ -41,6 +47,7 @@ describe("CommandPalette", () => {
     root = createRoot(container);
     navigateMock.mockClear();
     content.state = undefined;
+    disabledApps.clear();
   });
 
   afterEach(() => {
@@ -197,6 +204,21 @@ describe("CommandPalette", () => {
     setSearchQuery("schedule");
     act(() => buttonWithText("Schedule meeting").click());
     expect(navigateMock).toHaveBeenLastCalledWith({ to: "/calendar", search: { create: "event" } });
+  });
+
+  it("offers Admin and Helix AI only when the shell enables them", () => {
+    render(createWebPlatformHost({ queryClient }), vi.fn());
+    expect(container.textContent).toContain("Go to Admin");
+    expect(container.textContent).toContain("Admin console");
+    expect(container.textContent).toContain("Go to Helix AI");
+
+    disabledApps.add("admin");
+    disabledApps.add("assistant");
+    render(createWebPlatformHost({ queryClient }), vi.fn());
+    expect(container.textContent).not.toContain("Go to Admin");
+    expect(container.textContent).not.toContain("Admin console");
+    expect(container.textContent).not.toContain("Go to Helix AI");
+    expect(container.textContent).toContain("Go to Mail");
   });
 
   it("lists content results grouped by app under the command matches", () => {

@@ -35,3 +35,75 @@ describe("helix admin users suspend|restore", () => {
     }
   });
 });
+
+describe("helix admin users invite|resend-invite|revoke-invite", () => {
+  it("parses an invitation with optional name and admin role", () => {
+    expect(parseCliArgs(["admin", "users", "invite", "--email", "ada@example.com"])).toEqual({
+      kind: "admin-user-invite",
+      email: "ada@example.com",
+    });
+    expect(
+      parseCliArgs([
+        "admin",
+        "users",
+        "invite",
+        "--email",
+        "ada@example.com",
+        "--name",
+        "Ada Lovelace",
+        "--admin",
+      ]),
+    ).toEqual({
+      kind: "admin-user-invite",
+      email: "ada@example.com",
+      displayName: "Ada Lovelace",
+      role: "admin",
+    });
+    expect(() => parseCliArgs(["admin", "users", "invite"])).toThrow(
+      "helix admin users invite --email <email>",
+    );
+  });
+
+  it("parses resend and revoke and requires the actor id", () => {
+    expect(parseCliArgs(["admin", "users", "resend-invite", "--actor-id", actorId])).toEqual({
+      kind: "admin-user-invitation",
+      action: "resend",
+      actorId,
+    });
+    expect(parseCliArgs(["admin", "users", "revoke-invite", "--actor-id", actorId])).toEqual({
+      kind: "admin-user-invitation",
+      action: "revoke",
+      actorId,
+    });
+    expect(() => parseCliArgs(["admin", "users", "revoke-invite"])).toThrow(
+      "helix admin users <resend-invite|revoke-invite> --actor-id <id>",
+    );
+  });
+
+  it("posts to the admin invitation routes", () => {
+    const env = { HELIX_BASE_URL: "https://helix.example", HELIX_ACCESS_TOKEN: "token-1" };
+    expect(
+      buildHelixRequest(
+        { kind: "admin-user-invite", email: "ada@example.com", displayName: "Ada", role: "admin" },
+        env,
+      ),
+    ).toMatchObject({
+      url: "https://helix.example/v1/api/admin/users/invite",
+      init: {
+        method: "POST",
+        body: '{"email":"ada@example.com","displayName":"Ada","role":"admin"}',
+      },
+    });
+    expect(
+      buildHelixRequest({ kind: "admin-user-invite", email: "ada@example.com" }, env),
+    ).toMatchObject({ init: { body: '{"email":"ada@example.com"}' } });
+    for (const action of ["resend", "revoke"] as const) {
+      expect(
+        buildHelixRequest({ kind: "admin-user-invitation", action, actorId }, env),
+      ).toMatchObject({
+        url: `https://helix.example/v1/api/admin/users/${actorId}/invite/${action}`,
+        init: { method: "POST", body: "{}" },
+      });
+    }
+  });
+});

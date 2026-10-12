@@ -77,9 +77,24 @@ export class PostgresChatInboxStore {
          and helix_chat_message_visible_to(${input.orgId}, ${input.actorId}, room.id, message.sent_at)
         where room.org_id = ${input.orgId}
           and room.kind in ('chat_room', 'chat_dm')
+          -- Narrow to the actor's active thread grants through
+          -- permissions_chat_validity_idx before the threads RLS policy runs;
+          -- chat_permission_is_valid below stays the authoritative check.
+          and room.id = any(array(
+            select candidate.resource_id from permissions candidate
+            where candidate.org_id = ${input.orgId}
+              and candidate.actor_id = ${input.actorId}
+              and candidate.resource_type = 'thread'
+              and candidate.status = 'active'
+          ))
           and exists (
             select 1 from permissions access_grant
-            where chat_permission_is_valid(access_grant, ${input.orgId}, ${input.actorId}, room.id)
+            where access_grant.org_id = ${input.orgId}
+              and access_grant.actor_id = ${input.actorId}
+              and access_grant.resource_type = 'thread'
+              and access_grant.resource_id = room.id
+              and access_grant.status = 'active'
+              and chat_permission_is_valid(access_grant, ${input.orgId}, ${input.actorId}, room.id)
           )
         group by room.id, room.org_id, receipt.last_read_at
         order by last_message_at desc nulls last, room.id
@@ -130,7 +145,12 @@ export class PostgresChatInboxStore {
           and room.kind in ('chat_room', 'chat_dm')
           and exists (
             select 1 from permissions access_grant
-            where chat_permission_is_valid(access_grant, ${input.orgId}, ${input.actorId}, room.id)
+            where access_grant.org_id = ${input.orgId}
+              and access_grant.actor_id = ${input.actorId}
+              and access_grant.resource_type = 'thread'
+              and access_grant.resource_id = room.id
+              and access_grant.status = 'active'
+              and chat_permission_is_valid(access_grant, ${input.orgId}, ${input.actorId}, room.id)
           )
           and helix_chat_message_visible_to(${input.orgId}, ${input.actorId}, room.id, message.sent_at)
         order by message.sent_at desc, message.id desc

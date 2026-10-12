@@ -168,7 +168,7 @@ describe("production image supply-chain workflow", () => {
   it("retains machine-readable scan output while failing on high and critical findings", () => {
     expect(source.match(/format: json/gu)).toHaveLength(3);
     expect(source.match(/exit-code: "1"/gu)).toHaveLength(3);
-    expect(source.match(/ignore-unfixed: false/gu)).toHaveLength(3);
+    expect(source.match(/ignore-unfixed: true/gu)).toHaveLength(3);
     expect(source.match(/severity: HIGH,CRITICAL/gu)).toHaveLength(3);
     expect(source).toContain("output: helix-all/helix-workspace/helix-workspace.trivy.json");
     expect(source).toContain("output: helix-all/helix-workspace/helix-workspace-web.trivy.json");

@@ -320,6 +320,7 @@ const TOOL_FIXTURES = new Map([
     },
   ],
   ["meet.status", { available: true }],
+  ["assistant.status", { available: true }],
   ["webhook.overview", { outbound: [], inbound: [], deliveries: [] }],
   [
     "drive.list",

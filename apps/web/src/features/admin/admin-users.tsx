@@ -15,7 +15,7 @@ export interface AdminUser {
   readonly email: string | null;
   readonly displayName: string;
   readonly scopes: readonly string[];
-  /** `suspended` can be restored; `removed` accounts were offboarded. */
+  /** `invited` has not joined yet; `suspended` can be restored; `removed` accounts were offboarded. */
   readonly status: UserStatus;
   readonly disabledAt: string | null;
   /** Last sign-in to this workspace; null if they never signed in. */
@@ -24,7 +24,12 @@ export interface AdminUser {
   readonly updatedAt: string;
 }
 
-const USER_STATUSES: readonly string[] = ["active", "suspended", "removed"] satisfies UserStatus[];
+const USER_STATUSES: readonly string[] = [
+  "active",
+  "invited",
+  "suspended",
+  "removed",
+] satisfies UserStatus[];
 
 export interface AdminUsersListResponse {
   readonly users: readonly AdminUser[];
@@ -161,6 +166,55 @@ export async function setAdminUserSuspended(actorId: string, suspended: boolean)
   if (!response.ok) {
     const output: unknown = await response.json().catch(() => ({}));
     throw responseError(response, output, suspended ? "Suspend user" : "Restore user");
+  }
+}
+
+export type AdminInviteRole = "member" | "admin";
+
+export interface AdminUserInvitation {
+  readonly actorId: string;
+  readonly email: string;
+  readonly displayName: string;
+  readonly expiresAt: string;
+}
+
+/** Create the person and email them a link to choose a password and join. */
+export async function inviteAdminUser(input: {
+  readonly email: string;
+  readonly displayName?: string;
+  readonly role: AdminInviteRole;
+}): Promise<AdminUserInvitation> {
+  const response = await authenticatedFetch("/api/admin/users/invite", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  const output: unknown = await response.json().catch(() => ({}));
+  if (!response.ok) throw responseError(response, output, "Invite user");
+  return output as AdminUserInvitation;
+}
+
+/** Email a fresh invitation link; the previous link stops working. */
+export async function resendAdminUserInvite(actorId: string): Promise<void> {
+  const response = await authenticatedFetch(
+    `/api/admin/users/${encodeURIComponent(actorId)}/invite/resend`,
+    { method: "POST" },
+  );
+  if (!response.ok) {
+    const output: unknown = await response.json().catch(() => ({}));
+    throw responseError(response, output, "Resend invitation");
+  }
+}
+
+/** Withdraw a pending invitation so its link no longer works. */
+export async function revokeAdminUserInvite(actorId: string): Promise<void> {
+  const response = await authenticatedFetch(
+    `/api/admin/users/${encodeURIComponent(actorId)}/invite/revoke`,
+    { method: "POST" },
+  );
+  if (!response.ok) {
+    const output: unknown = await response.json().catch(() => ({}));
+    throw responseError(response, output, "Withdraw invitation");
   }
 }
 

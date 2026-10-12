@@ -12,7 +12,7 @@
 /* Workspace membership state from the admin users API: `suspended` is the
  * reversible hold an administrator can lift; `removed` accounts were
  * offboarded or deprovisioned and stay closed. */
-export type UserStatus = "active" | "suspended" | "removed";
+export type UserStatus = "active" | "invited" | "suspended" | "removed";
 
 /** How much of the admin surface an actor can reach.
  *
@@ -56,6 +56,13 @@ function isWildcardScope(scope: string): boolean {
  *  full administrator, so the row renders it rather than summarising it away. */
 export function adminScopesOf(scopes: readonly string[]): readonly string[] {
   return scopes.filter((scope) => isAdminScope(scope) || isWildcardScope(scope));
+}
+
+/** Whether these scopes open the Admin console: a wildcard or any dotted
+ *  `admin.` grant. The bare legacy `admin` marker opens no admin route, so it
+ *  alone does not count. */
+export function hasAdminConsoleAccess(scopes: readonly string[]): boolean {
+  return scopes.some((scope) => isWildcardScope(scope) || scope.startsWith("admin."));
 }
 
 /** Honest role for an actor, derived the way the platform actually authorizes.

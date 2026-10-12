@@ -2,15 +2,22 @@
  *
  * Source of truth is the platform's core-apps backend (`/api/core-apps`),
  * shared with the admin > Core apps panel that toggles them. The platform
- * tracks mail, chat, drive, calendar, meet, and assistant. Admin stays visible.
+ * tracks mail, chat, drive, calendar, meet, and assistant. On top of that:
+ *   - Admin is offered only to people whose scopes open the Admin console.
+ *   - Helix AI is offered only while a model provider answers
+ *     (`assistant.status`), so nobody is led into a chat that cannot reply.
  *
  * Used by:
  *   - components/shell/rail.tsx
  *   - components/shell/app-launcher.tsx
+ *   - components/shell/bottom-nav.tsx
+ *   - components/shell/command-palette.tsx
  */
 
 import { useQuery } from "@tanstack/react-query";
 import { coreAppsShellQueryOptions, type CoreAppId } from "@/features/admin/core-apps-api";
+import { useAdminAccess } from "@/features/admin/use-admin-access";
+import { useAssistantAvailability } from "@/features/assistant/use-assistant-availability";
 
 type AppId = string;
 
@@ -21,6 +28,8 @@ export interface EnabledApps {
 
 export function useEnabledApps(): EnabledApps {
   const query = useQuery(coreAppsShellQueryOptions());
+  const admin = useAdminAccess();
+  const assistant = useAssistantAvailability();
   const apps = query.data?.apps ?? [];
   /* `registered`, not `enabled`. The two differ: `enabled` is the org-wide
      admin toggle, while `registered` is `enabled && inRole` — whether the API
@@ -32,9 +41,11 @@ export function useEnabledApps(): EnabledApps {
      surfaced; it bites any deployment that splits apps across roles. */
   const map = new Map<CoreAppId, boolean>(apps.map((a) => [a.id, a.registered]));
   return {
-    isLoading: query.isLoading,
+    isLoading: query.isLoading || admin.isLoading || assistant.isLoading,
     isEnabled: (id) => {
-      return map.get(id as CoreAppId) ?? true;
+      if (id === "admin") return admin.isAdmin;
+      const registered = map.get(id as CoreAppId) ?? true;
+      return id === "assistant" ? registered && assistant.available : registered;
     },
   };
 }

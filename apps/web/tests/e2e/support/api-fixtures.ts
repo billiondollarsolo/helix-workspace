@@ -61,6 +61,8 @@ export async function fulfillCoreAppsRoute(route: Route): Promise<boolean> {
         actorId: "00000000-0000-4000-8000-000000000111",
         email: "admin@example.test",
         name: "Test admin",
+        // Admin entry points are offered only to admin scopes.
+        scopes: ["*"],
       },
     });
     return true;
@@ -75,6 +77,11 @@ export async function fulfillCoreAppsRoute(route: Route): Promise<boolean> {
   }
   if (pathname === "/v1/api/admin/core-apps") {
     await fulfillJson(route, coreAppsAdminStatusFixture());
+    return true;
+  }
+  // Helix AI entry points appear only while a model provider answers.
+  if (pathname === "/v1/api/tools/assistant.status") {
+    await fulfillJson(route, { available: true });
     return true;
   }
   return false;
@@ -97,6 +104,9 @@ export async function installCoreAppsRoutes(page: Page): Promise<void> {
   });
   await page.route("**/api/admin/core-apps", async (route) => {
     await fulfillJson(route, coreAppsAdminStatusFixture());
+  });
+  await page.route("**/api/tools/assistant.status", async (route) => {
+    await fulfillCoreAppsRoute(route);
   });
 }
 

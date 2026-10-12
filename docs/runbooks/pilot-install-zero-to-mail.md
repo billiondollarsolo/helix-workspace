@@ -132,14 +132,14 @@ The 1.0 pilot requires an operator-provisioned first organization owner. This
 runbook assumes that a deployment-specific bootstrap procedure has already been
 validated. Public self-service account and workspace creation are absent.
 
-**Current onboarding gap:** the Admin directory supports suspension and restoration,
-but does not yet provide local account creation or an Admin invite flow for new
-users. The existing `/api/signup/onboarding-invites` API can issue invitations,
-but acceptance requires an already authenticated identity; it does not create a
-new user's password login. [PR #15](https://github.com/billiondollarsolo/helix-workspace/pull/15) proposes
-those flows and needs reconciliation with the current identity and authorization
-code. Do not count invitations as a completed pilot prerequisite until the
-implementation and end-to-end invite, acceptance, and sign-in checks land.
+**Adding people:** in **Admin → Users**, choose **Invite people**, enter the person's
+email address, and choose Member or Administrator (only a full administrator,
+`admin.*`, can invite another administrator). Helix emails a link that expires in
+7 days; the person opens it, chooses a password, and is signed in. Until then the
+person appears as **Invited**, and the row menu can resend or withdraw the
+invitation. The same actions are available from the CLI (`helix admin users invite --email <address>`).
+Invitation email uses the managed mail provider; finish sections 4 and 5, then confirm one test
+invitation arrives before inviting the pilot cohort.
 
 Then:
 

@@ -3,6 +3,7 @@ import type { AuthFetch } from "@/lib/auth";
 import {
   CHAT_PLATFORM_DEFAULT_RETENTION_DAYS,
   describeChatAdminUnavailable,
+  describeChatRoom,
   exportChatOrganization,
   formatRetentionSummary,
   getChatRetentionPolicy,
@@ -96,7 +97,7 @@ describe("mapExportFormToToolInput", () => {
         from: "2026-01-01T00:00:00.000Z",
         to: "2026-02-01T00:00:00.000Z",
         limit: "500",
-        roomIds: "33333333-3333-4333-8333-333333333333, 44444444-4444-4444-8444-444444444444",
+        roomIds: ["33333333-3333-4333-8333-333333333333", "44444444-4444-4444-8444-444444444444"],
       }),
     ).toEqual({
       from: "2026-01-01T00:00:00.000Z",
@@ -106,13 +107,13 @@ describe("mapExportFormToToolInput", () => {
     });
   });
 
-  it("rejects inverted date ranges and bad room ids", () => {
+  it("rejects inverted date ranges and too many rooms", () => {
     expect(
       mapExportFormToToolInput({
         from: "2026-02-01T00:00:00.000Z",
         to: "2026-01-01T00:00:00.000Z",
         limit: "100",
-        roomIds: "",
+        roomIds: [],
       }),
     ).toBe("Export start must not be after export end.");
     expect(
@@ -120,9 +121,9 @@ describe("mapExportFormToToolInput", () => {
         from: "",
         to: "",
         limit: "100",
-        roomIds: "bad-id",
+        roomIds: Array.from({ length: 101 }, () => "33333333-3333-4333-8333-333333333333"),
       }),
-    ).toBe('Room ID "bad-id" is not a valid UUID.');
+    ).toBe("Choose at most 100 rooms, or none to export every room.");
   });
 
   it("defaults empty room list and enforces limit bounds", () => {
@@ -131,7 +132,7 @@ describe("mapExportFormToToolInput", () => {
         from: "",
         to: "",
         limit: "10000",
-        roomIds: "",
+        roomIds: [],
       }),
     ).toEqual({ roomIds: [], limit: 10_000 });
     expect(
@@ -139,9 +140,33 @@ describe("mapExportFormToToolInput", () => {
         from: "",
         to: "",
         limit: "10001",
-        roomIds: "",
+        roomIds: [],
       }),
     ).toBe("Export limit must be an integer from 1 to 10000.");
+  });
+});
+
+describe("describeChatRoom", () => {
+  const room = {
+    id: "33333333-3333-4333-8333-333333333333",
+    kind: "chat_room",
+    name: "Launch",
+    privacy: "discoverable",
+    memberCount: 4,
+    agentOnly: false,
+    updatedAt: "2026-08-01T00:00:00.000Z",
+  } as const;
+
+  it("names the room and says what kind it is", () => {
+    expect(describeChatRoom(room)).toBe("Launch");
+    expect(describeChatRoom({ ...room, privacy: "restricted" })).toBe("Launch (invitation only)");
+    expect(describeChatRoom({ ...room, privacy: "private", agentOnly: true })).toBe(
+      "Launch (private, agents only)",
+    );
+    expect(describeChatRoom({ ...room, kind: "chat_dm", name: "Avery, Blake" })).toBe(
+      "Avery, Blake (direct message)",
+    );
+    expect(describeChatRoom({ ...room, name: " " })).toBe("Untitled room");
   });
 });
 

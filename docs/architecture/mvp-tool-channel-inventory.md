@@ -139,33 +139,34 @@ Agent clean-read note: the Drive tool surface deliberately omits raw content/dow
 
 ## chat.\*
 
-| Tool id                    | Permission    | sideEffects | Tool `confirmationRequired` | Agent confirmation expectation                                                                    |
-| -------------------------- | ------------- | ----------- | --------------------------- | ------------------------------------------------------------------------------------------------- |
-| `chat.create_room`         | `chat.create` | write       | unset                       | **queue-confirmation**                                                                            |
-| `chat.delete`              | `chat.post`   | destructive | unset                       | **queue-confirmation**                                                                            |
-| `chat.edit`                | `chat.post`   | write       | unset                       | **queue-confirmation**                                                                            |
-| `chat.export`              | `chat.read`   | read        | unset                       | allow-read                                                                                        |
-| `chat.export.organization` | `admin.chat`  | read        | true                        | allow-read for agents at firewall (admin scope + tool confirmation for humans/export rate limits) |
-| `chat.import`              | `chat.create` | write       | unset                       | **queue-confirmation**                                                                            |
-| `chat.invite`              | `chat.create` | write       | unset                       | **queue-confirmation**                                                                            |
-| `chat.legal_hold.set`      | `admin.chat`  | write       | true                        | **queue-confirmation**                                                                            |
-| `chat.member.remove`       | `chat.create` | destructive | true                        | **queue-confirmation**                                                                            |
-| `chat.mentions.list`       | `chat.read`   | read        | unset                       | allow-read                                                                                        |
-| `chat.message.list`        | `chat.read`   | read        | unset                       | allow-read (room membership enforced in store)                                                    |
-| `chat.pin`                 | `chat.post`   | write       | unset                       | **queue-confirmation**                                                                            |
-| `chat.pins.list`           | `chat.read`   | read        | unset                       | allow-read                                                                                        |
-| `chat.react`               | `chat.post`   | write       | unset                       | **queue-confirmation**                                                                            |
-| `chat.reply_in_thread`     | `chat.post`   | write       | unset                       | **queue-confirmation**                                                                            |
-| `chat.retention.get`       | `admin.chat`  | read        | unset                       | allow-read                                                                                        |
-| `chat.retention.set`       | `admin.chat`  | write       | true                        | **queue-confirmation**                                                                            |
-| `chat.room.discover`       | `chat.read`   | read        | unset                       | allow-read                                                                                        |
-| `chat.room.join`           | `chat.create` | write       | unset                       | **queue-confirmation**                                                                            |
-| `chat.room.list`           | `chat.read`   | read        | unset                       | allow-read                                                                                        |
-| `chat.search`              | `chat.read`   | read        | unset                       | allow-read                                                                                        |
-| `chat.send`                | `chat.post`   | write       | unset                       | **queue-confirmation**                                                                            |
-| `chat.thread.list`         | `chat.read`   | read        | unset                       | allow-read                                                                                        |
-| `chat.unpin`               | `chat.post`   | write       | unset                       | **queue-confirmation**                                                                            |
-| `chat.unread.list`         | `chat.read`   | read        | unset                       | allow-read                                                                                        |
+| Tool id                       | Permission    | sideEffects | Tool `confirmationRequired` | Agent confirmation expectation                                                                    |
+| ----------------------------- | ------------- | ----------- | --------------------------- | ------------------------------------------------------------------------------------------------- |
+| `chat.create_room`            | `chat.create` | write       | unset                       | **queue-confirmation**                                                                            |
+| `chat.delete`                 | `chat.post`   | destructive | unset                       | **queue-confirmation**                                                                            |
+| `chat.edit`                   | `chat.post`   | write       | unset                       | **queue-confirmation**                                                                            |
+| `chat.export`                 | `chat.read`   | read        | unset                       | allow-read                                                                                        |
+| `chat.export.organization`    | `admin.chat`  | read        | true                        | allow-read for agents at firewall (admin scope + tool confirmation for humans/export rate limits) |
+| `chat.import`                 | `chat.create` | write       | unset                       | **queue-confirmation**                                                                            |
+| `chat.invite`                 | `chat.create` | write       | unset                       | **queue-confirmation**                                                                            |
+| `chat.legal_hold.set`         | `admin.chat`  | write       | true                        | **queue-confirmation**                                                                            |
+| `chat.member.remove`          | `chat.create` | destructive | true                        | **queue-confirmation**                                                                            |
+| `chat.mentions.list`          | `chat.read`   | read        | unset                       | allow-read                                                                                        |
+| `chat.message.list`           | `chat.read`   | read        | unset                       | allow-read (room membership enforced in store)                                                    |
+| `chat.pin`                    | `chat.post`   | write       | unset                       | **queue-confirmation**                                                                            |
+| `chat.pins.list`              | `chat.read`   | read        | unset                       | allow-read                                                                                        |
+| `chat.react`                  | `chat.post`   | write       | unset                       | **queue-confirmation**                                                                            |
+| `chat.reply_in_thread`        | `chat.post`   | write       | unset                       | **queue-confirmation**                                                                            |
+| `chat.retention.get`          | `admin.chat`  | read        | unset                       | allow-read                                                                                        |
+| `chat.retention.set`          | `admin.chat`  | write       | true                        | **queue-confirmation**                                                                            |
+| `chat.room.discover`          | `chat.read`   | read        | unset                       | allow-read                                                                                        |
+| `chat.room.join`              | `chat.create` | write       | unset                       | **queue-confirmation**                                                                            |
+| `chat.room.list`              | `chat.read`   | read        | unset                       | allow-read                                                                                        |
+| `chat.room.list_organization` | `admin.chat`  | read        | unset                       | allow-read (private rooms gated by `chat_admin_private_rooms`)                                    |
+| `chat.search`                 | `chat.read`   | read        | unset                       | allow-read                                                                                        |
+| `chat.send`                   | `chat.post`   | write       | unset                       | **queue-confirmation**                                                                            |
+| `chat.thread.list`            | `chat.read`   | read        | unset                       | allow-read                                                                                        |
+| `chat.unpin`                  | `chat.post`   | write       | unset                       | **queue-confirmation**                                                                            |
+| `chat.unread.list`            | `chat.read`   | read        | unset                       | allow-read                                                                                        |
 
 ---
 

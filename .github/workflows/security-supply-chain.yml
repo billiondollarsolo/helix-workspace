@@ -150,7 +150,19 @@ jobs:
         uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           image-ref: helix-security-scan:${{ github.sha }}
-          scanners: vuln,secret,misconfig,license
+          scanners: vuln,secret,misconfig
           severity: CRITICAL,HIGH
           ignore-unfixed: true
+          exit-code: 1
+
+      # The base image's own Debian packages (apt, bash, coreutils, ...) are
+      # GPL or LGPL, so a licence check that includes them cannot pass on any
+      # Debian base. Only what the application adds is held to the policy.
+      - name: Check application dependency licences in the image
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: helix-security-scan:${{ github.sha }}
+          scanners: license
+          vuln-type: library
+          severity: CRITICAL,HIGH
           exit-code: 1

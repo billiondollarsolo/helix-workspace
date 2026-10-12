@@ -8,6 +8,27 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Added
 
+- Passwords, an optional install. A bundled Vaultwarden server (compatible with the Bitwarden
+  apps and browser extensions) can be installed with the workspace and is not deployed unless the
+  operator opts in: `COMPOSE_PROFILES=passwords` and `HELIX_PASSWORDS_DOMAIN` for Docker Compose,
+  or `passwords.enabled=true` in the Helm chart. It is served on its own hostname so the vault
+  never shares a browser origin with the workspace, publishes no port, keeps its server
+  administration page off, and limits sign-up to the workspace's mail domain with email
+  confirmation. An administrator then turns it on in **Admin → Apps → Passwords** (the audited
+  workspace setting `passwords_app`, off by default), and people get a Passwords entry in the app
+  launcher that opens the vault and shows the server address for the Bitwarden apps. Accounts and
+  vaults are separate from Helix and end-to-end encrypted; Helix never sees them. New setting
+  `HELIX_PASSWORDS_URL`; `GET /api/core-apps` now also reports `passwords`.
+  `infra/scripts/production-boot-smoke.sh --with passwords` proves the install end to end.
+- Choose Chat rooms by name in the Admin console. **Admin → Chat** retention, legal hold, and
+  export now offer a room picker instead of asking for room IDs, and choosing a room shows that
+  room's own policy. Private rooms and direct messages stay out of the pickers (only a count is
+  shown) until an administrator turns on **Administrators can see private rooms**, a workspace
+  setting that is off by default and audited like every other workspace setting
+  (`chat_admin_private_rooms`). **Show agent-only rooms** adds rooms whose members are all
+  agents, private or not. New tool `chat.room.list_organization` (`admin.chat`, read) returns
+  room names, kinds, and member counts, never messages. An export with no rooms chosen still
+  covers every room, including private ones, and the confirmation now says so.
 - Manage the HTTPS certificate from the Admin console. **Admin → Domains → HTTPS certificate**
   shows the certificate the workspace serves, who issued it, and when it expires. In the
   production Compose stack an administrator can upload the organization's own certificate and key
@@ -525,6 +546,10 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Fixed
 
+- The nightly image scan no longer fails on the licences of the base image's own Debian
+  packages, which are GPL or LGPL and cannot be changed. Vulnerability, secret, and
+  misconfiguration scanning still cover the whole image; the licence check now covers what the
+  application adds.
 - `db:migrate` names the database it is about to change (`Migrating helix on 127.0.0.1:5432 as
 helix_migrator.`). It reads only the process environment and otherwise uses the local
   development default, which on a host with several stacks can be the wrong database.

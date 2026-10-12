@@ -13,7 +13,9 @@ Boots the production Compose stack from nothing on this host and proves the
 path a new deployment takes: generated secrets, one `up -d`, HTTPS at the edge,
 first administrator, 2-step verification, an emailed invitation, a Drive
 upload, download, and malware rejection, and replacing the HTTPS certificate
-from the Admin console.
+from the Admin console. With --with passwords it also installs the optional
+password manager and proves it is served on its own address, sends its
+sign-up confirmation, and appears for people once an administrator turns it on.
 
 Images are built from this checkout; nothing is pulled from the Helix registry
 and nothing is published beyond 127.0.0.1. Everything the run creates is
@@ -23,6 +25,7 @@ Options:
   --tls <internal|files>  Certificate source at the edge. internal uses Caddy's
                           own CA; files serves an operator certificate through
                           docker-compose.tls-files.yml. Default: internal
+  --with <install>        Also start an optional install: passwords
   --skip-build            Reuse images from an earlier run
   --keep                  Leave the stack and its work directory in place
   --project <name>        Compose project name. Default: helixbootsmoke
@@ -34,6 +37,7 @@ EOF
 }
 
 TLS_MODE=internal
+WITH_PASSWORDS=0
 SKIP_BUILD=0
 KEEP=0
 PROJECT=helixbootsmoke
@@ -43,6 +47,13 @@ SMTP_PORT=28825
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --tls) TLS_MODE=${2:?missing value for --tls}; shift 2 ;;
+    --with)
+      case "${2:?missing value for --with}" in
+        passwords) WITH_PASSWORDS=1 ;;
+        *) die "--with accepts: passwords" ;;
+      esac
+      shift 2
+      ;;
     --skip-build) SKIP_BUILD=1; shift ;;
     --keep) KEEP=1; shift ;;
     --project) PROJECT=${2:?missing value for --project}; shift 2 ;;
@@ -66,6 +77,7 @@ if [[ -n "$(docker ps -aq --filter "label=com.docker.compose.project=$PROJECT")"
 fi
 
 DOMAIN=helix.bootsmoke.test
+VAULT_DOMAIN=vault.bootsmoke.test
 ORG_NAME="Boot Smoke Workspace"
 OWNER_EMAIL="owner@$DOMAIN"
 OWNER_PASSWORD="Boot-smoke-$(openssl rand -hex 12)"
@@ -131,11 +143,14 @@ log "Generating secrets in $SECRETS"
 node infra/scripts/generate-production-secrets.mjs --dir "$SECRETS" --mail-host "mail.$DOMAIN" >/dev/null
 openssl rand -hex 24 >"$SECRETS/mail_smtp_password"
 
+# issue_certificate <file name> <host> [more hosts...]
 issue_certificate() {
-  local name=$1 host=$2
+  local name=$1 host=$2 names
+  shift
+  names=$(printf 'DNS:%s,' "$@")
   openssl req -newkey rsa:2048 -nodes -keyout "$WORK/$name.key" -out "$WORK/$name.csr" \
     -subj "/CN=$host" 2>/dev/null
-  printf 'subjectAltName=DNS:%s\nextendedKeyUsage=serverAuth\n' "$host" >"$WORK/$name.ext"
+  printf 'subjectAltName=%s\nextendedKeyUsage=serverAuth\n' "${names%,}" >"$WORK/$name.ext"
   openssl x509 -req -in "$WORK/$name.csr" -CA "$SECRETS/ca/ca.pem" -CAkey "$SECRETS/ca/ca.key" \
     -CAcreateserial -out "$WORK/$name.pem" -days 2 -extfile "$WORK/$name.ext" 2>/dev/null
   chmod 0644 "$WORK/$name.key" "$WORK/$name.pem"
@@ -143,7 +158,12 @@ issue_certificate() {
 # The stand-in mail provider requires STARTTLS, as a real one does.
 issue_certificate relay relay
 if [[ "$TLS_MODE" == files ]]; then
-  issue_certificate edge "$DOMAIN"
+  # One operator certificate covers every site the edge serves.
+  if [[ "$WITH_PASSWORDS" == 1 ]]; then
+    issue_certificate edge "$DOMAIN" "$VAULT_DOMAIN"
+  else
+    issue_certificate edge "$DOMAIN"
+  fi
   cat "$WORK/edge.pem" "$SECRETS/ca/ca.pem" >"$SECRETS/tls_cert"
   cp "$WORK/edge.key" "$SECRETS/tls_key"
   chmod 0644 "$SECRETS/tls_cert" "$SECRETS/tls_key"
@@ -184,6 +204,10 @@ HELIX_SMTP_RECEIVE_BIND_IP=127.0.0.1
 HELIX_SMTP_RECEIVE_PORT=$SMTP_PORT
 EOF
   [[ "$TLS_MODE" == internal ]] && printf 'HELIX_CADDY_TLS=internal\n'
+  # What an operator adds to install the optional password manager.
+  [[ "$WITH_PASSWORDS" == 1 ]] &&
+    printf 'COMPOSE_PROFILES=passwords\nHELIX_PASSWORDS_DOMAIN=%s\n' "$VAULT_DOMAIN"
+  true
 } >"$WORK/env.production"
 
 # Test-only: images built from this checkout stand in for the published
@@ -210,8 +234,17 @@ services:
     volumes:
       - $WORK/relay.pem:/certs/relay.pem:ro
       - $WORK/relay.key:/certs/relay.key:ro
-    networks: [data-plane]
+    networks: [data-plane, edge]
 EOF
+# The stand-in provider's certificate comes from the deployment CA, which the
+# password manager has no reason to trust; a real provider's is public.
+if [[ "$WITH_PASSWORDS" == 1 ]]; then
+  cat >>"$WORK/smoke.override.yml" <<EOF
+  vaultwarden:
+    environment:
+      SMTP_ACCEPT_INVALID_CERTS: "true"
+EOF
+fi
 
 if [[ "$SKIP_BUILD" == 0 ]]; then
   log "Building images from this checkout"
@@ -261,6 +294,22 @@ api() {
     -H "x-helix-csrf-token: ${CSRF:-}" "$BASE$path" "$@"
 }
 status_of() { api "$@" -o "$WORK/last.json" -w '%{http_code}'; }
+VAULT="https://$VAULT_DOMAIN"
+vault() {
+  curl -sS --cacert "$EDGE_CA" --connect-to "$VAULT_DOMAIN:443:127.0.0.1:$HTTPS_PORT" "$@"
+}
+vault_status() { vault -o "$WORK/vault.json" -w '%{http_code}' "$@"; }
+# relay_has_mail <Mailpit search query>
+relay_has_mail() {
+  for _ in {1..20}; do
+    if compose exec -T relay wget -qO- "http://127.0.0.1:8025/api/v1/search?query=$1" |
+      grep -q '"Subject"'; then
+      return 0
+    fi
+    sleep 3
+  done
+  return 1
+}
 
 # --- Edge -------------------------------------------------------------------
 
@@ -342,16 +391,74 @@ expect "a fresh code verifies the same session" "$(verify_code)" 200
 expect "the administrator carries on without signing in again" \
   "$(status_of '/v1/api/admin/users?limit=1')" 200
 
-mail_seen=0
-for _ in {1..20}; do
-  if compose exec -T relay wget -qO- 'http://127.0.0.1:8025/api/v1/search?query=to:second@'"$DOMAIN" |
-    grep -q '"Subject"'; then
-    mail_seen=1
-    break
+if relay_has_mail "to:second@$DOMAIN"; then
+  pass "invitation email reaches the mail provider over STARTTLS"
+else
+  fail "invitation email reaches the mail provider over STARTTLS"
+fi
+
+# --- Optional install: password manager ------------------------------------
+
+passwords_field() { api /v1/api/core-apps | json "passwords.$1"; }
+if [[ "$WITH_PASSWORDS" == 0 ]]; then
+  expect "no password manager is offered when none is installed" "$(passwords_field installed)" false
+else
+  for _ in {1..40}; do
+    [[ "$(vault_status "$VAULT/alive" 2>/dev/null)" == 200 ]] && break
+    sleep 3
+  done
+  expect "password manager answers on its own address over verified HTTPS" \
+    "$(vault_status "$VAULT/alive")" 200
+  expect "it is the bundled Vaultwarden" "$(vault "$VAULT/api/config" | json server.name)" Vaultwarden
+  vault_headers=$(vault -I "$VAULT/")
+  if grep -qi '^strict-transport-security:' <<<"$vault_headers" &&
+    grep -qi '^content-security-policy:' <<<"$vault_headers"; then
+    pass "its site sends HSTS and the vault's own content policy"
+  else
+    fail "its site sends HSTS and the vault's own content policy"
   fi
-  sleep 3
-done
-expect "invitation email reaches the mail provider over STARTTLS" "$mail_seen" 1
+  # A disabled administration page answers with a notice; its pages do not exist.
+  if vault "$VAULT/admin" | grep -q 'admin panel is disabled' &&
+    [[ "$(vault_status "$VAULT/admin/users/overview")" == 404 ]]; then
+    pass "its server administration page is off"
+  else
+    fail "its server administration page is off"
+  fi
+  if edge "$BASE/alive" | grep -qi '<div id="root"'; then
+    pass "the workspace address does not serve the vault"
+  else
+    fail "the workspace address does not serve the vault"
+  fi
+
+  register() {
+    vault_status "$VAULT/identity/accounts/register/send-verification-email" \
+      -H 'content-type: application/json' -d "{\"email\":\"$1\",\"name\":\"Smoke Person\"}"
+  }
+  outsider_status=$(register "someone@elsewhere.test")
+  if [[ "$outsider_status" == 4* ]]; then
+    pass "sign-up is refused outside the workspace's mail domain"
+  else
+    fail "sign-up is refused outside the workspace's mail domain (got $outsider_status)"
+  fi
+  member_status=$(register "vaultuser@$DOMAIN")
+  if [[ "$member_status" == 2* ]]; then
+    pass "sign-up with a workspace address is accepted"
+  else
+    fail "sign-up with a workspace address is accepted (got $member_status: $(head -c 200 "$WORK/vault.json"))"
+  fi
+  if relay_has_mail "to:vaultuser@$DOMAIN"; then
+    pass "its confirmation email reaches the mail provider over STARTTLS"
+  else
+    fail "its confirmation email reaches the mail provider over STARTTLS"
+  fi
+
+  expect "the workspace knows a password manager is installed" "$(passwords_field installed)" true
+  expect "people are not offered it until an administrator turns it on" "$(passwords_field url)" ""
+  expect "an administrator turns Passwords on" \
+    "$(status_of /v1/api/admin/tenant-config -X PATCH \
+      -d '{"features":{"passwords_app":true},"reason":"boot smoke"}')" 200
+  expect "people are then sent to the password manager" "$(passwords_field url)" "$VAULT"
+fi
 
 # --- Drive: upload, download, malware --------------------------------------
 
@@ -478,4 +585,6 @@ if [[ "$FAILURES" -gt 0 ]]; then
   compose logs --tail 60 helix >&2 || true
   die "$FAILURES check(s) failed"
 fi
-log "Production boot smoke passed ($TLS_MODE certificate)."
+with_note=""
+[[ "$WITH_PASSWORDS" == 1 ]] && with_note=", with passwords"
+log "Production boot smoke passed ($TLS_MODE certificate$with_note)."

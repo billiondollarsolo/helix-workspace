@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { OPT_IN_TENANT_FEATURE_FLAGS } from "@helix/contracts";
 import type { OrgRecord } from "./orgs.js";
 import { buildEffectiveTenantConfig } from "./effective-config.js";
 
@@ -7,8 +8,7 @@ describe("buildEffectiveTenantConfig", () => {
     const effective = buildEffectiveTenantConfig({ org: org({}) });
 
     for (const [key, value] of Object.entries(effective.features)) {
-      // Calendar invitation import is an admin opt-in.
-      const expected = key !== "calendar_import_invitations";
+      const expected = !OPT_IN_TENANT_FEATURE_FLAGS.includes(key);
       expect({ key, value }).toEqual({ key, value: expected });
     }
     expect(Object.keys(effective.quotas).length).toBeGreaterThan(0);

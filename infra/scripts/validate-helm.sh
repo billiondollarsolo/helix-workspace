@@ -331,6 +331,40 @@ assert_template_fails cnpg-placeholder-image --set cloudnativepg.enabled=true \
 assert_template_fails cnpg-legacy-image-name --set-string cloudnativepg.imageName=ghcr.io/cloudnative-pg/postgresql:17
 assert_template_fails cnpg-superuser-owner --set cloudnativepg.enabled=true --set-string cloudnativepg.bootstrap.owner=postgres
 
+# Optional password manager: absent by default, a separate workload on its own
+# host when enabled, and refused without what it cannot run without.
+PASSWORDS="$WORK_DIR/passwords.yaml"
+passwords_values=(
+  --set passwords.enabled=true
+  --set-string passwords.host=vault.example.com
+  --set-string passwords.signupDomains=example.com
+  --set-string passwords.smtp.host=smtp.example.com
+  --set-string passwords.smtp.from=passwords@example.com
+)
+render passwords "${passwords_values[@]}"
+assert_not_contains "$BASE" 'vaultwarden|HELIX_PASSWORDS_URL' \
+  "the password manager must not be deployed or advertised unless enabled"
+assert_contains "$PASSWORDS" 'image: "vaultwarden/server:[0-9.]+-alpine@sha256:[a-f0-9]{64}"' \
+  "the password manager image must be pinned by digest"
+assert_contains "$PASSWORDS" 'HELIX_PASSWORDS_URL: "https://vault\.example\.com"' \
+  "the application must be told where the password manager is"
+assert_contains "$PASSWORDS" '- host: "vault\.example\.com"' \
+  "the password manager must be served on its own host"
+assert_contains "$PASSWORDS" 'app\.kubernetes\.io/name: helix-passwords' \
+  "the password manager must not share the application's selector labels"
+assert_contains "$PASSWORDS" 'helm\.sh/resource-policy: keep' \
+  "uninstalling the release must keep the vault's data"
+assert_contains "$PASSWORDS" 'value: "example\.com"' \
+  "vault sign-up must be limited to the configured domains"
+assert_not_contains "$PASSWORDS" 'ADMIN_TOKEN' \
+  "the password manager's server administration page must stay off"
+assert_template_fails passwords-no-host --set passwords.enabled=true
+assert_template_fails passwords-no-signup-domains "${passwords_values[@]}" \
+  --set-string passwords.signupDomains=
+assert_template_fails passwords-no-smtp "${passwords_values[@]}" --set-string passwords.smtp.host=
+assert_template_fails passwords-tag-image "${passwords_values[@]}" \
+  --set-string passwords.image.digest=
+
 assert_contains "$SOVEREIGN" 'helix.io/security-tier: "sovereign"' "sovereign overlay must label the tier"
 assert_contains "$SOVEREIGN" 'priorityClassName: "helix-workspace-critical"' "sovereign workloads must use an operator-managed priority class"
 assert_contains "$SOVEREIGN" 'ghcr\.io/billiondollarsolo/helix-workspace-fips@sha256:' "sovereign overlay must use a digest-pinned FIPS image"

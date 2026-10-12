@@ -85,3 +85,8 @@
 		file_server
 	}
 }
+
+# Optional installs each bring their own site. The file name ends in "-on" only
+# when the deployment sets the matching variable; otherwise an empty file is
+# imported and nothing is served.
+import optional/passwords{$HELIX_PASSWORDS_SITE:}.caddy

@@ -52,6 +52,9 @@ gate package says otherwise:
 
 See [`docs/architecture/v1-packaging-matrix.md`](../architecture/v1-packaging-matrix.md).
 
+Optional installs, such as the password manager, are not part of this path. Add them afterwards
+from [Optional installs](../deployment-production.md#optional-installs).
+
 ---
 
 ## 1. Prepare secrets and env (no secrets in git)

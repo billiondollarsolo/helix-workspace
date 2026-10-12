@@ -247,6 +247,67 @@ describe("production Compose overlay", () => {
       pids: 256,
     });
   });
+  it("keeps the password manager optional, private, and on its own hostname", () => {
+    // Not installed: no service, no site, and the application advertises no link.
+    expect(resolvedCompose.services.vaultwarden).toBeUndefined();
+    expect(resolvedCompose.services.helix.depends_on).not.toHaveProperty("vaultwarden");
+    expect(resolvedCompose.services.helix.environment.HELIX_PASSWORDS_URL).toBe("");
+    expect(resolvedCompose.services.caddy.environment.HELIX_PASSWORDS_SITE).toBe("");
+
+    const installed = JSON.parse(
+      execFileSync(
+        "docker",
+        [...composeArgs, "--profile", "passwords", "config", "--format", "json"],
+        {
+          cwd: root,
+          encoding: "utf8",
+          env: { ...composeEnvironment, HELIX_PASSWORDS_DOMAIN: "vault.example.test" },
+        },
+      ),
+    );
+    expect(installed.services.helix.environment.HELIX_PASSWORDS_URL).toBe(
+      "https://vault.example.test",
+    );
+    expect(installed.services.caddy.environment).toMatchObject({
+      HELIX_PASSWORDS_DOMAIN: "vault.example.test",
+      HELIX_PASSWORDS_SITE: "-on",
+    });
+    const service = installed.services.vaultwarden;
+    expect(service.profiles).toEqual(["passwords"]);
+    expect(service.image).toMatch(/^vaultwarden\/server:[\d.]+-alpine@sha256:[a-f0-9]{64}$/u);
+    expect(service.ports).toBeUndefined();
+    expect(service.networks).toEqual({ edge: null });
+    expect(service.environment).toMatchObject({
+      DOMAIN: "https://vault.example.test",
+      SIGNUPS_VERIFY: "true",
+      SIGNUPS_DOMAINS_WHITELIST: "example.test",
+      DISABLE_ICON_DOWNLOAD: "true",
+      SMTP_HOST: "smtp.postmarkapp.com",
+      SMTP_SECURITY: "starttls",
+      SMTP_PASSWORD_FILE: "/run/secrets/mail_smtp_password",
+    });
+    // No server administration page, and no secret in the environment.
+    expect(service.environment).not.toHaveProperty("ADMIN_TOKEN");
+    expect(service.environment).not.toHaveProperty("SMTP_PASSWORD");
+    expect(service.read_only).toBe(true);
+    expect(service.cap_drop).toEqual(["ALL"]);
+    expect(service.security_opt).toContain("no-new-privileges:true");
+    expect(service.deploy.resources.limits).toMatchObject({ cpus: 1, pids: 256 });
+
+    const site = readFileSync(join(root, "infra/caddy/optional/passwords-on.caddy"), "utf8");
+    expect(site).toContain("{$HELIX_PASSWORDS_DOMAIN} {");
+    expect(site).toContain("tls {$HELIX_CADDY_TLS:} {");
+    expect(site).toContain("header_up -X-Helix-Mfa-Verified");
+    expect(readFileSync(join(root, "infra/caddy/Caddyfile.production"), "utf8")).toContain(
+      "import optional/passwords{$HELIX_PASSWORDS_SITE:}.caddy",
+    );
+    // The file imported when nothing is installed defines no site.
+    expect(
+      readFileSync(join(root, "infra/caddy/optional/passwords.caddy"), "utf8")
+        .split("\n")
+        .filter((line) => line.trim() !== "" && !line.startsWith("#")),
+    ).toEqual([]);
+  });
   it("uses the exact reviewed production dependency image inventory and waits for readiness", () => {
     expect(
       Object.fromEntries(

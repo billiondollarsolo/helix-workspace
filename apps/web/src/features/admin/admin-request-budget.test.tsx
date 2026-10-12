@@ -391,11 +391,13 @@ describe("admin console request budget", () => {
           ],
         },
         "chat": {
-          "requestCount": 2,
+          "requestCount": 4,
           "settled": true,
           "urls": [
             "/v1/api/admin/core-apps",
+            "/v1/api/admin/tenant-config",
             "/v1/api/tools/chat.retention.get",
+            "/v1/api/tools/chat.room.list_organization",
           ],
         },
         "domains": {
@@ -459,6 +461,11 @@ describe("admin console request budget", () => {
           "urls": [
             "/v1/api/admin/overview",
           ],
+        },
+        "passwords": {
+          "requestCount": 0,
+          "settled": true,
+          "urls": [],
         },
         "policies": {
           "requestCount": 1,

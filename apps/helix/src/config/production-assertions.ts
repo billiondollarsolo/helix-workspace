@@ -638,6 +638,8 @@ export function assertProductionConfiguration(environment: Env): void {
     validatePublicUrl("MEET_JITSI_PUBLIC_URL", environment.MEET_JITSI_PUBLIC_URL, false, issues),
   ].filter((url): url is URL => url !== undefined);
   validateTrustedOrigins(environment.BETTER_AUTH_TRUSTED_ORIGINS, publicUrls, issues);
+  // The password manager is only linked to, so it is not a trusted origin.
+  validatePublicUrl("HELIX_PASSWORDS_URL", environment.HELIX_PASSWORDS_URL, false, issues);
   const mailOutboundEnabled = flag(environment.MAIL_OUTBOUND_ENABLED) ?? true;
   if (mailOutboundEnabled) {
     const provider = normalized(environment.MAIL_PROVIDER)?.toLowerCase();

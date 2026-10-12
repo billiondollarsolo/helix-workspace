@@ -117,6 +117,7 @@ ENV XDG_DATA_HOME=/data \
 
 COPY --from=caddy-build /out/caddy /usr/bin/caddy
 COPY --chown=10001:10001 infra/caddy/Caddyfile.production /etc/caddy/Caddyfile
+COPY --chown=10001:10001 infra/caddy/optional/ /etc/caddy/optional/
 COPY --from=web-build --chown=10001:10001 /app/apps/web/dist/ /srv/
 
 USER 10001:10001

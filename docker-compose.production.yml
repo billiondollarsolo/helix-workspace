@@ -240,6 +240,9 @@ services:
       MEET_JITSI_DOMAIN: !reset "null"
       MEET_JITSI_JWT_SECRET: !reset "null"
       MEET_JITSI_WEBHOOK_SHARED_SECRET: !reset "null"
+      # Where people open the optional password manager. Empty unless the
+      # deployment sets HELIX_PASSWORDS_DOMAIN (and starts --profile passwords).
+      HELIX_PASSWORDS_URL: ${HELIX_PASSWORDS_DOMAIN:+https://${HELIX_PASSWORDS_DOMAIN}}
       # The Business tier requires an immutable copy of the audit log. It goes
       # to an object-locked bucket on the same store, signed with the anchor
       # secret, using the same store credentials.
@@ -765,6 +768,45 @@ services:
           memory: 512m
           pids: 256
 
+  # Optional password manager (Vaultwarden). Not started unless the operator
+  # passes --profile passwords; reachable only through Caddy at
+  # HELIX_PASSWORDS_DOMAIN. Its accounts are separate from Helix accounts:
+  # people sign up with an address in the workspace's mail domain and confirm
+  # it by email. The server administration page stays off (no ADMIN_TOKEN).
+  vaultwarden:
+    profiles: !override
+      - passwords
+    environment:
+      DOMAIN: https://${HELIX_PASSWORDS_DOMAIN:-passwords.invalid}
+      SIGNUPS_DOMAINS_WHITELIST: ${HELIX_PASSWORDS_SIGNUP_DOMAINS:-${MAIL_FROM_DOMAIN:-}}
+      # Caddy is the only client, so its forwarded address is the real one.
+      IP_HEADER: X-Forwarded-For
+      SMTP_HOST: ${MAIL_SMTP_HOST:-}
+      SMTP_PORT: ${MAIL_SMTP_PORT:-587}
+      SMTP_SECURITY: ${HELIX_PASSWORDS_SMTP_SECURITY:-starttls}
+      SMTP_USERNAME: ${MAIL_SMTP_USER:-}
+      SMTP_PASSWORD_FILE: /run/secrets/mail_smtp_password
+      SMTP_FROM: ${HELIX_PASSWORDS_MAIL_FROM:-passwords@${MAIL_FROM_DOMAIN:-invalid}}
+      SMTP_FROM_NAME: ${HELIX_DEFAULT_ORG_NAME:-Helix} Passwords
+    secrets:
+      - mail_smtp_password
+    ports: !override []
+    networks: !override
+      - edge
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512m
+          pids: 256
+
   spamd:
     image: ${HELIX_SPAMD_IMAGE:?immutable HELIX_SPAMD_IMAGE registry reference with
       digest is required}
@@ -817,6 +859,9 @@ services:
       HELIX_DOMAIN: ${HELIX_DOMAIN:?HELIX_DOMAIN is required}
       HELIX_UPSTREAM: helix:3000
       HELIX_JITSI_ORIGIN: ${MEET_JITSI_PUBLIC_URL:-https://meet.localhost}
+      # Serves the optional password manager's site only when its domain is set.
+      HELIX_PASSWORDS_DOMAIN: ${HELIX_PASSWORDS_DOMAIN:-}
+      HELIX_PASSWORDS_SITE: ${HELIX_PASSWORDS_DOMAIN:+-on}
       # Certificate source: empty for automatic HTTPS (Let's Encrypt). Add
       # docker-compose.tls-files.yml to serve operator-provided PEM files.
       HELIX_CADDY_TLS: ${HELIX_CADDY_TLS:-}

@@ -35,6 +35,24 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
 {{/*
+The optional password manager is its own workload: its labels must never match
+helix.selectorLabels, or the application's Service, HPA and network policies
+would select it.
+*/}}
+{{- define "helix.passwords.selectorLabels" -}}
+app.kubernetes.io/name: {{ printf "%s-passwords" (include "helix.name" .) }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end -}}
+
+{{- define "helix.passwords.labels" -}}
+helm.sh/chart: {{ include "helix.chart" . }}
+{{ include "helix.passwords.selectorLabels" . }}
+app.kubernetes.io/component: passwords
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+app.kubernetes.io/part-of: helix
+{{- end -}}
+
+{{/*
 Default pod scheduling keeps replicas off the same node and spreads them across
 zones while still permitting a single-zone development cluster. Callers may
 replace affinity or topologySpreadConstraints explicitly.
@@ -229,6 +247,21 @@ topologySpreadConstraints:
 {{- end -}}
 {{- end -}}
 {{- end -}}
+{{- /* Optional password manager: everything it cannot run without, checked before anything renders. */ -}}
+{{- if .Values.passwords.enabled -}}
+{{- if not .Values.passwords.host -}}
+{{- fail "passwords.host is required when passwords.enabled is true (for example vault.example.com)" -}}
+{{- end -}}
+{{- if not .Values.passwords.signupDomains -}}
+{{- fail "passwords.signupDomains is required when passwords.enabled is true: the email domains allowed to create a vault account" -}}
+{{- end -}}
+{{- if or (not .Values.passwords.smtp.host) (not .Values.passwords.smtp.from) -}}
+{{- fail "passwords.smtp.host and passwords.smtp.from are required when passwords.enabled is true: sign-up is confirmed by email" -}}
+{{- end -}}
+{{- if not (regexMatch "^sha256:[a-f0-9]{64}$" .Values.passwords.image.digest) -}}
+{{- fail "passwords.image.digest must be a sha256 digest" -}}
+{{- end -}}
+{{- end -}}
 {{- /* MVP packaging fail-closed: refuse accidental Full Workspace defaults without profile=full. */ -}}
 {{- $profile := "mvp" -}}
 {{- if and .Values.workspace .Values.workspace.profile -}}
@@ -338,6 +371,13 @@ default role. Input is the chart root context.
     configMapKeyRef:
       name: {{ include "helix.fullname" . }}-config
       key: HELIX_APPS
+{{- if .Values.passwords.enabled }}
+- name: HELIX_PASSWORDS_URL
+  valueFrom:
+    configMapKeyRef:
+      name: {{ include "helix.fullname" . }}-config
+      key: HELIX_PASSWORDS_URL
+{{- end }}
 {{- /*
   FIPS env is opt-in: emitted only when fips.enabled is true. When omitted the
   crypto adapter sees no HELIX_FIPS_* / HELIX_CRYPTO_* env and self-initializes

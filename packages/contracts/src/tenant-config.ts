@@ -17,8 +17,8 @@ export type TenantByoConfig = z.infer<typeof tenantByoConfigSchema>;
 
 /**
  * Tenant feature flags: org-admin policy switches. `assistant_retrieval` and
- * `mail_outbound` default to on; `calendar_import_invitations` and
- * `chat_admin_private_rooms` are opt-ins.
+ * `mail_outbound` default to on; `calendar_import_invitations`,
+ * `chat_admin_private_rooms` and `passwords_app` are opt-ins.
  * The stored object also carries structured policies such as
  * `mail_inbound_policy`, which the app validates where it reads them.
  */
@@ -29,6 +29,7 @@ export const tenantFeatureFlagsSchema = z
     calendar_import_invitations: z.boolean(),
     drive_s3_api: z.boolean(),
     chat_admin_private_rooms: z.boolean(),
+    passwords_app: z.boolean(),
   })
   .passthrough();
 export type TenantFeatureFlags = z.infer<typeof tenantFeatureFlagsSchema>;
@@ -74,6 +75,7 @@ export type TenantConfig = z.infer<typeof tenantConfigSchema>;
 export const OPT_IN_TENANT_FEATURE_FLAGS: readonly string[] = [
   "calendar_import_invitations",
   "chat_admin_private_rooms",
+  "passwords_app",
 ];
 
 export const SYSTEM_TENANT_FEATURE_FLAGS = {
@@ -82,6 +84,7 @@ export const SYSTEM_TENANT_FEATURE_FLAGS = {
   calendar_import_invitations: false,
   drive_s3_api: true,
   chat_admin_private_rooms: false,
+  passwords_app: false,
 } as const satisfies TenantFeatureFlags;
 
 export const SYSTEM_TENANT_QUOTAS = {

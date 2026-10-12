@@ -9,6 +9,7 @@ it("exposes communication and storage without editors", () => {
     "chat",
     "meet",
     "contacts",
+    "passwords",
     "assistant",
     "admin",
   ]);

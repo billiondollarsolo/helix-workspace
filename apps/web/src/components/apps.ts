@@ -79,6 +79,15 @@ export const APPS: readonly HelixApp[] = [
     pinned: false,
   },
   {
+    id: "passwords",
+    name: "Passwords",
+    description: "Your password vault",
+    icon: "Key",
+    color: "var(--label-green)",
+    route: "/passwords",
+    pinned: false,
+  },
+  {
     id: "assistant",
     name: "Helix AI",
     description: "Ask about your work",

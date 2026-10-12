@@ -118,6 +118,11 @@ export const ADMIN_SECTION_LOADERS: Record<AdminSectionId, AdminSectionLoader> =
     exportName: "AssistantAdminSection",
     prefetch: "prefetchAdminAppSettingsQueries",
   },
+  passwords: {
+    load: () => import("@/features/admin/sections/passwords"),
+    exportName: "PasswordsAdminSection",
+    prefetch: "prefetchAdminAppSettingsQueries",
+  },
   "oauth-apps": {
     load: () => import("@/features/admin/sections/oauth-apps"),
     exportName: "AdminApps",

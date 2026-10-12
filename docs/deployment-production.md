@@ -418,7 +418,8 @@ yourself instead, provide these non-empty files with the same permissions:
 
 Two more files are needed only for the options that use them: `searxng_secret` for the
 `web-search` profile, and `tls_cert` and `tls_key` when you
-[provide your own certificate](#tls-certificates).
+[provide your own certificate](#tls-certificates). The optional
+[password manager](#password-manager) needs no secret of its own.
 
 Secret values must contain at least 32 characters and at least 12 distinct characters. Generate
 independent values from a cryptographically secure random source. Do not reuse credentials between
@@ -529,7 +530,8 @@ deployment selects automatic HTTPS or the internal CA, in single-organization de
 
 **Your certificate as files.** Put two PEM files in `HELIX_PRODUCTION_SECRETS_DIR`: `tls_cert` (the
 certificate followed by its intermediate chain) and `tls_key` (the unencrypted private key). The
-certificate must cover `HELIX_DOMAIN`. Caddy does not renew it, and the console shows it but
+certificate must cover `HELIX_DOMAIN`, and `HELIX_PASSWORDS_DOMAIN` if you installed the
+[password manager](#password-manager). Caddy does not renew it, and the console shows it but
 cannot replace it. To replace it, overwrite both files and restart the edge:
 
 ```sh
@@ -594,6 +596,57 @@ several minutes. Helix reports not ready until scanning works, so `docker compos
 up to ten minutes the first time. Helix also reports not ready when the signatures are more than
 48 hours old (`HELIX_AV_MAX_SIGNATURE_AGE_MS`); allow outbound HTTPS from the host to
 `database.clamav.net`.
+
+## Optional installs
+
+Some components are not part of the default stack. Nothing below is started, pulled, or
+advertised to people unless you opt in when you install, and each one can be added to a running
+deployment later.
+
+### Password manager
+
+A bundled [Vaultwarden](https://github.com/dani-garcia/vaultwarden) server, compatible with the
+Bitwarden apps and browser extensions. It is a separate service with its own accounts and
+end-to-end encrypted vaults: Helix links to it and never sees a master password or a vault entry.
+
+1. Point a second DNS name at the host, for example `vault.example.com`. The vault is served on
+   its own address so that it never shares a browser origin with the workspace.
+2. Add to `.env.production`:
+
+   ```sh
+   COMPOSE_PROFILES=passwords
+   HELIX_PASSWORDS_DOMAIN=vault.example.com
+   ```
+
+3. Start the stack as usual. Caddy obtains a certificate for the second name the same way it does
+   for `HELIX_DOMAIN`. If you [provide your certificate as files](#tls-certificates), it must
+   cover both names. A certificate uploaded in the console applies to `HELIX_DOMAIN`; the vault
+   keeps its automatic certificate.
+4. An administrator opens **Admin → Apps → Passwords**, which shows that the server has a
+   password manager installed, and turns on **Passwords is on for everyone**. People then get a
+   Passwords entry in the app launcher that opens the vault and shows the server address to enter
+   in the Bitwarden apps.
+
+People create their own vault account with an address in `MAIL_FROM_DOMAIN` and confirm it from
+an email the vault sends through the same mail provider as Helix, from
+`passwords@MAIL_FROM_DOMAIN`. Your provider must allow that sender.
+
+| Setting                          | Default                      | Purpose                                                    |
+| -------------------------------- | ---------------------------- | ---------------------------------------------------------- |
+| `HELIX_PASSWORDS_DOMAIN`         | unset (not installed)        | The vault's public hostname                                |
+| `HELIX_PASSWORDS_SIGNUP_DOMAINS` | `MAIL_FROM_DOMAIN`           | Comma-separated email domains allowed to create an account |
+| `HELIX_PASSWORDS_MAIL_FROM`      | `passwords@MAIL_FROM_DOMAIN` | Sender of confirmation and security email                  |
+| `HELIX_PASSWORDS_SMTP_SECURITY`  | `starttls`                   | `starttls`, or `force_tls` for an implicit-TLS port (465)  |
+
+The container publishes no port, runs with a read-only root file system and no capabilities, and
+does not download website icons, so it makes no outbound request other than mail. Its server
+administration page is off. Vault data lives in the `vaultwarden-data` volume: include it in
+backups, because a lost vault cannot be rebuilt from anything Helix stores. Turning the workspace
+setting off removes the launcher entry; it does not stop the service or delete vaults. To remove
+the service, drop the profile and the variable and run `up -d --remove-orphans`.
+
+With the Helm chart, set `passwords.enabled=true` and the values described in the
+[chart README](../infra/helm/helix/README.md#optional-password-manager).
 
 ## Readiness
 

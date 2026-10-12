@@ -88,7 +88,7 @@ describe("BottomNav", () => {
     const sheet = document.querySelector('[role="dialog"]');
     expect(sheet?.textContent).toContain("More");
     const tiles = Array.from(sheet?.querySelectorAll("a") ?? []).map((link) => link.textContent);
-    expect(tiles).toEqual(["Meet", "Contacts", "Helix AI", "Admin", "Search"]);
+    expect(tiles).toEqual(["Meet", "Contacts", "Passwords", "Helix AI", "Admin", "Search"]);
 
     const about = Array.from(sheet?.querySelectorAll("button") ?? []).find(
       (button) => button.textContent === "About Helix",

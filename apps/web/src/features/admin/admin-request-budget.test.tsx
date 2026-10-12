@@ -462,6 +462,11 @@ describe("admin console request budget", () => {
             "/v1/api/admin/overview",
           ],
         },
+        "passwords": {
+          "requestCount": 0,
+          "settled": true,
+          "urls": [],
+        },
         "policies": {
           "requestCount": 1,
           "settled": true,

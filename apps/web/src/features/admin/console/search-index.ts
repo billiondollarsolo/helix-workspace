@@ -87,6 +87,11 @@ const SETTINGS: readonly Omit<AdminSettingEntry, "location">[] = [
   },
   { title: "Meeting server", section: "meet", keywords: ["jitsi", "video", "conference", "jwt"] },
   {
+    title: "Password manager",
+    section: "passwords",
+    keywords: ["vault", "vaultwarden", "bitwarden", "logins", "credentials"],
+  },
+  {
     title: "Assistant models",
     section: "assistant",
     tab: "models",

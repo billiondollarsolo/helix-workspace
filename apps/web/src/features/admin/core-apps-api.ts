@@ -27,9 +27,19 @@ interface CoreAppShellEntry {
   readonly registered: boolean;
 }
 
+/** The optional password manager: installed by the deployment, turned on by an admin. */
+export interface PasswordsStatus {
+  readonly installed: boolean;
+  readonly enabled: boolean;
+  /** Where to open it; null unless it is both installed and turned on. */
+  readonly url: string | null;
+}
+
 export interface CoreAppShellStatus {
   readonly role: string;
   readonly apps: readonly CoreAppShellEntry[];
+  /** Absent from servers that predate the optional password manager. */
+  readonly passwords?: PasswordsStatus | undefined;
 }
 
 /** Admin-facing core-app view. */
@@ -77,9 +87,16 @@ const coreAppShellEntrySchema = z.object({
   registered: z.boolean(),
 });
 
+const passwordsStatusSchema = z.object({
+  installed: z.boolean(),
+  enabled: z.boolean(),
+  url: z.string().nullable(),
+});
+
 const coreAppShellStatusSchema = z.object({
   role: z.string(),
   apps: z.array(coreAppShellEntrySchema),
+  passwords: passwordsStatusSchema.optional(),
 });
 
 const coreAppAdminEntrySchema = z.object({

@@ -17,6 +17,8 @@ import { HELIX_API_VERSION_HEADER_VALUE, versionedApiPath } from "../api/version
 import { oauthAuthorizationServerMetadata } from "../platform/auth/authorization-server-metadata.js";
 import type { ToolInvocationPrincipal } from "../platform/auth/tool-invocation-principal.js";
 import { resolveCoreAppStatuses } from "../platform/apps/core-apps.js";
+import { PASSWORDS_APP_FLAG, resolvePasswordsStatus } from "../platform/passwords/status.js";
+import { loadEffectiveTenantConfig } from "../platform/tenancy/index.js";
 import { registerAssistantStreamRoute } from "./assistant-routes.js";
 import type { installObservability } from "./observability.js";
 import { CredentialAuthError } from "./request-principal.js";
@@ -37,6 +39,8 @@ export async function installAgentApi(context: AgentApiContext) {
     calendarStore,
     chatStore,
     platformConfig,
+    orgStore,
+    bootEnv,
     sessionActorResolver,
     principalFromAuthenticatedRequest,
     actorFromAuthenticatedRequest,
@@ -56,9 +60,11 @@ export async function installAgentApi(context: AgentApiContext) {
   // Core-app enablement, projected for the web shell. Any authenticated user
   // can read this — the shell drives its left rail + route gating from it so
   // a disabled (or out-of-role) core app is never shown or routed to. Admins
-  // toggle enablement via `/api/admin/core-apps`.
+  // toggle enablement via `/api/admin/core-apps`. The optional password
+  // manager rides along so the shell needs no second request to place it.
   app.get("/api/core-apps", async (request) => {
-    await actorFromAuthenticatedRequest(request);
+    const actor = await actorFromAuthenticatedRequest(request);
+    const tenantConfig = await loadEffectiveTenantConfig({ orgs: orgStore }, actor.orgId);
     const status = await platformConfig.getStatus();
     const modules = status.config.modules;
     const currentCoreApps = resolveCoreAppStatuses({
@@ -74,6 +80,10 @@ export async function installAgentApi(context: AgentApiContext) {
         enabled: appStatus.enabled,
         registered: coreApps.status(appStatus.id).registered,
       })),
+      passwords: resolvePasswordsStatus(
+        bootEnv.HELIX_PASSWORDS_URL,
+        tenantConfig?.features[PASSWORDS_APP_FLAG] === true,
+      ),
     };
   });
 

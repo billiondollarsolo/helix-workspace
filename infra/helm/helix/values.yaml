@@ -67,6 +67,56 @@ workspace:
     jitsiJwtSecretName: ""
     jitsiJwtSecretKey: "jwt-secret"
 
+# Optional password manager (Vaultwarden, Bitwarden-compatible). Nothing is
+# deployed unless enabled. It runs as its own workload on its own hostname, so
+# the vault never shares a browser origin with the workspace, and keeps its own
+# accounts: people sign up with an address in signupDomains and confirm it by
+# email. An admin then offers it to people in Admin → Apps → Passwords.
+passwords:
+  enabled: false
+  # Public hostname, for example vault.example.com. Required when enabled.
+  host: ""
+  image:
+    repository: vaultwarden/server
+    tag: 1.37.4-alpine
+    digest: sha256:19ea2b669945d842dadc3d500f2d6a795866a003330f59a47b9634658bae98bb
+  # Comma-separated email domains allowed to create a vault account. Required.
+  signupDomains: ""
+  smtp:
+    host: ""
+    port: 587
+    # starttls | force_tls | off
+    security: starttls
+    # The address confirmation mail comes from. Required.
+    from: ""
+    username: ""
+    # An existing Secret holding the SMTP password (the chart does not invent one).
+    passwordSecretName: ""
+    passwordSecretKey: password
+  persistence:
+    size: 5Gi
+    storageClassName: ""
+    # Use a claim you manage instead of the one this chart creates and keeps.
+    existingClaim: ""
+  ingress:
+    className: ""
+    annotations: {}
+    tlsSecretName: ""
+  networkPolicy:
+    # Who may reach the vault, normally your ingress controller's pods:
+    # [{ namespace: ingress-nginx, podLabels: { app.kubernetes.io/name: ingress-nginx } }]
+    # Empty denies all ingress.
+    ingress: []
+    # The SMTP relay's exact address (/32 or /128); smtp.port is opened to it.
+    smtpCidr: ""
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
 serviceAccount:
   create: true
   name: ""

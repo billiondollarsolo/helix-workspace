@@ -98,6 +98,7 @@ Production assertions impose additional requirements; follow the [deployment gui
 | `HELIX_OBJECT_STORAGE_ENCRYPTION_AT_REST_ATTESTED` | Optional     | —                                                           |
 | `HELIX_OTEL_REGION`                                | Optional     | —                                                           |
 | `HELIX_OUTBOUND_HTTP_PROXY_URL`                    | Optional     | —                                                           |
+| `HELIX_PASSWORDS_URL`                              | Optional     | —                                                           |
 | `HELIX_POSTGRES_ENCRYPTION_AT_REST_ATTESTED`       | Optional     | —                                                           |
 | `HELIX_POSTGRES_IMAGE`                             | Optional     | —                                                           |
 | `HELIX_PUBLIC_URL`                                 | Optional     | —                                                           |

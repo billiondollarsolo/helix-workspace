@@ -2,7 +2,8 @@
 
 This repository owns the communication and file-storage platform, web app, CLI,
 MCP interface, infrastructure, and SDK contracts. The product includes Mail,
-Drive storage, Chat, Calendar, Meet, Assistant, and Admin. Editors, file viewers,
+Drive storage, Chat, Calendar, Meet, Assistant, and Admin, plus Passwords, an
+optional install that links to a bundled Vaultwarden server. Editors, file viewers,
 and converters are outside the product and must not remain as dependencies,
 optional integrations, disabled controls, or compatibility stubs.
 

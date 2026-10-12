@@ -8,6 +8,10 @@ Production promotion requires the revision-bound eight-gate manifest described i
 [`final-release-readiness.md`](final-release-readiness.md). Ordinary manifests and CI contract
 tests are preflight evidence only.
 
+For the shortest path from an empty host to a signed-in administrator, follow
+[the pilot install runbook](runbooks/pilot-install-zero-to-mail.md); this guide explains each
+setting it uses.
+
 ## Public surface
 
 Apply `docker-compose.production.yml` after the development Compose file. The resolved production
@@ -220,10 +224,11 @@ health checks, compiled migrations and SPA assets, a valid Caddy configuration, 
 source-control, environment, package-manager tooling, metadata, and unreachable build-only
 dependencies.
 
-The overlay enables the existing WORM-Postgres audit destination so the Business tier starts with
-an enforced audit sink and removes the development immutable-S3 credentials. This is a bootstrap
-control, not the final off-host assurance gate: configure and prove immutable off-host audit
-shipping before the private pilot.
+The overlay enables two audit destinations so the Business tier starts with enforced audit sinks:
+the WORM-Postgres copy and immutable object copies in the bundled object store (see
+[Audit copies](#audit-copies)). Both live on the deployment host. They are a bootstrap control,
+not the final off-host assurance gate: configure and prove immutable off-host audit shipping
+before the private pilot.
 
 ## Database
 
@@ -347,9 +352,32 @@ barman-cloud as a sidecar, which is why the operand does not bundle it. The in-c
 
 ## Secret files
 
-Create a root/operator-owned directory outside source control, mode `0700`, containing these
-non-empty files with mode `0600`. Each file must be readable by the UID of the services that use it
-(see [Dependency image users](#dependency-image-users)):
+Every secret lives in one operator-owned directory outside source control. Generate a complete
+set on the deployment host (requires Node.js 22 or newer and `openssl`; the
+[install runbook](runbooks/pilot-install-zero-to-mail.md) shows a Docker-only alternative):
+
+```sh
+node infra/scripts/generate-production-secrets.mjs \
+  --dir /srv/helix-secrets \
+  --mail-host mail.example.com
+```
+
+The script writes independent random values, creates one private certificate authority, and signs
+the PostgreSQL, Redis, NATS, and object-storage server certificates, the NATS client certificate,
+and a placeholder certificate for inbound SMTP. It refuses to write into a directory that already
+contains files, so it cannot rotate a running deployment by accident. Afterwards:
+
+1. Replace the contents of `mail_smtp_password` with your mail provider's SMTP password or API
+   credential (at least 32 characters). Until you do, the file holds a marked placeholder.
+2. Move `ca/` (the CA certificate and its private key) to offline storage. Compose never mounts it;
+   you need it again only to renew the service certificates, which are valid for 825 days.
+3. Back the directory up offline. Losing `rustfs_kms_master_key` makes stored files and mail
+   attachments unreadable.
+
+The directory is mode `0700` and its files are mode `0644`: the services run as different
+unprivileged users (see [Dependency image users](#dependency-image-users)) and Compose mounts each
+file as it is, so the directory, not the files, keeps other host users out. To create the files
+yourself instead, provide these non-empty files with the same permissions:
 
 | File                           | Content                                  |
 | ------------------------------ | ---------------------------------------- |
@@ -377,9 +405,20 @@ non-empty files with mode `0600`. Each file must be readable by the UID of the s
 | `mfa_assertion_secret`         | Random upstream MFA assertion HMAC key   |
 | `rustfs_access_key`            | Random object-store access identifier    |
 | `rustfs_secret_key`            | Random object-store secret               |
+| `rustfs_kms_master_key`        | Base64 of 32 random bytes (object KMS)   |
+| `rustfs_ca`                    | PEM CA for object-storage server TLS     |
+| `rustfs_server_cert`           | PEM object-storage server certificate    |
+| `rustfs_server_key`            | PEM object-storage server private key    |
+| `audit_anchor_secret`          | Random audit-copy signing secret         |
 | `meili_master_key`             | Random Meilisearch master key            |
 | `mail_smtp_password`           | Managed provider SMTP/API credential     |
 | `mail_provider_webhook_secret` | Managed provider event-signing secret    |
+| `smtp_tls_cert`                | PEM certificate for inbound SMTP         |
+| `smtp_tls_key`                 | PEM private key for inbound SMTP         |
+
+Two more files are needed only for the options that use them: `searxng_secret` for the
+`web-search` profile, and `tls_cert` and `tls_key` when you
+[provide your own certificate](#tls-certificates).
 
 Secret values must contain at least 32 characters and at least 12 distinct characters. Generate
 independent values from a cryptographically secure random source. Do not reuse credentials between
@@ -420,12 +459,164 @@ For Kubernetes or another orchestrator, mount equivalent secret-manager/CSI file
 corresponding `*_FILE` variables. Do not render secrets into a Compose file, image layer, command
 line, CI artifact, or application log.
 
+## Image references
+
+Every push to `main` that passes the Production Image Security workflow publishes the eight
+images to GitHub Container Registry, tagged with the commit. The overlay accepts only digest
+references, so resolve them once for the commit you are deploying and paste the output into
+`.env.production`:
+
+```sh
+commit="$(git rev-parse HEAD)"
+while read -r variable image; do
+  digest="$(docker buildx imagetools inspect \
+    "ghcr.io/billiondollarsolo/$image:$commit" --format '{{.Manifest.Digest}}')"
+  echo "$variable=ghcr.io/billiondollarsolo/$image@$digest"
+done <<'IMAGES'
+HELIX_IMAGE helix-workspace
+HELIX_WEB_IMAGE helix-workspace-web
+HELIX_POSTGRES_IMAGE helix-workspace-postgres
+HELIX_NATS_IMAGE helix-workspace-nats
+HELIX_MEILISEARCH_IMAGE helix-workspace-meilisearch
+HELIX_CERBOS_IMAGE helix-workspace-cerbos
+HELIX_SPAMD_IMAGE helix-workspace-spamassassin
+HELIX_CLAMAV_IMAGE helix-workspace-clamav
+IMAGES
+```
+
+A commit whose workflow run has not finished, or failed, has no images; the command then reports
+that the tag was not found. Deploy the checkout that matches the images: the overlay mounts
+configuration files (NATS, Cerbos policies, Meilisearch) from the repository.
+
+## TLS certificates
+
+Caddy terminates HTTPS for `HELIX_DOMAIN`. Choose one source for its certificate:
+
+| Mode             | How to select it                                               | Use it when                                                              |
+| ---------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| Automatic        | Nothing to set                                                 | The host is reachable from the Internet on ports 80 and 443              |
+| Your certificate | Add `-f docker-compose.tls-files.yml` to every Compose command | You have a certificate from your own CA or a wildcard you already manage |
+| Internal CA      | `HELIX_CADDY_TLS=internal` in `.env.production`                | Testing on a private network; browsers will not trust it                 |
+
+**Automatic.** Caddy obtains and renews a certificate from Let's Encrypt. The DNS record for
+`HELIX_DOMAIN` must point at the host before the first start, and ports 80 and 443 must be open.
+The certificate and its account key are stored in the `caddy-data` volume; include it in backups to
+avoid requesting a new certificate after every restore.
+
+**Your certificate.** Put two PEM files in `HELIX_PRODUCTION_SECRETS_DIR`: `tls_cert` (the
+certificate followed by its intermediate chain) and `tls_key` (the unencrypted private key). The
+certificate must cover `HELIX_DOMAIN`. Caddy does not renew it. To replace it, overwrite both files
+and restart the edge:
+
+```sh
+docker compose --env-file .env.production \
+  -f docker-compose.yml -f docker-compose.production.yml -f docker-compose.tls-files.yml \
+  restart caddy
+```
+
+Inbound SMTP uses a separate certificate, `smtp_tls_cert` and `smtp_tls_key`. The generated one is
+signed by the private CA, which is enough for opportunistic STARTTLS: sending servers encrypt the
+connection but rarely verify the certificate. Replace both files with a publicly trusted
+certificate for your mail hostname if you publish MTA-STS or DANE, then restart `helix`.
+
+## Object storage
+
+The bundled RustFS needs no settings. The overlay serves it over TLS with the generated
+certificate, encrypts every object with a key held by its local key-management service, and
+creates the bucket with versioning and object-lock retention before the application starts:
+
+- `rustfs-kms-init` and `rustfs-kms-key` prepare the key directory and create the named key
+  (`RUSTFS_SSE_KMS_KEY_ID`, default `helix-default`).
+- `helix-storage-init` creates the bucket (`RUSTFS_BUCKET`, default `helix-objects`), turns on
+  versioning, sets the default encryption key, and sets default retention
+  (`RUSTFS_OBJECT_LOCK_MODE`, default `GOVERNANCE`; `RUSTFS_OBJECT_LOCK_RETENTION_DAYS`, default
+  `30`). Running it again never shortens an existing retention period.
+
+Helix refuses to start unless the bucket has all of these, and its storage region
+(`RUSTFS_REGION`, which defaults to `HELIX_REGION`) matches the workspace region.
+
+Browsers upload and download files directly through short-lived signed links. Those links use
+`RUSTFS_PUBLIC_ENDPOINT`, which defaults to `https://$HELIX_DOMAIN`; Caddy forwards only the
+bucket's path to RustFS. Nothing else on RustFS is reachable from outside, and its console is
+disabled.
+
+Back up the `rustfs-data` and `rustfs-kms` volumes together with the `rustfs_kms_master_key`
+secret. Objects cannot be decrypted without all three.
+
+The overlay is tested with the bundled RustFS. An external S3-compatible service must give the
+same guarantees: an HTTPS endpoint, a bucket with versioning, object lock, and default SSE-KMS
+encryption. Point Helix at it with `RUSTFS_ENDPOINT`, `RUSTFS_REGION`, `RUSTFS_BUCKET`, and
+`RUSTFS_SSE_KMS_KEY_ID`, set `RUSTFS_PUBLIC_ENDPOINT=` (empty) when browsers can reach that
+endpoint directly, and put its credentials in `rustfs_access_key` and `rustfs_secret_key`.
+
+### Audit copies
+
+Helix writes a signed, object-locked copy of each audit batch to a second bucket
+(`AUDIT_IMMUTABLE_S3_BUCKET`, default `helix-audit`) with `COMPLIANCE` retention of 365 days
+(`AUDIT_IMMUTABLE_S3_RETENTION_DAYS`). Compliance-mode objects cannot be deleted or shortened by
+anyone, including the storage administrator, until the retention period ends; choose the period
+before the first start. `audit_anchor_secret` signs the chain anchors, and
+`AUDIT_IMMUTABLE_S3_ANCHOR_KEY_ID` names that secret so it can be rotated.
+
+## Malware and spam scanners
+
+ClamAV and SpamAssassin are on the private data network and on a second network,
+`scanner-updates-egress`, that exists only so they can download signature and rule updates. No
+other service is attached to it and it publishes no ports.
+
+On the first start ClamAV downloads its signature database before it accepts scans, which takes
+several minutes. Helix reports not ready until scanning works, so `docker compose up -d` waits for
+up to ten minutes the first time. Helix also reports not ready when the signatures are more than
+48 hours old (`HELIX_AV_MAX_SIGNATURE_AGE_MS`); allow outbound HTTPS from the host to
+`database.clamav.net`.
+
+## Readiness
+
+`GET /readyz` returns 200 only when every dependency Helix needs answers. When it does not, the
+application log names the failing dependency and the reason:
+
+```sh
+docker compose --env-file .env.production \
+  -f docker-compose.yml -f docker-compose.production.yml \
+  logs helix | grep -i 'not ready'
+```
+
+## First administrator
+
+Production has no default accounts and no public sign-up. After the stack is healthy, create the
+workspace owner's invitation from the host:
+
+```sh
+docker compose --env-file .env.production \
+  -f docker-compose.yml -f docker-compose.production.yml \
+  exec helix /nodejs/bin/node dist/db/bootstrap-owner.js \
+  --email owner@example.com --name "Owner Name"
+```
+
+The command prints a single-use link that expires in 7 days. Open it, choose a password, and you
+are signed in as the workspace owner with full administrator access. Running the command again
+for the same address replaces the link; once the owner has joined it reports that and changes
+nothing. The action is recorded in the audit log as `identity.owner.bootstrapped`. Treat the link
+as a credential: it is printed to your terminal only and is not written to the application log.
+
+Administrator actions require 2-step verification on the Business tier. Before using the Admin
+console, open **Settings → Security → 2-step verification** and add an authenticator app or a
+passkey. Until then the Admin console explains what is missing and links to those settings.
+
+Administrator sessions are verified again after 10 minutes by default: the Admin console asks for
+a code and continues what you were doing. Someone without a second step is returned to the sign-in
+page instead. The interval is the session policy's `reauthIntervalMinutes` setting (1 to 1440),
+and `reauthForAdminActions` turns the check off; both are changed with
+`PUT /api/admin/security-policies/session`.
+
 ## Signed upstream MFA assertions
 
 Business and higher tiers require admin MFA by default. Administrators can choose optional or
 required MFA and independently configure sensitive-action MFA and second-admin approval under
 **Admin → Security policies**. Helix supports native MFA enrollment and verification; a trusted
-upstream authenticator is an optional alternative. See
+upstream authenticator is an optional alternative. Without one, leave the issuer and audience
+unset: the Compose overlay fills in `https://$HELIX_DOMAIN` and `helix-workspace`, and
+administrators satisfy the requirement by signing in with an authenticator app or passkey. See
 [account handoff and admin safeguards](runbooks/account-offboarding-and-admin-safeguards.md)
 for the effective-policy rules and safeguards on changing them.
 
@@ -505,8 +696,9 @@ fail-closed under the Mail and Drive quarantine policies.
 
 ## Validate before starting
 
-Start from `.env.production.example`, provide the secret directory and every required promoted
-image reference above, then resolve and inspect the merged configuration:
+Start from `.env.production.example`, set `HELIX_DOMAIN`, `HELIX_REGION`, and
+`HELIX_DEFAULT_ORG_NAME`, provide the secret directory and every required promoted image reference
+above, then resolve and inspect the merged configuration:
 
 ```sh
 docker compose \
@@ -525,6 +717,20 @@ Then run the static production Compose regression test:
 ```sh
 pnpm exec vitest run infra/scripts/production-compose.test.mjs
 ```
+
+To prove the whole path on a Docker host, boot a disposable copy of the production stack from this
+checkout:
+
+```sh
+infra/scripts/production-boot-smoke.sh              # Caddy's internal CA at the edge
+infra/scripts/production-boot-smoke.sh --tls files  # an operator-provided certificate
+```
+
+It generates secrets, runs one `docker compose up -d`, and checks HTTPS at the edge, the first
+administrator's invitation, 2-step verification, an invitation email delivered over STARTTLS, and
+a Drive upload, download, and malware rejection. It builds its images locally, publishes only on
+`127.0.0.1`, uses its own Compose project and networks, and removes everything afterwards. It
+needs about 8 GB of free memory and takes a few minutes after the first image build.
 
 Run the disposable live data-plane drill on a Docker host before promotion:
 

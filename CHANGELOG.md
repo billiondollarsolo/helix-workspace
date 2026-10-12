@@ -8,6 +8,17 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Added
 
+- One demo seed, `pnpm --filter @helix/app db:seed:demo` (`--size small|medium|large`, `--reset`,
+  `--accounts-only`), builds Quillfeather Labs: 60–120 people with departments, groups and suspended, offboarded and invited accounts, plus Mail (threads, external mail with
+  SPF/DKIM/DMARC evidence, receipts with attachments, labels, filters, drafts, scheduled sends,
+  spam, a vacation responder), Drive (shared drives, versions, comments, shares, public links,
+  trash), Chat, Calendar with Meet history, Contacts, Assistant history recorded as the local test
+  model, and Admin (policies, app passwords, S3 keys, OAuth apps, service accounts, webhooks with
+  deliveries, retention and a legal hold). It writes only through the product stores in tenant
+  context, scans every object with ClamAV under the tenant's storage prefix, is deterministic and
+  re-runnable, and ends by validating storage, Drive contents, storage accounting, a search reindex
+  and Drive reconciliation, the audit chain and the sign-ins. `admin@helix.local` and
+  `user@helix.local` keep their passwords. See `docs/demo-data.md`.
 - PostgreSQL deployment for CloudNativePG: the Helm `Cluster` now runs
   `helix-workspace-postgres-cnpg`, a digest-pinned CloudNativePG `minimal` PostgreSQL 18.6 operand
   with pgvector 0.8.5 built from the same pinned source as the Compose image
@@ -377,6 +388,13 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Removed
 
+- The previous seeds and their scripts: `db:seed:logins`, `db:seed:scenarios`, `db:seed:team`,
+  `db:verify:team`, `db:prepare:demo`, `db:verify:demo`, `db:seed:mail-corpus`,
+  `db:fetch:corpus`, `corpus:fetch` and `corpus:seed`, the `test-corpus/` and
+  `apps/helix/seed/corpus` content, the `seed_corpus_assets` table, and the live smoke's
+  `--seeded-volume-search-smoke` and the demo-data smoke's `--volume-search`,
+  `--volume-mail-count`, `--anchor-date` and `--batch-size` options. `db:seed:demo` replaces them
+  (`--accounts-only` for sign-ins only).
 - `infra/scripts/v1-phase-artifact-gate.test.mjs`, an unwired structural test that still required
   removed editor artifacts (`editor-perf-budget.ts`); the R3 go/no-go script no longer lists it.
 - The `/api/people/contacts/*` import, export, update, delete and merge routes; the `contacts.*`
@@ -402,6 +420,18 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Fixed
 
+- Seeded Drive and Mail bytes were written outside the tenant's storage prefix, so a full search
+  reindex failed at Drive and the search reconciliation worker failed at startup with "Search
+  source file contents are unavailable". The demo seed provisions the tenant's storage namespace
+  and stores every object through the upload and ingest paths.
+- `db:reindex:search` wrote to the `helix_search` index while the API reads the regional index
+  (`<region>_helix_search`); it now uses the API's search engine and index.
+- Mail failed under the RLS-constrained runtime database role: every inbound message failed
+  because its raw-source evidence object was not readable back in the mail service context,
+  sending mail with an attachment failed because the active-attachment integrity check ran with
+  the sender's row policies, and marking a scanned attachment clean updated two tables in one
+  statement that row-level security could not see together. Migration 0217 and the attachment
+  ingestion code fix all three.
 - Migrations could not run as a non-superuser owner: the CloudNativePG path failed on
   `CREATE EXTENSION vector` and production Compose on migration 0090's role DDL. Migration 0090 now
   only verifies roles that the superuser bootstrap provisioned (and still creates or repairs them

@@ -274,7 +274,7 @@ jobs:
 
   backend-live-demo-data:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     defaults:
       run:
         working-directory: helix-all/helix-workspace
@@ -306,8 +306,50 @@ jobs:
       - name: Check Docker daemon
         run: docker info
 
-      - name: Run live demo data smoke
-        run: pnpm quality:live-demo-data -- --execute --compose-project helix_demo_smoke_ci_${{ github.run_id }} --volume-mail-count 25 --batch-size 10
+      - name: Start demo data services and migrate
+        run: pnpm quality:live-demo-data -- --execute --compose-project helix_demo_smoke_ci_${{ github.run_id }} --skip-seed
+
+      - name: Snapshot the migrated database as a test template
+        run: >-
+          docker compose -p helix_demo_smoke_ci_${{ github.run_id }} exec -T postgres
+          psql -U helix -d postgres -v ON_ERROR_STOP=1
+          -c "create database helix_demo_template template helix_demo_smoke"
+
+      # The seed on a fresh copy of the template must pass its own validation:
+      # objects readable through tenant storage, clean reindex and Drive
+      # reconciliation, settled storage accounting, intact audit chain, sign-ins.
+      - name: Prove the demo seed on a fresh database
+        env:
+          HELIX_DEMO_SEED_INTEGRATION: "1"
+          HELIX_REQUIRE_LIVE_SUITES: "1"
+          HELIX_TEST_DATABASE_TEMPLATE: postgres://helix:helix_dev_password@127.0.0.1:39532/helix_demo_template
+          DATABASE_URL: postgres://helix:helix_dev_password@127.0.0.1:39532/helix_demo_template
+          HELIX_MIGRATION_DATABASE_URL: postgres://helix:helix_dev_password@127.0.0.1:39532/helix_demo_template
+          MEILI_HOST: http://127.0.0.1:39533
+          MEILI_MASTER_KEY: helix_dev_meili_master_key
+          MEILI_INDEX_UID: helix_demo_seed_test
+          RUSTFS_ENDPOINT: http://127.0.0.1:39534
+          RUSTFS_ACCESS_KEY: helixrustfs
+          RUSTFS_SECRET_KEY: helix_rustfs_dev_secret
+          RUSTFS_BUCKET: helix-demo-seed-test
+          MAIL_CLAMAV_ENABLED: "true"
+          MAIL_CLAMAV_HOST: 127.0.0.1
+          MAIL_CLAMAV_PORT: "39536"
+        run: pnpm --filter @helix/app exec vitest run src/db/demo-seed/seed.integration.test.ts
+
+      - name: Seed the demo workspace
+        env:
+          DATABASE_URL: postgres://helix:helix_dev_password@127.0.0.1:39532/helix_demo_smoke
+          MEILI_HOST: http://127.0.0.1:39533
+          MEILI_MASTER_KEY: helix_dev_meili_master_key
+          RUSTFS_ENDPOINT: http://127.0.0.1:39534
+          RUSTFS_ACCESS_KEY: helixrustfs
+          RUSTFS_SECRET_KEY: helix_rustfs_dev_secret
+          RUSTFS_BUCKET: helix-objects
+          MAIL_CLAMAV_ENABLED: "true"
+          MAIL_CLAMAV_HOST: 127.0.0.1
+          MAIL_CLAMAV_PORT: "39536"
+        run: pnpm --filter @helix/app db:seed:demo -- --size small
 
       - name: Run database migrations
         env:
@@ -390,13 +432,15 @@ jobs:
           # The full MCP catalog is roughly 1.7 MB; budget serialization and
           # transfer separately from the low-latency API health probes.
           MCP_CATALOG_P95_MS: "1500"
-          MAIL_API_BODY: '{"query":"Renovate","limit":10}'
-          MAIL_API_EXPECT: Renovate
+          # The OAuth client acts as the demo admin, Avery Park; all-staff
+          # announcements and #general reach everyone (docs/demo-data.md).
+          MAIL_API_BODY: '{"query":"All-hands recap","limit":10}'
+          MAIL_API_EXPECT: All-hands recap
           SEARCH_TOOL_IDS: search.query
-          SEARCH_BODY: '{"query":"Mail density","types":["chat"],"limit":10}'
-          SEARCH_EXPECT: Mail density
-          CHAT_BODY: '{"query":"Mail density","limit":10}'
-          CHAT_EXPECT: Mail density
+          SEARCH_BODY: '{"query":"Welcome our new teammates","types":["mail"],"limit":10}'
+          SEARCH_EXPECT: Welcome our new teammates
+          CHAT_BODY: '{"query":"expense reports","limit":10}'
+          CHAT_EXPECT: expense reports
           MCP_EXPECT: mail.search
         run: pnpm quality:live-auth-smoke -- --k6-target-smoke
 

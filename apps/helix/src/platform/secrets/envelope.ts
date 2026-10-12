@@ -3,6 +3,22 @@ import { getCryptoProvider, type CryptoProvider } from "../crypto/index.js";
 const prefix = "helix$1$";
 const purposePattern = /^[a-z][a-z0-9.-]{0,63}$/u;
 
+/**
+ * The master secret tenant envelopes are sealed with: the configured key, the
+ * Better Auth secret, or a fixed development key outside production.
+ */
+export function tenantSecretMasterKey(input: {
+  readonly configuredKey: string | undefined;
+  readonly betterAuthSecret: string | undefined;
+  readonly production: boolean;
+}): string | undefined {
+  return (
+    input.configuredKey ??
+    input.betterAuthSecret ??
+    (input.production ? undefined : "helix_local_database_secret_change_me_32_chars")
+  );
+}
+
 /** AES-256-GCM envelope encryption with a distinct KEK for each tenant and purpose. */
 export class TenantEnvelopeCipher {
   constructor(

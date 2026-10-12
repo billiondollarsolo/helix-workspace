@@ -261,7 +261,6 @@ export async function countTenantExportRows(
     union all select 'chat_read_receipts', count(*)::integer from chat_read_receipts where org_id = ${orgId}
     union all select 'notifications', count(*)::integer from notifications where org_id = ${orgId}
     union all select 'resource_classifications', count(*)::integer from resource_classifications where org_id = ${orgId}
-    union all select 'seed_corpus_assets', count(*)::integer from seed_corpus_assets where org_id = ${orgId}
     order by table_name
   `;
   return rows.map((row) => ({ table: row.table_name, rowCount: row.row_count }));

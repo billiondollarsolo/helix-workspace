@@ -82,6 +82,7 @@ import { PostgresOutboxStore } from "../platform/outbox/postgres-store.js";
 import {
   createVaultTenantSecretReaderFromEnv,
   TenantEnvelopeCipher,
+  tenantSecretMasterKey,
 } from "../platform/secrets/index.js";
 import { PostgresSignupOnboardingInviteTokenStore } from "../platform/signup/invites.js";
 import {
@@ -222,12 +223,11 @@ export async function installAuth(context: Awaited<ReturnType<typeof installHttp
               }),
         });
 
-  const tenantSecretMaster =
-    bootEnv.HELIX_SECRET_ENCRYPTION_KEY ??
-    betterAuthConfig?.secret ??
-    (bootEnv.NODE_ENV === "production"
-      ? undefined
-      : "helix_local_database_secret_change_me_32_chars");
+  const tenantSecretMaster = tenantSecretMasterKey({
+    configuredKey: bootEnv.HELIX_SECRET_ENCRYPTION_KEY,
+    betterAuthSecret: betterAuthConfig?.secret,
+    production: bootEnv.NODE_ENV === "production",
+  });
 
   if (tenantSecretMaster === undefined) {
     throw new TypeError(

@@ -18,9 +18,6 @@
 /artifacts/
 /.tmp/
 /.codex-artifacts/
-/test-corpus/generated/
-/test-corpus/.cache/
-/test-corpus/_state.json
 
 # Generated source. This file explicitly instructs formatters not to edit it.
 /apps/web/src/routeTree.gen.ts

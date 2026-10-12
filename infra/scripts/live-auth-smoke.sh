@@ -26,7 +26,6 @@ Options:
   --search-reindex             Also POST /api/admin/search/reindex with pruneStale=false
   --seeded-demo-tools          Also assert seeded mail/chat/drive/calendar/search tool results
   --seeded-demo                Alias for --seeded-demo-tools
-  --seeded-volume-search-smoke Also assert opt-in seeded volume mail through global search.query
   --drive-calendar-smoke  Also create live Drive and Calendar data and verify it through tools/MCP
   --drive-calendar-search-smoke
                               Also reindex and verify live Drive and Calendar data through search.query
@@ -85,7 +84,6 @@ BACKUP_ID=${HELIX_SMOKE_BACKUP_ID:-helix-smoke-backup}
 BACKUP_RESTORE_ENCRYPTED=${HELIX_SMOKE_BACKUP_RESTORE_ENCRYPTED:-false}
 SEARCH_REINDEX=${HELIX_SMOKE_SEARCH_REINDEX:-false}
 SEEDED_DEMO=${HELIX_SMOKE_SEEDED_DEMO:-false}
-SEEDED_VOLUME_SEARCH=${HELIX_SMOKE_SEEDED_VOLUME_SEARCH:-false}
 DRIVE_CALENDAR_SMOKE=${HELIX_SMOKE_DRIVE_CALENDAR_SMOKE:-false}
 WORKSPACE_SEARCH_SMOKE=${HELIX_SMOKE_WORKSPACE_SEARCH_SMOKE:-false}
 WORKSPACE_SEARCH_REINDEX=true
@@ -151,7 +149,6 @@ while [[ $# -gt 0 ]]; do
     --backup-restore-encrypted) BACKUP_RESTORE=true; BACKUP_RESTORE_ENCRYPTED=true; shift ;;
     --search-reindex) SEARCH_REINDEX=true; shift ;;
     --seeded-demo|--seeded-demo-tools) SEEDED_DEMO=true; shift ;;
-    --seeded-volume-search-smoke) SEEDED_VOLUME_SEARCH=true; shift ;;
     --drive-calendar-smoke) DRIVE_CALENDAR_SMOKE=true; shift ;;
     --drive-calendar-search-smoke|--workspace-search-smoke) WORKSPACE_SEARCH_SMOKE=true; shift ;;
     --drive-calendar-event-search-smoke)
@@ -768,153 +765,72 @@ trim() {
 }
 
 run_seeded_demo_checks() {
+  # Content the demo seed (docs/demo-data.md) guarantees for its admin, Avery
+  # Park, whom the local OAuth client acts as. Record ids are generated per
+  # seed, so the checks assert on titles and resource shapes.
+  local calendar_from calendar_to
+  calendar_from=$(node -e 'console.log(new Date(Date.now() - 35 * 864e5).toISOString())')
+  calendar_to=$(node -e 'console.log(new Date(Date.now() + 35 * 864e5).toISOString())')
+
   request_contains POST /api/tools/mail.search 200 \
-    '{"query":"Renovate","limit":10}' \
+    '{"query":"All-hands recap","limit":10}' \
     "seeded mail search" \
-    "00000000-0000-4000-8000-000000000604" \
-    "Renovate"
-
-  request_contains POST /api/tools/mail.thread.get 200 \
-    '{"threadId":"00000000-0000-4000-8000-000000000601"}' \
-    "seeded Amazon mail thread" \
-    "Amazon" \
-    '"hasAttachment":true' \
-    '"objectId":"00000000-0000-4000-8000-000000000609"' \
-    '"filename":"order-summary.txt"' \
-    '"mimeType":"text/plain"' \
-    '"disposition":"attachment"'
-
-  request_contains POST /api/tools/drive.list 200 \
-    '{"limit":25}' \
-    "seeded Drive list" \
-    "00000000-0000-4000-8000-000000000301" \
-    "Projects" \
-    "AI Services and Keys"
+    "All-hands recap" \
+    "quillfeather.example"
 
   request_contains POST /api/tools/drive.search 200 \
-    '{"query":"Training Course","limit":10}' \
+    '{"query":"Headcount","limit":10}' \
     "seeded Drive search" \
-    "00000000-0000-4000-8000-000000000303" \
-    "Training Course Links"
+    "Headcount by department.csv"
 
   request_contains POST /api/tools/calendar.event.list 200 \
-    '{"startsAt":"2026-05-20T00:00:00.000Z","endsAt":"2026-05-22T00:00:00.000Z","limit":10}' \
+    "{\"startsAt\":\"$calendar_from\",\"endsAt\":\"$calendar_to\",\"limit\":200}" \
     "seeded Calendar list" \
-    "00000000-0000-4000-8000-000000000502" \
-    "Order match ball" \
-    "00000000-0000-4000-8000-000000000504" \
-    "Product planning review"
+    "Company all-hands"
 
   request_contains POST /api/tools/chat.room.list 200 \
-    '{"query":"Helix launch","limit":10}' \
+    '{"query":"General","limit":10}' \
     "seeded Chat room list" \
-    "00000000-0000-4000-8000-000000000701" \
-    "Helix launch room"
+    "General"
 
   request_contains POST /api/tools/chat.search 200 \
-    '{"query":"Mail density","limit":10}' \
+    '{"query":"expense reports","limit":10}' \
     "seeded Chat search" \
-    "00000000-0000-4000-8000-000000000703" \
-    "Mail density"
+    "expense reports"
 
+  # Mail, Drive and Calendar are reindexed by the seed itself; Chat reaches
+  # the index through the API's event indexer, so it is not asserted here.
   request_search_projection_retry POST /api/tools/search.query \
-    '{"query":"Renovate","types":["mail"],"limit":10}' \
+    '{"query":"All-hands recap","types":["mail"],"limit":10}' \
     "seeded global mail search" \
     10 \
-    "mail:00000000-0000-4000-8000-000000000604" \
-    "mail" \
-    "[AlphaBravoCompany/remotedialer] Run failed: Renovate - main" \
-    "/mail/00000000-0000-4000-8000-000000000603?message=00000000-0000-4000-8000-000000000604" \
-    "manual review" \
-    '"threadId":"00000000-0000-4000-8000-000000000603"' \
-    '"from":"mjtechguy@example.com"' \
-    '"labels":["inbox","updates"]'
+    '"type":"mail"' \
+    "All-hands recap" \
+    "/mail/"
 
   request_search_projection_retry POST /api/tools/search.query \
-    '{"query":"AI Services","types":["drive"],"limit":10}' \
+    '{"query":"Headcount","types":["drive"],"limit":10}' \
     "seeded global Drive search" \
     10 \
-    "drive:00000000-0000-4000-8000-000000000302" \
-    "drive" \
-    "AI Services and Keys" \
-    "/drive/00000000-0000-4000-8000-000000000302" \
-    '"kind":"file"' \
-    '"mimeType":"text/markdown"' \
-    '"path":["AI Services and Keys"]'
+    '"type":"drive"' \
+    "Headcount by department.csv" \
+    "/drive/"
 
   request_search_projection_retry POST /api/tools/search.query \
-    '{"query":"Order match","types":["calendar"],"limit":10}' \
+    '{"query":"Company all-hands","types":["calendar"],"limit":10}' \
     "seeded global Calendar search" \
     10 \
-    "calendar:00000000-0000-4000-8000-000000000502" \
-    "calendar" \
-    "Order match ball" \
-    "/calendar/events/00000000-0000-4000-8000-000000000502" \
-    "payment receipt" \
-    '"location":"Indoor Court 2"' \
-    '"icsUid":"demo-order-match@helix.local"'
-
-  request_search_projection_retry POST /api/tools/search.query \
-    '{"query":"Mail density","types":["chat"],"limit":10}' \
-    "seeded global Chat search" \
-    10 \
-    "chat:00000000-0000-4000-8000-000000000703" \
-    "chat" \
-    "Helix launch room" \
-    "/chat/00000000-0000-4000-8000-000000000701?message=00000000-0000-4000-8000-000000000703" \
-    "Mail density" \
-    '"roomId":"00000000-0000-4000-8000-000000000701"' \
-    '"reactions":["ok"]'
+    '"type":"calendar"' \
+    "Company all-hands" \
+    "/calendar/events/"
 
   request_contains POST /mcp 200 \
     '{"jsonrpc":"2.0","id":"seeded-resources","method":"resources/list"}' \
     "seeded MCP resources list" \
-    "helix://chat/room/00000000-0000-4000-8000-000000000701" \
-    "helix://mail/thread/00000000-0000-4000-8000-000000000601" \
-    "helix://drive/file/00000000-0000-4000-8000-000000000302" \
-    "helix://calendar/event/00000000-0000-4000-8000-000000000502"
-
-  request_contains POST /mcp 200 \
-    '{"jsonrpc":"2.0","id":"seeded-mail-read","method":"resources/read","params":{"uri":"helix://mail/thread/00000000-0000-4000-8000-000000000601"}}' \
-    "seeded MCP Mail read" \
-    "3 items from Amazon arriving tomorrow" \
-    "Track package delivery"
-
-  request_contains POST /mcp 200 \
-    '{"jsonrpc":"2.0","id":"seeded-drive-read","method":"resources/read","params":{"uri":"helix://drive/file/00000000-0000-4000-8000-000000000302"}}' \
-    "seeded MCP Drive read" \
-    "AI Services and Keys" \
-    "Local Ollama"
-
-  request_contains POST /mcp 200 \
-    '{"jsonrpc":"2.0","id":"seeded-calendar-read","method":"resources/read","params":{"uri":"helix://calendar/event/00000000-0000-4000-8000-000000000502"}}' \
-    "seeded MCP Calendar read" \
-    "Order match ball" \
-    "Indoor Court 2" \
-    "payment receipt"
-
-  request_contains POST /mcp 200 \
-    '{"jsonrpc":"2.0","id":"seeded-chat-read","method":"resources/read","params":{"uri":"helix://chat/room/00000000-0000-4000-8000-000000000701"}}' \
-    "seeded MCP Chat read" \
-    "Helix launch room" \
-    "Mail density"
-}
-
-run_seeded_volume_search_smoke() {
-  request_search_projection_retry POST /api/tools/search.query \
-    '{"query":"helix-volume-mail-search","types":["mail"],"limit":20}' \
-    "seeded volume global mail search" \
-    10 \
-    "mail:00000000-0000-4200-8000-000000000001" \
-    "mail" \
-    "helix-volume-mail-search message 00001" \
-    "/mail/00000000-0000-4100-8000-000000000001?message=00000000-0000-4200-8000-000000000001" \
-    "helix-volume-mail-search body 00001" \
-    '"threadId":"00000000-0000-4100-8000-000000000001"' \
-    '"messageId":"00000000-0000-4200-8000-000000000001"' \
-    '"labels":["inbox","operations","volume"]' \
-    '"source":"local-demo-volume"' \
-    '"marker":"helix-volume-mail-search"'
+    "helix://chat/room/" \
+    "helix://mail/thread/" \
+    "helix://drive/file/" \
+    "helix://calendar/event/"
 }
 
 run_audit_runtime_smoke() {
@@ -1443,7 +1359,7 @@ run_cli_checks() {
     run_cli_contains "seeded MCP resources list" \
       mcp resources list \
       --expect \
-      "helix://mail/thread/00000000-0000-4000-8000-000000000601"
+      "helix://mail/thread/"
 
   fi
 }
@@ -4131,13 +4047,7 @@ fi
 if bool_true "$SEEDED_DEMO"; then
   run_seeded_demo_checks
 else
-  log "skipping seeded demo tool checks; pass --seeded-demo-tools after running db:prepare:demo"
-fi
-
-if bool_true "$SEEDED_VOLUME_SEARCH"; then
-  run_seeded_volume_search_smoke
-else
-  log "skipping seeded volume search check; pass --seeded-volume-search-smoke after running db:prepare:demo -- --volume-search"
+  log "skipping seeded demo tool checks; pass --seeded-demo-tools after running db:seed:demo"
 fi
 
 if bool_true "$DRIVE_CALENDAR_SMOKE" || bool_true "$WORKSPACE_SEARCH_SMOKE"; then

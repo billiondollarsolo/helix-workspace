@@ -1,7 +1,8 @@
 import { pathToFileURL } from "node:url";
 import type postgres from "postgres";
+import { createSearchEngine } from "../bootstrap/search.js";
+import { env } from "../config/env.js";
 import {
-  createMeilisearchSearchEngineFromEnv,
   createPostgresSearchReindexSources,
   SearchReindexService,
   searchReindexTypes,
@@ -80,7 +81,8 @@ export async function reindexSearch(
   sql: postgres.Sql,
   options: ReindexSearchCommandOptions,
 ): Promise<ReindexSearchResult> {
-  const engine = await createMeilisearchSearchEngineFromEnv();
+  // The same index the API serves from, so a reindex repairs what users search.
+  const engine = await createSearchEngine(env().HELIX_REGION);
   if (engine === undefined) {
     return { searchConfigured: false, totalDocuments: 0, deletedDocuments: 0 };
   }

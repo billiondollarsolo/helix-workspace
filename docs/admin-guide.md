@@ -233,40 +233,25 @@ The `--search-reindex` check requires the API to be started with Meilisearch
 configuration so `POST /api/admin/search/reindex` is registered; it queues the
 reindex job with stale pruning disabled for smoke safety and polls
 `GET /api/admin/search/reindex/jobs/<id>` until it reports `status: "completed"`.
-For local UI/API testing with deterministic seeded data, run
-`pnpm --filter @helix/app db:prepare:demo -- --require-storage --require-search`
-with `DATABASE_URL`, `RUSTFS_ENDPOINT`, and Meilisearch env set before starting
-the app server.
+For local UI/API testing with realistic seeded data, run
+`pnpm --filter @helix/app db:seed:demo -- --size small` with `DATABASE_URL`,
+`RUSTFS_ENDPOINT`, Meilisearch and ClamAV (`MAIL_CLAMAV_ENABLED=true`) env set;
+see [Demo data](demo-data.md) for what it creates, the sign-ins and the presets.
 Storage-less dev mode is metadata/editor-only. It can boot the app, but Drive
 byte finalization, MCP byte reads, WebDAV byte round-trips, and Meet recording
 uploads require resolved object storage. For BYO-storage hardening or
 `--drive-docs-calendar-smoke`, start with `RUSTFS_ENDPOINT` or configure tenant
 BYO storage plus its secret reader; missing storage is expected to fail closed.
 For a complete backend-only local stack, `pnpm quality:live-demo-data -- --execute`
-starts Postgres, Meilisearch, and RustFS on the contiguous high-port block
-`39532`-`39535`, then runs that same prepare/verify path. The Quality Gates CI
-workflow runs this smoke with `--volume-mail-count 25` and Compose cleanup. In
-execute mode, the script preflights each requested high port before starting new
-Compose services, while allowing already-running services from the same Compose
-project to be reused.
-Pass `--anchor-date <YYYY-MM-DD>` to `db:prepare:demo` or
-`pnpm quality:live-demo-data` when demo mail, calendar, chat, and volume-mail
-timestamps should be shifted near a specific test date while keeping stable IDs,
-subjects, storage keys, and search assertions.
-Add `--volume-search` to seed 10,000 deterministic Mail messages for realistic
-global-search and mailbox-list testing, or pass `--volume-mail-count <n>` for a
-smaller local run. The volume seed remains opt-in, stores rows in the same
-Postgres Mail tables as normal demo mail, and is verified through Meilisearch by
-`db:prepare:demo` when `--require-search` is present.
+starts Postgres, Meilisearch, RustFS and ClamAV on the contiguous high-port block
+`39532`-`39536`, migrates, and runs the demo seed with `--reset` (its built-in
+validation must pass). The Quality Gates CI workflow runs this smoke with
+`--size small` and Compose cleanup. In execute mode, the script preflights each
+requested high port before starting new Compose services, while allowing
+already-running services from the same Compose project to be reused.
 After the app server starts, add `--seeded-demo-tools` to the live smoke command
-to assert those seeded mail, Chat, Docs, Drive, Calendar, global-search, and MCP
-resources through authenticated runtime tool calls. The global-search checks
-validate projected ids, types, titles, URLs, body snippets, and selected
-attributes; the MCP checks read Mail, Drive, Docs, Calendar, and Chat resources.
-After running `db:prepare:demo -- --volume-search --require-search`, add
-`--seeded-volume-search-smoke` to assert the deterministic volume mailbox marker
-through authenticated global `search.query` with volume ids, labels, and marker
-metadata.
+to assert seeded Mail, Chat, Drive, Calendar, global-search and MCP resources
+through authenticated runtime tool calls as the demo admin.
 
 For a broad backend-only runtime pass after the app is running, use
 `pnpm quality:live-auth-smoke -- --backend-realism-smoke`. That bundle enables

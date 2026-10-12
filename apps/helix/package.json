@@ -9,21 +9,13 @@
     "db:migrate": "tsx src/db/migrate.ts",
     "db:reindex:search": "tsx src/db/reindex-search.ts",
     "db:backfill:mail-receiving-domain": "tsx src/db/backfill-mail-receiving-domain.ts",
-    "db:seed:scenarios": "tsx src/db/seed-scenarios.ts",
-    "db:fetch:corpus": "tsx src/db/fetch-corpus.ts",
-    "db:seed:mail-corpus": "tsx src/db/seed-mail-corpus.ts",
-    "db:seed:logins": "tsx src/db/seed-login-accounts.ts",
-    "db:seed:team": "tsx src/db/seed-local-team.ts",
-    "db:verify:team": "tsx src/db/verify-local-team.ts",
+    "db:seed:demo": "tsx src/db/demo-seed/cli.ts",
     "db:seed:oauth": "tsx src/db/seed-local-oauth.ts",
     "db:seed:smoke-agent": "tsx src/db/seed-live-smoke-oauth.ts",
     "dev": "tsx watch src/index.ts",
     "lint": "eslint src --max-warnings=0",
     "test": "vitest run --passWithNoTests --exclude='dist/**'",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "db:prepare:demo": "tsx src/db/prepare-local-demo.ts",
-    "db:seed:demo": "tsx src/db/seed-local-demo.ts",
-    "db:verify:demo": "tsx src/db/verify-local-demo.ts"
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@aws-sdk/client-kms": "3.1125.0",

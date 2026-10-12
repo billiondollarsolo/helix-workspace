@@ -19,6 +19,11 @@ test("only separately executed real-service contracts may skip", () => {
     ],
   };
   checkTestSkips(result);
+  result.testResults[0].name = "/app/db/demo-seed/seed.integration.test.ts";
+  assert.throws(() => checkTestSkips(result), /Unexpected skipped test/u);
+  result.testResults[0].assertionResults[0].fullName =
+    "demo seed seeds the small preset on a fresh database and passes its own validation";
+  checkTestSkips(result);
   result.testResults[0].name = "/app/platform/tenancy/rls.test.ts";
   assert.throws(() => checkTestSkips(result), /Unexpected skipped test/u);
   assert.throws(() => checkTestSkips({ testResults: [], numPendingTests: 1 }), /total/u);

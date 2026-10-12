@@ -349,10 +349,11 @@ describe("admin console request budget", () => {
           ],
         },
         "ai-costs": {
-          "requestCount": 1,
+          "requestCount": 2,
           "settled": true,
           "urls": [
             "/v1/api/admin/ai/cost-limits",
+            "/v1/api/admin/users?includeDisabled=true&limit=250",
           ],
         },
         "ai-observability": {

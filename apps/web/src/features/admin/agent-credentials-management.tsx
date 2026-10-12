@@ -543,7 +543,7 @@ export function AgentCredentialsManagement() {
         >
           This credential stops minting OAuth access tokens for{" "}
           {revokeTargetActor === undefined
-            ? "an actor that is no longer in the enabled directory"
+            ? "an account that is no longer active"
             : actorLabel(revokeTargetActor)}
           .
           {credentialToRevoke.scopes.length === 0
@@ -553,7 +553,7 @@ export function AgentCredentialsManagement() {
           credential and redeploying it.
           <span className="mt-2 block text-xs">
             <span className="block">
-              Actor ID <code>{credentialToRevoke.actorId}</code>
+              Account ID <code>{credentialToRevoke.actorId}</code>
             </span>
             <span className="block">
               Client ID <code>{credentialToRevoke.clientId}</code>

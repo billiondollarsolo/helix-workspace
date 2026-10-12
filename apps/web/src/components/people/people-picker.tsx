@@ -30,6 +30,8 @@ export interface PeoplePickerProps {
   readonly placeholder?: string;
   /** Maximum number of chips; the text input hides once it is reached. */
   readonly max?: number;
+  /** Put the label above the field, as in a form whose other labels sit above. */
+  readonly stacked?: boolean;
 }
 
 const MAX_SUGGESTIONS = 8;
@@ -43,6 +45,7 @@ export function PeoplePicker({
   allowGroups = false,
   placeholder,
   max = Number.POSITIVE_INFINITY,
+  stacked = false,
 }: PeoplePickerProps) {
   const id = useId();
   const labelId = `${id}-label`;
@@ -164,7 +167,7 @@ export function PeoplePicker({
   }
 
   return (
-    <div className="people-picker">
+    <div className="people-picker" data-stacked={stacked || undefined}>
       <label id={labelId} htmlFor={inputId} className="people-picker-label">
         {label}
       </label>

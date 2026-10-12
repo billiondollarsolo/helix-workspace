@@ -68,7 +68,7 @@ jobs:
         run: infra/scripts/validate-restore-drill.sh
 
       - name: Start isolated restore dependencies
-        run: docker compose up -d postgres rustfs
+        run: docker compose up -d --wait postgres rustfs
 
       - name: Restore prior database and every referenced object
         env:
@@ -113,7 +113,7 @@ jobs:
         run: pnpm turbo run build --filter="./packages/*"
 
       - name: Start backup dependencies
-        run: docker compose up -d postgres rustfs
+        run: docker compose up -d --wait postgres rustfs
 
       - name: Migrate and seed a referenced proof object
         run: |

@@ -3,8 +3,10 @@ import { type DlpGuard } from "../../dlp.js";
 import type { TenantPresignedPutUpload, TenantStorageResolver } from "../../storage/index.js";
 import type { DriveConfig } from "../config.js";
 import { type VirusScanner } from "../scanning.js";
+import type { DriveShareMailer } from "../share-mail.js";
 import type {
   DriveAccessGrantRecord,
+  DriveAccessRequestRecord,
   DriveCommentPage,
   DriveCommentRecord,
   DriveCommentRevisionPage,
@@ -150,6 +152,10 @@ export interface DriveStore {
     readonly targetActorIds: readonly string[];
     readonly role: string;
     readonly expiresAt?: Date | null;
+    /** Email the people being given access. They are always notified in Helix. */
+    readonly notify?: boolean | undefined;
+    /** A note from the person sharing, included in the email and the notification. */
+    readonly message?: string | undefined;
   }): Promise<{
     readonly objectId: string;
     readonly sharedWithActorIds: readonly string[];
@@ -394,6 +400,39 @@ export interface DriveFileStreamResult extends DriveObjectStream {
   readonly entry: DriveEntryRecord;
 }
 
+/**
+ * What people a Drive item is shared with can do: ask for access, hide a
+ * shared item, and (for owners) answer a request.
+ */
+export interface DriveCollaborationStore {
+  /** Hide an item shared with the actor from their Shared with me, or show it again. */
+  setHiddenShare(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly objectId: string;
+    readonly hidden: boolean;
+  }): Promise<{ readonly objectId: string; readonly hidden: boolean }>;
+  /** Ask the owner of an item the actor cannot open for access. */
+  requestAccess(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly objectId: string;
+    readonly message?: string | undefined;
+  }): Promise<{ readonly requestId: string }>;
+  /** The owner's answer; approving grants the requester view access. */
+  decideAccessRequest(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly requestId: string;
+    readonly approve: boolean;
+  }): Promise<{ readonly requestId: string; readonly approved: boolean }>;
+  listAccessRequests(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly objectId?: string | undefined;
+  }): Promise<readonly DriveAccessRequestRecord[]>;
+}
+
 export interface PostgresDriveStoreOptions {
   readonly gc?: DriveConfig["gc"];
   readonly events?: Pick<EventBus, "publish">;
@@ -430,6 +469,8 @@ export interface PostgresDriveStoreOptions {
   /** Lifetime for a prepared multipart plan and its presigned URLs (default 15 minutes). */
   readonly multipartSessionTtlMs?: number;
   readonly dlp?: DlpGuard;
+  readonly shareMailer?: DriveShareMailer;
+  readonly onShareMailError?: (error: unknown) => void;
 }
 
 interface DriveVirusScanUnavailableEvent {

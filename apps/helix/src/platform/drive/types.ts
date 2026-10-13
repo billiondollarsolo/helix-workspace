@@ -230,3 +230,15 @@ export interface DriveCommentRevisionPage {
   readonly revisions: readonly DriveCommentRevisionRecord[];
   readonly nextCursor: string | null;
 }
+
+/** A request for access to a Drive item, as its owner sees it. */
+export interface DriveAccessRequestRecord {
+  readonly id: string;
+  readonly objectId: string;
+  readonly requesterActorId: string;
+  readonly requesterDisplayName: string | null;
+  readonly requesterEmail: string | null;
+  readonly objectName: string;
+  readonly message: string | null;
+  readonly createdAt: Date;
+}

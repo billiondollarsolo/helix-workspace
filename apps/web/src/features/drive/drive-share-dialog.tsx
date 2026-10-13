@@ -77,6 +77,8 @@ export function DriveShareDialog({
   const domain = emailDomain(session.data?.email);
   const [people, setPeople] = useState<PersonRef[]>([]);
   const [role, setRole] = useState<DriveAccessRole>("reader");
+  const [notifyPeople, setNotifyPeople] = useState(true);
+  const [note, setNote] = useState("");
   const [linkToken, setLinkToken] = useState<string | null>(null);
   const files = target.kind === "file";
 
@@ -99,12 +101,15 @@ export function DriveShareDialog({
         objectId: target.id,
         actorIds: people.flatMap((person) => (person.actorId === null ? [] : [person.actorId])),
         role,
+        notify: notifyPeople,
+        ...(notifyPeople ? { message: note } : {}),
       }),
     onSuccess: async () => {
       notify({
         message: `Shared with ${people.length === 1 ? (people[0]?.displayName ?? "1 person") : `${String(people.length)} people`}`,
       });
       setPeople([]);
+      setNote("");
       await refresh();
     },
   });
@@ -203,15 +208,40 @@ export function DriveShareDialog({
         </select>
       </div>
       {people.length > 0 ? (
-        <div className="flex justify-end mt-2">
-          <button
-            type="button"
-            className="btn primary"
-            disabled={busy}
-            onClick={() => share.mutate()}
-          >
-            Share
-          </button>
+        <div className="mt-3 grid gap-2">
+          <label className="flex min-h-6 items-center gap-2 type-body-sm">
+            <input
+              type="checkbox"
+              checked={notifyPeople}
+              onChange={(event) => setNotifyPeople(event.target.checked)}
+            />
+            Send them an email
+          </label>
+          {notifyPeople ? (
+            <>
+              <label htmlFor={`${roleId}-note`} className="sr-only">
+                Note to include
+              </label>
+              <textarea
+                id={`${roleId}-note`}
+                className="input min-h-20"
+                maxLength={2000}
+                placeholder="Add a note (optional)"
+                value={note}
+                onChange={(event) => setNote(event.target.value)}
+              />
+            </>
+          ) : null}
+          <div className="flex justify-end">
+            <button
+              type="button"
+              className="btn primary"
+              disabled={busy}
+              onClick={() => share.mutate()}
+            >
+              Share
+            </button>
+          </div>
         </div>
       ) : null}
       {error === null ? null : (

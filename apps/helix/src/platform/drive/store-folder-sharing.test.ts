@@ -86,6 +86,16 @@ function sharingSql(options: { folderExists: boolean; actorRole: string | null }
     if (text.includes("from permissions p") && text.includes("'drive_folder'")) {
       return Promise.resolve([grantRow("reader")]);
     }
+    if (text.includes("insert into notifications")) {
+      return Promise.resolve([
+        {
+          id: "99999999-9999-4999-8999-999999999999",
+          payload: {},
+          created_at: new Date(0),
+          read_at: null,
+        },
+      ]);
+    }
     if (text.includes("from activity") || text.includes("insert into activity")) {
       return Promise.resolve([{ hash: "0".repeat(64) }]);
     }

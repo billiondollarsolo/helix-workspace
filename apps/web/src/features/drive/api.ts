@@ -49,6 +49,10 @@ export interface DriveShareInput {
   readonly actorRefs?: readonly string[];
   readonly role?: DriveRole;
   readonly expiresAt?: string | null;
+  /** Email the people being given access. They are always notified in Helix. */
+  readonly notify?: boolean;
+  /** A note from the person sharing, included in the email and the notification. */
+  readonly message?: string;
 }
 export type DriveAccessRole = Exclude<DriveRole, "owner">;
 export interface DriveUploadInput {
@@ -196,6 +200,10 @@ export async function shareDrive(
       actorRefs: input.actorRefs ?? [],
       role: input.role ?? "reader",
       expiresAt: input.expiresAt ?? null,
+      notify: input.notify ?? true,
+      ...(input.message === undefined || input.message.trim() === ""
+        ? {}
+        : { message: input.message.trim() }),
     },
     fetchImpl,
   );
@@ -461,7 +469,7 @@ export function drivePublicShareUrl(
   const base = origin.replace(/\/$/u, "");
   return `${base}/v1/api/drive/share/${encodeURIComponent(token)}`;
 }
-async function callDriveTool<Output = unknown>(
+export async function callDriveTool<Output = unknown>(
   toolId: string,
   input: unknown,
   fetchImpl: DriveApiFetch,
@@ -473,8 +481,12 @@ async function callDriveTool<Output = unknown>(
   });
   const output: unknown = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(
-      errorMessageFromOutput(output) ?? `${toolId} failed with ${String(response.status)}`,
+    // The status lets a caller tell "not yours to open" from a failure worth retrying.
+    throw Object.assign(
+      new Error(
+        errorMessageFromOutput(output) ?? `${toolId} failed with ${String(response.status)}`,
+      ),
+      { status: response.status },
     );
   }
   // Confirmation-gated tools (`drive.share`, `drive.delete`) reply 202 with a

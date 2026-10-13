@@ -8,6 +8,20 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Added
 
+- Drive tells people when something is shared with them. Sharing a file or folder notifies each
+  person newly given access in Helix and, unless the sharer unticks **Send them an email** in the
+  Share dialog, emails them a link with an optional note. The email comes from the person
+  sharing, through their own mailbox, so it needs Mail to be enabled. People who already had
+  access are not told again. Comment mentions and replies are emailed the same way.
+- Asking for access in Drive. Someone who follows a link to a file or folder they cannot open
+  sees **You need access** and can ask its owner, with a note. The owner is notified and emailed,
+  sees **People asking for access** at the top of their Drive, and gives view access or declines;
+  the person asking is told the answer. Only the item's current owner can answer, an answered
+  request cannot be answered again, and asking twice while a request is open tells the owner
+  once. New tools: `drive.access.request`, `drive.access.requests`, `drive.access.decide`.
+- **Remove from Shared with me** in Drive. An item someone else shared can be taken out of a
+  person's own list (`drive.hide.set`); they keep their access and can still open it by link.
+  Items in Shared with me no longer offer **Move to trash**, which never applied to them.
 - Mail protection for agents. **Admin → Security → Agent mail** gives an agent or service account a
   mail address and sets who may write to it from outside: only the senders an administrator
   lists, or anyone. Mail from outside that an agent's settings do not let through is never
@@ -422,6 +436,9 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Changed
 
+- `drive.share` emails the people it gives access to unless called with `notify: false`, and
+  accepts a `message` to include. Callers that share on someone's behalf and do not want mail sent
+  must pass `notify: false`.
 - Agents and service accounts that already had a mail address no longer receive mail from
   outside the organization until an administrator lists who may write to them, or chooses
   **Anyone**, under **Admin → Security → Agent mail**. Such mail is held there, not lost. Mail

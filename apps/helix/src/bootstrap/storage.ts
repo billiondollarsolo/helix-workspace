@@ -4,6 +4,7 @@ import { PostgresChatAttachmentStore } from "../platform/chat/index.js";
 import { loadDriveConfig } from "../platform/drive/config.js";
 import {
   createClamAvVirusScanner,
+  createMailDriveShareSender,
   DriveVirusScanRetryWorker,
   PostgresDriveStore,
   PostgresDriveWorkflowStore,
@@ -249,6 +250,20 @@ export async function installStorage(context: Awaited<ReturnType<typeof installA
   const driveStore = new PostgresDriveStore(sql, driveStorage, {
     metrics,
     gc: driveConfig.gc,
+    // Sharing emails go out as the person sharing, through their own mailbox,
+    // so they exist only where Mail does.
+    ...(coreApps.shouldRegister("mail")
+      ? {
+          shareMailer: createMailDriveShareSender({
+            store: mailStore,
+            publicBaseUrl:
+              bootEnv.HELIX_PUBLIC_URL ?? bootEnv.PUBLIC_BASE_URL ?? "http://localhost:3000",
+          }),
+        }
+      : {}),
+    onShareMailError: (error: unknown) => {
+      app.log.warn({ error }, "A Drive sharing email could not be queued");
+    },
     storageResolver: driveStorageResolver,
     events: eventBus,
     contentAddressedDedup: driveConfig.contentAddressedDedup,

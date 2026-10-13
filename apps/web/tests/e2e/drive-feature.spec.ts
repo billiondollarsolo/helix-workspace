@@ -19,6 +19,11 @@ const folderId = "00000000-0000-4000-8000-000000000702";
 const roadmapId = "00000000-0000-4000-8000-000000000701";
 const budgetId = "00000000-0000-4000-8000-000000000703";
 const notesId = "00000000-0000-4000-8000-000000000704";
+const sharedId = "00000000-0000-4000-8000-000000000705";
+const SHARED_ITEM = "Launch plan.pdf";
+/** A file the signed-in person has a link to and no access to. */
+const STRANGERS_FILE = "00000000-0000-4000-8000-000000000799";
+const REQUEST_ID = "00000000-0000-4000-8000-0000000000a1";
 const axePath = createRequire(import.meta.url).resolve("axe-core/axe.min.js");
 
 interface ToolCall {
@@ -130,10 +135,19 @@ test.describe("/drive feature flow", () => {
     await dialog.getByRole("combobox", { name: "Add people" }).fill("sam");
     await dialog.getByRole("option", { name: /Sam Patel/u }).click();
     await dialog.getByRole("combobox", { name: "Role for new people" }).selectOption("editor");
+    // People are emailed unless the sharer says otherwise, and may be sent a note.
+    await expect(dialog.getByRole("checkbox", { name: "Send them an email" })).toBeChecked();
+    await dialog.getByRole("textbox", { name: "Note to include" }).fill("For Monday");
     await dialog.getByRole("button", { name: "Share", exact: true }).click();
     await expect
       .poll(() => calls.find((call) => call.tool === "drive.share")?.body)
-      .toMatchObject({ objectId: roadmapId, actorIds: [SAM], role: "editor" });
+      .toMatchObject({
+        objectId: roadmapId,
+        actorIds: [SAM],
+        role: "editor",
+        notify: true,
+        message: "For Monday",
+      });
 
     await expect(dialog.getByRole("combobox", { name: "General access" })).toHaveValue(
       "restricted",
@@ -145,6 +159,65 @@ test.describe("/drive feature flow", () => {
     expect(await seriousViolations(page)).toEqual([]);
     await dialog.getByRole("button", { name: "Done" }).click();
     await expect(dialog).toHaveCount(0);
+  });
+
+  test("asks the owner for access to a link that cannot be opened", async ({ page }) => {
+    test.skip(isLiveBackend(), "Uses deterministic fixtures.");
+    const accessToken = await seedBrowserSession(page, "e2e-drive-token");
+    const calls = await mockDriveBackend(page, accessToken, { noAccessTo: STRANGERS_FILE });
+    await page.goto(`/drive?file=${STRANGERS_FILE}`);
+
+    const panel = page.getByRole("region", { name: "You need access" });
+    await expect(panel).toContainText("This file hasn’t been shared with you.");
+    // The person's own files are not shown in place of the one they came for.
+    await expect(page.getByText("Backend roadmap.pdf")).toHaveCount(0);
+    expect(await seriousViolations(page)).toEqual([]);
+    await panel
+      .getByRole("textbox", { name: "Note to the owner (optional)" })
+      .fill("For the audit");
+    await panel.getByRole("button", { name: "Ask for access" }).click();
+    await expect(panel.getByRole("status")).toContainText("The owner has been asked.");
+    expect(calls.find((call) => call.tool === "drive.access.request")?.body).toEqual({
+      objectId: STRANGERS_FILE,
+      message: "For the audit",
+    });
+  });
+
+  test("shows the owner who is asking for access and takes their answer", async ({ page }) => {
+    test.skip(isLiveBackend(), "Uses deterministic fixtures.");
+    const accessToken = await seedBrowserSession(page, "e2e-drive-token");
+    const calls = await mockDriveBackend(page, accessToken, { accessRequested: true });
+    await page.goto("/drive");
+
+    const requests = page.getByRole("region", { name: "People asking for access" });
+    await expect(requests).toContainText("Sam Patel asked for access to Backend roadmap.pdf");
+    await expect(requests).toContainText("Need it for the review");
+    expect(await seriousViolations(page)).toEqual([]);
+    await requests.getByRole("button", { name: /^Give access/u }).click();
+    await expect(requests).toHaveCount(0);
+    expect(calls.find((call) => call.tool === "drive.access.decide")?.body).toEqual({
+      requestId: REQUEST_ID,
+      approve: true,
+    });
+  });
+
+  test("removes someone else's item from Shared with me, with undo", async ({ page }) => {
+    test.skip(isLiveBackend(), "Uses deterministic fixtures.");
+    const accessToken = await seedBrowserSession(page, "e2e-drive-token");
+    const calls = await mockDriveBackend(page, accessToken, { view: "list" });
+    await page.goto("/drive?scope=shared");
+
+    await page.getByRole("row").filter({ hasText: SHARED_ITEM }).click({ button: "right" });
+    const menu = page.getByRole("menu");
+    // It is not this person's to trash: it can only leave their own list.
+    await expect(menu.getByRole("menuitem", { name: /Move to trash/u })).toHaveCount(0);
+    await menu.getByRole("menuitem", { name: "Remove from Shared with me" }).click();
+    await expect(page.getByText(/removed from Shared with me/u)).toBeVisible();
+    const hides = () =>
+      calls.filter((call) => call.tool === "drive.hide.set").map((call) => call.body);
+    expect(hides()).toMatchObject([{ hidden: true }]);
+    await page.getByRole("button", { name: "Undo" }).click();
+    await expect.poll(hides).toMatchObject([{ hidden: true }, { hidden: false }]);
   });
 
   test("uploads a folder and keeps its structure", async ({ page }) => {
@@ -224,7 +297,13 @@ async function seriousViolations(page: Page): Promise<string[]> {
 async function mockDriveBackend(
   page: Page,
   accessToken: string,
-  options: { readonly view?: "grid" | "list" } = {},
+  options: {
+    readonly view?: "grid" | "list";
+    /** An item the signed-in person was not given access to. */
+    readonly noAccessTo?: string;
+    /** Someone is waiting for the signed-in person to answer. */
+    readonly accessRequested?: boolean;
+  } = {},
 ) {
   const toolCalls: ToolCall[] = [];
   let createdFolders = 0;
@@ -273,7 +352,19 @@ async function mockDriveBackend(
 
     switch (tool) {
       case "drive.list":
-        await fulfillJson(route, { entries: ENTRIES, nextCursor: null });
+        await fulfillJson(route, {
+          entries:
+            body.view === "shared"
+              ? [
+                  {
+                    ...fileEntry(sharedId, SHARED_ITEM, "application/pdf", 4096, 24),
+                    ownerActorId: SAM,
+                    ownerDisplayName: "Sam Patel",
+                  },
+                ]
+              : ENTRIES,
+          nextCursor: null,
+        });
         return;
       case "drive.view.get":
         await fulfillJson(route, { view: options.view ?? "grid" });
@@ -293,8 +384,37 @@ async function mockDriveBackend(
         await fulfillJson(route, ENTRIES.find((entry) => entry.id === body.objectId) ?? null);
         return;
       case "drive.access.list":
+        if (body.objectId === options.noAccessTo) {
+          await route.fulfill({
+            status: 404,
+            contentType: "application/json",
+            body: JSON.stringify({ error: { code: "not_found", message: "Not found." } }),
+          });
+          return;
+        }
         await fulfillJson(route, { grants: [] });
         return;
+      case "drive.access.requests": {
+        const answered = toolCalls.some((call) => call.tool === "drive.access.decide");
+        await fulfillJson(route, {
+          requests:
+            options.accessRequested === true && !answered
+              ? [
+                  {
+                    id: REQUEST_ID,
+                    objectId: roadmapId,
+                    requesterActorId: SAM,
+                    requesterDisplayName: "Sam Patel",
+                    requesterEmail: "sam@example.test",
+                    objectName: "Backend roadmap.pdf",
+                    message: "Need it for the review",
+                    createdAt: "2026-05-20T12:00:00.000Z",
+                  },
+                ]
+              : [],
+        });
+        return;
+      }
       case "drive.link.list":
         await fulfillJson(route, { links: [] });
         return;

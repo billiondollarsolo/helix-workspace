@@ -4,6 +4,7 @@
 import {
   ClipboardCheck as WorkflowIcon,
   Download as DownloadIcon,
+  EyeOff as HideIcon,
   FolderInput as MoveIcon,
   FolderOpen as OpenIcon,
   Info as InfoIcon,
@@ -31,6 +32,7 @@ export type DriveActionId =
   | "unstar"
   | "details"
   | "workflows"
+  | "remove-shared"
   | "trash"
   | "restore"
   | "delete-forever";
@@ -56,6 +58,7 @@ const ACTION_ICONS: Readonly<Record<DriveActionId, LucideIcon>> = {
   unstar: UnstarIcon,
   details: InfoIcon,
   workflows: WorkflowIcon,
+  "remove-shared": HideIcon,
   trash: TrashIcon,
   restore: RestoreIcon,
   "delete-forever": TrashIcon,
@@ -64,7 +67,12 @@ const ACTION_ICONS: Readonly<Record<DriveActionId, LucideIcon>> = {
 /** Actions that apply to `targets` (the selection, or the right-clicked item). */
 export function driveItemActions(
   targets: readonly DriveItem[],
-  context: { readonly trash: boolean; readonly now?: number },
+  context: {
+    readonly trash: boolean;
+    /** The targets are items other people shared, listed in Shared with me. */
+    readonly shared?: boolean;
+    readonly now?: number;
+  },
 ): DriveAction[] {
   if (targets.length === 0) return [];
   const single = targets.length === 1 ? targets[0] : undefined;
@@ -140,6 +148,11 @@ export function driveItemActions(
       },
       { id: "workflows", label: "Requests and approvals", group: 3 },
     );
+  }
+  if (context.shared === true) {
+    // Someone else's item: it can leave this person's list, not the owner's Drive.
+    actions.push({ id: "remove-shared", label: "Remove from Shared with me", group: 4 });
+    return actions;
   }
   actions.push({
     id: "trash",

@@ -104,6 +104,16 @@ function createAuthzSql(options: { grants: Readonly<Record<string, string>>; own
     if (text.includes("select storage_key") || text.includes("from drive_versions")) {
       return Promise.resolve([]);
     }
+    if (text.includes("insert into notifications")) {
+      return Promise.resolve([
+        {
+          id: "99999999-9999-4999-8999-999999999999",
+          payload: {},
+          created_at: new Date(0),
+          read_at: null,
+        },
+      ]);
+    }
     if (text.includes("from activity") || text.includes("insert into activity")) {
       return Promise.resolve([{ hash: "0".repeat(64) }]);
     }

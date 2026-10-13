@@ -148,6 +148,7 @@ describe("drive API", () => {
         actorRefs: [],
         role: "reader",
         expiresAt: null,
+        notify: true,
       }),
     });
     expect(fetchImpl).toHaveBeenNthCalledWith(3, "/api/tools/drive.trash", {
@@ -303,6 +304,7 @@ describe("drive API", () => {
         actorRefs: ["maya@helix.local", "Maya Chen"],
         role: "reader",
         expiresAt: null,
+        notify: true,
       }),
     });
   });

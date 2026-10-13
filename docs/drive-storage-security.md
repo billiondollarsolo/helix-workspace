@@ -18,6 +18,29 @@ Before enabling Business production traffic, retain:
 
 Never record access keys, raw share tokens, share passwords, or object contents in evidence.
 
+## Sharing notices and access requests
+
+Sharing notifies each person newly given access in Helix. The sharer chooses whether they are
+also emailed; that email is sent as the sharer through their own mailbox and is recorded in
+their Sent mail. A failure to queue it never undoes the share.
+
+A person who cannot open an item may ask its owner for access. They cannot read the item, so the
+request and the answer go through two database functions, `helix_drive_request_access` and
+`helix_drive_decide_access_request`, which the application role may execute but whose table it
+may only read:
+
+- a request can be made only as the signed-in person, for an item that exists, that they do not
+  own and cannot already open;
+- only the item's owner at the time of the answer can approve or decline, so a request does not
+  outlive a change of owner or a deletion;
+- approving grants view access and nothing more; the owner can change it afterwards in the Share
+  dialog;
+- a person sees only requests they made or requests for items they own.
+
+`drive.access.request` is limited to 10 calls a minute per person, and asking again while a
+request is open notifies nobody. Hiding an item from Shared with me (`drive_hidden_shares`) is a
+per-person list preference and changes no access.
+
 ## KMS rotation
 
 1. Create or select the replacement key and grant only the tenant storage principal access.

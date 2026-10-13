@@ -10,6 +10,8 @@ import { Dialog } from "@/components/ui/helix-dialog";
 import { notify } from "@/components/ui/toast";
 import { useShortcuts } from "@/lib/shortcuts/use-shortcuts";
 import { driveItemUrl, driveRawDownloadUrl } from "./api";
+import { DriveAccessNeeded } from "./drive-access-needed";
+import { DriveAccessRequests } from "./drive-access-requests";
 import { DriveBreadcrumb, type DriveTrailCrumb } from "./drive-breadcrumb";
 import {
   canDeleteForever,
@@ -42,6 +44,7 @@ import { SCOPE_TITLE } from "./drive-view-types";
 import { DriveWorkflows } from "./drive-workflows";
 import {
   applyDriveScope,
+  driveAccessQueryOptions,
   driveActorQueryOptions,
   driveFetchLimit,
   driveItemsQueryOptions,
@@ -58,6 +61,13 @@ import { useDocumentSurfaceViewPreference } from "./view-preference";
 type Confirmation =
   | { readonly kind: "delete"; readonly items: readonly DriveItem[] }
   | { readonly kind: "empty"; readonly items: readonly DriveItem[] };
+
+/** The server refused the item, or says there is none: either way, not this person's to open. */
+function isAccessError(error: unknown): boolean {
+  const status =
+    typeof error === "object" && error !== null && "status" in error ? error.status : undefined;
+  return status === 403 || status === 404;
+}
 
 function downloadFile(item: DriveItem) {
   const link = document.createElement("a");
@@ -162,6 +172,28 @@ export function DriveShell() {
   }, [search.file, allItems]);
 
   const isTrash = scope === "trash";
+  // At the top of Shared with me every item belongs to someone else.
+  const actionContext = {
+    trash: isTrash,
+    shared: scope === "shared" && folderId === null && !searching,
+  };
+  // A link to something this person cannot open: offer to ask its owner.
+  const linkedFile = search.file;
+  const linkedFileMissing =
+    linkedFile !== undefined &&
+    itemsQuery.isSuccess &&
+    !allItems.some((item) => item.id === linkedFile);
+  const linkedFileAccess = useQuery({
+    ...driveAccessQueryOptions(linkedFile ?? "", linkedFileMissing),
+    // A refusal is the answer here, not something to try again.
+    retry: false,
+  });
+  const accessNeeded: { readonly id: string; readonly kind: "file" | "folder" } | null =
+    urlFolder !== null && isAccessError(itemsQuery.error)
+      ? { id: urlFolder, kind: "folder" }
+      : linkedFile !== undefined && linkedFileMissing && isAccessError(linkedFileAccess.error)
+        ? { id: linkedFile, kind: "file" }
+        : null;
   const canCreate = !searching && !isTrash && (scope === "my" || folderId !== null);
   const createTarget = canCreate ? folderId : null;
   const rootCrumb: DriveTrailCrumb = {
@@ -266,6 +298,10 @@ export function DriveShell() {
       case "workflows":
         setWorkflowTarget(first);
         return;
+      case "remove-shared":
+        setSelected(new Set());
+        void actions.removeFromShared(targets);
+        return;
       case "trash":
         setSelected(new Set());
         void actions.trash(targets);
@@ -301,7 +337,7 @@ export function DriveShell() {
   const single = selectedItems.length === 1 ? selectedItems[0] : undefined;
   const activeItem = items.find((item) => item.id === activeKey);
   const focusTarget = single ?? activeItem;
-  const selectionActions = driveItemActions(selectedItems, { trash: isTrash });
+  const selectionActions = driveItemActions(selectedItems, actionContext);
   useShortcuts("drive", {
     "drive.new-folder": canCreate ? newActions.onNewFolder : undefined,
     "drive.upload": canCreate ? newActions.onFileUpload : undefined,
@@ -426,43 +462,51 @@ export function DriveShell() {
           ) : null}
         </div>
         <div className="drive-content">
-          <DriveItemsArea
-            scope={scope}
-            view={view}
-            items={items}
-            loading={itemsQuery.isLoading}
-            error={itemsQuery.isError ? itemsQuery.error : null}
-            retrying={itemsQuery.isFetching}
-            onRetry={() => void queryClient.invalidateQueries({ queryKey: driveQueryKeys.all })}
-            filtered={hasDriveFilters(filters)}
-            onClearFilters={() => setFilters(NO_DRIVE_FILTERS)}
-            searching={searching}
-            selectedKeys={selected}
-            onSelectedKeysChange={setSelected}
-            activeKey={activeKey}
-            onActiveKeyChange={setActiveKey}
-            onOpen={openItem}
-            handlers={{
-              ownerLabel,
-              actionsFor: (item) =>
-                driveItemActions(selected.has(item.id) ? selectedItems : [item], {
-                  trash: isTrash,
-                }),
-              onAction: (item, id) => runAction(selected.has(item.id) ? selectedItems : [item], id),
-              onToggleStar: (item) => void actions.setStarred([item], !item.starred),
-              dragIds: (item) =>
-                selected.has(item.id) ? selectedItems.map((entry) => entry.id) : [item.id],
-              onDropInto: (folder, ids) => moveInto({ id: folder.id, name: folder.name }, ids),
-              trash: isTrash,
-            }}
-            actionsFor={(targets) => driveItemActions(targets, { trash: isTrash })}
-            onTargetsAction={runAction}
-            canCreate={canCreate}
-            newActions={newActions}
-            onEmptyTrash={() => setConfirmation({ kind: "empty", items: deletable })}
-            onDropFiles={(files) => uploads.uploadFiles(files, createTarget)}
-            dropLabel={locationName}
-          />
+          {isTrash ? null : <DriveAccessRequests />}
+          {accessNeeded === null ? (
+            <DriveItemsArea
+              scope={scope}
+              view={view}
+              items={items}
+              loading={itemsQuery.isLoading}
+              error={itemsQuery.isError ? itemsQuery.error : null}
+              retrying={itemsQuery.isFetching}
+              onRetry={() => void queryClient.invalidateQueries({ queryKey: driveQueryKeys.all })}
+              filtered={hasDriveFilters(filters)}
+              onClearFilters={() => setFilters(NO_DRIVE_FILTERS)}
+              searching={searching}
+              selectedKeys={selected}
+              onSelectedKeysChange={setSelected}
+              activeKey={activeKey}
+              onActiveKeyChange={setActiveKey}
+              onOpen={openItem}
+              handlers={{
+                ownerLabel,
+                actionsFor: (item) =>
+                  driveItemActions(selected.has(item.id) ? selectedItems : [item], actionContext),
+                onAction: (item, id) =>
+                  runAction(selected.has(item.id) ? selectedItems : [item], id),
+                onToggleStar: (item) => void actions.setStarred([item], !item.starred),
+                dragIds: (item) =>
+                  selected.has(item.id) ? selectedItems.map((entry) => entry.id) : [item.id],
+                onDropInto: (folder, ids) => moveInto({ id: folder.id, name: folder.name }, ids),
+                trash: isTrash,
+              }}
+              actionsFor={(targets) => driveItemActions(targets, actionContext)}
+              onTargetsAction={runAction}
+              canCreate={canCreate}
+              newActions={newActions}
+              onEmptyTrash={() => setConfirmation({ kind: "empty", items: deletable })}
+              onDropFiles={(files) => uploads.uploadFiles(files, createTarget)}
+              dropLabel={locationName}
+            />
+          ) : (
+            <DriveAccessNeeded
+              key={accessNeeded.id}
+              itemId={accessNeeded.id}
+              kind={accessNeeded.kind}
+            />
+          )}
           {hasMore ? (
             <div className="flex justify-center py-4">
               <button

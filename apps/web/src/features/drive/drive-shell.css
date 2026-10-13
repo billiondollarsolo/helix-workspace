@@ -242,6 +242,29 @@
     font-size: var(--text-body-sm);
   }
 
+  /* ---- Access requests ---------------------------------------------- */
+
+  .drive-access-requests {
+    display: grid;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface-2);
+  }
+
+  .drive-access-needed {
+    display: grid;
+    justify-items: start;
+    gap: var(--space-3);
+    max-width: 480px;
+    margin: var(--space-8) auto;
+    padding: var(--space-6);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    color: var(--text-2);
+  }
+
   /* ---- Item lists -------------------------------------------------- */
 
   .drive-items-area {

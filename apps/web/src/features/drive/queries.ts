@@ -12,6 +12,7 @@ import {
   type DriveApiEntry,
   type DriveApiSearchHit,
 } from "./api";
+import { listDriveAccessRequests } from "./drive-collaboration-api";
 import { validateDriveRouteSearch, type DriveRouteSearch, type DriveScope } from "./route-search";
 
 export { validateDriveRouteSearch };
@@ -103,6 +104,7 @@ export const driveQueryKeys = {
   folderChildren: (folderId: string | null) =>
     ["drive", "folder-children", folderId ?? "root"] as const,
   workflows: ["drive", "workflows"] as const,
+  accessRequests: ["drive", "access-requests"] as const,
   uploadStatus: (objectId: string | null) => ["drive", "upload-status", objectId] as const,
   items: (input: DriveItemsQueryInput = defaultDriveItemsInput) =>
     [
@@ -143,6 +145,15 @@ export function driveAccessQueryOptions(objectId: string, enabled = true) {
     queryKey: driveQueryKeys.access(objectId),
     queryFn: () => listDriveAccess(objectId),
     enabled,
+    throwOnError: false,
+  });
+}
+
+/** Open requests for access to items the signed-in person owns. */
+export function driveAccessRequestsQueryOptions() {
+  return queryOptions({
+    queryKey: driveQueryKeys.accessRequests,
+    queryFn: () => listDriveAccessRequests(),
     throwOnError: false,
   });
 }

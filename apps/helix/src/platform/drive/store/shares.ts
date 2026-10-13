@@ -12,6 +12,7 @@ import {
 import { type DriveStoreContext } from "./context.js";
 import { mapDriveAccessGrant } from "./mappers.js";
 import { type DriveAccessGrantRow, type SqlLike } from "./rows.js";
+import { deliverDriveMail, notifyDriveShare } from "./share-notifications.js";
 
 /** Live folder lookup used to route sharing calls to folder grants instead of object grants. */
 async function findLiveFolder(
@@ -25,6 +26,7 @@ async function findLiveFolder(
   `;
   return rows[0] ?? null;
 }
+
 export async function share(
   context: DriveStoreContext,
   input: {
@@ -34,13 +36,16 @@ export async function share(
     readonly targetActorIds: readonly string[];
     readonly role: string;
     readonly expiresAt?: Date | null;
+    readonly notify?: boolean | undefined;
+    readonly message?: string | undefined;
   },
 ): Promise<{
   readonly objectId: string;
   readonly sharedWithActorIds: readonly string[];
   readonly role: string;
 }> {
-  return context.sql.begin(async (tx) => {
+  const note = input.message === undefined || input.message === "" ? undefined : input.message;
+  const result = await context.sql.begin(async (tx) => {
     const role = parseDriveRole(input.role);
     const sharedWithActorIds = [...new Set(input.targetActorIds)];
     const folder = await findLiveFolder(tx, input.orgId, input.objectId);
@@ -57,6 +62,17 @@ export async function share(
       );
       assertDriveObjectReady(object);
     }
+    // People who already had access are not told again.
+    const alreadyShared = new Set(
+      (
+        await tx<{ actor_id: string }[]>`
+          select actor_id from permissions
+          where org_id = ${input.orgId} and resource_type = ${resourceType}
+            and resource_id = ${input.objectId} and actor_id in ${tx(sharedWithActorIds)}
+        `
+      ).map((row) => row.actor_id),
+    );
+    const newlyShared = sharedWithActorIds.filter((id) => !alreadyShared.has(id));
     for (const targetActorId of sharedWithActorIds) {
       await tx`
           insert into permissions (org_id, actor_id, resource_type, resource_id, role, granted_by_actor_id, expires_at)
@@ -71,8 +87,49 @@ export async function share(
       objectId: input.objectId,
       payload: { sharedWithActorIds, role },
     });
-    return { objectId: input.objectId, sharedWithActorIds, role };
+    const notice = await notifyDriveShare(tx, {
+      orgId: input.orgId,
+      actorId: input.actorId,
+      objectId: input.objectId,
+      resourceType,
+      targetActorIds: newlyShared,
+      role,
+      ...(note === undefined ? {} : { message: note }),
+    });
+    return { objectId: input.objectId, sharedWithActorIds, role, notice };
   });
+  // Everyone newly given access is notified in Helix; the email is the sharer's choice.
+  const notice = input.notify === false ? null : result.notice;
+  const mailer = context.options.shareMailer;
+  const authorEmail = notice?.authorEmail ?? null;
+  if (notice !== null && mailer !== undefined && authorEmail !== null) {
+    const recipients = notice.recipients.flatMap((recipient) =>
+      recipient.email === null
+        ? []
+        : [{ email: recipient.email, displayName: recipient.displayName }],
+    );
+    if (recipients.length > 0) {
+      await deliverDriveMail(context, () =>
+        mailer.sendShare({
+          orgId: input.orgId,
+          actorId: input.actorId,
+          objectId: notice.objectId,
+          folder: notice.folder,
+          title: notice.title,
+          role: notice.role,
+          authorName: notice.authorName,
+          authorEmail,
+          recipients,
+          ...(note === undefined ? {} : { message: note }),
+        }),
+      );
+    }
+  }
+  return {
+    objectId: result.objectId,
+    sharedWithActorIds: result.sharedWithActorIds,
+    role: result.role,
+  };
 }
 
 export async function listAccess(

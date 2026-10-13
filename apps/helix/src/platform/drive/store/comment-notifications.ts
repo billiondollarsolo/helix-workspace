@@ -3,6 +3,21 @@ import { insertNotification } from "../../notifications/index.js";
 import { stringMetadata } from "../core/mappers.js";
 import { mentionedActorIds, mentionTokensForComment } from "../core/mentions.js";
 import { type ObjectRow, type SqlLike } from "./rows.js";
+import { loadDriveMailActors } from "./share-notifications.js";
+
+export interface DriveCommentMailNotice {
+  readonly kind: "mention" | "reply";
+  readonly objectId: string;
+  readonly title: string;
+  readonly authorName: string;
+  readonly authorEmail: string | null;
+  readonly body: string;
+  readonly recipients: readonly {
+    readonly email: string;
+    readonly displayName: string | null;
+  }[];
+}
+
 export async function notifyDriveCommentMentions(
   sql: SqlLike,
   input: {
@@ -16,10 +31,10 @@ export async function notifyDriveCommentMentions(
     readonly metadata: JsonObject;
     readonly tokens?: readonly string[] | undefined;
   },
-): Promise<void> {
+): Promise<DriveCommentMailNotice | null> {
   const tokens = input.tokens ?? mentionTokensForComment(input.metadata, input.body);
   if (tokens.length === 0) {
-    return;
+    return null;
   }
   const actorRows = await sql<
     {
@@ -41,7 +56,7 @@ export async function notifyDriveCommentMentions(
     tokens,
   });
   if (recipients.length === 0) {
-    return;
+    return null;
   }
   const authorName =
     actorRows.find((actor) => actor.id === input.actorId)?.display_name ?? "Someone";
@@ -67,6 +82,19 @@ export async function notifyDriveCommentMentions(
       },
     });
   }
+  return {
+    kind: "mention",
+    objectId: input.object.id,
+    title,
+    authorName,
+    authorEmail: actorRows.find((actor) => actor.id === input.actorId)?.email ?? null,
+    body: input.body,
+    recipients: recipients.flatMap((recipientId) => {
+      const actor = actorRows.find((row) => row.id === recipientId);
+      if (actor?.email === undefined || actor.email === null) return [];
+      return [{ email: actor.email, displayName: actor.display_name }];
+    }),
+  };
 }
 
 export async function notifyDriveCommentReply(
@@ -79,9 +107,9 @@ export async function notifyDriveCommentReply(
     readonly parentCommentId: string | null;
     readonly body: string;
   },
-): Promise<void> {
+): Promise<DriveCommentMailNotice | null> {
   if (input.parentCommentId === null) {
-    return;
+    return null;
   }
   const rows = await sql<
     {
@@ -109,15 +137,16 @@ export async function notifyDriveCommentReply(
   `;
   const recipientId = rows[0]?.actor_id;
   if (recipientId === undefined) {
-    return;
+    return null;
   }
+  const title = driveObjectNotificationTitle(input.object);
   await insertNotification(sql, {
     orgId: input.orgId,
     actorId: recipientId,
     verb: "drive.comment.reply",
     objectType: "drive.object",
     objectId: input.object.id,
-    summary: `Someone replied to your comment in "${driveObjectNotificationTitle(input.object)}".`,
+    summary: `Someone replied to your comment in "${title}".`,
     body: input.body,
     payload: {
       objectId: input.object.id,
@@ -126,6 +155,21 @@ export async function notifyDriveCommentReply(
       repliedByActorId: input.actorId,
     },
   });
+  const actors = await loadDriveMailActors(sql, input.orgId, [input.actorId, recipientId]);
+  const author = actors.get(input.actorId);
+  const recipient = actors.get(recipientId);
+  return {
+    kind: "reply",
+    objectId: input.object.id,
+    title,
+    authorName: author?.displayName ?? "Someone",
+    authorEmail: author?.email ?? null,
+    body: input.body,
+    recipients:
+      recipient?.email === undefined || recipient.email === null
+        ? []
+        : [{ email: recipient.email, displayName: recipient.displayName }],
+  };
 }
 
 function driveObjectNotificationTitle(object: ObjectRow): string {

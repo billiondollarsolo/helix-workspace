@@ -122,6 +122,8 @@ const shareSchema = z
     actorRefs: z.array(z.string().trim().min(1)).default([]),
     role: z.enum(["reader", "commenter", "editor", "owner"]).default("reader"),
     expiresAt: z.string().datetime().nullable().optional(),
+    notify: z.boolean().default(true),
+    message: z.string().trim().max(2000).optional(),
   })
   .superRefine((value, ctx) => {
     if (value.actorIds.length === 0 && value.actorRefs.length === 0) {
@@ -497,6 +499,8 @@ export function createDriveToolDefinitions(
           targetActorIds: actorIds,
           role: input.role,
           expiresAt: toNullableDate(input.expiresAt),
+          notify: input.notify,
+          message: input.message,
         });
       },
     }),

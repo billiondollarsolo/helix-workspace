@@ -14,6 +14,7 @@ import {
   setDriveObjectStarred,
   trashDriveObject,
 } from "./api";
+import { hideDriveShare } from "./drive-collaboration-api";
 import type { DriveItem } from "./drive-data";
 import { driveQueryKeys } from "./queries";
 
@@ -30,6 +31,8 @@ export interface DriveActions {
   move(items: readonly DriveItem[], target: DriveMoveTarget): Promise<void>;
   rename(item: DriveItem, name: string): Promise<void>;
   setStarred(items: readonly DriveItem[], starred: boolean): Promise<void>;
+  /** Take items other people shared out of this person's Shared with me. */
+  removeFromShared(items: readonly DriveItem[]): Promise<void>;
   createFolder(name: string, parentId: string | null): Promise<string | null>;
 }
 
@@ -99,6 +102,27 @@ export function useDriveActions(): DriveActions {
               () => Promise.all(items.map((item) => restoreDriveObject(item.id))),
               "Couldn’t undo",
             );
+          },
+        },
+      });
+    },
+    [run],
+  );
+
+  const removeFromShared = useCallback(
+    async (items: readonly DriveItem[]) => {
+      if (items.length === 0) return;
+      const hide = (hidden: boolean) =>
+        Promise.all(items.map((item) => hideDriveShare(item.id, hidden)));
+      const done = await run(() => hide(true), "Couldn’t remove from Shared with me");
+      if (done === null) return;
+      notify({
+        message: `${countLabel(items)} removed from Shared with me`,
+        description: "You still have access through a link.",
+        action: {
+          label: "Undo",
+          onAction: () => {
+            void run(() => hide(false), "Couldn’t undo");
           },
         },
       });
@@ -200,8 +224,19 @@ export function useDriveActions(): DriveActions {
       move,
       rename,
       setStarred,
+      removeFromShared,
       createFolder,
     }),
-    [pending, trash, restore, deleteForever, move, rename, setStarred, createFolder],
+    [
+      pending,
+      trash,
+      restore,
+      deleteForever,
+      move,
+      rename,
+      setStarred,
+      removeFromShared,
+      createFolder,
+    ],
   );
 }

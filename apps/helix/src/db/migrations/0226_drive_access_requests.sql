@@ -47,6 +47,10 @@ create policy helix_tenant_isolation on drive_hidden_shares
   using (org_id = helix_current_org_id() and actor_id = helix_current_actor_id())
   with check (org_id = helix_current_org_id() and actor_id = helix_current_actor_id());
 
+create policy helix_tenant_boundary on drive_hidden_shares as restrictive for all
+  using (org_id = public.helix_current_org_id())
+  with check (org_id = public.helix_current_org_id());
+
 alter table drive_access_requests enable row level security;
 alter table drive_access_requests force row level security;
 create policy helix_tenant_isolation on drive_access_requests
@@ -61,6 +65,10 @@ create policy helix_tenant_isolation on drive_access_requests
     org_id = helix_current_org_id()
     and requester_actor_id = helix_current_actor_id()
   );
+
+create policy helix_tenant_boundary on drive_access_requests as restrictive for all
+  using (org_id = public.helix_current_org_id())
+  with check (org_id = public.helix_current_org_id());
 
 create function helix_drive_request_access(
   input_org_id uuid,

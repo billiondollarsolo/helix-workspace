@@ -15,6 +15,11 @@ describe("0226 Drive hidden shares and access requests", () => {
     expect(migration).toContain("Owners do not request access to their own files");
     expect(migration).toContain("Only the owner can decide an access request");
     expect(migration).toContain("force row level security");
+    // Production refuses to start unless every tenant table also has the restrictive boundary.
+    expect(migration.match(/create policy helix_tenant_boundary on \w+ as restrictive/gu)).toEqual([
+      "create policy helix_tenant_boundary on drive_hidden_shares as restrictive",
+      "create policy helix_tenant_boundary on drive_access_requests as restrictive",
+    ]);
     expect(migration).toContain("actor_id = helix_current_actor_id()");
     // The application reads requests; only the two functions write them.
     expect(migration).toContain("grant select on drive_access_requests to helix_app");

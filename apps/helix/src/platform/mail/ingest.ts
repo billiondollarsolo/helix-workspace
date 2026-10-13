@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { SMTPServer, type SMTPServerDataStream, type SMTPServerSession } from "smtp-server";
 import { compactJsonObject } from "../util/json.js";
 import { MailAddressNormalizationError, normalizeMailboxAddress } from "./address-normalization.js";
+import { holdAgentMail, type AgentMailGate } from "./agent-mail/hold.js";
 import type { AntivirusScanner, AntivirusScanResult } from "./antivirus.js";
 import { inspectInboundAttachments } from "./content-safety.js";
 import { MailAddressDeliveryError, MailMalwareRejectedError } from "./errors.js";
@@ -201,6 +202,8 @@ export interface SmtpReceiverOptions {
     | undefined;
   /** Imports iMIP invitations for delivered mailboxes when the tenant enables it. */
   readonly calendarInvitations?: InboundCalendarInvitationImporter | undefined;
+  /** Holds mail from outside that an agent recipient's policy does not admit. */
+  readonly agentMail?: AgentMailGate | undefined;
 }
 
 export class MailauthAuthenticator implements MailAuthenticator {
@@ -622,6 +625,7 @@ export async function ingestSmtpEnvelope(input: {
     (<T>(orgId: string, operation: () => Promise<T>) => Promise<T>) | undefined;
   readonly authorizeForward?: SmtpReceiverOptions["authorizeForward"];
   readonly calendarInvitations?: InboundCalendarInvitationImporter | undefined;
+  readonly agentMail?: AgentMailGate | undefined;
 }): Promise<readonly IngestRawMailResult[]> {
   const resolved = await Promise.all(input.envelopeTo.map(input.resolveRecipient));
   if (resolved.some((resolution) => !acceptsInboundRecipient(resolution))) {
@@ -682,6 +686,7 @@ export async function ingestSmtpEnvelope(input: {
             ...(input.calendarInvitations === undefined
               ? {}
               : { calendarInvitations: input.calendarInvitations }),
+            ...(input.agentMail === undefined ? {} : { agentMail: input.agentMail }),
             scanners: { ...input.scanners, failurePolicy },
             malwareDisposition: "quarantine",
             ...(authenticationPolicy === undefined ? {} : { authenticationPolicy }),
@@ -743,6 +748,8 @@ export async function ingestRawMail(input: {
   readonly authenticationPolicy?: InboundAuthenticationPolicy | false;
   readonly threatVerdicts?: InboundThreatVerdicts;
   readonly calendarInvitations?: InboundCalendarInvitationImporter | undefined;
+  /** Left out when an administrator releases held mail, so it is not held again. */
+  readonly agentMail?: AgentMailGate | undefined;
 }): Promise<IngestRawMailResult> {
   // P2-6: an `smtp.receive` span covers authentication, parsing, persistence,
   // inbound-filter evaluation, and spam/antivirus scanning for one message.
@@ -857,10 +864,36 @@ export async function ingestRawMail(input: {
             span.setAttribute("helix.mail.quarantine_id", quarantine.id);
             throw new MailInboundQuarantinedError(quarantine.id);
           }
+          const agentMail = await holdAgentMail({
+            gate: input.agentMail,
+            quarantineStore: input.quarantineStore,
+            orgId: canonicalInput.orgId,
+            recipients: canonicalInput.recipients,
+            raw,
+            fromAddress,
+            subject: parsed.subject ?? "",
+            text: `${parsed.text ?? ""}\n${parsed.html === false ? "" : parsed.html}`,
+            dmarc: auth.dmarc,
+            authentication: quarantineAuthentication(auth),
+            envelopeFrom: canonicalInput.envelopeFrom,
+            remoteAddress: canonicalInput.remoteAddress,
+            helo: canonicalInput.helo,
+            providerDeliveryId: canonicalInput.providerDeliveryId,
+          });
+          if (agentMail.quarantineId !== null) {
+            span.setAttribute("helix.mail.agent_hold_id", agentMail.quarantineId);
+            if (agentMail.deliver.length === 0) {
+              throw new MailInboundQuarantinedError(agentMail.quarantineId);
+            }
+          }
           const message = withPolicyMetadata(
             withScanMetadata(
               {
-                ...parsedMailToMessage(canonicalInput, parsed, auth),
+                ...parsedMailToMessage(
+                  { ...canonicalInput, recipients: agentMail.deliver },
+                  parsed,
+                  auth,
+                ),
                 rawSource: prepareMailRawSource(raw, parsed),
               },
               scan,
@@ -942,7 +975,7 @@ export async function ingestRawMail(input: {
     );
 }
 
-class MailInboundQuarantinedError extends Error {
+export class MailInboundQuarantinedError extends Error {
   constructor(readonly quarantineId: string) {
     super("Inbound mail accepted into quarantine.");
     this.name = "MailInboundQuarantinedError";

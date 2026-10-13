@@ -29,10 +29,21 @@ import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { defineTool } from "../tools/define-tool.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import { MAIL_CATEGORY_TABS } from "./category.js";
-import { MailFilterNotFoundError, MailInboundActorForbiddenError } from "./errors.js";
+import type { AgentMailGate } from "./agent-mail/hold.js";
+import {
+  MailFilterNotFoundError,
+  MailInboundActorForbiddenError,
+  MailInboundHeldError,
+} from "./errors.js";
 import { FILTER_ACTION_REQUIRED, hasFilterAction } from "./filter-actions.js";
 import { sanitizeMailHtml } from "./html-rendering.js";
-import { ingestRawMail, MailauthAuthenticator, type MailAuthenticator } from "./ingest.js";
+import {
+  ingestRawMail,
+  MailauthAuthenticator,
+  MailInboundQuarantinedError,
+  type MailAuthenticator,
+} from "./ingest.js";
+import type { MailQuarantineStore } from "./quarantine.js";
 import { formatMailboxAddress } from "./outbound-format.js";
 import { MailSendService } from "./outbound.js";
 import {
@@ -307,6 +318,9 @@ export interface CreateMailToolDefinitionsOptions {
    * message, but it is recorded so the From header is not trusted.
    */
   readonly inboundAuthenticator?: MailAuthenticator;
+  /** With `quarantineStore`, holds bridged mail an agent's settings do not admit. */
+  readonly agentMail?: AgentMailGate | undefined;
+  readonly quarantineStore?: MailQuarantineStore | undefined;
 }
 
 export function createMailToolDefinitions(
@@ -381,6 +395,14 @@ export function createMailToolDefinitions(
             receivedAt,
           },
           authenticator,
+          ...(options.agentMail === undefined ? {} : { agentMail: options.agentMail }),
+          ...(options.quarantineStore === undefined
+            ? {}
+            : { quarantineStore: options.quarantineStore }),
+        }).catch((error: unknown) => {
+          throw error instanceof MailInboundQuarantinedError
+            ? new MailInboundHeldError(error.quarantineId)
+            : error;
         });
         return {
           ok: true,

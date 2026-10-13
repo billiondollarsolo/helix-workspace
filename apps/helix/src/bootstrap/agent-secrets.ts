@@ -10,12 +10,17 @@ import {
   PostgresAdminAgentStore,
   registerAdminAgentRoutes,
 } from "../platform/auth/admin-agents.js";
+import {
+  PostgresAgentMailStore,
+  registerAgentMailAdminRoutes,
+} from "../platform/mail/agent-mail/index.js";
 import type { TenantEnvelopeCipher } from "../platform/secrets/envelope.js";
 
 /**
- * Admin → Agent credentials and Admin → Agent secrets: adding an agent, and
- * the secrets an administrator stores and grants to agents. The tools agents
- * use those secrets through are registered with the other tools.
+ * Admin → Agent credentials, Agent secrets and Agent mail: adding an agent,
+ * the secrets an administrator stores and grants to agents, and who may write
+ * to an agent's mailbox. The tools agents use those secrets through are
+ * registered with the other tools.
  */
 export function installAgentSecretAdministration(input: {
   readonly app: FastifyInstance;
@@ -32,6 +37,11 @@ export function installAgentSecretAdministration(input: {
   });
   registerAgentSecretAdminRoutes(app, {
     store: new PostgresAgentSecretStore(input.sql, input.cipher),
+    actorFromRequest,
+    auditSink,
+  });
+  registerAgentMailAdminRoutes(app, {
+    store: new PostgresAgentMailStore(input.sql),
     actorFromRequest,
     auditSink,
   });

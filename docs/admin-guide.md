@@ -130,6 +130,48 @@ Values are encrypted with a key derived for each organization. They are covered 
 backups in that encrypted form, so restoring a backup needs the same `HELIX_SECRET_ENCRYPTION_KEY`
 (or sign-in secret) the deployment ran with.
 
+## Mail for agents
+
+An agent with a mailbox reads its mail and acts on it, so mail is a way to instruct it. Set who
+may write to each agent under **Admin → Security → Agent mail** (`/admin/agent-mail`).
+
+1. Choose **Edit** next to the agent, give it an address on one of your verified mail domains,
+   and choose who may write to it from outside:
+
+   | Setting                     | What reaches the agent                                                                                                                 |
+   | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+   | **Only the senders I list** | Mail from the addresses (`ana@partner.example`) and domains (`@supplier.example`) you list, when the message proves it came from them. |
+   | **Anyone**                  | Mail from every sender.                                                                                                                |
+
+2. Mail that is not let through is kept under **Held mail** on the same page, with the sender and
+   the reason. **Deliver** puts it in the agent's mailbox; **Delete** erases it.
+
+What to expect:
+
+- **An agent starts closed.** Until you list a sender or choose **Anyone**, all mail from outside
+  is held. This includes agents and service accounts that had an address before this setting
+  existed.
+- **People in your organization can always write to an agent.** The settings cover mail arriving
+  from outside only.
+- **A listed sender has to be proven.** A From address is only text, so a listed sender is let
+  through only when the message passes DMARC for that sender's domain. Mail from a listed sender
+  whose domain publishes no DMARC policy is held; deliver it by hand, or ask the sender to
+  publish one.
+- **A domain entry is exact.** `@supplier.example` does not cover `eu.supplier.example`.
+- **Some mail is held whoever sent it:** messages that tell the agent to ignore or override its
+  instructions, or that contain text-direction characters used to hide content from a reviewer.
+  This catches crude attempts only. The sender list is what keeps strangers out, and an agent
+  open to **Anyone** should hold only permissions you would give a stranger.
+- **Held mail never reaches the agent.** It is not in the agent's mailbox, search, or any tool
+  result. When a message is addressed to a person and an agent, the person receives it and only
+  the agent's copy is held.
+- **Delivering is a decision about the agent.** The message is checked for malware again and then
+  placed in the mailbox, where the agent may act on what it says. Delivering and deleting held
+  mail needs the `mail.admin` permission and is recorded in the audit log
+  (`mail.quarantine.released`, `mail.quarantine.deleted`); changes to an agent's address or
+  senders are recorded as `agent_mail.updated`.
+- **Agents cannot change these settings.** Only a signed-in administrator can.
+
 ## Quality Gate Responsibilities
 
 Admins own release readiness for:

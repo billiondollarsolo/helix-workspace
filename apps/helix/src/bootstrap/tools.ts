@@ -56,6 +56,7 @@ import {
   registerMailStreamRoutes,
   registerMailTools,
 } from "../platform/mail/index.js";
+import { PostgresAgentMailStore } from "../platform/mail/agent-mail/index.js";
 import {
   createJibriRecorderHealthCheck,
   createMeetConferenceProvider,
@@ -122,6 +123,7 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
     assistantMemory,
     securityTier,
     mailStore,
+    mailQuarantineStore,
     driveStore,
     driveWorkflowStore,
     runtimeSearchEngine,
@@ -366,6 +368,8 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
   if (coreApps.shouldRegister("mail")) {
     registerMailTools(tools, {
       store: mailStore,
+      agentMail: new PostgresAgentMailStore(sql),
+      quarantineStore: mailQuarantineStore,
       defaultFromDomain: mailCfg.fromDomain,
       resolveInternalDomains: async (orgId) =>
         (await domainsStore.listDomains(orgId))

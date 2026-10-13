@@ -106,6 +106,8 @@ describe("mail quarantine admin flow", () => {
   let quarantine: MemoryQuarantineStore;
   let mail: RecordingMailStore;
   let audits: { readonly verb: string; readonly metadata?: unknown }[];
+  /** Organizations whose context a release delivered in. */
+  let deliveredFor: string[];
 
   beforeEach(async () => {
     actor = {
@@ -121,6 +123,7 @@ describe("mail quarantine admin flow", () => {
     quarantine.seed(raw);
     mail = new RecordingMailStore();
     audits = [];
+    deliveredFor = [];
     app = fastify();
     registerMailQuarantineAdminRoutes(app, {
       store: quarantine,
@@ -142,6 +145,10 @@ describe("mail quarantine admin flow", () => {
         },
       },
       resolveRecipient: async (address) => ({ orgId, actorId, address }),
+      runForTenant: (tenantId, operation) => {
+        deliveredFor.push(tenantId);
+        return operation();
+      },
       authenticator: auth,
       actorFromRequest: () => actor,
       auditSink: {
@@ -187,6 +194,9 @@ describe("mail quarantine admin flow", () => {
     });
     expect(released.statusCode).toBe(200);
     expect(mail.inserted).toHaveLength(1);
+    // Delivered in the organization's context, not the administrator's own: the
+    // recipient's mailbox is usually someone else's.
+    expect(deliveredFor).toEqual([orgId, orgId]);
     expect(quarantine.releases).toHaveLength(1);
     expect(audits).toEqual([expect.objectContaining({ verb: "mail.quarantine.released" })]);
     expect(released.body).not.toContain("EICAR-STANDARD-ANTIVIRUS-TEST-FILE");
@@ -308,6 +318,7 @@ class MemoryQuarantineStore implements MailQuarantineStore {
         id: quarantineId,
         recipientAddresses: ["user@helix.test"],
         envelopeFrom: "attacker@example.test",
+        fromAddress: null,
         signature: "Eicar-Test-Signature",
         status: "pending",
         bytesDeleted: false,

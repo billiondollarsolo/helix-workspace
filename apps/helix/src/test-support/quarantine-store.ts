@@ -19,6 +19,7 @@ export class CapturingMailQuarantineStore implements MailQuarantineStore {
         id: record.id,
         recipientAddresses: record.recipientAddresses,
         envelopeFrom: record.envelopeFrom ?? null,
+        fromAddress: null,
         signature: record.signature,
         status: "pending" as const,
         bytesDeleted: false,

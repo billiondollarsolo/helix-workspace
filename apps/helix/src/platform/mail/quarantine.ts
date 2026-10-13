@@ -23,6 +23,8 @@ export interface MailQuarantineSummary {
   readonly id: string;
   readonly recipientAddresses: readonly string[];
   readonly envelopeFrom: string | null;
+  /** The From address of mail held by an agent's policy; `null` for other holds. */
+  readonly fromAddress: string | null;
   readonly signature: string;
   readonly status: "pending" | "rechecking" | "released" | "deleted";
   readonly bytesDeleted: boolean;
@@ -148,9 +150,10 @@ export class PostgresMailQuarantineStore implements MailQuarantineStore {
   }
 
   async listPending(orgId: string): Promise<readonly MailQuarantineSummary[]> {
-    const rows = await this.sql<QuarantineRow[]>`
+    const rows = await this.sql<(QuarantineRow & { readonly from_address: string | null })[]>`
       select id, recipient_addresses, envelope_from, signature, status,
-        bytes_deleted_at, created_at, resolved_at
+        bytes_deleted_at, created_at, resolved_at,
+        scan_evidence->'agentMail'->>'from' as from_address
       from mail_quarantines
       where org_id = ${orgId}
         and (status = 'pending'
@@ -162,6 +165,7 @@ export class PostgresMailQuarantineStore implements MailQuarantineStore {
       id: row.id,
       recipientAddresses: row.recipient_addresses,
       envelopeFrom: row.envelope_from,
+      fromAddress: row.from_address,
       signature: row.signature,
       status: row.status,
       bytesDeleted: row.bytes_deleted_at !== null,

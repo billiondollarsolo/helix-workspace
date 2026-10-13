@@ -1,32 +1,43 @@
 import { queryOptions } from "@tanstack/react-query";
 import { authenticatedFetch, type AuthFetch } from "@/lib/auth";
+import { secondAdministratorRequired } from "@/features/admin/api-response";
 import { ADMIN_QUERY_DEFAULTS } from "@/features/admin/console/request-budget";
 
+export type AgentCredentialType = "api_key" | "oauth_client";
+
 export interface AgentCredential {
-  readonly clientId: string;
+  readonly id: string;
+  readonly credentialType: AgentCredentialType | "mtls_cert";
   readonly actorId: string;
-  readonly orgId: string;
+  readonly label: string;
+  readonly purpose: string;
   readonly scopes: readonly string[];
+  /** Set for OAuth clients only. */
+  readonly clientId: string | null;
   readonly expiresAt: string | null;
   readonly revokedAt: string | null;
+  readonly lastUsedAt: string | null;
 }
 
 export interface AgentCredentialCreateInput {
   readonly actorId: string;
+  readonly credentialType: AgentCredentialType;
+  readonly label: string;
+  readonly purpose: string;
   readonly scopes: readonly string[];
-  readonly expiresAt?: string | null;
+  readonly expiresAt: string;
 }
 
 export interface AgentCredentialCreateResult {
   readonly credential: AgentCredential;
-  readonly clientSecret: string;
-  readonly grantType: "client_credentials";
-  readonly tokenEndpoint: string;
+  /** The API key or client secret. Shown once; the server keeps only a hash. */
+  readonly secret?: string;
+  readonly grantType?: "client_credentials";
+  readonly tokenEndpoint?: string;
 }
 
 export interface AgentCredentialRevokeResult {
   readonly status: "revoked" | "not_found";
-  readonly clientId?: string;
   readonly credential?: AgentCredential;
 }
 
@@ -35,7 +46,9 @@ interface AgentCredentialListOutput {
 }
 
 interface PendingToolOutput {
-  readonly status: "pending_confirmation";
+  readonly status?: "pending_confirmation";
+  readonly code?: string;
+  readonly approval?: { readonly id?: string };
   readonly pending?: {
     readonly id?: string;
   };
@@ -83,10 +96,10 @@ export function createAgentCredential(
 }
 
 export function revokeAgentCredential(
-  clientId: string,
+  credentialId: string,
   fetchImpl: AuthFetch = authenticatedFetch,
 ): Promise<AgentCredentialRevokeResult> {
-  return callToolWithApproval("agent.credentials.revoke", { clientId }, fetchImpl);
+  return callToolWithApproval("agent.credentials.revoke", { credentialId }, fetchImpl);
 }
 
 async function callTool<Output>(
@@ -117,6 +130,10 @@ async function callToolWithApproval<Output>(
   }
 
   const pending = (await response.json().catch(() => ({}))) as PendingToolOutput;
+  // Not a confirmation this person can give: the change waits for someone else.
+  if (pending.code === "crown_jewel_approval_required") {
+    throw new Error(secondAdministratorRequired(pending.approval?.id ?? "unknown"));
+  }
   const pendingId = pending.pending?.id;
   if (pendingId === undefined || pendingId.length === 0) {
     throw new Error(`Tool ${toolId} is awaiting confirmation without a pending id.`);
@@ -148,8 +165,13 @@ function isExecutedToolOutput<Output>(value: unknown): value is ExecutedToolOutp
   return isRecord(value) && value.status === "executed" && "output" in value;
 }
 
+/** Tool routes answer `{ error: { message } }`; older ones a bare string. */
 function errorMessageFromOutput(output: unknown): string | undefined {
-  return isRecord(output) && typeof output.error === "string" ? output.error : undefined;
+  if (!isRecord(output)) return undefined;
+  if (typeof output.error === "string") return output.error;
+  return isRecord(output.error) && typeof output.error.message === "string"
+    ? output.error.message
+    : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

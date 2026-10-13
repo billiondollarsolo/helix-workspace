@@ -76,17 +76,19 @@ describe("AgentCredentialsManagement", () => {
 
     renderAgentCredentials();
 
-    await waitForText("client-active");
+    await waitForText("Scheduler key");
     expect(container.querySelector('table[aria-label="Agent credentials"]')).not.toBeNull();
     expect(container.textContent).toContain("platform.read");
-    expect(container.textContent).not.toContain("client-revoked");
-    // The actor id stays visible, but no longer alone.
-    await waitForText("Scheduler Agent (scheduler@agents.example)", container);
-    expect(container.textContent).toContain(agentActor().id);
+    expect(container.textContent).toContain("API key");
+    expect(container.textContent).not.toContain("Retired client");
+    // The agent is named, not shown as an id.
+    await waitForText("Scheduler Agent", container);
 
     clickIncludeRevoked();
 
-    await waitForText("client-revoked");
+    await waitForText("Retired client");
+    // An OAuth client shows the client ID an operator has to configure.
+    expect(container.textContent).toContain("OAuth client · client-revoked");
     expect(latestListBody()).toEqual({ includeRevoked: true });
     expect(alertMock).not.toHaveBeenCalled();
     expect(confirmMock).not.toHaveBeenCalled();
@@ -112,7 +114,7 @@ describe("AgentCredentialsManagement", () => {
     expect(headings[0]?.textContent).toBe("Agent credentials");
   });
 
-  it("picks the actor from the directory, grouped by actor type", async () => {
+  it("picks from the organization's agents and service accounts, agents first", async () => {
     fetchMock.mockImplementation((input) => {
       if (isActorDirectoryRequest(input)) {
         return Promise.resolve(actorDirectoryResponse());
@@ -129,18 +131,28 @@ describe("AgentCredentialsManagement", () => {
     const select = selectElement("agent-actor-id");
     expect(select.disabled).toBe(false);
     expect(Array.from(select.querySelectorAll("optgroup")).map((group) => group.label)).toEqual([
-      "Agent actors",
-      "Human actors",
+      "Agents",
+      "Service accounts",
     ]);
-    expect(optionLabels("agent-actor-id")).toContain("Scheduler Agent (scheduler@agents.example)");
-    expect(optionLabels("agent-actor-id")).toContain("Ada Lovelace (ada@example.com)");
-    expect(optionValues("agent-actor-id")).toEqual(["", agentActor().id, humanActor().id]);
+    // A disabled agent cannot be given a new credential.
+    expect(optionLabels("agent-actor-id")).toEqual([
+      "Select an agent",
+      "Scheduler Agent",
+      "Reporting",
+    ]);
+    expect(optionValues("agent-actor-id")).toEqual(["", agentActor().id, serviceAccount().id]);
   });
 
-  it("flags a human actor picked for an agent credential", async () => {
-    fetchMock.mockImplementation((input) => {
+  it("adds an agent and selects it for its first credential", async () => {
+    const agents = [agentActor()];
+    fetchMock.mockImplementation((input, init) => {
+      if (input === "/v1/api/admin/agents" && init?.method === "POST") {
+        const created = { ...agentActor(), id: NEW_AGENT_ID, displayName: "Release bot" };
+        agents.push(created);
+        return Promise.resolve(Response.json({ agent: created }, { status: 201 }));
+      }
       if (isActorDirectoryRequest(input)) {
-        return Promise.resolve(actorDirectoryResponse());
+        return Promise.resolve(Response.json({ agents }));
       }
       if (input === "/v1/api/tools/agent.credentials.list") {
         return Promise.resolve(Response.json({ credentials: [] }));
@@ -149,16 +161,23 @@ describe("AgentCredentialsManagement", () => {
     });
 
     renderAgentCredentials();
-    await waitForOption("agent-actor-id", humanActor().id);
+    await waitForOption("agent-actor-id", agentActor().id);
+    expect(findButton("Add agent", container).disabled).toBe(true);
 
-    selectOption("agent-actor-id", agentActor().id);
-    expect(container.textContent).not.toContain("not an agent");
+    typeInto("New agent name", "Release bot");
+    clickButton("Add agent", container);
 
-    selectOption("agent-actor-id", humanActor().id);
-    expect(container.textContent).toContain("is a human actor, not an agent");
+    await waitForOption("agent-actor-id", NEW_AGENT_ID);
+    const added = fetchMock.mock.calls.find(
+      (call) => call[0] === "/v1/api/admin/agents" && call[1]?.method === "POST",
+    );
+    expect(requestBody(added?.[1])).toEqual({ displayName: "Release bot", description: "" });
+    await waitFor(() => {
+      expect(selectElement("agent-actor-id").value).toBe(NEW_AGENT_ID);
+    });
   });
 
-  it("blocks creation when the actor directory cannot load", async () => {
+  it("blocks creation when the agents cannot be loaded", async () => {
     fetchMock.mockImplementation((input) => {
       if (isActorDirectoryRequest(input)) {
         return Promise.resolve(Response.json({ error: "actors offline" }, { status: 500 }));
@@ -170,7 +189,7 @@ describe("AgentCredentialsManagement", () => {
     });
 
     renderAgentCredentials();
-    await waitForText("Credentials cannot be issued until the actor directory loads.", container);
+    await waitForText("Credentials cannot be issued until the list loads.", container);
 
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("actors offline");
     expect(selectElement("agent-actor-id").disabled).toBe(true);
@@ -202,9 +221,7 @@ describe("AgentCredentialsManagement", () => {
             status: "executed",
             output: {
               credential: activeCredential(),
-              clientSecret: "secret-agent-token",
-              grantType: "client_credentials",
-              tokenEndpoint: "/oauth/token",
+              secret: "helix_ak_secret-agent-token",
             },
           }),
         );
@@ -216,16 +233,29 @@ describe("AgentCredentialsManagement", () => {
     await waitForText("No active credentials", container);
     await waitForOption("agent-actor-id", activeCredential().actorId);
     selectOption("agent-actor-id", activeCredential().actorId);
+    typeInto("Label", "Scheduler key");
+    typeInto("What it is for", "Books rooms");
     clickButton("Create credential");
 
     await waitFor(() => {
-      expect(inputValue("agent-client-secret")).toBe("secret-agent-token");
+      expect(inputValue("agent-client-secret")).toBe("helix_ak_secret-agent-token");
     });
-    // The picker is presentation only: the tool still receives a bare actor id.
-    expect(fetchBody("/v1/api/tools/agent.credentials.create")).toMatchObject({
+    expect(container.textContent).toContain("Send it in the x-api-key header.");
+    // Everything the server requires, including an expiry it will accept.
+    const sent = fetchBody("/v1/api/tools/agent.credentials.create") as {
+      readonly expiresAt: string;
+    };
+    expect(sent).toEqual({
       actorId: activeCredential().actorId,
+      credentialType: "api_key",
+      label: "Scheduler key",
+      purpose: "Books rooms",
       scopes: ["platform.read", "tools:read"],
+      expiresAt: expect.any(String),
     });
+    const lifetimeDays = (new Date(sent.expiresAt).getTime() - Date.now()) / 86_400_000;
+    expect(lifetimeDays).toBeGreaterThan(89);
+    expect(lifetimeDays).toBeLessThan(91);
     expect(
       fetchMock.mock.calls.some(
         (call) => call[0] === "/v1/api/tools/pending/pending-create/approve",
@@ -234,6 +264,36 @@ describe("AgentCredentialsManagement", () => {
     expect(alertMock).not.toHaveBeenCalled();
     expect(confirmMock).not.toHaveBeenCalled();
     expect(promptMock).not.toHaveBeenCalled();
+  });
+
+  it("says what to do when issuing waits for a second administrator", async () => {
+    fetchMock.mockImplementation((input) => {
+      if (isActorDirectoryRequest(input)) {
+        return Promise.resolve(actorDirectoryResponse());
+      }
+      if (input === "/v1/api/tools/agent.credentials.list") {
+        return Promise.resolve(Response.json({ credentials: [] }));
+      }
+      if (input === "/v1/api/tools/agent.credentials.create") {
+        return Promise.resolve(
+          Response.json(
+            { code: "crown_jewel_approval_required", approval: { id: "approval-1" } },
+            { status: 202 },
+          ),
+        );
+      }
+      return Promise.resolve(Response.json({ error: "unexpected" }, { status: 500 }));
+    });
+
+    renderAgentCredentials();
+    await waitForOption("agent-actor-id", activeCredential().actorId);
+    selectOption("agent-actor-id", activeCredential().actorId);
+    typeInto("Label", "Scheduler key");
+    typeInto("What it is for", "Books rooms");
+    clickButton("Create credential");
+
+    await waitForText("A second administrator must approve this change (request approval-1)");
+    expect(container.textContent).toContain("under Admin → Policies");
   });
 
   it("revokes a credential through the shared confirmation dialog without native confirm", async () => {
@@ -267,15 +327,13 @@ describe("AgentCredentialsManagement", () => {
     });
 
     renderAgentCredentials();
-    await waitForText("client-active");
-    await waitForText("Scheduler Agent (scheduler@agents.example)", container);
+    await waitForText("Scheduler key");
+    await waitForText("Scheduler Agent", container);
     clickButton("Revoke", container);
     await waitForText("Revoke agent credential", document.body);
 
     const dialog = document.querySelector('[data-slot="alert-dialog-description"]');
-    expect(dialog?.textContent).toContain("Scheduler Agent (scheduler@agents.example)");
-    expect(dialog?.textContent).toContain(activeCredential().actorId);
-    expect(dialog?.textContent).toContain("client-active");
+    expect(dialog?.textContent).toContain("Scheduler key stops working for Scheduler Agent");
     /* Now the shared ConfirmDestructive rather than a private copy of the same
        AlertDialog stack, at the policy's one-object tier: the scopes the
        credential actually carries, no blast radius invented for holders nothing
@@ -288,7 +346,7 @@ describe("AgentCredentialsManagement", () => {
 
     await waitFor(() => {
       expect(fetchBody("/v1/api/tools/agent.credentials.revoke")).toEqual({
-        clientId: "client-active",
+        credentialId: activeCredential().id,
       });
     });
     expect(
@@ -311,7 +369,7 @@ describe("AgentCredentialsManagement", () => {
     });
 
     renderAgentCredentials();
-    await waitForText("client-active");
+    await waitForText("Scheduler key");
     clickButton("Revoke", container);
     await waitForText("Revoke agent credential", document.body);
     clickButton("Cancel", document.body);
@@ -355,20 +413,29 @@ describe("AgentCredentialsManagement", () => {
   }
 });
 
+const NEW_AGENT_ID = "00000000-0000-4000-8000-000000000009";
+
 function activeCredential() {
   return {
-    clientId: "client-active",
+    id: "00000000-0000-4000-8000-0000000000c1",
+    credentialType: "api_key",
     actorId: "00000000-0000-4000-8000-000000000001",
-    orgId: "00000000-0000-4000-8000-000000000099",
+    label: "Scheduler key",
+    purpose: "Books rooms",
     scopes: ["platform.read", "tools:read"],
-    expiresAt: null,
+    clientId: null,
+    expiresAt: "2026-12-01T09:00:00.000Z",
     revokedAt: null,
+    lastUsedAt: null,
   };
 }
 
 function revokedCredential() {
   return {
     ...activeCredential(),
+    id: "00000000-0000-4000-8000-0000000000c2",
+    credentialType: "oauth_client",
+    label: "Retired client",
     clientId: "client-revoked",
     revokedAt: "2026-05-20T16:00:00.000Z",
   };
@@ -377,36 +444,36 @@ function revokedCredential() {
 function agentActor() {
   return {
     id: "00000000-0000-4000-8000-000000000001",
-    orgId: "00000000-0000-4000-8000-000000000099",
-    type: "agent",
-    email: "scheduler@agents.example",
     displayName: "Scheduler Agent",
-    scopes: ["platform.read"],
-    status: "active",
-    disabledAt: null,
-    lastSignInAt: null,
+    type: "agent",
+    description: "",
+    disabled: false,
     createdAt: "2026-05-01T09:00:00.000Z",
-    updatedAt: "2026-05-01T09:00:00.000Z",
   };
 }
 
-function humanActor() {
+function serviceAccount() {
   return {
     ...agentActor(),
     id: "00000000-0000-4000-8000-000000000002",
-    type: "human",
-    email: "ada@example.com",
-    displayName: "Ada Lovelace",
+    type: "service_account",
+    displayName: "Reporting",
   };
 }
 
-/** Humans first on the wire: the picker is expected to order agents up front. */
+/** Service accounts first on the wire: the picker is expected to put agents up front. */
 function actorDirectoryResponse() {
-  return Response.json({ users: [humanActor(), agentActor()], nextCursor: null });
+  return Response.json({
+    agents: [
+      serviceAccount(),
+      agentActor(),
+      { ...agentActor(), id: "00000000-0000-4000-8000-000000000003", disabled: true },
+    ],
+  });
 }
 
 function isActorDirectoryRequest(input: unknown): boolean {
-  return typeof input === "string" && input.startsWith("/v1/api/admin/users");
+  return input === "/v1/api/admin/agents";
 }
 
 function clickIncludeRevoked() {
@@ -529,6 +596,21 @@ function setSelectValue(select: HTMLSelectElement, value: string) {
   }
   const setValue: (nextValue: string) => void = descriptor.set.bind(select);
   setValue(value);
+}
+
+/** Type into the field with this label, the way React hears it. */
+function typeInto(label: string, value: string) {
+  const input = Array.from(containerLabels())
+    .find((candidate) => candidate.textContent?.trim().startsWith(label))
+    ?.querySelector("input");
+  if (input === null || input === undefined) {
+    throw new Error(`Field not found: ${label}`);
+  }
+  const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+  act(() => {
+    setValue?.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
 }
 
 function inputValue(id: string) {

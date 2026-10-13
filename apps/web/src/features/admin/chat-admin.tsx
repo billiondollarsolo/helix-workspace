@@ -652,7 +652,7 @@ function ExportRoomChecklist({
               const checked = selected.includes(room.id);
               return (
                 <li key={room.id}>
-                  <label className="flex items-center gap-2 type-meta">
+                  <label className="flex min-h-6 items-center gap-2 type-meta">
                     <input
                       checked={checked}
                       disabled={!checked && full}

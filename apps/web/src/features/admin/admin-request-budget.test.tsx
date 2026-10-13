@@ -344,8 +344,16 @@ describe("admin console request budget", () => {
           "requestCount": 2,
           "settled": true,
           "urls": [
-            "/v1/api/admin/users?includeDisabled=false&limit=50",
+            "/v1/api/admin/agents",
             "/v1/api/tools/agent.credentials.list",
+          ],
+        },
+        "agent-secrets": {
+          "requestCount": 2,
+          "settled": true,
+          "urls": [
+            "/v1/api/admin/agent-secrets",
+            "/v1/api/admin/agents",
           ],
         },
         "ai-costs": {

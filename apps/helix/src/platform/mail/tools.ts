@@ -318,6 +318,12 @@ export interface CreateMailToolDefinitionsOptions {
    * message, but it is recorded so the From header is not trusted.
    */
   readonly inboundAuthenticator?: MailAuthenticator;
+  /**
+   * Whether an organization lets its agents save drafts in their own mailbox
+   * without a person confirming each one. A draft sends nothing; sending still
+   * waits for a person. Left out, every draft an agent saves is confirmed.
+   */
+  readonly draftsRunUnattended?: ((orgId: string) => Promise<boolean>) | undefined;
   /** With `quarantineStore`, holds bridged mail an agent's settings do not admit. */
   readonly agentMail?: AgentMailGate | undefined;
   readonly quarantineStore?: MailQuarantineStore | undefined;
@@ -941,6 +947,11 @@ export function createMailToolDefinitions(
       description: "Create or update a mail draft for the current actor.",
       permission: "mail.write",
       sideEffects: "write",
+      // The draft is always in the caller's own mailbox, and nothing leaves Helix.
+      standingAuthorization: async (_input, actor) =>
+        actor.type === "agent" && (await options.draftsRunUnattended?.(actor.orgId)) === true
+          ? { id: "agent-own-drafts", version: "1", requestsPerMinute: 30, requestsPerDay: 2_000 }
+          : null,
       inputSchema: zodToolSchema(mailDraftSaveInputSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(mailDraftSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {

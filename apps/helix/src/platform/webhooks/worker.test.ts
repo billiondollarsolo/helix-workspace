@@ -30,6 +30,78 @@ const outboundWebhookId = "00000000-0000-4000-8000-000000000010";
 const secretResolver = { resolveSecret: (_orgId: string, ciphertext: string) => ciphertext };
 
 describe("OutboundWebhookWorker", () => {
+  it("delivers an event only to webhooks of the organization it happened in", async () => {
+    const otherOrgId = "00000000-0000-4000-8000-0000000000ff";
+    const store = new InMemoryWebhookStore([
+      outboundWebhook({ id: outboundWebhookId, eventSubjects: ["activity.>"] }),
+      outboundWebhook({
+        id: "00000000-0000-4000-8000-000000000013",
+        orgId: otherOrgId,
+        eventSubjects: ["activity.>"],
+        url: "https://other.test/webhook",
+      }),
+    ]);
+    const httpClient = new RecordingHttpClient([{ status: 204, headers: {}, body: "" }]);
+    const contexts: string[] = [];
+    const worker = new OutboundWebhookWorker({
+      store,
+      events: new NoopEventBus(),
+      httpClient,
+      secretResolver,
+      runForOrg: (org, work) => {
+        contexts.push(org);
+        return work();
+      },
+    });
+    const event = { subject: "activity.mail.received", occurredAt: "2026-05-20T12:00:00.000Z" };
+
+    await expect(worker.handle({ ...event, payload: { orgId, actorId } })).resolves.toEqual({
+      attempted: 1,
+      delivered: 1,
+      failed: 0,
+    });
+    expect(httpClient.requests.map((request) => request.url)).toEqual([
+      "https://example.test/webhook",
+    ]);
+    // Every lookup and write ran inside that organization's context.
+    expect(new Set(contexts)).toEqual(new Set([orgId]));
+    // An event that names no organization reaches nobody's webhook.
+    await expect(worker.handle({ ...event, payload: { actorId } })).resolves.toEqual({
+      attempted: 0,
+      delivered: 0,
+      failed: 0,
+    });
+  });
+
+  it("limits a webhook to events about the people or agents it lists", async () => {
+    const agentId = "00000000-0000-4000-8000-0000000000a1";
+    const store = new InMemoryWebhookStore([
+      outboundWebhook({
+        id: outboundWebhookId,
+        eventSubjects: ["activity.mail.received"],
+        metadata: { onlyActorIds: [agentId] },
+      }),
+    ]);
+    const httpClient = new RecordingHttpClient([{ status: 204, headers: {}, body: "" }]);
+    const worker = new OutboundWebhookWorker({
+      store,
+      events: new NoopEventBus(),
+      httpClient,
+      secretResolver,
+    });
+    const received = (mailbox: string) =>
+      worker.handle({
+        subject: "activity.mail.received",
+        payload: { orgId, actorId: mailbox, subject: "Quarterly numbers" },
+        occurredAt: "2026-05-20T12:00:00.000Z",
+      });
+
+    // Someone else's new mail is not this webhook's business.
+    await expect(received(actorId)).resolves.toMatchObject({ attempted: 0 });
+    await expect(received(agentId)).resolves.toMatchObject({ attempted: 1, delivered: 1 });
+    expect(httpClient.requests).toHaveLength(1);
+  });
+
   it("dispatches an event to enabled outbound webhooks matching the subject", async () => {
     const store = new InMemoryWebhookStore([
       outboundWebhook({ id: outboundWebhookId, eventSubjects: ["ticket.*"] }),
@@ -56,7 +128,7 @@ describe("OutboundWebhookWorker", () => {
     await expect(
       worker.handle({
         subject: "ticket.created",
-        payload: { id: "T-1" },
+        payload: { id: "T-1", orgId },
         trace: {
           traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
           tracestate: "vendor=value",
@@ -107,7 +179,7 @@ describe("OutboundWebhookWorker", () => {
     await expect(
       worker.handle({
         subject: "ticket.created",
-        payload: { id: "T-1", classification: "restricted" },
+        payload: { id: "T-1", orgId, classification: "restricted" },
         occurredAt: "2026-05-20T12:00:00.000Z",
       }),
     ).resolves.toEqual({ attempted: 1, delivered: 0, failed: 1 });
@@ -135,7 +207,7 @@ describe("OutboundWebhookWorker", () => {
 
     await worker.handle({
       subject: "ticket.created",
-      payload: { id: "T-1" },
+      payload: { id: "T-1", orgId },
       trace: {
         traceId: "4bf92f3577b34da6a3ce929d0e0e4736",
         spanId: "00f067aa0ba902b7",

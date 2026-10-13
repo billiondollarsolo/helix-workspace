@@ -349,11 +349,12 @@ describe("admin console request budget", () => {
           ],
         },
         "agent-mail": {
-          "requestCount": 2,
+          "requestCount": 3,
           "settled": true,
           "urls": [
             "/v1/api/admin/agent-mail",
             "/v1/api/admin/mail/quarantine",
+            "/v1/api/admin/tenant-config",
           ],
         },
         "agent-secrets": {

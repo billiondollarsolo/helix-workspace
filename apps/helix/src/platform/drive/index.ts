@@ -18,6 +18,7 @@ export * from "./storage-policy.js";
 export * from "./store.js";
 export * from "./tools.js";
 export { registerDriveCollaborationTools } from "./tools-collaboration.js";
+export { registerDriveCopyTool } from "./tools-copy.js";
 export * from "./types.js";
 export * from "./upload-state.js";
 export * from "./webdav-security.js";

@@ -3,6 +3,7 @@
    what applies to the current selection. */
 import {
   ClipboardCheck as WorkflowIcon,
+  Copy as CopyIcon,
   Download as DownloadIcon,
   EyeOff as HideIcon,
   FolderInput as MoveIcon,
@@ -27,6 +28,7 @@ export type DriveActionId =
   | "share"
   | "copy-link"
   | "rename"
+  | "copy"
   | "move"
   | "star"
   | "unstar"
@@ -53,6 +55,7 @@ const ACTION_ICONS: Readonly<Record<DriveActionId, LucideIcon>> = {
   share: ShareIcon,
   "copy-link": LinkIcon,
   rename: RenameIcon,
+  copy: CopyIcon,
   move: MoveIcon,
   star: StarIcon,
   unstar: UnstarIcon,
@@ -122,6 +125,9 @@ export function driveItemActions(
       { id: "copy-link", label: "Copy link", group: 1 },
       { id: "rename", label: "Rename", shortcut: "F2", group: 2 },
     );
+  }
+  if (onlyFiles) {
+    actions.push({ id: "copy", label: "Make a copy", disabled: !allAvailable, group: 2 });
   }
   actions.push({ id: "move", label: "Move", group: 2 });
   if (onlyFiles) {

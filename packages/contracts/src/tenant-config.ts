@@ -17,7 +17,8 @@ export type TenantByoConfig = z.infer<typeof tenantByoConfigSchema>;
 
 /**
  * Tenant feature flags: org-admin policy switches. `assistant_retrieval`,
- * `mail_outbound` and `agent_secrets_unattended` default to on;
+ * `mail_outbound`, `agent_secrets_unattended` and
+ * `agent_mail_drafts_unattended` default to on;
  * `calendar_import_invitations`, `chat_admin_private_rooms` and
  * `passwords_app` are opt-ins.
  * The stored object also carries structured policies such as
@@ -32,6 +33,7 @@ export const tenantFeatureFlagsSchema = z
     chat_admin_private_rooms: z.boolean(),
     passwords_app: z.boolean(),
     agent_secrets_unattended: z.boolean(),
+    agent_mail_drafts_unattended: z.boolean(),
   })
   .passthrough();
 export type TenantFeatureFlags = z.infer<typeof tenantFeatureFlagsSchema>;
@@ -88,6 +90,7 @@ export const SYSTEM_TENANT_FEATURE_FLAGS = {
   chat_admin_private_rooms: false,
   passwords_app: false,
   agent_secrets_unattended: true,
+  agent_mail_drafts_unattended: true,
 } as const satisfies TenantFeatureFlags;
 
 export const SYSTEM_TENANT_QUOTAS = {

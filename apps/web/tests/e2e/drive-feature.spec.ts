@@ -125,7 +125,15 @@ test.describe("/drive feature flow", () => {
       .filter({ hasText: "Backend roadmap.pdf" })
       .click({ button: "right" });
     const menu = page.getByRole("menu");
-    for (const item of ["Download", "Share", "Copy link", "Rename", "Move", "Move to trash"]) {
+    for (const item of [
+      "Download",
+      "Share",
+      "Copy link",
+      "Rename",
+      "Make a copy",
+      "Move",
+      "Move to trash",
+    ]) {
       await expect(menu.getByRole("menuitem", { name: item, exact: false }).first()).toBeVisible();
     }
     await menu.getByRole("menuitem", { name: /^Share/u }).click();
@@ -199,6 +207,25 @@ test.describe("/drive feature flow", () => {
       requestId: REQUEST_ID,
       approve: true,
     });
+  });
+
+  test("makes a copy of a file from its menu", async ({ page }) => {
+    test.skip(isLiveBackend(), "Uses deterministic fixtures.");
+    const accessToken = await seedBrowserSession(page, "e2e-drive-token");
+    const calls = await mockDriveBackend(page, accessToken, { view: "list" });
+    await page.goto("/drive");
+
+    await page.getByRole("row").filter({ hasText: "Budget.xlsx" }).click({ button: "right" });
+    await page.getByRole("menu").getByRole("menuitem", { name: "Make a copy" }).click();
+    await expect(page.getByText("“Copy of Budget.xlsx” created")).toBeVisible();
+    expect(calls.find((call) => call.tool === "drive.copy")?.body).toEqual({ objectId: budgetId });
+    // Folders are not copied: the action is offered for files only.
+    await page.keyboard.press("Escape");
+    await page.getByRole("row").filter({ hasText: "Planning" }).click({ button: "right" });
+    await expect(page.getByRole("menu").getByRole("menuitem", { name: "Open" })).toBeVisible();
+    await expect(page.getByRole("menu").getByRole("menuitem", { name: "Make a copy" })).toHaveCount(
+      0,
+    );
   });
 
   test("removes someone else's item from Shared with me, with undo", async ({ page }) => {
@@ -393,6 +420,13 @@ async function mockDriveBackend(
           return;
         }
         await fulfillJson(route, { grants: [] });
+        return;
+      case "drive.copy":
+        await fulfillJson(route, {
+          objectId: "00000000-0000-4000-8000-00000000c0f1",
+          name: "Copy of Budget.xlsx",
+          folderId: null,
+        });
         return;
       case "drive.access.requests": {
         const answered = toolCalls.some((call) => call.tool === "drive.access.decide");

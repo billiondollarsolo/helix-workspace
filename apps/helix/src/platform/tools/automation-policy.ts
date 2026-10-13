@@ -1,4 +1,10 @@
-import type { JsonObject, JsonValue, PendingActionPreview, ToolDefinition } from "@helix/sdk-types";
+import type {
+  Actor,
+  JsonObject,
+  JsonValue,
+  PendingActionPreview,
+  ToolDefinition,
+} from "@helix/sdk-types";
 import type { AgentAutomationPolicy, AgentAutomationPolicyRule } from "../auth/credentials.js";
 import { getCryptoProvider } from "../crypto/index.js";
 
@@ -65,6 +71,36 @@ const targetKeys = new Set([
   "userIds",
 ]);
 const recipientKeys = new Set(["address", "bcc", "cc", "email", "recipient", "recipients", "to"]);
+
+/**
+ * A call the credential's own policy does not cover may still run unattended
+ * when an administrator granted the tool's resource to this agent. A refusal
+ * to let a policy change itself is never overridden.
+ */
+export async function withStandingAuthorization(
+  decision: AutomationPolicyDecision,
+  tool: ToolDefinition,
+  parsedInput: unknown,
+  actor: Actor,
+): Promise<AutomationPolicyDecision> {
+  if (
+    decision.allowed ||
+    decision.reason === "policy_self_modification" ||
+    tool.standingAuthorization === undefined
+  ) {
+    return decision;
+  }
+  const standing = await tool.standingAuthorization(parsedInput, actor);
+  return standing === null
+    ? decision
+    : {
+        allowed: true,
+        policyVersion: standing.version,
+        ruleId: standing.id,
+        requestsPerMinute: standing.requestsPerMinute,
+        requestsPerDay: standing.requestsPerDay,
+      };
+}
 
 export function evaluateAutomationPolicy(input: {
   readonly policy: AgentAutomationPolicy | null | undefined;

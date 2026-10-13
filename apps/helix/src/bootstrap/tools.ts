@@ -405,6 +405,9 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
 
   registerAgentSecretTools(tools, {
     store: new PostgresAgentSecretStore(sql, tenantSecretCipher),
+    requestsRunUnattended: async (orgId) =>
+      (await loadEffectiveTenantConfig({ orgs: orgStore }, orgId))?.features
+        .agent_secrets_unattended !== false,
   });
 
   if (coreApps.shouldRegister("chat")) {

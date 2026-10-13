@@ -67,6 +67,19 @@ export interface ToolScopeComposition<Input = unknown> {
   readonly conditionalScopes?: readonly ConditionalScopeRequirement<Input>[];
 }
 
+/**
+ * An administrator's standing authorization for one exact agent call. It plays
+ * the part of a credential's automation rule: it names what was authorized and
+ * bounds how often it may be used.
+ */
+export interface StandingAuthorization {
+  /** What authorized the call, for the audit trail. */
+  readonly id: string;
+  readonly version: string;
+  readonly requestsPerMinute: number;
+  readonly requestsPerDay: number;
+}
+
 export interface ToolDefinition<Input = unknown, Output = unknown> {
   readonly id: string;
   readonly description: string;
@@ -94,6 +107,13 @@ export interface ToolDefinition<Input = unknown, Output = unknown> {
    * long-lived credentials, which must not outlive a delegated grant.
    */
   readonly interactiveSessionOnly?: boolean;
+  /**
+   * Resolves an administrator's standing authorization for an agent to make
+   * this exact call without a person confirming it, or null when there is
+   * none and the call waits like any other agent action. Only for tools whose
+   * every use an administrator has already granted, resource by resource.
+   */
+  standingAuthorization?(input: Input, actor: Actor): Promise<StandingAuthorization | null>;
   handler(input: Input, ctx: ToolContext): Promise<Output>;
 }
 

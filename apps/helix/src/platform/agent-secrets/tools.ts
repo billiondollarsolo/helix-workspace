@@ -7,6 +7,7 @@ import { defineTool } from "../tools/define-tool.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import {
   checkSecretRequest,
+  secretMayBeSentTo,
   secretHttpRequestSchema,
   secretHttpResponseSchema,
   sendWithSecret,
@@ -36,8 +37,18 @@ const revealedSecretSchema = z.object({
   version: z.number().int(),
 });
 
+/** How often one agent may send one secret without a person confirming. */
+const UNATTENDED_REQUESTS_PER_MINUTE = 60;
+const UNATTENDED_REQUESTS_PER_DAY = 5_000;
+
 export interface AgentSecretToolOptions {
   readonly store: Pick<PostgresAgentSecretStore, "listGranted" | "open" | "recordUse">;
+  /**
+   * Whether the organization lets agents send the secrets they were granted
+   * without a person confirming each request. When it does not, every request
+   * waits like any other agent action.
+   */
+  readonly requestsRunUnattended: (orgId: string) => Promise<boolean>;
   /** Test seam for the outgoing request. */
   readonly outbound?: Pick<OutboundHttpClientOptions, "resolve" | "transport">;
 }
@@ -121,12 +132,29 @@ export function createAgentSecretTools(options: AgentSecretToolOptions): readonl
       {
         id: "secrets.http_request",
         description:
-          "Make one HTTPS request with a granted secret added by Helix, so the secret never has to be read. Name the secret, the method, and the URL; the URL's host must be one the secret may be sent to (see secrets.list). Do not set the authentication header yourself. Returns the status and up to 1 MiB of response text.",
+          "Make one HTTPS request with a granted secret added by Helix, so the secret never has to be read. Name the secret, the method, and the URL; the URL's host must be one the secret may be sent to (see secrets.list). Do not set the authentication header yourself. Returns the status and up to 1 MiB of response text. A request the organization has not authorized in advance waits for a person to confirm it.",
         permission,
         sideEffects: "external_communication",
         rateLimit: { perActor: { perMinute: 60 } },
         inputSchema: zodToolSchema(secretHttpRequestSchema, genericObjectJsonSchema),
         outputSchema: zodToolSchema(secretHttpResponseSchema, genericObjectJsonSchema),
+        // An administrator stored this secret for these hosts and granted it to
+        // this agent: that is the authorization for exactly this request. Any
+        // other request waits for a person, and is then refused by the handler.
+        standingAuthorization: async (input, actor) => {
+          if (actor.type !== "agent" && actor.type !== "service_account") return null;
+          if (!(await options.requestsRunUnattended(actor.orgId))) return null;
+          const granted = await store.listGranted({ orgId: actor.orgId, actorId: actor.id });
+          const secret = granted.find((candidate) => candidate.name === input.secret);
+          return secret === undefined || !secretMayBeSentTo(secret, input.url)
+            ? null
+            : {
+                id: `agent-secret-grant:${secret.id}`,
+                version: String(secret.version),
+                requestsPerMinute: UNATTENDED_REQUESTS_PER_MINUTE,
+                requestsPerDay: UNATTENDED_REQUESTS_PER_DAY,
+              };
+        },
         handler: async (input, ctx) => {
           requireAgent(ctx.actor);
           const scope = { orgId: ctx.actor.orgId, actorId: ctx.actor.id };

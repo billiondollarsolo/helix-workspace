@@ -174,7 +174,7 @@ function PolicyEditForm({ policy, pending, onCancel, onSubmit }: PolicyEditFormP
     policy.settings.sensitiveActionMfaRequired !== false,
   );
   const [secondAdmin, setSecondAdmin] = useState(
-    policy.settings.secondAdminApprovalRequired !== false,
+    policy.settings.secondAdminApprovalRequired === true,
   );
   const requiredUnavailable =
     policy.runtimeStatus?.mode === "recorded_only" ||

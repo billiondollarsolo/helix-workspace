@@ -10,7 +10,11 @@ export interface AdminSecurityControls {
   readonly secondAdminApprovalRequired: boolean;
 }
 
-/** Missing fields retain the existing defaults; explicit operator choices win. */
+/**
+ * Missing fields retain the existing defaults; explicit operator choices win.
+ * A second administrator's approval is something an organization turns on: a
+ * workspace starts with one administrator, who must be able to run it alone.
+ */
 export function resolveAdminSecurityControls(
   tier: SecurityTier,
   policy?: SecurityPolicyLike | null,
@@ -27,7 +31,7 @@ export function resolveAdminSecurityControls(
     adminMfaSource:
       choice === "optional" || choice === "required" || legacyRequired ? "policy" : "tier",
     sensitiveActionMfaRequired: settings?.sensitiveActionMfaRequired !== false,
-    secondAdminApprovalRequired: settings?.secondAdminApprovalRequired !== false,
+    secondAdminApprovalRequired: settings?.secondAdminApprovalRequired === true,
   };
 }
 

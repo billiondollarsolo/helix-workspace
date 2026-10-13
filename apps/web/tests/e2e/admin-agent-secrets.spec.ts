@@ -105,13 +105,14 @@ async function openAgentSecrets(page: Page): Promise<Vault> {
     if (pathname === "/v1/api/admin/agent-secrets" && method === "POST") {
       const body = request.postDataJSON() as StoredSecret & { value: string };
       vault.created.push(body);
-      const { value: _value, ...stored } = body;
+      // Like the server, keep everything about the secret except its value.
       const secret = {
         ...PORTAL,
-        ...stored,
+        ...body,
         id: "22222222-2222-4222-8222-222222222222",
         grants: [],
-      };
+      } as StoredSecret & { value?: string };
+      delete secret.value;
       vault.secrets.push(secret);
       return route.fulfill({ status: 201, json: { secret } });
     }

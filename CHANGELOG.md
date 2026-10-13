@@ -557,6 +557,10 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Fixed
 
+- The install guide asked for Docker Compose 2.24, which does not merge the production files
+  correctly: 2.24 quietly drops settings and 2.25 refuses the files. The requirement is now
+  2.27, the oldest release that resolves the production stack and the optional Meet install
+  the same way current releases do, and the boot smoke test checks it before starting.
 - The bundled Jitsi stack (`--profile meet`) starts again. The pinned TURN server rejected the
   removed `--no-dtls` option and restarted in a loop, and the conference focus and media bridge
   exited at startup because the images take ownership of `/config`, where two override files

@@ -77,6 +77,12 @@ done
 cd "$SCRIPT_DIR/../.."
 ensure_repo_root
 for command in docker node openssl curl; do require_cmd "$command"; done
+# Older Compose releases merge the production files differently: some refuse
+# them, and 2.24 quietly drops settings.
+compose_version=$(docker compose version --short 2>/dev/null | sed 's/^v//')
+if [[ "$(printf '%s\n' 2.27.0 "${compose_version:-0}" | sort -V | head -n 1)" != 2.27.0 ]]; then
+  die "Docker Compose 2.27 or newer is required (found ${compose_version:-none})"
+fi
 if [[ "$WITH_MEET" == 1 ]] && ! node -e '
   const { createRequire } = require("node:module");
   const { chromium } = createRequire(process.cwd() + "/apps/web/package.json")("@playwright/test");

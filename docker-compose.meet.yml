@@ -21,7 +21,7 @@
 # Recording (Jibri) is not part of this install. See docs/deployment-production.md.
 
 x-jitsi-hardening: &jitsi-hardening
-  profiles: !reset []
+  profiles: !override []
   security_opt: !override
     - no-new-privileges:true
   restart: unless-stopped

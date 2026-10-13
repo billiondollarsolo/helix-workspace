@@ -27,16 +27,16 @@ full production configuration guide.
 
 ## Preconditions
 
-| Need                           | Notes                                                                                      |
-| ------------------------------ | ------------------------------------------------------------------------------------------ |
-| Linux amd64 host               | 4 CPUs, 16 GB memory, 80 GB disk. The ClamAV image is amd64-only.                          |
-| Docker Engine + Compose plugin | Compose 2.24 or newer. The secrets generator needs Node.js and `openssl`, or Docker alone. |
-| A checkout of this repository  | At the commit you deploy; the overlay mounts configuration files from it.                  |
-| Public DNS control             | An `A`/`AAAA` record for `HELIX_DOMAIN` pointing at the host, and `MX` for inbound mail.   |
-| Open inbound ports             | 80 and 443 for the web app; 25 for inbound mail (many hosting providers block it — ask).   |
-| Managed mail provider account  | SES, Postmark, Mailgun, managed SMTP, or SMTP relay, with STARTTLS — see provider docs.    |
-| An authenticator app           | Administrators need 2-step verification before the Admin console works.                    |
-| Promoted image digests         | Every `HELIX_*_IMAGE` value must be `registry/repo@sha256:<64 hex>`.                       |
+| Need                           | Notes                                                                                                                                                                        |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Linux amd64 host               | 4 CPUs, 16 GB memory, 80 GB disk. The ClamAV image is amd64-only.                                                                                                            |
+| Docker Engine + Compose plugin | Compose 2.27 or newer (`docker compose version`). Older releases merge the production files incorrectly. The secrets generator needs Node.js and `openssl`, or Docker alone. |
+| A checkout of this repository  | At the commit you deploy; the overlay mounts configuration files from it.                                                                                                    |
+| Public DNS control             | An `A`/`AAAA` record for `HELIX_DOMAIN` pointing at the host, and `MX` for inbound mail.                                                                                     |
+| Open inbound ports             | 80 and 443 for the web app; 25 for inbound mail (many hosting providers block it — ask).                                                                                     |
+| Managed mail provider account  | SES, Postmark, Mailgun, managed SMTP, or SMTP relay, with STARTTLS — see provider docs.                                                                                      |
+| An authenticator app           | Administrators need 2-step verification before the Admin console works.                                                                                                      |
+| Promoted image digests         | Every `HELIX_*_IMAGE` value must be `registry/repo@sha256:<64 hex>`.                                                                                                         |
 
 Read claims before you brief pilot users: [`product-claims-mvp.md`](../product-claims-mvp.md).
 

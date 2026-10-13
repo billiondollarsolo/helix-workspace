@@ -45,9 +45,11 @@ export type TenantFeatureFlags = z.infer<typeof tenantFeatureFlagsSchema>;
 export const tenantQuotasSchema = z
   .object({
     storage_bytes_limit: z.number().nullable(),
-    ai_tokens_monthly_limit: z.number().nullable(),
-    ai_image_gen_monthly_limit: z.number().nullable(),
-    actors_limit: z.number().nullable(),
+    /** Storage for each person: their Drive files and their mailbox. */
+    storage_bytes_per_person_limit: z.number().nullable(),
+    /** Messages each person may send in an hour, and in a day. */
+    mail_send_per_hour_limit: z.number().nullable(),
+    mail_send_per_day_limit: z.number().nullable(),
     outbound_webhooks_limit: z.number().nullable(),
     api_rps_limit: z.number().nullable(),
     export_jobs_per_hour: z.number().nullable(),
@@ -95,9 +97,9 @@ export const SYSTEM_TENANT_FEATURE_FLAGS = {
 
 export const SYSTEM_TENANT_QUOTAS = {
   storage_bytes_limit: null,
-  ai_tokens_monthly_limit: null,
-  ai_image_gen_monthly_limit: null,
-  actors_limit: null,
+  storage_bytes_per_person_limit: null,
+  mail_send_per_hour_limit: null,
+  mail_send_per_day_limit: null,
   outbound_webhooks_limit: null,
   api_rps_limit: null,
   export_jobs_per_hour: null,

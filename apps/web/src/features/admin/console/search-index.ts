@@ -136,9 +136,9 @@ const SETTINGS: readonly Omit<AdminSettingEntry, "location">[] = [
     keywords: ["logo", "color", "accent", "display name", "custom domain"],
   },
   {
-    title: "Limits",
-    section: "workspace-settings",
-    keywords: ["quota", "storage limit", "rate limit", "accounts"],
+    title: "Limits for each person",
+    section: "limits",
+    keywords: ["quota", "storage limit", "mailbox size", "sending limit", "per user"],
   },
   {
     title: "Bring your own storage",

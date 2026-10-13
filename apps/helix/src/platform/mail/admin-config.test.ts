@@ -57,8 +57,6 @@ describe("mail admin configuration status", () => {
         MAIL_SPF_RECORD: "v=spf1 include:example.net -all",
         MAIL_DKIM_SELECTOR: "helix",
         MAIL_DMARC_POLICY: "p=quarantine",
-        MAIL_SEND_RATE_LIMIT_PER_HOUR: "80",
-        MAIL_SEND_RATE_LIMIT_PER_DAY: "400",
         MAIL_MAX_MESSAGE_BYTES: "26214400",
       },
       deliveryHealthStore: store,
@@ -95,11 +93,7 @@ describe("mail admin configuration status", () => {
       ["DKIM", "configured"],
       ["DMARC", "configured"],
     ]);
-    expect(status.quotas).toMatchObject({
-      perActorPerHour: 80,
-      perActorPerDay: 400,
-      maxMessageBytes: 26214400,
-    });
+    expect(status.quotas).toMatchObject({ maxMessageBytes: 26214400 });
     expect(status.deliveryHealth).toMatchObject({
       counts: expect.objectContaining({ queued: 2, sending: 1, accepted: 9, failed: 1 }),
       failedLast24h: 1,

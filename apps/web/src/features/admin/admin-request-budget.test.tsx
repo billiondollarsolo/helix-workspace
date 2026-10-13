@@ -450,6 +450,13 @@ describe("admin console request budget", () => {
             "/v1/api/admin/identity/idp-configs",
           ],
         },
+        "limits": {
+          "requestCount": 1,
+          "settled": true,
+          "urls": [
+            "/v1/api/admin/person-limits",
+          ],
+        },
         "mail": {
           "requestCount": 2,
           "settled": true,

@@ -517,6 +517,11 @@ export interface DriveMemberStorageUsageRecord {
   readonly limitBytes: number | null;
   /** Pooled organization usage; only reported when a limit is set. */
   readonly organizationUsedBytes: number | null;
+  /**
+   * The member's own limit and what counts against it (their files and their
+   * mailbox). Left out when an administrator has set no limit for them.
+   */
+  readonly personal?: { readonly usedBytes: number; readonly limitBytes: number } | undefined;
 }
 
 export interface DriveLifecyclePolicyRecord {

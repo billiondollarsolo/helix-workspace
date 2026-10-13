@@ -71,7 +71,7 @@ describe("tenant config admin routes", () => {
         effective: {
           byo: {},
           features: { assistant_retrieval: false, mail_outbound: true },
-          quotas: { api_rps_limit: 5, actors_limit: null, storage_bytes_limit: null },
+          quotas: { api_rps_limit: 5, export_jobs_per_hour: null, storage_bytes_limit: null },
           branding: {},
         },
       },
@@ -121,7 +121,7 @@ describe("tenant config admin routes", () => {
             lifecycle: { object_lock: "compliance", retention_days: 30 },
           },
         },
-        quotas: { api_rps_limit: 10, actors_limit: null },
+        quotas: { api_rps_limit: 10, export_jobs_per_hour: null },
         branding: { accent_color_hex: "#2f6fed", display_name_override: "Acme" },
         reason: "admin settings update",
       },
@@ -147,7 +147,7 @@ describe("tenant config admin routes", () => {
           },
         },
         featureFlags: { assistant_retrieval: true, mail_outbound: false },
-        quotas: { api_rps_limit: 10, actors_limit: null },
+        quotas: { api_rps_limit: 10, export_jobs_per_hour: null },
         branding: { accent_color_hex: "#2f6fed", display_name_override: "Acme" },
         changedByActorId: actorId,
         reason: "admin settings update",
@@ -164,7 +164,7 @@ describe("tenant config admin routes", () => {
           },
         },
         features: { assistant_retrieval: true, mail_outbound: false },
-        quotas: { api_rps_limit: 10, actors_limit: null },
+        quotas: { api_rps_limit: 10, export_jobs_per_hour: null },
         branding: { accent_color_hex: "#2f6fed", display_name_override: "Acme" },
       },
     });
@@ -1107,7 +1107,7 @@ describe("tenant config merge semantics", () => {
   it("keeps flags the admin did not submit when one flag is saved", async () => {
     const store = new InMemoryTenantConfigAdminStore({
       featureFlags: { mail_outbound: false, assistant_retrieval: true },
-      quotas: { api_rps_limit: 5, actors_limit: null },
+      quotas: { api_rps_limit: 5, export_jobs_per_hour: null },
     });
     const app = fastify();
     await registerTenantConfigAdminRoutes(app, { store, actorFromRequest });
@@ -1124,7 +1124,7 @@ describe("tenant config merge semantics", () => {
     expect(body(response)).toMatchObject({
       tenantConfig: {
         features: { mail_outbound: false, assistant_retrieval: false },
-        quotas: { api_rps_limit: 9, actors_limit: null },
+        quotas: { api_rps_limit: 9, export_jobs_per_hour: null },
       },
     });
     await expect(store.findById(orgId)).resolves.toMatchObject({

@@ -26,12 +26,12 @@ describe("tenant config patches", () => {
   });
 
   it("stores null quotas because null means unlimited", () => {
-    expect(tenantConfigPatchParts({ actors_limit: null }, QUOTAS_PATCH)).toEqual({
-      merge: { actors_limit: null },
+    expect(tenantConfigPatchParts({ export_jobs_per_hour: null }, QUOTAS_PATCH)).toEqual({
+      merge: { export_jobs_per_hour: null },
       remove: [],
     });
     expect(
-      applyTenantConfigPatch({ api_rps_limit: 5 }, { actors_limit: null }, QUOTAS_PATCH),
-    ).toEqual({ api_rps_limit: 5, actors_limit: null });
+      applyTenantConfigPatch({ api_rps_limit: 5 }, { export_jobs_per_hour: null }, QUOTAS_PATCH),
+    ).toEqual({ api_rps_limit: 5, export_jobs_per_hour: null });
   });
 });

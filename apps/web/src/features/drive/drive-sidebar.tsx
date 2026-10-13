@@ -31,7 +31,11 @@ const DRIVE_SCOPES: readonly { readonly id: DriveScope; readonly icon: LucideIco
 function DriveStorageMeter() {
   const storage = useQuery(driveStorageUsageQueryOptions());
   if (storage.data === undefined) return null;
-  const { usedBytes, limitBytes, organizationUsedBytes } = storage.data;
+  const { usedBytes, limitBytes, organizationUsedBytes, personal } = storage.data;
+  const personalPercent =
+    personal === undefined || personal.limitBytes === 0
+      ? 100
+      : Math.min(100, (personal.usedBytes / personal.limitBytes) * 100);
   const limited = limitBytes !== null && organizationUsedBytes !== null;
   const percent =
     limited && limitBytes > 0 ? Math.min(100, (organizationUsedBytes / limitBytes) * 100) : 0;
@@ -55,9 +59,32 @@ function DriveStorageMeter() {
           <span style={{ width: `${String(percent)}%` }} />
         </div>
       ) : null}
-      <p className="type-caption text-muted-foreground m-0">
-        {formatByteSize(usedBytes) === "—" ? "0 B" : formatByteSize(usedBytes)} used
-      </p>
+      {personal === undefined ? (
+        <p className="type-caption text-muted-foreground m-0">
+          {formatByteSize(usedBytes) === "—" ? "0 B" : formatByteSize(usedBytes)} used
+        </p>
+      ) : (
+        <>
+          <div
+            role="meter"
+            aria-label="Your storage used"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(personalPercent)}
+            aria-valuetext={`${formatByteSize(personal.usedBytes)} of ${formatByteSize(personal.limitBytes)}`}
+            className="drive-storage-bar"
+            data-full={personalPercent >= 90 || undefined}
+          >
+            <span style={{ width: `${String(personalPercent)}%` }} />
+          </div>
+          <p className="type-caption text-muted-foreground m-0">
+            {formatByteSize(personal.usedBytes) === "—"
+              ? "0 B"
+              : formatByteSize(personal.usedBytes)}{" "}
+            of {formatByteSize(personal.limitBytes)} used, files and mail
+          </p>
+        </>
+      )}
       {limited ? (
         <p className="type-caption text-muted-foreground m-0">
           Organization: {formatByteSize(organizationUsedBytes)} of {formatByteSize(limitBytes)}

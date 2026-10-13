@@ -522,14 +522,20 @@ describe("AdminUsers", () => {
     expect(await openRowMenu("Person")).toEqual([
       "Edit profile",
       "Mail addresses",
+      "Limits",
       "Reset sign-in verification",
       "Suspend user…",
       "Remove access…",
     ]);
     await key("Escape");
-    expect(await openRowMenu("Robot")).toEqual(["Remove access…"]);
+    expect(await openRowMenu("Robot")).toEqual(["Limits", "Remove access…"]);
     await key("Escape");
-    expect(await openRowMenu("Gone")).toEqual(["Edit profile", "Mail addresses", "Restore user…"]);
+    expect(await openRowMenu("Gone")).toEqual([
+      "Edit profile",
+      "Mail addresses",
+      "Limits",
+      "Restore user…",
+    ]);
     await key("Escape");
     expect(await openRowMenu("Former")).toEqual(["Edit profile", "Mail addresses"]);
     await key("Escape");

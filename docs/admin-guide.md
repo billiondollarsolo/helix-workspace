@@ -130,6 +130,36 @@ Values are encrypted with a key derived for each organization. They are covered 
 backups in that encrypted form, so restoring a backup needs the same `HELIX_SECRET_ENCRYPTION_KEY`
 (or sign-in secret) the deployment ran with.
 
+## Limits for each person
+
+Nothing is limited until you set a limit. Under **Admin → Directory → Limits** (`/admin/limits`)
+you set what applies to everyone, and see who has limits of their own.
+
+| Limit                                      | What it covers                                                                                                   |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| **Storage**                                | A person's Drive files and recordings, trash included, plus the mail in their mailbox.                           |
+| **Messages sent per hour** and **per day** | Messages the person sends. Notices Helix sends in their name, such as "shared a file with you", are not counted. |
+
+To give one person, agent, or service account different limits, open their row under **Admin →
+Users**, choose **Limits**, and enter the values. An empty field there means "use the
+organization's default"; an empty default means "no limit". The dialog also shows what the
+person is using now.
+
+What happens at a limit:
+
+- **Storage, uploading.** An upload or copy that would go over is refused and says why. A new
+  version of a file counts against the file's owner, whoever uploads it.
+- **Storage, mail.** Mail for a mailbox that has reached its limit is turned away with "Mailbox is
+  full" (SMTP 452), so the sending server keeps trying and tells the sender if it gives up.
+  Behind a group address, the other members still receive the message.
+- **Sending.** A message past the hourly or daily limit is refused with the limit it reached. This
+  applies to agents too, including when a person confirms the agent's send.
+- **The person sees their own storage** against their limit in the Drive sidebar.
+
+The organization-wide **Storage** limit under Workspace settings is separate: it caps Drive
+files, recordings, and chat attachments for the whole organization, and does not count mail.
+Changes to a person's limits are recorded in the audit log as `person_limits.updated`.
+
 ## Mail for agents
 
 An agent with a mailbox reads its mail and acts on it, so mail is a way to instruct it. Set who
@@ -191,7 +221,10 @@ An agent running outside Helix works through its own credential, the way a perso
    without asking a person** on the Agent mail page.
 4. **Sending always waits for a person.** When the agent calls `mail.reply` or `mail.send`
    (`mail.send`), the message waits for someone to confirm it, like every other change an agent
-   makes. A credential without `mail.send` cannot ask to send at all.
+   makes. A credential without `mail.send` cannot ask to send at all, and replying to someone
+   outside your organization also needs `mail.external`. The agent names the recipients in `to`,
+   so the person confirming sees who will receive the reply. Once confirmed, the reply is sent
+   from the agent's own mailbox.
 
 ## Quality Gate Responsibilities
 

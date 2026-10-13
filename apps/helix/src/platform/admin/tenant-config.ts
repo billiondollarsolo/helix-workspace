@@ -77,9 +77,9 @@ const quotaValueSchema = z.number().int().min(0).nullable();
 const quotasSchema = z
   .object({
     storage_bytes_limit: quotaValueSchema.optional(),
-    ai_tokens_monthly_limit: quotaValueSchema.optional(),
-    ai_image_gen_monthly_limit: quotaValueSchema.optional(),
-    actors_limit: quotaValueSchema.optional(),
+    storage_bytes_per_person_limit: quotaValueSchema.optional(),
+    mail_send_per_hour_limit: quotaValueSchema.optional(),
+    mail_send_per_day_limit: quotaValueSchema.optional(),
     outbound_webhooks_limit: quotaValueSchema.optional(),
     api_rps_limit: quotaValueSchema.optional(),
     export_jobs_per_hour: quotaValueSchema.optional(),

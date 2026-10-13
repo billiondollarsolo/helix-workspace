@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import { UNCOUNTED_MAIL_KEY_PREFIX } from "../limits/person-limits.js";
 import type { MailStore } from "../mail/index.js";
 import { MailSendService } from "../mail/outbound.js";
 import { escapeHtml } from "../util/strings.js";
@@ -83,6 +85,7 @@ export function createMailDriveShareSender(options: {
       for (const recipient of input.recipients) {
         const url = openUrl(input.objectId, input.folder);
         await service.queue({
+          ...notice(),
           orgId: input.orgId,
           actorId: input.actorId,
           envelope: {
@@ -101,6 +104,7 @@ export function createMailDriveShareSender(options: {
     async sendAccessRequest(input) {
       const url = openUrl(input.objectId, input.folder);
       await service.queue({
+        ...notice(),
         orgId: input.orgId,
         actorId: input.actorId,
         envelope: {
@@ -119,6 +123,7 @@ export function createMailDriveShareSender(options: {
       const url = openUrl(input.objectId, input.folder);
       const verb = input.approved ? "approved" : "declined";
       await service.queue({
+        ...notice(),
         orgId: input.orgId,
         actorId: input.actorId,
         envelope: {
@@ -142,6 +147,7 @@ export function createMailDriveShareSender(options: {
           : `${input.authorName} replied to your comment in "${input.title}"`;
       for (const recipient of input.recipients) {
         await service.queue({
+          ...notice(),
           orgId: input.orgId,
           actorId: input.actorId,
           envelope: {
@@ -158,6 +164,14 @@ export function createMailDriveShareSender(options: {
       }
     },
   };
+}
+
+/**
+ * Marks mail Helix sends in a person's name as a notice, so sharing a folder
+ * with fifty people does not use up what that person may send in a day.
+ */
+function notice(): { readonly idempotencyKey: string } {
+  return { idempotencyKey: `${UNCOUNTED_MAIL_KEY_PREFIX}${randomUUID()}` };
 }
 
 function address(email: string, name: string | null): { address: string; name?: string } {

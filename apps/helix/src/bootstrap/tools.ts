@@ -28,6 +28,7 @@ import { PostgresUserAddressStore } from "../platform/auth/user-addresses.js";
 import {
   tenantAwarePostgresSql,
   withTenantPostgresContext,
+  withRequesterPostgresActor,
 } from "../platform/tenancy/postgres-roles.js";
 import {
   agentCredentialScopeCatalog,
@@ -41,6 +42,7 @@ import {
 import { PostgresContactsStore, registerContactsTools } from "../platform/carddav/index.js";
 import { registerChatTools } from "../platform/chat/index.js";
 import { tierDefaults } from "../platform/config/tier.js";
+import { createPersonLimitStore } from "./person-limits.js";
 import {
   registerDriveCollaborationTools,
   registerDriveCopyTool,
@@ -347,6 +349,7 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
     featureFlags: runtimeFeatureFlags,
     dlp,
     resolvePendingPrincipal: createPendingPrincipalResolver(sql, agentCredentialStore),
+    runAsRequester: (requester, work) => withRequesterPostgresActor(requester.id, work),
   });
 
   // P0-6 / PRD §8.4: auto-classify newly created resources. The feature tool
@@ -375,6 +378,7 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
       store: mailStore,
       agentMail: new PostgresAgentMailStore(sql),
       quarantineStore: mailQuarantineStore,
+      sendLimit: createPersonLimitStore(sql, orgStore),
       draftsRunUnattended: async (orgId) =>
         (await loadEffectiveTenantConfig({ orgs: orgStore }, orgId))?.features
           .agent_mail_drafts_unattended !== false,

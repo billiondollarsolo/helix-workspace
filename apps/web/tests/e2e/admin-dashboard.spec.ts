@@ -437,8 +437,6 @@ function mailConfigResponse() {
       },
     ],
     quotas: {
-      perActorPerHour: 60,
-      perActorPerDay: 200,
       maxMessageBytes: 10485760,
       evidence: "Default quotas active.",
     },

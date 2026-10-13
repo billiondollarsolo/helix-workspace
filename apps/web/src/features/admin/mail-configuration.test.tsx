@@ -250,8 +250,6 @@ function mailConfiguration(): AdminMailConfigurationResponse {
     quotas: {
       evidence: "Runtime quota config loaded.",
       maxMessageBytes: 10_485_760,
-      perActorPerDay: 1000,
-      perActorPerHour: 100,
     },
   };
 }

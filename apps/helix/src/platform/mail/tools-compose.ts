@@ -168,8 +168,9 @@ export function createMailComposeToolDefinitions(
       readonly inReplyTo?: string;
       readonly references?: readonly string[];
     },
-  ) =>
-    new MailSendService({
+  ) => {
+    await options.sendLimit?.assertMaySend({ orgId: ctx.actor.orgId, actorId: ctx.actor.id });
+    return new MailSendService({
       store: options.store,
       undoWindowMs: input.undoWindowMs ?? options.undoWindowMs ?? 30_000,
     }).queue({
@@ -184,6 +185,7 @@ export function createMailComposeToolDefinitions(
         ? {}
         : { idempotencyKey: input.idempotencyKey ?? ctx.idempotencyKey }),
     });
+  };
   const classify = async (ctx: ToolContext, messageId: string, content: string) =>
     options.classifyResource?.({
       actor: ctx.actor,
@@ -211,7 +213,6 @@ export function createMailComposeToolDefinitions(
       sideEffects: "external_communication",
       confirmationRequired: true,
       scopeComposition: { conditionalScopes: [externalRecipientScope] },
-      rateLimit: { perActor: { perHour: 60, perDay: 200 } },
       inputSchema: zodToolSchema(sendSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(mailSendOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
@@ -287,7 +288,6 @@ export function createMailComposeToolDefinitions(
       sideEffects: "external_communication",
       confirmationRequired: true,
       scopeComposition: { conditionalScopes: [externalRecipientScope] },
-      rateLimit: { perActor: { perHour: 60, perDay: 200 } },
       inputSchema: zodToolSchema(forwardSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(mailSendOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {

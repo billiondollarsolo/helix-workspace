@@ -53,6 +53,17 @@ export class DriveQuotaExceededError extends ConflictError {
   }
 }
 
+/** The file's owner has reached the storage an administrator allows one person. */
+export class DrivePersonStorageFullError extends ConflictError {
+  constructor() {
+    super(
+      "This would go over the storage allowed for one person. Delete files or mail that are no longer needed, or ask an administrator for more.",
+      { details: { driveCode: "drive.person_storage_full" } },
+    );
+    this.name = "DrivePersonStorageFullError";
+  }
+}
+
 /**
  * Historical name used throughout store.ts / metering tests.
  * Prefer {@link DriveQuotaExceededError} for new code.

@@ -501,7 +501,8 @@ services:
       XMPP_RECORDER_DOMAIN: ${JITSI_XMPP_RECORDER_DOMAIN:-recorder.meet.jitsi}
     volumes:
       - jitsi-jicofo-config:/config
-      - ./infra/meet/jicofo/custom-jicofo.conf:/config/custom-jicofo.conf:ro
+      - ./infra/meet/init/02-helix-config:/etc/cont-init.d/02-helix-config:ro
+      - ./infra/meet/jicofo/custom-jicofo.conf:/run/helix-jitsi-config/custom-jicofo.conf:ro
     secrets:
       - jitsi_xmpp_truststore
     networks: [meet-control]
@@ -533,7 +534,8 @@ services:
       - "127.0.0.1:${JITSI_JVB_UDP_PORT:-28453}:10000/udp"
     volumes:
       - jitsi-jvb-config:/config
-      - ./infra/meet/jvb/custom-jvb.conf:/config/custom-jvb.conf:ro
+      - ./infra/meet/init/02-helix-config:/etc/cont-init.d/02-helix-config:ro
+      - ./infra/meet/jvb/custom-jvb.conf:/run/helix-jitsi-config/custom-jvb.conf:ro
     secrets:
       - jitsi_xmpp_truststore
     networks: [meet-control, meet-media]
@@ -555,7 +557,7 @@ services:
         --external-ip="$${JITSI_TURN_EXTERNAL_IP}" --listening-port=3478
         --tls-listening-port=5349 --min-port=49160 --max-port=49200
         --cert=/run/secrets/jitsi_turn_cert --pkey=/run/secrets/jitsi_turn_key
-        --no-dtls --stale-nonce=600 --user-quota=12 --total-quota=1200 --no-cli
+        --stale-nonce=600 --user-quota=12 --total-quota=1200 --no-cli
         --no-multicast-peers --log-file=stdout
     environment:
       JITSI_TURN_REALM: ${JITSI_TURN_HOST:-turn.localhost}

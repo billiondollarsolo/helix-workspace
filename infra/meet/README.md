@@ -1,8 +1,18 @@
 # Helix Meet Jitsi Stack
 
-The local Compose stack below is for development. The reproducible multi-region
-production topology, signed-image gate, capacity model, and failure drill are
-documented in [`ha/`](ha/README.md).
+The local Compose stack below is for development. A single production host can
+opt in to the same services with `docker-compose.meet.yml`, which replaces every
+development credential with a generated secret file and publishes only the media
+ports; see "Optional installs" in
+[`docs/deployment-production.md`](../../docs/deployment-production.md#optional-installs).
+The reproducible multi-region production topology, signed-image gate, capacity
+model, and failure drill are documented in [`ha/`](ha/README.md).
+
+The stock images take ownership of `/config` when they start, so checked-in
+overrides are mounted under `/run/helix-jitsi-config` and copied into place by
+[`init/02-helix-config`](init/02-helix-config). In the production file,
+[`init/01-helix-secrets`](init/01-helix-secrets) loads each credential from a
+mounted secret file.
 
 This directory holds local/dev infrastructure notes for `com.helix.core.meet-jitsi`.
 

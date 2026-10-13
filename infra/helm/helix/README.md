@@ -86,6 +86,17 @@ release does not delete people's vaults. The application learns the address thro
 Accounts are separate from workspace accounts and vaults are end-to-end encrypted. Back up the
 claim: nothing Helix stores can rebuild a lost vault.
 
+## Optional Meet and Calendar
+
+Meet and Calendar are not enabled by default. To opt in, deploy the media plane from
+[`infra/meet/ha`](../../meet/ha/README.md), then set `workspace.profile=full`, the Full Workspace
+`workspace.apps`, `workspace.modules.meet.enabled=true`, `workspace.modules.calendar.enabled=true`,
+`workspace.meet.jitsiDomain`, and the JWT secret reference described under
+[Workspace packaging](#workspace-packaging-mvp-fail-closed). The chart refuses the Full
+Workspace app list without `workspace.profile=full`, and Helix refuses to start Meet without a
+Jitsi domain and secrets. A single host can use `docker-compose.meet.yml` instead; see
+[Optional installs](../../../docs/deployment-production.md#optional-installs).
+
 ## Signed plugin trust
 
 Enterprise and sovereign pods fail closed unless the operator provides the

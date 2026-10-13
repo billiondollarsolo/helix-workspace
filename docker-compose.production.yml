@@ -19,6 +19,10 @@ name: helix-production
 # Do NOT enable Meet, Calendar, Docs, Sheets, Slides, or Editors here until
 # PKG.* + domain evidence (CAL/MT/ED) + O-D.7–O-D.10 gates pass.
 #
+# An operator who chooses to run Meet and Calendar on a single host adds
+# docker-compose.meet.yml after this file. That is an explicit opt-in outside
+# the 1.0 release scope; this file on its own never deploys them.
+#
 # PKG flip procedure (operators — after evidence, not a silent default):
 #   1. Bind release evidence under artifacts/release-readiness/<date>/<sha>/
 #   2. Promote web image built with VITE_HELIX_MVP_ONLY=false

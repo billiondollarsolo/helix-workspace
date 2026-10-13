@@ -8,6 +8,17 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Added
 
+- Meet and Calendar as an optional install on a single production host. Adding
+  `docker-compose.meet.yml` to the Compose commands (with `HELIX_MEET_DOMAIN` and
+  `HELIX_MEET_PUBLIC_IP`) switches Helix to the Full Workspace profile and starts a bundled Jitsi:
+  the meeting page behind Caddy on its own hostname, the XMPP server and conference focus on a
+  network with no route out, and the media bridge and TURN on the only published ports. Every
+  development credential is replaced by a generated secret file
+  (`generate-production-secrets.mjs --add-meet`), XMPP is verified against the deployment CA, and
+  people can join only with a pass Helix signs. Without the file nothing is deployed and the
+  default packaging is unchanged; this install is outside the 1.0 release scope.
+  `infra/scripts/production-boot-smoke.sh --with meet` boots it and holds a meeting between two
+  browsers, using the new `apps/web/scripts/meet-media-probe.mjs`.
 - Passwords, an optional install. A bundled Vaultwarden server (compatible with the Bitwarden
   apps and browser extensions) can be installed with the workspace and is not deployed unless the
   operator opts in: `COMPOSE_PROFILES=passwords` and `HELIX_PASSWORDS_DOMAIN` for Docker Compose,
@@ -546,6 +557,15 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Fixed
 
+- The install guide asked for Docker Compose 2.24, which does not merge the production files
+  correctly: 2.24 quietly drops settings and 2.25 refuses the files. The requirement is now
+  2.27, the oldest release that resolves the production stack and the optional Meet install
+  the same way current releases do, and the boot smoke test checks it before starting.
+- The bundled Jitsi stack (`--profile meet`) starts again. The pinned TURN server rejected the
+  removed `--no-dtls` option and restarted in a loop, and the conference focus and media bridge
+  exited at startup because the images take ownership of `/config`, where two override files
+  were mounted read-only. The overrides are now copied into place before the images configure
+  themselves.
 - The nightly image scan no longer fails on the licences of the base image's own Debian
   packages, which are GPL or LGPL and cannot be changed. Vulnerability, secret, and
   misconfiguration scanning still cover the whole image; the licence check now covers what the

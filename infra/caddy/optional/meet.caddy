@@ -1,0 +1,2 @@
+# Meet is not installed, so it has no site. docker-compose.meet.yml selects
+# meet-on.caddy.

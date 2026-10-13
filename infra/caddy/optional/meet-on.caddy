@@ -1,0 +1,23 @@
+# Optional Meet install: the meeting page (Jitsi), which the workspace embeds.
+# Media does not pass through here; it goes to the bridge and TURN ports.
+{$HELIX_MEET_DOMAIN} {
+	tls {$HELIX_CADDY_TLS:} {
+		protocols tls1.2 tls1.3
+		load {$HELIX_EDGE_CERT_DIR:/run/helix-edge-certs}
+	}
+
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		# Only the workspace may embed a meeting.
+		Content-Security-Policy "frame-ancestors https://{$HELIX_DOMAIN}"
+		-Server
+	}
+
+	reverse_proxy {$HELIX_MEET_UPSTREAM:jitsi-web:80} {
+		header_up -X-Helix-Mfa-Verified
+	}
+}

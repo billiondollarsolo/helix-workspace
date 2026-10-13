@@ -8,6 +8,14 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Added
 
+- Mail protection for agents. **Admin → Security → Agent mail** gives an agent or service account a
+  mail address and sets who may write to it from outside: only the senders an administrator
+  lists, or anyone. Mail from outside that an agent's settings do not let through is never
+  delivered to the agent; it is held, with the sender and the reason, until an administrator
+  delivers or deletes it. A listed sender is let through only when the message passes DMARC, and
+  mail that tells an agent to ignore its instructions is held whoever sent it. People in the
+  organization can always write to an agent, and a message addressed to a person and an agent
+  still reaches the person. See "Mail for agents" in the admin guide.
 - Agent secrets. An administrator stores a password, token, or key under **Admin → Security →
   Agent secrets**, chooses how agents may use it, and grants it to named agents and service
   accounts. A **use-only** secret is sent by Helix in requests the agent asks for
@@ -414,6 +422,10 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Changed
 
+- Agents and service accounts that already had a mail address no longer receive mail from
+  outside the organization until an administrator lists who may write to them, or chooses
+  **Anyone**, under **Admin → Security → Agent mail**. Such mail is held there, not lost. Mail
+  from people inside the organization is unaffected.
 - A second administrator's approval for sensitive actions is now something an organization turns
   on, instead of being required until it was turned off. A new workspace has one administrator,
   and with the old default that person could not issue an agent credential, grant an agent
@@ -585,6 +597,11 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Fixed
 
+- Releasing quarantined mail from the Admin API failed with a database permission error unless the
+  message was addressed to the administrator's own mailbox. The release now delivers the way the
+  mail server does, in the organization's context. No console screen used this route before
+  **Agent mail**, so it had gone unnoticed; `infra/scripts/production-boot-smoke.sh` now holds a
+  message for an agent, releases it, and has the agent read it.
 - A workspace's own administrator was refused by every administration tool: Chat retention, legal
   hold, exports and the room pickers, Drive administration, webhooks, agent credentials, and agent
   controls. Tools check for an exact permission and an administrator holds the general one

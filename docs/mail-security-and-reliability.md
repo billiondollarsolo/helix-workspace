@@ -171,6 +171,14 @@ instead of delivering it. Malware and executable or active-content attachments a
 quarantined. A spoofed but syntactically valid `From` header is not by itself grounds for SMTP
 rejection; authentication failures influence spam/quarantine routing.
 
+Mail addressed to an agent or service account is also checked against that agent's own settings
+(**Admin → Security → Agent mail**): who may write to it from outside, and whether the message
+tries to override the agent's instructions. A copy that fails is quarantined for that recipient
+only, with a signature starting `agent-mail:` (`sender-not-allowed`, `sender-not-verified`,
+`instructs-the-agent`, `hidden-text`), while other recipients of the same message receive it.
+Releasing such a record delivers it without applying the agent's settings again. See "Mail for
+agents" in the [admin guide](admin-guide.md).
+
 Mail administrators can list, release, or delete records only inside their organization. Release
 and deletion require explicit confirmation and a reason, are audited, and clear the stored raw
 bytes. Release first re-scans the raw message; scanner failure or a non-clean result leaves it

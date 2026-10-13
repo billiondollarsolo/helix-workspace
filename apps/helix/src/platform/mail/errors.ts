@@ -1,4 +1,10 @@
-import { ApiError, BadRequestError, ForbiddenError, NotFoundError } from "../../api/api-error.js";
+import {
+  ApiError,
+  BadRequestError,
+  ConflictError,
+  ForbiddenError,
+  NotFoundError,
+} from "../../api/api-error.js";
 
 export class MailAttachmentQuotaError extends BadRequestError {
   constructor(message: string) {
@@ -41,6 +47,16 @@ export class MailInboundActorForbiddenError extends ForbiddenError {
       details: { mailCode: "mail.inbound_forbidden", actorType },
     });
     this.name = "MailInboundActorForbiddenError";
+  }
+}
+
+/** Every recipient of a bridged message was an agent whose mail settings held it. */
+export class MailInboundHeldError extends ConflictError {
+  constructor(quarantineId: string) {
+    super("The message was held for an administrator and not delivered to any mailbox.", {
+      details: { mailCode: "mail.inbound_held", quarantineId },
+    });
+    this.name = "MailInboundHeldError";
   }
 }
 

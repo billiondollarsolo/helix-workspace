@@ -99,7 +99,9 @@ import { registerInviteRoutes } from "../platform/signup/routes.js";
 import {
   buildEffectiveTenantConfig,
   createPostgresTenantExportManifestPlanner,
+  detachedFromTenantPostgresContext,
   registerTenantLifecycleRoutes,
+  withTenantPostgresContext,
 } from "../platform/tenancy/index.js";
 import {
   registerWebhookRoutes,
@@ -390,6 +392,10 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
       mailStore,
       scanners: inboundMailScanners,
       resolveRecipient: (address) => mailStore.resolveInboundAddress(address),
+      runForTenant: (orgId, operation) =>
+        detachedFromTenantPostgresContext(() =>
+          withTenantPostgresContext(sql, { orgId }, async () => operation()),
+        ),
       actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
       auditSink: auditStore,
     });

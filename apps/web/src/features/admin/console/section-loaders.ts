@@ -139,6 +139,10 @@ export const ADMIN_SECTION_LOADERS: Record<AdminSectionId, AdminSectionLoader> =
     load: () => import("@/features/admin/agent-secrets"),
     exportName: "AgentSecretsManagement",
   },
+  "agent-mail": {
+    load: () => import("@/features/admin/agent-mail"),
+    exportName: "AgentMailManagement",
+  },
   "agent-controls": {
     load: () => import("@/features/admin/agent-controls"),
     exportName: "AgentControlsManagement",

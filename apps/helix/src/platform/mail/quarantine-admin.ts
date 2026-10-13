@@ -37,6 +37,14 @@ export function registerMailQuarantineAdminRoutes(
     readonly scanners: InboundMailScanners;
     readonly resolveRecipient: (address: string) => Promise<MailInboundRecipientResolution>;
     readonly authenticator?: MailAuthenticator | undefined;
+    /**
+     * Delivers released mail the way the SMTP receiver does: in the
+     * organization's database context with no acting person. Inside the
+     * administrator's own request, row security lets them write only to their
+     * own mailbox, so releasing anyone else's mail would be refused.
+     */
+    readonly runForTenant?:
+      (<T>(orgId: string, operation: () => Promise<T>) => Promise<T>) | undefined;
     readonly actorFromRequest: (request: FastifyRequest) => Actor | Promise<Actor>;
     readonly auditSink: AdminConsoleAuditSink;
   },
@@ -79,28 +87,32 @@ export function registerMailQuarantineAdminRoutes(
     }
     let delivered;
     try {
-      delivered = await ingestRawMail({
-        store: options.mailStore,
-        input: {
-          orgId: actor.orgId,
-          recipients: resolvedRecipients,
-          raw: quarantined.raw,
-          ...(quarantined.envelopeFrom === undefined
-            ? {}
-            : { envelopeFrom: quarantined.envelopeFrom }),
-          ...(quarantined.remoteAddress === undefined
-            ? {}
-            : { remoteAddress: quarantined.remoteAddress }),
-          ...(quarantined.helo === undefined ? {} : { helo: quarantined.helo }),
-          ...(quarantined.providerDeliveryId === undefined
-            ? {}
-            : { providerDeliveryId: quarantined.providerDeliveryId }),
-        },
-        scanners: { ...options.scanners, failurePolicy: "defer" },
-        malwareDisposition: "reject",
-        authenticationPolicy: false,
-        ...(options.authenticator === undefined ? {} : { authenticator: options.authenticator }),
-      });
+      const deliver = () =>
+        ingestRawMail({
+          store: options.mailStore,
+          input: {
+            orgId: actor.orgId,
+            recipients: resolvedRecipients,
+            raw: quarantined.raw,
+            ...(quarantined.envelopeFrom === undefined
+              ? {}
+              : { envelopeFrom: quarantined.envelopeFrom }),
+            ...(quarantined.remoteAddress === undefined
+              ? {}
+              : { remoteAddress: quarantined.remoteAddress }),
+            ...(quarantined.helo === undefined ? {} : { helo: quarantined.helo }),
+            ...(quarantined.providerDeliveryId === undefined
+              ? {}
+              : { providerDeliveryId: quarantined.providerDeliveryId }),
+          },
+          scanners: { ...options.scanners, failurePolicy: "defer" },
+          malwareDisposition: "reject",
+          authenticationPolicy: false,
+          ...(options.authenticator === undefined ? {} : { authenticator: options.authenticator }),
+        });
+      delivered = await (options.runForTenant === undefined
+        ? deliver()
+        : options.runForTenant(actor.orgId, deliver));
     } catch (error) {
       await options.store.abortRelease(actor.orgId, quarantined.id, quarantined.releaseToken);
       if (error instanceof MailMalwareRejectedError) {

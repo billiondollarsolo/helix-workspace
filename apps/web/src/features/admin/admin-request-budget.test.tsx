@@ -348,6 +348,14 @@ describe("admin console request budget", () => {
             "/v1/api/tools/agent.credentials.list",
           ],
         },
+        "agent-mail": {
+          "requestCount": 2,
+          "settled": true,
+          "urls": [
+            "/v1/api/admin/agent-mail",
+            "/v1/api/admin/mail/quarantine",
+          ],
+        },
         "agent-secrets": {
           "requestCount": 3,
           "settled": true,

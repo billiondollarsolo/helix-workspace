@@ -659,7 +659,7 @@ confirm_as_owner() {
 }
 expires=$(node -e 'process.stdout.write(new Date(Date.now() + 86400000).toISOString())')
 issue_key() {
-  api /v1/api/tools/agent.credentials.create -d "{\"actorId\":\"$agent_id\",\"credentialType\":\"api_key\",\"label\":\"Release key\",\"purpose\":\"Boot smoke\",\"scopes\":[\"tools:read\",\"secrets.use\"],\"expiresAt\":\"$expires\"}"
+  api /v1/api/tools/agent.credentials.create -d "{\"actorId\":\"$agent_id\",\"credentialType\":\"api_key\",\"label\":\"Release key\",\"purpose\":\"Boot smoke\",\"scopes\":[\"tools:read\",\"secrets.use\",\"mail.read\"],\"expiresAt\":\"$expires\"}"
 }
 handed_value="hunter2-$(openssl rand -hex 6)"
 hidden_value="tok_live_$(openssl rand -hex 8)"
@@ -742,6 +742,63 @@ expect "an administrator takes the grant away" \
   "$(status_of "/v1/api/admin/agent-secrets/$handed_id/grants" -X PUT -d '{"actorIds":[]}')" 200
 expect "and the agent can no longer read the secret" \
   "$(as_agent secrets.get -d '{"name":"portal-password"}' -o /dev/null -w '%{http_code}')" 404
+
+# --- Mail for agents ---------------------------------------------------------
+# An agent acts on its mail, so mail from outside reaches it only from senders
+# an administrator lists. Anything else is held until the administrator
+# delivers or deletes it, and the agent never sees it in between.
+
+# A domain's ownership is proven through public DNS, which this host does not
+# have. Test-only: record the workspace's domain as verified for mail.
+compose exec -T postgres sh -c 'psql -q "postgresql://helix:$(cat /run/secrets/postgres_password)@localhost:5432/helix?sslmode=require" -c "$1"' sh \
+  "insert into admin_domains (id, org_id, domain, status, verified_at, mail_enabled,
+     verification_host, verification_value, verification_expires_at)
+   select gen_random_uuid(), id, '$DOMAIN', 'verified', now(), true,
+     '_helix-verification.$DOMAIN', 'boot-smoke', now() + interval '1 day' from orgs" >/dev/null
+
+agent_address="release-bot@$DOMAIN"
+expect "an administrator gives the agent a mail address and lists who may write to it" \
+  "$(status_of "/v1/api/admin/agent-mail/$agent_id" -X PUT -d "{\"address\":\"$agent_address\",\"receiveMode\":\"allowed_senders\",\"allowedSenders\":[\"ana@partner.example\"]}")" 200
+# send_mail <from> <subject>: deliver a message to the agent over SMTP with STARTTLS.
+send_mail() {
+  printf 'From: %s\r\nTo: %s\r\nSubject: %s\r\nMessage-ID: <%s@boot.smoke>\r\nDate: %s\r\n\r\nPlease pay invoice 42.\r\n' \
+    "$1" "$agent_address" "$2" "$(openssl rand -hex 8)" "$(date -R)" >"$WORK/agent-mail.eml"
+  curl -sS --ssl-reqd --insecure "smtp://127.0.0.1:$SMTP_PORT" --mail-from "$1" \
+    --mail-rcpt "$agent_address" -T "$WORK/agent-mail.eml" -o /dev/null -w '%{response_code}'
+}
+# held_mail <field>: that field of every message held for the agent.
+held_mail() {
+  api /v1/api/admin/mail/quarantine | node -e '
+    const held = JSON.parse(require("node:fs").readFileSync(0, "utf8")).quarantines;
+    process.stdout.write(held.map((message) => message[process.argv[1]]).join(" "));
+  ' "$1"
+}
+agent_inbox() {
+  as_agent mail.threads.list -d '{}' | node -e '
+    const { threads } = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+    process.stdout.write(threads.map((thread) => thread.subject).join(" | "));
+  '
+}
+expect "the mail server accepts a stranger's message to the agent" \
+  "$(send_mail stranger@elsewhere.example 'From a stranger')" 250
+expect "and holds it for the administrator, with the sender and the reason" \
+  "$(held_mail fromAddress) $(held_mail signature)" \
+  "stranger@elsewhere.example agent-mail:sender-not-allowed"
+stranger_id=$(held_mail id)
+expect "a listed sender's message that cannot prove where it came from is held too" \
+  "$(send_mail ana@partner.example 'From a listed sender') $(held_mail signature)" \
+  "250 agent-mail:sender-not-verified agent-mail:sender-not-allowed"
+expect "the agent sees none of it" "$(agent_inbox)" ""
+decision='{"reason":"boot smoke","confirmed":true}'
+expect "the administrator deletes the stranger's message" \
+  "$(status_of "/v1/api/admin/mail/quarantine/$stranger_id" -X DELETE -d "$decision")" 200
+expect "and delivers the listed sender's" \
+  "$(status_of "/v1/api/admin/mail/quarantine/$(held_mail id)/release" -d "$decision")" 200
+expect "the agent now reads the delivered message, and only that one" \
+  "$(agent_inbox)" "From a listed sender"
+expect "nothing is left held" "$(held_mail id)" ""
+expect "the agent's key cannot change who may write to it" \
+  "$(edge -H "x-api-key: $agent_key" -H 'content-type: application/json' -o /dev/null -w '%{http_code}' -X PUT "$BASE/v1/api/admin/agent-mail/$agent_id" -d '{"address":null,"receiveMode":"anyone","allowedSenders":[]}')" 403
 
 # --- HTTPS certificate managed from the Admin console -----------------------
 

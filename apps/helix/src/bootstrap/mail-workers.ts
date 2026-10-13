@@ -13,6 +13,7 @@ import {
   resolveDecisionModelConfig,
 } from "../platform/mail/decision/config.js";
 import { PostgresMailDecisionStore } from "../platform/mail/decision/store.js";
+import { PostgresAgentMailStore } from "../platform/mail/agent-mail/index.js";
 import { MailDecisionWorker } from "../platform/mail/decision/worker.js";
 import {
   DispatchTimeTransportResolver,
@@ -296,6 +297,7 @@ export async function installMailWorkers(context: Awaited<ReturnType<typeof inst
           runForTenant: (orgId, operation) =>
             withTenantPostgresContext(sql, { orgId }, async () => operation()),
           calendarInvitations,
+          agentMail: new PostgresAgentMailStore(sql),
           transportSecurity: smtpMailReceiverConfig.transportSecurity,
           limits: smtpMailReceiverConfig.limits,
           logger: app.log,

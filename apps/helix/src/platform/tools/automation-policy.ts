@@ -77,7 +77,7 @@ const recipientKeys = new Set(["address", "bcc", "cc", "email", "recipient", "re
  * when an administrator granted the tool's resource to this agent. A refusal
  * to let a policy change itself is never overridden.
  */
-export async function withStandingAuthorization(
+async function withStandingAuthorization(
   decision: AutomationPolicyDecision,
   tool: ToolDefinition,
   parsedInput: unknown,
@@ -336,4 +336,26 @@ function sortJson(value: JsonValue): JsonValue {
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([key, child]) => [key, sortJson(child)]),
   );
+}
+
+/**
+ * Only agent mutations are bounded: people and reads produce no decision. A
+ * credential's policy comes first, then an administrator's standing grant.
+ */
+export async function resolveAutomationDecision(input: {
+  readonly actor: Actor;
+  readonly tool: ToolDefinition;
+  readonly parsedInput: unknown;
+  readonly credentialId: string | undefined;
+  readonly credentialPolicy:
+    { readonly automationPolicy?: AgentAutomationPolicy | null | undefined } | undefined;
+}): Promise<AutomationPolicyDecision | null> {
+  if (input.actor.type !== "agent" || input.tool.sideEffects === "read") {
+    return null;
+  }
+  const { tool, parsedInput } = input;
+  // No authenticating credential, no policy to honor, whatever the caller sent.
+  const policy = input.credentialId === undefined ? null : input.credentialPolicy?.automationPolicy;
+  const decision = evaluateAutomationPolicy({ policy, tool, parsedInput });
+  return withStandingAuthorization(decision, tool, parsedInput, input.actor);
 }

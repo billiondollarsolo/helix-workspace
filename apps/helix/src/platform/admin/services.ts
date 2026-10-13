@@ -1011,12 +1011,8 @@ const serviceDefinitions: readonly AdminServiceDefinition[] = [
       }),
       config({
         key: "smtpRateLimits",
-        label: "SMTP send rate and size limits",
-        envAnyOf: [
-          "MAIL_SEND_RATE_LIMIT_PER_HOUR",
-          "MAIL_SEND_RATE_LIMIT_PER_DAY",
-          "MAIL_MAX_MESSAGE_BYTES",
-        ],
+        label: "Mail message size limit",
+        envAnyOf: ["MAIL_MAX_MESSAGE_BYTES"],
         required: false,
       }),
       config({

@@ -52,9 +52,9 @@ export async function prefetchAdminTenantConfigQuery(queryClient: TenantConfigRo
 
 const QUOTA_FIELDS = [
   ["storage_bytes_limit", "Storage", formatBytes],
-  ["ai_tokens_monthly_limit", "AI tokens per month", formatCount],
-  ["ai_image_gen_monthly_limit", "AI images per month", formatCount],
-  ["actors_limit", "Accounts", formatCount],
+  ["storage_bytes_per_person_limit", "Storage for each person", formatBytes],
+  ["mail_send_per_hour_limit", "Messages each person sends per hour", formatCount],
+  ["mail_send_per_day_limit", "Messages each person sends per day", formatCount],
   ["outbound_webhooks_limit", "Outbound webhooks", formatCount],
   ["api_rps_limit", "API requests per second", formatCount],
   ["export_jobs_per_hour", "Exports per hour", formatCount],

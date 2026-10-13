@@ -12,6 +12,7 @@ import { UserStatusChip } from "./user-suspension-dialog";
 const ACTION_BUTTON_LABEL: Record<UserAction, string> = {
   profile: "Edit profile",
   addresses: "Mail addresses",
+  limits: "Limits",
   "resend-invite": "Resend invitation",
   "revoke-invite": "Withdraw invitation",
   "reset-verification": "Reset sign-in verification",

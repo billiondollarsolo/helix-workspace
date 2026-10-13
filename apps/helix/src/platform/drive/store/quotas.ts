@@ -4,6 +4,7 @@ import { bytesFromDatabase } from "../core/mappers.js";
 import {
   DriveConflictError,
   DriveNotFoundError,
+  DrivePersonStorageFullError,
   DriveStorageQuotaExceededError,
 } from "../errors.js";
 import { appendDriveActivity } from "./activity.js";
@@ -29,6 +30,14 @@ export async function reserveDriveStorageQuota(
   expiresAt: Date,
   onExceeded?: (event: Omit<StorageQuotaExceededEvent, "bucket" | "quota">) => void,
 ): Promise<void> {
+  // A file counts against its owner, whoever uploads it or adds a version.
+  const personal = await sql<{ full: boolean | null }[]>`
+    select helix_actor_storage_full(object.org_id, object.owner_actor_id, ${byteSize}) as full
+    from objects object
+    where object.org_id = ${orgId} and object.id = ${objectId}
+      and object.owner_actor_id is not null
+  `;
+  if (personal[0]?.full === true) throw new DrivePersonStorageFullError();
   const rows = await sql<StorageQuotaDecisionRow[]>`
     select * from helix_reserve_drive_storage(
       ${orgId}, ${objectId}, ${byteSize}, ${expiresAt}
@@ -119,9 +128,19 @@ export async function getMemberStorageUsage(
     context.sql,
     { orgId: input.orgId, actorId: input.actorId },
     async (tx) =>
-      await tx<readonly (DriveStorageQuotaRow & { readonly member_used_bytes: string | number })[]>`
+      await tx<
+        readonly (DriveStorageQuotaRow & {
+          readonly member_used_bytes: string | number;
+          readonly personal_limit_bytes: string | number | null;
+          readonly personal_used_bytes: string | number | null;
+        })[]
+      >`
         select
           o.quotas -> 'storage_bytes_limit' as storage_bytes_limit,
+          personal.limit_bytes as personal_limit_bytes,
+          case when personal.limit_bytes is not null
+            then helix_actor_storage_usage_bytes(${input.orgId}, ${input.actorId})
+          end as personal_used_bytes,
           helix_storage_usage_bytes(${input.orgId}) as storage_used_bytes,
           (
             select coalesce(sum(object.byte_size), 0)
@@ -131,6 +150,9 @@ export async function getMemberStorageUsage(
               and object.kind in ('file', 'recording')
           ) as member_used_bytes
         from orgs o
+        cross join lateral (
+          select helix_actor_storage_limit_bytes(${input.orgId}, ${input.actorId}) as limit_bytes
+        ) personal
         where o.id = ${input.orgId}
         limit 1
       `,
@@ -142,6 +164,14 @@ export async function getMemberStorageUsage(
     usedBytes: bytesFromDatabase(row.member_used_bytes),
     limitBytes,
     organizationUsedBytes: limitBytes === null ? null : bytesFromDatabase(row.storage_used_bytes),
+    ...(row.personal_limit_bytes === null
+      ? {}
+      : {
+          personal: {
+            usedBytes: bytesFromDatabase(row.personal_used_bytes ?? 0),
+            limitBytes: bytesFromDatabase(row.personal_limit_bytes),
+          },
+        }),
   };
 }
 

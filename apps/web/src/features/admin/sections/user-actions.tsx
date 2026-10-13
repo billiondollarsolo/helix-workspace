@@ -7,6 +7,7 @@ import { RowMenuItem } from "@/features/admin/console/widgets";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   AtSign as AtSignIcon,
+  Gauge as GaugeIcon,
   KeyRound as KeyIcon,
   MailPlus as MailPlusIcon,
   Pencil as PencilIcon,
@@ -25,6 +26,7 @@ import {
   revokeAdminUserInvite,
 } from "@/features/admin/admin-users";
 import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
+import { PersonLimitsDialog } from "@/features/admin/person-limits-dialog";
 import { AdminUserAddressesDialog } from "./user-addresses-dialog";
 import { UserOffboardingDialog } from "./user-offboarding-dialog";
 import { AdminUserProfileDialog } from "./user-profile-dialog";
@@ -33,6 +35,7 @@ import { UserSuspensionDialog } from "./user-suspension-dialog";
 export type UserAction =
   | "profile"
   | "addresses"
+  | "limits"
   | "resend-invite"
   | "revoke-invite"
   | "reset-verification"
@@ -51,9 +54,12 @@ export function userActionsFor(user: DirectoryUser): readonly UserAction[] {
   }
   if (user.actorType === "user") {
     actions.push("profile", "addresses");
+    if (user.status !== "removed") actions.push("limits");
     if (user.status === "active") actions.push("reset-verification", "suspend");
     if (user.status === "suspended") actions.push("restore");
   }
+  // Agents and service accounts store and send too, so they have limits as well.
+  if (user.actorType !== "user" && user.status === "active") actions.push("limits");
   if ((user.actorType === "user" || user.actorType === "agent") && user.status === "active") {
     actions.push("offboard");
   }
@@ -63,6 +69,7 @@ export function userActionsFor(user: DirectoryUser): readonly UserAction[] {
 const ACTION_LABEL: Record<UserAction, string> = {
   profile: "Edit profile",
   addresses: "Mail addresses",
+  limits: "Limits",
   "resend-invite": "Resend invitation",
   "revoke-invite": "Withdraw invitation…",
   "reset-verification": "Reset sign-in verification",
@@ -74,6 +81,7 @@ const ACTION_LABEL: Record<UserAction, string> = {
 const ACTION_ICON: Record<UserAction, ReactNode> = {
   profile: <PencilIcon size={16} />,
   addresses: <AtSignIcon size={16} />,
+  limits: <GaugeIcon size={16} />,
   "resend-invite": <MailPlusIcon size={16} />,
   "revoke-invite": <XIcon size={16} />,
   "reset-verification": <KeyIcon size={16} />,
@@ -139,6 +147,8 @@ export function UserActionDialog({
       return <AdminUserProfileDialog actorId={user.id} name={user.name} onClose={onClose} />;
     case "addresses":
       return <AdminUserAddressesDialog actorId={user.id} name={user.name} onClose={onClose} />;
+    case "limits":
+      return <PersonLimitsDialog actorId={user.id} name={user.name} onClose={onClose} />;
     case "offboard":
       return <UserOffboardingDialog actorId={user.id} name={user.name} onClose={onClose} />;
     case "reset-verification":

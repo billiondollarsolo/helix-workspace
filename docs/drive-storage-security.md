@@ -37,8 +37,8 @@ may only read:
   dialog;
 - a person sees only requests they made or requests for items they own.
 
-`drive.access.request` is limited to 10 calls a minute per person, and asking again while a
-request is open notifies nobody. Hiding an item from Shared with me (`drive_hidden_shares`) is a
+Asking again while a request is open notifies nobody, so a person cannot use requests to flood
+an owner. Hiding an item from Shared with me (`drive_hidden_shares`) is a
 per-person list preference and changes no access.
 
 ## KMS rotation

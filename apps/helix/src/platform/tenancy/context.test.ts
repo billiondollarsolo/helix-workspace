@@ -140,7 +140,7 @@ describe("resolveTenantContext", () => {
     expect(context.orgId).toBe(acme.id);
     expect(context.orgSlug).toBe("acme");
     expect(context.effectiveConfig.features.assistant_retrieval).toBe(false);
-    expect(context.effectiveConfig.quotas.actors_limit).toBeNull();
+    expect(context.effectiveConfig.quotas.export_jobs_per_hour).toBeNull();
   });
 
   it("requires a tenant slug in multi-tenant SaaS mode", async () => {

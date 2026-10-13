@@ -93,6 +93,7 @@ import {
 } from "../platform/mail/index.js";
 import { registerMailDecisionAdminRoutes } from "../platform/mail/decision/admin-routes.js";
 import { buildDecisionModelReport } from "../platform/mail/decision/report.js";
+import { registerPersonLimitRoutes } from "../platform/limits/person-limits-routes.js";
 import { registerMeetRoutes } from "../platform/meet/index.js";
 import { registerSearchAdminRoutes } from "../platform/search/index.js";
 import { registerInviteRoutes } from "../platform/signup/routes.js";
@@ -110,6 +111,7 @@ import {
 import { registerBetterAuthRoutes } from "./auth-routes.js";
 import { installAgentSecretAdministration } from "./agent-secrets.js";
 import { installEdgeCertificateManagement } from "./edge-certificate.js";
+import { createPersonLimitStore, personLimitDefaults } from "./person-limits.js";
 import { traceIdForRequest } from "./request-principal.js";
 import { isAdminMfaProtectedPath } from "./route-scope.js";
 import type { installTools } from "./tools.js";
@@ -548,6 +550,13 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
     app,
     sql,
     cipher: tenantSecretCipher,
+    auditSink: auditStore,
+    actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+  });
+
+  registerPersonLimitRoutes(app, {
+    store: createPersonLimitStore(sql, orgStore),
+    defaultsFor: personLimitDefaults(orgStore),
     auditSink: auditStore,
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
   });

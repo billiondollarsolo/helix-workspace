@@ -252,6 +252,8 @@ export interface DriveStorageUsage {
   readonly usedBytes: number;
   readonly limitBytes: number | null;
   readonly organizationUsedBytes: number | null;
+  /** The person's own limit, counting their files and their mailbox; absent when none is set. */
+  readonly personal?: { readonly usedBytes: number; readonly limitBytes: number };
 }
 export async function getDriveStorageUsage(
   fetchImpl: DriveApiFetch = authenticatedFetch,

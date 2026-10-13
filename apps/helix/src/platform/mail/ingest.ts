@@ -12,7 +12,11 @@ import { MailAddressNormalizationError, normalizeMailboxAddress } from "./addres
 import { holdAgentMail, type AgentMailGate } from "./agent-mail/hold.js";
 import type { AntivirusScanner, AntivirusScanResult } from "./antivirus.js";
 import { inspectInboundAttachments } from "./content-safety.js";
-import { MailAddressDeliveryError, MailMalwareRejectedError } from "./errors.js";
+import {
+  MailAddressDeliveryError,
+  MailInboundQuotaExceededError,
+  MailMalwareRejectedError,
+} from "./errors.js";
 import { evaluateInboundMail, type MailFilterEvaluationResult } from "./filters.js";
 import { addressObjectToList, parsedAttachments, parsedMailToMessage } from "./inbound-message.js";
 import {
@@ -367,6 +371,7 @@ export class SmtpMailReceiver {
       );
     } catch (error) {
       if (error instanceof MailAddressDeliveryError) throw error;
+      if (error instanceof MailInboundQuotaExceededError) throw smtpError(452, "Mailbox is full.");
       throw smtpError(451, "Recipient lookup temporarily unavailable.");
     }
     if (!acceptsInboundRecipient(recipient)) {

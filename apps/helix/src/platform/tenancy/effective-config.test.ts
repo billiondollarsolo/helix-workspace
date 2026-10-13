@@ -25,7 +25,7 @@ describe("buildEffectiveTenantConfig", () => {
           assistant_retrieval: false,
         },
         quotas: {
-          actors_limit: 50,
+          export_jobs_per_hour: 50,
         },
         branding: {
           accent_color_hex: "#2f6fed",
@@ -37,7 +37,7 @@ describe("buildEffectiveTenantConfig", () => {
     expect(effective.features.calendar_import_invitations).toBe(true);
     expect(effective.features.mail_outbound).toBe(true);
     expect(effective.quotas.storage_bytes_limit).toBeNull();
-    expect(effective.quotas.actors_limit).toBe(50);
+    expect(effective.quotas.export_jobs_per_hour).toBe(50);
     expect(effective.branding.accent_color_hex).toBe("#2f6fed");
   });
 

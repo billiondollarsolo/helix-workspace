@@ -105,6 +105,32 @@ export function detachedFromTenantPostgresContext<T>(callback: () => Promise<T>)
   return activeTenantContext.exit(callback);
 }
 
+/**
+ * Run `callback` as another actor inside the active request transaction, then
+ * return to the caller's own identity. A transaction otherwise never changes
+ * actor; this exists for one case: a person has confirmed an action that an
+ * agent (or another person) asked for, and that action must run as whoever
+ * asked. The caller has already checked that the requester is still authorized.
+ *
+ * It stays in the same transaction because the approval and its audit entries
+ * are already written there, and a second transaction would wait on them.
+ */
+export async function withRequesterPostgresActor<T>(
+  actorId: string,
+  callback: () => Promise<T>,
+): Promise<T> {
+  const active = activeTenantContext.getStore();
+  const requester = normalizeUuid(actorId, "actorId");
+  if (active === undefined || active.actorId === requester) return callback();
+  // A savepoint: if the work fails, the identity change is undone with it.
+  const result = (await active.tx.savepoint(async (tx) => {
+    await tx`select set_config('helix.actor_id', ${requester}, true)`;
+    return activeTenantContext.run({ orgId: active.orgId, actorId: requester, tx }, callback);
+  })) as T;
+  await active.tx`select set_config('helix.actor_id', ${active.actorId ?? ""}, true)`;
+  return result;
+}
+
 async function applyTenantPostgresContext(
   tx: postgres.TransactionSql,
   input: TenantPostgresContextInput,

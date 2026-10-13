@@ -8,6 +8,15 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Added
 
+- Limits for each person. **Admin → Directory → Limits** sets how much each person may store
+  (their Drive files plus their mailbox) and how many messages they may send in an hour and in a
+  day. Nothing is limited until an administrator sets a value. One person, agent, or service
+  account can be given values of their own from **Limits** on their row under **Admin → Users**;
+  an empty value there falls back to the organization's default. At a storage limit, uploads and
+  copies are refused and new mail is turned away as "Mailbox is full" (other members of a group
+  address still receive it); at a sending limit, the message is refused with the limit it
+  reached. People see their own storage against their limit in Drive. See "Limits for each
+  person" in the admin guide.
 - **Make a copy** in Drive (`drive.copy`). A person can copy any file they can open; the copy is
   theirs. It is written through the ordinary upload path, so it counts against storage and is
   malware-scanned, and it is refused wherever a download would be (data-loss policy, recordings
@@ -446,6 +455,15 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Changed
 
+- Three organization limits that were stored and displayed but never applied have been removed:
+  **Accounts**, **AI tokens per month**, and **AI images per month**. Saved values for them are
+  dropped. AI spending is limited under **Admin → AI costs**, as before.
+- Mail sending was documented as limited to 60 messages an hour and 200 a day per person, and the
+  Mail status page showed those numbers, but nothing applied them. The numbers are no longer
+  shown or declared on the tools; the real limits are the ones set under **Admin → Limits**.
+  `MAIL_SEND_RATE_LIMIT_PER_HOUR` and `MAIL_SEND_RATE_LIMIT_PER_DAY` are no longer read.
+- A mailbox that cannot take mail because its storage is full now answers the sending server
+  with `452 Mailbox is full` instead of `451 Recipient lookup temporarily unavailable`.
 - `drive.share` emails the people it gives access to unless called with `notify: false`, and
   accepts a `message` to include. Callers that share on someone's behalf and do not want mail sent
   must pass `notify: false`.
@@ -624,6 +642,12 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Fixed
 
+- An agent's mail could be held for a person to confirm, but confirming it failed with "Mail
+  thread not found". Approved work ran with the approving person's database identity, and mail
+  rules let a person reach only their own mailbox. Approved work now runs as whoever asked for
+  it, for the duration of that work, inside the same transaction. This affects every confirmed
+  action, not only mail: it is executed as its requester, as the confirmation screen says.
+  `infra/scripts/production-boot-smoke.sh` now confirms an agent's reply and checks it is sent.
 - Outbound webhooks never fired for live events. Webhooks are per-organization rows, and the
   worker looked them up outside any organization, where the server's database role sees none, so
   every event matched nothing and waiting retries were never picked up. The worker now looks up

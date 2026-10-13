@@ -33,12 +33,7 @@ import {
   toolResource,
   type ToolAccessPolicy,
 } from "./permissions/tool-access.js";
-import {
-  evaluateAutomationPolicy,
-  hashToolInput,
-  withStandingAuthorization,
-  type AutomationPolicyDecision,
-} from "./tools/automation-policy.js";
+import { hashToolInput, resolveAutomationDecision } from "./tools/automation-policy.js";
 import {
   evaluateToolPolicyFirewall,
   type ToolPolicyDecision,
@@ -333,6 +328,12 @@ export interface ToolRegistryOptions {
     record: PendingActionRecord,
     approval: PendingToolActionOptions,
   ) => Promise<PendingExecutionPrincipal | null>;
+  /**
+   * Runs approved work as the actor that asked for it, so row security sees
+   * the requester and not the person who confirmed. Without it the work runs
+   * in the approver's own database context.
+   */
+  readonly runAsRequester?: <T>(actor: Actor, work: () => Promise<T>) => Promise<T>;
 }
 
 export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeToolRegistry {
@@ -876,31 +877,34 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
         ...(claim.record.traceId === null ? {} : { traceId: claim.record.traceId }),
         ...(claim.record.requesterIp === null ? {} : { ip: claim.record.requesterIp }),
       };
-      const result = await this.invoke<Output>(claim.record.toolId, claim.record.input, {
-        actor: requestingPrincipal.actor,
-        request: executionRequest,
-        ...(requestingPrincipal.credentialId === undefined
-          ? {}
-          : { credentialId: requestingPrincipal.credentialId }),
-        ...(requestingPrincipal.credentialOwnerActorId === undefined
-          ? {}
-          : { credentialOwnerActorId: requestingPrincipal.credentialOwnerActorId }),
-        ...(requestingPrincipal.credentialPolicy === undefined
-          ? {}
-          : { credentialPolicy: requestingPrincipal.credentialPolicy }),
-        idempotencyFingerprint: claim.record.inputHash,
-        executionIdempotencyKey: claim.record.executionIdempotencyKey,
-        pendingActionId: pendingId,
-        policyContext: {
-          effectiveClassification: "restricted",
-          sourceIds: [],
-          containsUntrustedContext: false,
-          requestChannel: "pending_execution",
-          tenantId: claim.record.orgId,
-        },
-        enforceConfirmation: true,
-        skipConfirmation: true,
-      });
+      const execute = () =>
+        this.invoke<Output>(claim.record.toolId, claim.record.input, {
+          actor: requestingPrincipal.actor,
+          request: executionRequest,
+          ...(requestingPrincipal.credentialId === undefined
+            ? {}
+            : { credentialId: requestingPrincipal.credentialId }),
+          ...(requestingPrincipal.credentialOwnerActorId === undefined
+            ? {}
+            : { credentialOwnerActorId: requestingPrincipal.credentialOwnerActorId }),
+          ...(requestingPrincipal.credentialPolicy === undefined
+            ? {}
+            : { credentialPolicy: requestingPrincipal.credentialPolicy }),
+          idempotencyFingerprint: claim.record.inputHash,
+          executionIdempotencyKey: claim.record.executionIdempotencyKey,
+          pendingActionId: pendingId,
+          policyContext: {
+            effectiveClassification: "restricted",
+            sourceIds: [],
+            containsUntrustedContext: false,
+            requestChannel: "pending_execution",
+            tenantId: claim.record.orgId,
+          },
+          enforceConfirmation: true,
+          skipConfirmation: true,
+        });
+      const result = await (options.runAsRequester?.(requestingPrincipal.actor, execute) ??
+        execute());
       await gate.completeExecution({
         id: pendingId,
         executionActorId: requestingPrincipal.actor.id,
@@ -1609,25 +1613,4 @@ function actorIsOrgAdmin(actor: Actor): boolean {
 
 function shouldLimitActor(actor: Actor): boolean {
   return actor.type === "agent" || actor.type === "service_account";
-}
-
-/**
- * Only agent mutations are bounded: people and reads produce no decision. A
- * credential's policy comes first, then an administrator's standing grant.
- */
-async function resolveAutomationDecision(input: {
-  readonly actor: Actor;
-  readonly tool: ToolDefinition;
-  readonly parsedInput: unknown;
-  readonly credentialId: string | undefined;
-  readonly credentialPolicy: CredentialPolicyOverrides | undefined;
-}): Promise<AutomationPolicyDecision | null> {
-  if (input.actor.type !== "agent" || input.tool.sideEffects === "read") {
-    return null;
-  }
-  const { tool, parsedInput } = input;
-  // No authenticating credential, no policy to honor, whatever the caller sent.
-  const policy = input.credentialId === undefined ? null : input.credentialPolicy?.automationPolicy;
-  const decision = evaluateAutomationPolicy({ policy, tool, parsedInput });
-  return withStandingAuthorization(decision, tool, parsedInput, input.actor);
 }

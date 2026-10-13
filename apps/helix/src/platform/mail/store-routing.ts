@@ -107,7 +107,22 @@ export class MailRoutingStore {
     if (rows.some((recipient) => recipient.quota_exceeded)) {
       throw new MailInboundQuotaExceededError();
     }
-    return rows.map((recipient) => ({
+    // A mailbox that has reached its owner's storage limit takes no more mail.
+    // Behind a group address the other members still receive the message.
+    const full =
+      rows.length === 0
+        ? []
+        : await this.sql<{ readonly actor_id: string }[]>`
+            select mailbox.actor_id
+            from unnest(
+              ${this.sql.array(rows.map((row) => row.org_id))}::uuid[],
+              ${this.sql.array(rows.map((row) => row.actor_id))}::uuid[]
+            ) as mailbox(org_id, actor_id)
+            where helix_actor_storage_full(mailbox.org_id, mailbox.actor_id)
+          `;
+    const open = rows.filter((row) => !full.some((mailbox) => mailbox.actor_id === row.actor_id));
+    if (rows.length > 0 && open.length === 0) throw new MailInboundQuotaExceededError();
+    return open.map((recipient) => ({
       orgId: recipient.org_id,
       actorId: recipient.actor_id,
       address: recipient.address,

@@ -97,6 +97,12 @@ export const driveStorageUsageOutputSchema = z.object({
   usedBytes: z.number().int().nonnegative(),
   limitBytes: z.number().int().nonnegative().nullable(),
   organizationUsedBytes: z.number().int().nonnegative().nullable(),
+  personal: z
+    .object({
+      usedBytes: z.number().int().nonnegative(),
+      limitBytes: z.number().int().nonnegative(),
+    })
+    .optional(),
 });
 /** D11 operator lifecycle policy. */
 export const driveLifecyclePolicyOutputSchema = z.object({

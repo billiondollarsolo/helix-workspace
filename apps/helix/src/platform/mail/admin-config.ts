@@ -54,8 +54,6 @@ export interface MailAdminStatus {
   };
   readonly domains: readonly MailAdminDomainStatus[];
   readonly quotas: {
-    readonly perActorPerHour: number;
-    readonly perActorPerDay: number;
     readonly maxMessageBytes: number | null;
     readonly evidence: string;
   };
@@ -242,10 +240,8 @@ function dnsRecord(
 
 function quotasStatus(env: NodeJS.ProcessEnv): MailAdminStatus["quotas"] {
   return {
-    perActorPerHour: parseInteger(env.MAIL_SEND_RATE_LIMIT_PER_HOUR) ?? 60,
-    perActorPerDay: parseInteger(env.MAIL_SEND_RATE_LIMIT_PER_DAY) ?? 200,
     maxMessageBytes: parseInteger(env.MAIL_MAX_MESSAGE_BYTES),
-    evidence: "Defaults align with the mail.send tool rate limit unless env overrides are present.",
+    evidence: "How much each person may send is set under Admin → Limits.",
   };
 }
 

@@ -361,7 +361,7 @@ describe("PostgresOrgStore", () => {
     await store.updateTenantConfig({
       orgId: "11111111-1111-4111-8111-111111111111",
       featureFlags: { assistant_retrieval: false, calendar_import_invitations: null },
-      quotas: { actors_limit: null },
+      quotas: { export_jobs_per_hour: null },
     });
 
     const update = recording.calls[1]?.text.replace(/\s+/gu, " ") ?? "";
@@ -370,7 +370,7 @@ describe("PostgresOrgStore", () => {
     expect(recording.jsonValues).toContainEqual({ assistant_retrieval: false });
     // A null flag removes the override; a null quota is stored as "unlimited".
     expect(recording.arrays).toEqual([["calendar_import_invitations"], []]);
-    expect(recording.jsonValues).toContainEqual({ actors_limit: null });
+    expect(recording.jsonValues).toContainEqual({ export_jobs_per_hour: null });
   });
 
   it("lists BYO storage orgs and persists bounded health", async () => {

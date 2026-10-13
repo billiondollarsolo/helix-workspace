@@ -33,6 +33,8 @@ describe("inbound SMTP tenant routing", () => {
           quota_exceeded: false,
         },
       ],
+      // Nobody is at their own storage limit.
+      [],
       [
         {
           org_id: orgA,
@@ -47,6 +49,7 @@ describe("inbound SMTP tenant routing", () => {
           quota_exceeded: false,
         },
       ],
+      [],
     ]);
     const store = new PostgresMailStore(recording.sql);
 
@@ -92,6 +95,7 @@ describe("inbound SMTP tenant routing", () => {
   it("loads and groups tenant-owned routing targets for one envelope address", async () => {
     const recording = recordingSql([
       [{ org_id: orgA, actor_id: actorA, address: "ada@alpha.test", quota_exceeded: false }],
+      [],
       [
         {
           id: "rule-alias",
@@ -396,7 +400,10 @@ describe("SMTP RCPT validation", () => {
     const logger = { error: vi.fn() };
     const result = await validateRecipient(async () => Promise.reject(failure), logger);
 
-    expect(result).toMatchObject({ responseCode: 451 });
+    // Both are temporary: the sender keeps trying, and a full mailbox says so.
+    expect(result).toMatchObject({
+      responseCode: failure instanceof MailInboundQuotaExceededError ? 452 : 451,
+    });
     expect(result?.message).not.toContain(failure.message);
   });
 

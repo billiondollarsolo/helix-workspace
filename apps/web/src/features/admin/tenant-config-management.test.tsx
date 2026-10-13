@@ -34,7 +34,7 @@ const tenantConfigPayload = {
     },
     quotas: {
       api_rps_limit: 10,
-      actors_limit: null,
+      export_jobs_per_hour: null,
     },
     effective: {
       byo: {},
@@ -45,7 +45,7 @@ const tenantConfigPayload = {
       },
       quotas: {
         api_rps_limit: 10,
-        actors_limit: null,
+        export_jobs_per_hour: null,
       },
       branding: {
         display_name_override: "Acme",
@@ -189,7 +189,10 @@ describe("TenantConfigManagement", () => {
       expect(container.textContent).toContain("2 set for your organization");
       expect(container.textContent).toContain("API requests per second");
       expect(container.textContent).toContain("10");
-      expect(container.textContent).toContain("Accounts");
+      expect(container.textContent).toContain("Exports per hour");
+      // Limits nothing enforced were removed rather than shown as if they applied.
+      expect(container.textContent).not.toContain("Accounts");
+      expect(container.textContent).not.toContain("AI tokens per month");
       expect(container.textContent).toContain("Unlimited");
     });
     expect(() => inputByLabel("API requests per second")).toThrow(
@@ -801,8 +804,8 @@ describe("TenantConfigManagement", () => {
     });
     const quotas = detailsBySummary("Effective limits");
     expect(rowByLabel(quotas, "Storage").textContent).toContain("Not reported");
-    // `actors_limit` is an explicit null override — that one really is uncapped.
-    expect(rowByLabel(quotas, "Accounts").textContent).toContain("Unlimited");
+    // `export_jobs_per_hour` is an explicit null override — that one really is uncapped.
+    expect(rowByLabel(quotas, "Exports per hour").textContent).toContain("Unlimited");
     expect(container.textContent).not.toContain("unlimited");
   });
 

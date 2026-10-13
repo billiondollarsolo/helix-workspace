@@ -39,7 +39,7 @@ describe(
       const updated = await store.updateTenantConfig({
         orgId,
         featureFlags: { assistant_retrieval: false },
-        quotas: { actors_limit: null },
+        quotas: { export_jobs_per_hour: null },
       });
 
       expect(updated?.featureFlags).toEqual({
@@ -47,7 +47,7 @@ describe(
         calendar_import_invitations: true,
         assistant_retrieval: false,
       });
-      expect(updated?.quotas).toEqual({ api_rps_limit: 5, actors_limit: null });
+      expect(updated?.quotas).toEqual({ api_rps_limit: 5, export_jobs_per_hour: null });
       await expect(store.listByoStorageOrgIds({ limit: 1_000 })).resolves.toContain(orgId);
 
       const cleared = await store.updateTenantConfig({

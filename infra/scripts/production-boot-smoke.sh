@@ -659,7 +659,7 @@ confirm_as_owner() {
 }
 expires=$(node -e 'process.stdout.write(new Date(Date.now() + 86400000).toISOString())')
 issue_key() {
-  api /v1/api/tools/agent.credentials.create -d "{\"actorId\":\"$agent_id\",\"credentialType\":\"api_key\",\"label\":\"Release key\",\"purpose\":\"Boot smoke\",\"scopes\":[\"tools:read\",\"secrets.use\",\"mail.read\",\"mail.write\",\"mail.send\"],\"expiresAt\":\"$expires\"}"
+  api /v1/api/tools/agent.credentials.create -d "{\"actorId\":\"$agent_id\",\"credentialType\":\"api_key\",\"label\":\"Release key\",\"purpose\":\"Boot smoke\",\"scopes\":[\"tools:read\",\"secrets.use\",\"mail.read\",\"mail.write\",\"mail.send\",\"mail.external\"],\"expiresAt\":\"$expires\"}"
 }
 handed_value="hunter2-$(openssl rand -hex 6)"
 hidden_value="tok_live_$(openssl rand -hex 8)"
@@ -833,18 +833,51 @@ if [[ -n "$(json id <<<"$saved")" && "$(held "$saved")" == "not held" ]]; then
 else
   fail "the agent saves a draft reply without a person confirming it ($(head -c 200 <<<"$saved"))"
 fi
-reply=$(as_agent mail.reply -d "{\"threadId\":\"$thread_id\",\"bodyText\":\"Invoice 42 is scheduled for Friday.\",\"idempotencyKey\":\"boot-smoke-$(openssl rand -hex 6)\"}")
+reply=$(as_agent mail.reply -d "{\"threadId\":\"$thread_id\",\"to\":[{\"address\":\"ana@partner.example\"}],\"bodyText\":\"Invoice 42 is scheduled for Friday.\",\"idempotencyKey\":\"boot-smoke-$(openssl rand -hex 6)\"}")
 if [[ "$(held "$reply")" == held ]]; then
   pass "sending the reply waits for a person"
 else
   fail "sending the reply waits for a person ($(head -c 300 <<<"$reply"))"
 fi
+# Once a person confirms, the reply goes out as the agent, from the agent's mailbox.
+confirmed=$(confirm_as_owner "$reply")
+if [[ -n "$(json messageId <<<"$confirmed")" ]]; then
+  pass "and is sent from the agent's mailbox once the person confirms it"
+else
+  fail "and is sent from the agent's mailbox once the person confirms it ($(head -c 300 <<<"$confirmed"))"
+fi
+# (It goes no further here: this stack's domain has no DKIM key, which a real
+# deployment sets up with its mail provider before sending.)
 expect "the organization asks for a person to confirm drafts as well" \
   "$(status_of /v1/api/admin/tenant-config -X PATCH -d '{"features":{"agent_mail_drafts_unattended":false},"reason":"boot smoke"}')" 200
 draft_again=${draft/$(json idempotencyKey <<<"$draft")/$(node -e 'process.stdout.write(require("node:crypto").randomUUID())')}
 expect "and the agent's next draft now waits" "$(held "$(as_agent mail.draft.save -d "$draft_again")")" held
 expect "the agent's key cannot change who may write to it" \
   "$(edge -H "x-api-key: $agent_key" -H 'content-type: application/json' -o /dev/null -w '%{http_code}' -X PUT "$BASE/v1/api/admin/agent-mail/$agent_id" -d '{"address":null,"receiveMode":"anyone","allowedSenders":[]}')" 403
+
+# --- Limits for each person --------------------------------------------------
+# An administrator can give one person or agent limits of their own: how much
+# they may store (their files and their mailbox) and how much mail they may send.
+
+limits() {
+  status_of "/v1/api/admin/person-limits/$agent_id" -X PUT \
+    -d "{\"storageBytes\":$1,\"mailSendPerHour\":$2,\"mailSendPerDay\":null}"
+}
+expect "an administrator gives the agent a storage limit below what it already uses" \
+  "$(limits 0 null)" 200
+expect "mail for the full mailbox is turned away as full" \
+  "$(send_mail ana@partner.example 'To a full mailbox' 2>/dev/null)" 452
+expect "the administrator hands the storage limit back and caps the agent's sending instead" \
+  "$(limits null 0)" 200
+expect "and the mailbox takes mail again" \
+  "$(send_mail ana@partner.example 'After the limit')" 250
+over_limit=$(confirm_as_owner "$(as_agent mail.reply -d "{\"threadId\":\"$thread_id\",\"to\":[{\"address\":\"ana@partner.example\"}],\"bodyText\":\"One more.\",\"idempotencyKey\":\"boot-smoke-$(openssl rand -hex 6)\"}")")
+if grep -q "reached your limit of 0 messages an hour" <<<"$over_limit"; then
+  pass "a reply past the agent's sending limit is refused even when a person confirms it"
+else
+  fail "a reply past the agent's sending limit is refused even when a person confirms it ($(head -c 300 <<<"$over_limit"))"
+fi
+expect "the agent's own limits are removed" "$(limits null null)" 200
 
 # --- HTTPS certificate managed from the Admin console -----------------------
 

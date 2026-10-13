@@ -55,7 +55,9 @@ describe("userActionsFor", () => {
       expect(actions).not.toContain("resend-invite");
       expect(actions).not.toContain("revoke-invite");
     }
+    // An agent stores and sends too, so it has limits; it has no profile or sign-in.
     expect(userActionsFor(directoryUser({ actorType: "agent", status: "active" }))).toEqual([
+      "limits",
       "offboard",
     ]);
   });

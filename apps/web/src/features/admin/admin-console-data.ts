@@ -130,6 +130,7 @@ export const ADMIN_NAV_GROUPS = [
     items: [
       { id: "users", label: "Users", icon: "Users" },
       { id: "groups", label: "Groups & org units", icon: "Building" },
+      { id: "limits", label: "Limits", icon: "Settings" },
     ],
   },
   {

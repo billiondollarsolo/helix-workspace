@@ -46,8 +46,6 @@ export interface AdminMailConfigurationResponse {
   };
   readonly domains: readonly AdminMailDomain[];
   readonly quotas: {
-    readonly perActorPerHour: number;
-    readonly perActorPerDay: number;
     readonly maxMessageBytes: number | null;
     readonly evidence: string;
   };
@@ -228,8 +226,6 @@ export function MailConfiguration() {
             title="Quotas"
             status="configured"
             rows={[
-              ["Per actor hour", formatNumber(config.quotas.perActorPerHour)],
-              ["Per actor day", formatNumber(config.quotas.perActorPerDay)],
               ["Max size", formatBytes(config.quotas.maxMessageBytes)],
               ["Evidence", config.quotas.evidence],
             ]}
@@ -532,11 +528,7 @@ function isAdminMailDNSRecord(value: unknown): value is AdminMailDNSRecord {
 
 function isQuotas(value: unknown): value is AdminMailConfigurationResponse["quotas"] {
   return (
-    isRecord(value) &&
-    typeof value.perActorPerHour === "number" &&
-    typeof value.perActorPerDay === "number" &&
-    isNullableNumber(value.maxMessageBytes) &&
-    typeof value.evidence === "string"
+    isRecord(value) && isNullableNumber(value.maxMessageBytes) && typeof value.evidence === "string"
   );
 }
 

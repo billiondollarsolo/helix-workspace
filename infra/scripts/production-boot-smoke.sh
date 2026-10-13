@@ -659,7 +659,7 @@ confirm_as_owner() {
 }
 expires=$(node -e 'process.stdout.write(new Date(Date.now() + 86400000).toISOString())')
 issue_key() {
-  api /v1/api/tools/agent.credentials.create -d "{\"actorId\":\"$agent_id\",\"credentialType\":\"api_key\",\"label\":\"Release key\",\"purpose\":\"Boot smoke\",\"scopes\":[\"tools:read\",\"secrets.use\",\"mail.read\"],\"expiresAt\":\"$expires\"}"
+  api /v1/api/tools/agent.credentials.create -d "{\"actorId\":\"$agent_id\",\"credentialType\":\"api_key\",\"label\":\"Release key\",\"purpose\":\"Boot smoke\",\"scopes\":[\"tools:read\",\"secrets.use\",\"mail.read\",\"mail.write\",\"mail.send\"],\"expiresAt\":\"$expires\"}"
 }
 handed_value="hunter2-$(openssl rand -hex 6)"
 hidden_value="tok_live_$(openssl rand -hex 8)"
@@ -789,6 +789,23 @@ expect "a listed sender's message that cannot prove where it came from is held t
   "$(send_mail ana@partner.example 'From a listed sender') $(held_mail signature)" \
   "250 agent-mail:sender-not-verified agent-mail:sender-not-allowed"
 expect "the agent sees none of it" "$(agent_inbox)" ""
+# An agent working elsewhere is told about new mail by webhook: this one is
+# limited to the agent's own mailbox. (The address does not exist, so the
+# delivery fails; what matters is that it was attempted, and for this mail only.)
+hook=$(confirm_as_owner "$(api /v1/api/tools/webhook.outbound.create -d "{\"name\":\"Release bot mail\",\"url\":\"https://hooks.bootsmoke.invalid/agent-mail\",\"eventSubjects\":[\"activity.mail.received\"],\"secret\":\"$(openssl rand -hex 24)\",\"metadata\":{\"onlyActorIds\":[\"$agent_id\"]}}")")
+hook_id=$(json id <<<"$hook")
+if [[ -n "$hook_id" ]]; then
+  pass "an administrator subscribes a webhook to the agent's new mail"
+else
+  fail "an administrator subscribes a webhook to the agent's new mail ($(head -c 200 <<<"$hook"))"
+fi
+# hook_events: the events Helix tried to deliver to that webhook.
+hook_events() {
+  api /v1/api/tools/webhook.delivery.list -d "{\"outboundWebhookId\":\"$hook_id\"}" | node -e '
+    const { deliveries } = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+    process.stdout.write((deliveries ?? []).map((delivery) => delivery.eventSubject).join(" "));
+  '
+}
 decision='{"reason":"boot smoke","confirmed":true}'
 expect "the administrator deletes the stranger's message" \
   "$(status_of "/v1/api/admin/mail/quarantine/$stranger_id" -X DELETE -d "$decision")" 200
@@ -797,6 +814,35 @@ expect "and delivers the listed sender's" \
 expect "the agent now reads the delivered message, and only that one" \
   "$(agent_inbox)" "From a listed sender"
 expect "nothing is left held" "$(held_mail id)" ""
+for _ in {1..30}; do
+  [[ -n "$(hook_events)" ]] && break
+  sleep 1
+done
+expect "Helix tells the agent's webhook about that message, and about nothing else" \
+  "$(hook_events)" "activity.mail.received"
+
+# The agent reads the message and writes a reply. Its draft is saved without a
+# person confirming it; sending the reply waits for one.
+thread_id=$(as_agent mail.threads.list -d '{}' | json threads.0.threadId)
+expect "the agent reads the message it was told about" \
+  "$(as_agent mail.thread.get -d "{\"threadId\":\"$thread_id\"}" | json thread.subject)" "From a listed sender"
+draft="{\"idempotencyKey\":\"$(node -e 'process.stdout.write(require("node:crypto").randomUUID())')\",\"threadId\":\"$thread_id\",\"to\":[{\"address\":\"ana@partner.example\"}],\"subject\":\"Re: From a listed sender\",\"bodyText\":\"Invoice 42 is scheduled for Friday.\"}"
+saved=$(as_agent mail.draft.save -d "$draft")
+if [[ -n "$(json id <<<"$saved")" && "$(held "$saved")" == "not held" ]]; then
+  pass "the agent saves a draft reply without a person confirming it"
+else
+  fail "the agent saves a draft reply without a person confirming it ($(head -c 200 <<<"$saved"))"
+fi
+reply=$(as_agent mail.reply -d "{\"threadId\":\"$thread_id\",\"bodyText\":\"Invoice 42 is scheduled for Friday.\",\"idempotencyKey\":\"boot-smoke-$(openssl rand -hex 6)\"}")
+if [[ "$(held "$reply")" == held ]]; then
+  pass "sending the reply waits for a person"
+else
+  fail "sending the reply waits for a person ($(head -c 300 <<<"$reply"))"
+fi
+expect "the organization asks for a person to confirm drafts as well" \
+  "$(status_of /v1/api/admin/tenant-config -X PATCH -d '{"features":{"agent_mail_drafts_unattended":false},"reason":"boot smoke"}')" 200
+draft_again=${draft/$(json idempotencyKey <<<"$draft")/$(node -e 'process.stdout.write(require("node:crypto").randomUUID())')}
+expect "and the agent's next draft now waits" "$(held "$(as_agent mail.draft.save -d "$draft_again")")" held
 expect "the agent's key cannot change who may write to it" \
   "$(edge -H "x-api-key: $agent_key" -H 'content-type: application/json' -o /dev/null -w '%{http_code}' -X PUT "$BASE/v1/api/admin/agent-mail/$agent_id" -d '{"address":null,"receiveMode":"anyone","allowedSenders":[]}')" 403
 

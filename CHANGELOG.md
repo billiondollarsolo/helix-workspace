@@ -8,6 +8,16 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Added
 
+- **Make a copy** in Drive (`drive.copy`). A person can copy any file they can open; the copy is
+  theirs. It is written through the ordinary upload path, so it counts against storage and is
+  malware-scanned, and it is refused wherever a download would be (data-loss policy, recordings
+  with export turned off). Files over 128 MiB are downloaded and uploaded again instead.
+- Agents can answer their mail from outside Helix. An outbound webhook can be limited to events
+  about named people or agents (`"onlyActorIds"` in its settings), so an agent is told about new
+  mail in its own mailbox and nobody else's. An agent's drafts in its own mailbox are saved
+  without a person confirming each one (**Agents save draft replies without asking a person**, on
+  by default, under **Admin → Security → Agent mail**); sending still waits for a person. See
+  "An agent that answers its mail" in the admin guide.
 - Drive tells people when something is shared with them. Sharing a file or folder notifies each
   person newly given access in Helix and, unless the sharer unticks **Send them an email** in the
   Share dialog, emails them a link with an optional note. The email comes from the person
@@ -614,6 +624,13 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Fixed
 
+- Outbound webhooks never fired for live events. Webhooks are per-organization rows, and the
+  worker looked them up outside any organization, where the server's database role sees none, so
+  every event matched nothing and waiting retries were never picked up. The worker now looks up
+  and delivers inside the organization the event happened in. This also means an event is only
+  ever offered to its own organization's webhooks, and an event that names no organization is
+  delivered to none. `infra/scripts/production-boot-smoke.sh` now checks that new mail for an
+  agent reaches a webhook.
 - Releasing quarantined mail from the Admin API failed with a database permission error unless the
   message was addressed to the administrator's own mailbox. The release now delivers the way the
   mail server does, in the organization's context. No console screen used this route before

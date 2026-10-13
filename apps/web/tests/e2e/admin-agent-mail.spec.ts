@@ -54,6 +54,8 @@ interface Desk {
   saves: unknown[];
   released: unknown[];
   deleted: unknown[];
+  draftsUnattended: boolean;
+  settingUpdates: unknown[];
 }
 
 async function openAgentMail(page: Page): Promise<Desk> {
@@ -73,12 +75,37 @@ async function openAgentMail(page: Page): Promise<Desk> {
     saves: [],
     released: [],
     deleted: [],
+    draftsUnattended: true,
+    settingUpdates: [],
   };
   await page.route("**/api/**", async (route) => {
     if (await fulfillCoreAppsRoute(route)) return;
     const request = route.request();
     const pathname = new URL(request.url()).pathname;
     const method = request.method();
+    if (pathname === "/v1/api/admin/tenant-config") {
+      if (method === "PATCH") {
+        const update = request.postDataJSON() as {
+          features: { agent_mail_drafts_unattended: boolean };
+        };
+        desk.settingUpdates.push(update);
+        desk.draftsUnattended = update.features.agent_mail_drafts_unattended;
+      }
+      const features = { agent_mail_drafts_unattended: desk.draftsUnattended };
+      return route.fulfill({
+        json: {
+          tenantConfig: {
+            orgId: "33333333-3333-4333-8333-333333333333",
+            orgName: "Example",
+            byo: {},
+            features: {},
+            quotas: {},
+            branding: {},
+            effective: { byo: {}, features, quotas: {}, branding: {} },
+          },
+        },
+      });
+    }
     if (pathname === "/v1/api/admin/agent-mail") {
       return route.fulfill({ json: { agents: desk.agents, domains: ["example.com"] } });
     }
@@ -231,4 +258,24 @@ test("shows held mail with the reason, and delivers or deletes it on confirmatio
       confirmed: true,
     },
   ]);
+});
+
+test("lets the organization ask for a person to confirm every draft an agent saves", async ({
+  page,
+}) => {
+  const desk = await openAgentMail(page);
+  const unattended = page
+    .getByRole("region", { name: "What agents do with their mail" })
+    .getByRole("switch", { name: "Agents save draft replies without asking a person" });
+  // Drafts are saved without asking unless the organization says otherwise.
+  await expect(unattended).toBeChecked();
+  await unattended.click();
+  await expect(unattended).not.toBeChecked();
+  expect(desk.settingUpdates).toEqual([
+    {
+      features: { agent_mail_drafts_unattended: false },
+      reason: "admin settings update: agent_mail_drafts_unattended",
+    },
+  ]);
+  await audit(page);
 });

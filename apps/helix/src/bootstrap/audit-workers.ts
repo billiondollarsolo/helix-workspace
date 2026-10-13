@@ -11,6 +11,7 @@ import {
   TenantDeletionWorkflow,
   TenantHardDeleteWorker,
 } from "../platform/tenancy/index.js";
+import { withTenantPostgresContext } from "../platform/tenancy/index.js";
 import { OutboundWebhookWorker } from "../platform/webhooks/index.js";
 import type { installMailWorkers } from "./mail-workers.js";
 
@@ -35,6 +36,13 @@ export async function installAuditWorkers(context: Awaited<ReturnType<typeof ins
     store: webhookStore,
     secretResolver: webhookSecretResolver,
     events: eventBus,
+    // Webhooks and deliveries are tenant rows; the worker reaches them one
+    // organization at a time.
+    runForOrg: (orgId, work) => withTenantPostgresContext(sql, { orgId }, async () => work()),
+    listOrgIds: async () =>
+      (await sql<{ id: string }[]>`select id from orgs where hard_deleted_at is null`).map(
+        (org) => org.id,
+      ),
     subject: bootEnv.WEBHOOK_EVENT_SUBJECT,
     retryBatchSize: bootEnv.WEBHOOK_RETRY_BATCH_SIZE,
     retryIntervalMs: bootEnv.WEBHOOK_RETRY_INTERVAL_MS,

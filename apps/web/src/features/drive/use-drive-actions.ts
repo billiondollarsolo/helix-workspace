@@ -14,7 +14,7 @@ import {
   setDriveObjectStarred,
   trashDriveObject,
 } from "./api";
-import { hideDriveShare } from "./drive-collaboration-api";
+import { copyDriveObject, hideDriveShare } from "./drive-collaboration-api";
 import type { DriveItem } from "./drive-data";
 import { driveQueryKeys } from "./queries";
 
@@ -31,6 +31,8 @@ export interface DriveActions {
   move(items: readonly DriveItem[], target: DriveMoveTarget): Promise<void>;
   rename(item: DriveItem, name: string): Promise<void>;
   setStarred(items: readonly DriveItem[], starred: boolean): Promise<void>;
+  /** Make the signed-in person their own copy of each file. */
+  copy(items: readonly DriveItem[]): Promise<void>;
   /** Take items other people shared out of this person's Shared with me. */
   removeFromShared(items: readonly DriveItem[]): Promise<void>;
   createFolder(name: string, parentId: string | null): Promise<string | null>;
@@ -104,6 +106,25 @@ export function useDriveActions(): DriveActions {
             );
           },
         },
+      });
+    },
+    [run],
+  );
+
+  const copy = useCallback(
+    async (items: readonly DriveItem[]) => {
+      if (items.length === 0) return;
+      const done = await run(
+        () => Promise.all(items.map((item) => copyDriveObject(item.id))),
+        "Couldn’t make a copy",
+      );
+      if (done === null) return;
+      const [only] = done;
+      notify({
+        message:
+          done.length === 1 && only !== undefined
+            ? `“${only.name}” created`
+            : `${String(done.length)} copies created`,
       });
     },
     [run],
@@ -224,6 +245,7 @@ export function useDriveActions(): DriveActions {
       move,
       rename,
       setStarred,
+      copy,
       removeFromShared,
       createFolder,
     }),
@@ -235,6 +257,7 @@ export function useDriveActions(): DriveActions {
       move,
       rename,
       setStarred,
+      copy,
       removeFromShared,
       createFolder,
     ],

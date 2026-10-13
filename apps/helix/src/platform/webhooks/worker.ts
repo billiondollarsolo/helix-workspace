@@ -32,6 +32,15 @@ export interface OutboundWebhookWorkerOptions {
   readonly retryPolicy?: WebhookRetryPolicy;
   readonly secretResolver?: WebhookSecretResolver;
   readonly onError?: (error: unknown) => void;
+  /**
+   * Runs one store call inside an organization's database context. Webhooks
+   * and their deliveries are tenant rows: under the runtime database role
+   * nothing is visible, or writable, outside the organization they belong to.
+   * Left out, store calls run as they are (in-memory stores in tests).
+   */
+  readonly runForOrg?: <T>(orgId: string, work: () => Promise<T>) => Promise<T>;
+  /** The organizations whose waiting deliveries are retried. Needed with `runForOrg`. */
+  readonly listOrgIds?: () => Promise<readonly string[]>;
 }
 
 export interface OutboundWebhookDrainResult {
@@ -88,17 +97,24 @@ export class OutboundWebhookWorker {
   }
 
   async handle(event: EventEnvelope): Promise<OutboundWebhookDrainResult> {
-    const webhooks = await this.options.store.listEnabledOutbound();
+    // An event reaches only the webhooks of the organization it happened in.
+    // One that names no organization belongs to none of them.
+    const orgId = eventField(event.payload, "orgId");
+    if (orgId === undefined) return { attempted: 0, delivered: 0, failed: 0 };
+    const store = this.storeFor(orgId);
+    const webhooks = await store.listEnabledOutbound();
     const matching = webhooks.filter(
       (webhook) =>
         webhook.enabled &&
-        webhook.eventSubjects.some((pattern) => webhookSubjectMatches(pattern, event.subject)),
+        webhook.orgId === orgId &&
+        webhook.eventSubjects.some((pattern) => webhookSubjectMatches(pattern, event.subject)) &&
+        webhookWantsActor(webhook, event.payload),
     );
     const results = await Promise.all(
       matching.map(async (webhook) => {
         try {
           const delivery = await deliverOutboundWebhook({
-            store: this.options.store,
+            store,
             webhook,
             event: {
               subject: event.subject,
@@ -126,7 +142,38 @@ export class OutboundWebhookWorker {
   }
 
   async drainRetries(now = new Date()): Promise<OutboundWebhookDrainResult> {
-    const deliveries = await this.options.store.claimDueOutboundDeliveries({
+    if (this.options.runForOrg === undefined || this.options.listOrgIds === undefined) {
+      return this.drainRetriesIn(this.options.store, now);
+    }
+    const totals = { attempted: 0, delivered: 0, failed: 0 };
+    for (const orgId of await this.options.listOrgIds()) {
+      const drained = await this.drainRetriesIn(this.storeFor(orgId), now);
+      totals.attempted += drained.attempted;
+      totals.delivered += drained.delivered;
+      totals.failed += drained.failed;
+    }
+    return totals;
+  }
+
+  /** The store, with every call made inside `orgId`'s database context. */
+  private storeFor(orgId: string): OutboundWebhookWorkerStore {
+    const { store, runForOrg } = this.options;
+    if (runForOrg === undefined) return store;
+    return {
+      listEnabledOutbound: () => runForOrg(orgId, () => store.listEnabledOutbound()),
+      getOutbound: (owner, id) => runForOrg(orgId, () => store.getOutbound(owner, id)),
+      claimDueOutboundDeliveries: (input) =>
+        runForOrg(orgId, () => store.claimDueOutboundDeliveries(input)),
+      createDelivery: (input) => runForOrg(orgId, () => store.createDelivery(input)),
+      updateDeliveryStatus: (input) => runForOrg(orgId, () => store.updateDeliveryStatus(input)),
+    };
+  }
+
+  private async drainRetriesIn(
+    store: OutboundWebhookWorkerStore,
+    now: Date,
+  ): Promise<OutboundWebhookDrainResult> {
+    const deliveries = await store.claimDueOutboundDeliveries({
       limit: this.retryBatchSize,
       now,
     });
@@ -134,21 +181,26 @@ export class OutboundWebhookWorker {
       deliveries.map(async (delivery) => {
         try {
           if (delivery.outboundWebhookId === null) {
-            await this.abandonDelivery(delivery, "Outbound delivery is missing a webhook id");
+            await this.abandonDelivery(
+              store,
+              delivery,
+              "Outbound delivery is missing a webhook id",
+            );
             return false;
           }
 
-          const webhook = await this.options.store.getOutbound(
-            delivery.orgId,
-            delivery.outboundWebhookId,
-          );
+          const webhook = await store.getOutbound(delivery.orgId, delivery.outboundWebhookId);
           if (webhook === null || !webhook.enabled) {
-            await this.abandonDelivery(delivery, "Outbound webhook is unavailable or disabled");
+            await this.abandonDelivery(
+              store,
+              delivery,
+              "Outbound webhook is unavailable or disabled",
+            );
             return false;
           }
 
           const updated = await dispatchClaimedOutboundDelivery({
-            store: this.options.store,
+            store,
             webhook,
             delivery,
             ...(this.options.secretResolver === undefined
@@ -188,8 +240,12 @@ export class OutboundWebhookWorker {
     return this.activeDrain;
   }
 
-  private async abandonDelivery(delivery: WebhookDeliveryRecord, error: string): Promise<void> {
-    await this.options.store.updateDeliveryStatus({
+  private async abandonDelivery(
+    store: OutboundWebhookWorkerStore,
+    delivery: WebhookDeliveryRecord,
+    error: string,
+  ): Promise<void> {
+    await store.updateDeliveryStatus({
       id: delivery.id,
       status: "abandoned",
       attempt: delivery.attempt,
@@ -198,6 +254,25 @@ export class OutboundWebhookWorker {
       deliveredAt: null,
     });
   }
+}
+
+/** A string field of an event's payload, when it has one. */
+function eventField(payload: unknown, field: string): string | undefined {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return undefined;
+  const value = (payload as Record<string, unknown>)[field];
+  return typeof value === "string" && value !== "" ? value : undefined;
+}
+
+/**
+ * A webhook whose settings list `onlyActorIds` receives only events about
+ * those people or agents, for example new mail in one agent's mailbox and
+ * nobody else's. Without the list it receives every event it subscribes to.
+ */
+function webhookWantsActor(webhook: OutboundWebhookRecord, payload: unknown): boolean {
+  const only = webhook.metadata.onlyActorIds;
+  if (!Array.isArray(only)) return true;
+  const actorId = eventField(payload, "actorId");
+  return actorId !== undefined && only.includes(actorId);
 }
 
 function webhookSubjectMatches(pattern: string, subject: string): boolean {

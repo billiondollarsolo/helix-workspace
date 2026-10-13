@@ -43,6 +43,7 @@ import { registerChatTools } from "../platform/chat/index.js";
 import { tierDefaults } from "../platform/config/tier.js";
 import {
   registerDriveCollaborationTools,
+  registerDriveCopyTool,
   registerDriveS3KeyTools,
   registerDriveTools,
 } from "../platform/drive/index.js";
@@ -374,6 +375,9 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
       store: mailStore,
       agentMail: new PostgresAgentMailStore(sql),
       quarantineStore: mailQuarantineStore,
+      draftsRunUnattended: async (orgId) =>
+        (await loadEffectiveTenantConfig({ orgs: orgStore }, orgId))?.features
+          .agent_mail_drafts_unattended !== false,
       defaultFromDomain: mailCfg.fromDomain,
       resolveInternalDomains: async (orgId) =>
         (await domainsStore.listDomains(orgId))
@@ -436,6 +440,7 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
   if (coreApps.shouldRegister("drive")) {
     registerDriveS3KeyTools(tools, { store: driveS3AccessKeyStore });
     registerDriveCollaborationTools(tools, driveStore);
+    registerDriveCopyTool(tools, { store: driveStore, dlp });
     registerDriveTools(tools, {
       store: driveStore,
       workflows: driveWorkflowStore,

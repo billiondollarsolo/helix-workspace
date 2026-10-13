@@ -172,6 +172,27 @@ What to expect:
   senders are recorded as `agent_mail.updated`.
 - **Agents cannot change these settings.** Only a signed-in administrator can.
 
+### An agent that answers its mail
+
+An agent running outside Helix works through its own credential, the way a person would:
+
+1. **Tell it when mail arrives.** Under **Admin → Webhooks**, add an outbound webhook for the
+   subject `activity.mail.received` and put the agent's ID in the webhook's settings as
+   `{"onlyActorIds": ["<agent id>"]}`. Helix then calls the webhook for mail delivered to that
+   agent's mailbox only. Without `onlyActorIds`, a webhook for that subject is told about new mail
+   in every mailbox in the organization, with sender and subject; do not leave it off by accident.
+   Held mail produces no call until an administrator delivers it. Verify calls as described in
+   [webhook verification](webhooks/verify.md).
+2. **It reads the message** with `mail.threads.list` and `mail.thread.get`, using a credential that
+   has `mail.read`.
+3. **It writes a reply as a draft** with `mail.draft.save` (`mail.write`). A draft stays in the
+   agent's own mailbox and sends nothing, so it is saved without a person confirming it, at most
+   30 a minute and 2,000 a day. To confirm every draft, turn off **Agents save draft replies
+   without asking a person** on the Agent mail page.
+4. **Sending always waits for a person.** When the agent calls `mail.reply` or `mail.send`
+   (`mail.send`), the message waits for someone to confirm it, like every other change an agent
+   makes. A credential without `mail.send` cannot ask to send at all.
+
 ## Quality Gate Responsibilities
 
 Admins own release readiness for:

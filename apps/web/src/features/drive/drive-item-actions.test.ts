@@ -22,6 +22,7 @@ describe("driveItemActions", () => {
       "Share",
       "Copy link",
       "Rename",
+      "Make a copy",
       "Move",
       "Add to starred",
       "File information",
@@ -38,9 +39,23 @@ describe("driveItemActions", () => {
     expect(actions).not.toContain("Download");
   });
 
+  it("copies files, never folders, and lets go of other people's items instead of trashing them", () => {
+    expect(labels(driveItemActions([folder], { trash: false }))).not.toContain("Make a copy");
+    const shared = labels(driveItemActions([file], { trash: false, shared: true }));
+    expect(shared).toContain("Make a copy");
+    expect(shared).toContain("Remove from Shared with me");
+    expect(shared).not.toContain("Move to trash");
+  });
+
   it("applies to the whole selection", () => {
     const actions = driveItemActions([file, starred], { trash: false });
-    expect(labels(actions)).toEqual(["Download", "Move", "Add to starred", "Move to trash"]);
+    expect(labels(actions)).toEqual([
+      "Download",
+      "Make a copy",
+      "Move",
+      "Add to starred",
+      "Move to trash",
+    ]);
     expect(labels(driveItemActions([starred], { trash: false }))).toContain("Remove from starred");
     expect(labels(driveItemActions([file, folder], { trash: false }))).toEqual([
       "Move",

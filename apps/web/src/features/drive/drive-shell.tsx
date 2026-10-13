@@ -283,6 +283,9 @@ export function DriveShell() {
       case "rename":
         setRenameTarget(first);
         return;
+      case "copy":
+        void actions.copy(targets);
+        return;
       case "move":
         setMoveTargets(targets);
         return;

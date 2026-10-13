@@ -20,6 +20,7 @@ import {
   type AgentMailReceiveMode,
   type HeldAgentMail,
 } from "@/features/admin/agent-mail-api";
+import { WorkspaceFlagsPanel } from "@/features/admin/console/app-settings";
 import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
 import { AdminField, AdminInput, AdminSelect } from "@/features/admin/console/controls";
 import { formatRelativeTime } from "@/features/admin/console/format";
@@ -53,6 +54,15 @@ const MODES: readonly {
       "Every sender reaches the agent. Only mail that tries to override the agent's instructions is held.",
   },
 ];
+
+const DRAFT_FLAGS = [
+  {
+    key: "agent_mail_drafts_unattended",
+    label: "Agents save draft replies without asking a person",
+    description:
+      "A draft stays in the agent's own mailbox and sends nothing. Sending always waits for a person to confirm. Turn this off to confirm every draft as well.",
+  },
+] as const;
 
 const REASONS: Record<string, string> = {
   "sender-not-allowed": "The sender is not on the agent's list.",
@@ -164,6 +174,8 @@ export function AgentMailManagement() {
             </ul>
           )}
         </section>
+
+        <WorkspaceFlagsPanel title="What agents do with their mail" flags={DRAFT_FLAGS} />
 
         {editing === null ? null : (
           <AgentMailForm

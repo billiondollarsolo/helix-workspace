@@ -54,3 +54,11 @@ export async function listDriveAccessRequests(
   );
   return output.requests ?? [];
 }
+
+/** Make the signed-in person their own copy of a file they can open. */
+export async function copyDriveObject(
+  objectId: string,
+  fetchImpl: DriveApiFetch = authenticatedFetch,
+): Promise<{ readonly objectId: string; readonly name: string }> {
+  return callDriveTool("drive.copy", { objectId }, fetchImpl);
+}

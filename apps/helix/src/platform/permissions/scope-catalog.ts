@@ -44,6 +44,12 @@ export interface ScopeDefinition {
   readonly protocolScope?: boolean;
   /** Permission is enforced by a first-party HTTP surface, not the tool PDP. */
   readonly routeOnly?: boolean;
+  /**
+   * The scope alone gives access to nothing: every use also needs a grant on
+   * the resource itself. A credential issuer may therefore add it without
+   * holding it.
+   */
+  readonly grantGated?: boolean;
   /** Surfaces this scope may be issued on. */
   readonly surfaces: readonly ScopeSurface[];
 }
@@ -165,6 +171,14 @@ const scopeCatalog = [
     scope: "drive.delete",
     description: "Permanently delete files.",
     surfaces: ["agent", "app_password"],
+  },
+
+  // Agent secrets. The scope reaches the tools; each secret also needs a grant.
+  {
+    scope: "secrets.use",
+    description: "Use the secrets an administrator has granted to this agent.",
+    surfaces: ["agent"],
+    grantGated: true,
   },
 
   // Chat.
@@ -428,9 +442,36 @@ export function validatedPermissions(value: unknown): readonly Permission[] {
   return parsed.success ? parsed.data : [];
 }
 
+/** The administration permissions tools ask for, which the tool policy matches exactly. */
+const ADMINISTRATION_TOOL_SCOPES: readonly Permission[] = scopeCatalog
+  .filter(
+    (entry: ScopeDefinition) =>
+      entry.routeOnly !== true &&
+      (entry.scope.startsWith("admin.") || entry.scope === "mail.admin"),
+  )
+  .map((entry) => entry.scope);
+
+/**
+ * The permissions of a signed-in person. `admin.*` is full administration
+ * authority. Routes honour it as it stands; tools match permissions exactly,
+ * so its holder is given each administration permission a tool can ask for.
+ * Without this a workspace's own administrator is refused by every
+ * administration tool. Credentials and tokens are not widened: they carry
+ * only what they were issued.
+ */
+export function sessionPermissions(value: unknown): readonly Permission[] {
+  const held = validatedPermissions(value);
+  return held.includes("admin.*") ? [...new Set([...held, ...ADMINISTRATION_TOOL_SCOPES])] : held;
+}
+
 /** True when {@link scope} is a known canonical scope. */
 export function isKnownScope(scope: string): boolean {
   return scopesByName.has(scope);
+}
+
+/** True for a scope that needs a per-resource grant before it allows anything. */
+export function isGrantGatedScope(scope: string): boolean {
+  return scopesByName.get(scope)?.grantGated === true;
 }
 
 /** Look up a scope definition, or `undefined` when unknown. */

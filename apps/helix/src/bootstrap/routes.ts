@@ -106,6 +106,7 @@ import {
   registerWebhookVerificationDocsRoute,
 } from "../platform/webhooks/index.js";
 import { registerBetterAuthRoutes } from "./auth-routes.js";
+import { installAgentSecretAdministration } from "./agent-secrets.js";
 import { installEdgeCertificateManagement } from "./edge-certificate.js";
 import { traceIdForRequest } from "./request-principal.js";
 import { isAdminMfaProtectedPath } from "./route-scope.js";
@@ -535,6 +536,14 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
     mfa: mfaResolver,
     securityTier: () => runtimeConfiguration.current.security.tier,
     hasOtherAdministrator: (actor) => securityPoliciesStore.hasOtherAdministrator(actor),
+  });
+
+  installAgentSecretAdministration({
+    app,
+    sql,
+    cipher: tenantSecretCipher,
+    auditSink: auditStore,
+    actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
   });
 
   installEdgeCertificateManagement({

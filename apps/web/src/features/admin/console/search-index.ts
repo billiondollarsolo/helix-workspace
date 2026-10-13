@@ -179,6 +179,11 @@ const SETTINGS: readonly Omit<AdminSettingEntry, "location">[] = [
     keywords: ["status", "dependencies", "readiness", "uptime"],
   },
   {
+    title: "Secrets for agents",
+    section: "agent-secrets",
+    keywords: ["passwords", "tokens", "api keys", "credentials", "vault", "grant"],
+  },
+  {
     title: "Agent kill switch",
     section: "agent-controls",
     keywords: ["emergency", "stop agents", "disable agents"],

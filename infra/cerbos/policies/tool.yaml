@@ -203,6 +203,13 @@ resourcePolicy:
         match:
           expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "contacts.write" && P.attr.scopes.exists(scope, scope == "contacts.write")
 
+    - actions: ["secrets.use"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "secrets.use" && P.attr.scopes.exists(scope, scope == "secrets.use")
+
     - actions: ["meet.read"]
       effect: EFFECT_ALLOW
       roles: ["user", "agent", "service_account"]

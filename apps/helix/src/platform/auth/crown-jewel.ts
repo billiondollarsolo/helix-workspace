@@ -127,6 +127,16 @@ const policies: readonly {
   policy("POST", /^\/api\/tools\/agent\.credentials\.create$/u, "credential.issue", "admin.agents"),
   policy("POST", /^\/api\/tools\/agent\.credentials\.rotate$/u, "key.rotate", "admin.agents"),
   policy("POST", /^\/api\/tools\/app\.passwords\.create$/u, "credential.issue", "admin.users"),
+  // Granting a secret to agents. Storing one is left out on purpose: an
+  // approval keeps a fingerprint of the request, and a request that carries a
+  // password must not leave one behind.
+  policy(
+    "PUT",
+    /^\/api\/admin\/agent-secrets\/[^/]+\/grants$/u,
+    "agent_secret.grant",
+    "admin.agents",
+    true,
+  ),
 ];
 
 function policy(

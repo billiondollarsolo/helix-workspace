@@ -40,10 +40,7 @@ export async function parseResponse<T>(
         approval: z.object({ id: z.string() }),
       })
       .safeParse(payload);
-    if (approval.success)
-      throw new Error(
-        `A second administrator must approve this change (request ${approval.data.approval.id}). The requested change has not been applied.`,
-      );
+    if (approval.success) throw new Error(secondAdministratorRequired(approval.data.approval.id));
   }
   const parsed = schema.safeParse(payload);
   if (parsed.success) {
@@ -53,6 +50,11 @@ export async function parseResponse<T>(
     return fallback;
   }
   throw new Error(`Failed to ${action}: malformed response.`);
+}
+
+/** What to tell an administrator whose change is waiting for another one. */
+export function secondAdministratorRequired(approvalId: string): string {
+  return `A second administrator must approve this change (request ${approvalId}). The requested change has not been applied. To work without a second administrator, turn off “Require a second administrator for sensitive actions” under Admin → Policies.`;
 }
 
 export async function ensureOk(response: Response, action: string): Promise<void> {

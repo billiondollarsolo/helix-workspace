@@ -7,6 +7,7 @@ import type postgres from "postgres";
 import { enforceCredentialPolicy } from "../platform/auth/credentials.js";
 import type { PostgresAgentCredentialStore } from "../platform/auth/postgres-store.js";
 import { parseActorRoleBindings } from "../platform/permissions/roles.js";
+import { sessionPermissions } from "../platform/permissions/scope-catalog.js";
 import type { ToolRegistryOptions } from "../platform/tool-registry.js";
 
 type PendingPrincipalResolver = NonNullable<ToolRegistryOptions["resolvePendingPrincipal"]>;
@@ -48,7 +49,8 @@ export function createPendingPrincipalResolver(
           type: requester.type,
           displayName: requester.display_name,
           ...(requester.email === null ? {} : { email: requester.email }),
-          scopes: requester.scopes,
+          // The same permissions the person's session carried when they asked.
+          scopes: sessionPermissions(requester.scopes),
           ...(roleBindings.length === 0 ? {} : { roleBindings }),
         },
       };

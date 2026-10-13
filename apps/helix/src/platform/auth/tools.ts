@@ -1,7 +1,7 @@
 import type { JsonObject, ToolDefinition } from "@helix/sdk-types";
 import { z } from "zod";
 import { getCryptoProvider } from "../crypto/index.js";
-import { agentCredentialScopeCatalog } from "../permissions/scope-catalog.js";
+import { agentCredentialScopeCatalog, isGrantGatedScope } from "../permissions/scope-catalog.js";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { defineTool } from "../tools/define-tool.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
@@ -317,7 +317,10 @@ function assertIssuerScopeCeiling(
   if (actor.type === "system") return;
   const held = new Set(actor.scopes ?? []);
   if (held.has("*")) return;
-  const unauthorized = normalizeScopes(scopes).filter((scope) => !held.has(scope));
+  // A grant-gated scope reaches nothing until an administrator grants a resource.
+  const unauthorized = normalizeScopes(scopes).filter(
+    (scope) => !held.has(scope) && !isGrantGatedScope(scope),
+  );
   if (unauthorized.length > 0) throw new CredentialScopeCeilingError(unauthorized);
 }
 

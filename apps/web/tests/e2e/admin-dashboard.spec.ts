@@ -65,7 +65,11 @@ test.describe("/admin dashboard", () => {
       "agent-client-e2e",
     );
     await expect(page.getByRole("table", { name: "Agent credentials" })).toContainText(
-      "admin.agents",
+      "secrets.use",
+    );
+    // The credential's agent is named, not shown as an id.
+    await expect(page.getByRole("table", { name: "Agent credentials" })).toContainText(
+      "Scheduler Agent",
     );
 
     await adminNav(page).getByRole("link", { name: "App passwords", exact: true }).click();
@@ -187,6 +191,21 @@ async function mockAdminDashboardBackend(page: Page, backendCalls: BackendCall[]
     }
     if (call.method === "POST" && call.pathname === "/v1/api/tools/webhook.delivery.list") {
       await fulfillJson(route, { deliveries: [] });
+      return;
+    }
+    if (call.method === "GET" && call.pathname === "/v1/api/admin/agents") {
+      await fulfillJson(route, {
+        agents: [
+          {
+            id: "agent-actor-e2e",
+            displayName: "Scheduler Agent",
+            type: "agent",
+            description: "",
+            disabled: false,
+            createdAt: "2026-05-20T14:00:00.000Z",
+          },
+        ],
+      });
       return;
     }
     if (call.method === "POST" && call.pathname === "/v1/api/tools/agent.credentials.list") {
@@ -437,12 +456,16 @@ function agentCredentialsListResponse() {
   return {
     credentials: [
       {
-        clientId: "agent-client-e2e",
+        id: "credential-e2e",
+        credentialType: "oauth_client",
         actorId: "agent-actor-e2e",
-        orgId: "org-e2e",
-        scopes: ["platform.read", "admin.agents"],
-        expiresAt: null,
+        label: "Scheduler client",
+        purpose: "Books rooms",
+        scopes: ["platform.read", "secrets.use"],
+        clientId: "agent-client-e2e",
+        expiresAt: "2027-05-20T14:00:00.000Z",
         revokedAt: null,
+        lastUsedAt: null,
       },
     ],
   };

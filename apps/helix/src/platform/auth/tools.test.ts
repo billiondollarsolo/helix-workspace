@@ -110,6 +110,29 @@ describe("non-human credential tools", () => {
     expect(await store.list({ orgId, includeRevoked: true })).toEqual([]);
   });
 
+  it("lets an issuer add a grant-gated scope it does not hold, since the scope alone reaches nothing", async () => {
+    const store = new MemoryCredentialStore();
+    const registry = createToolRegistry();
+    registerAgentCredentialTools(registry, { store });
+
+    const issued = await registry.invoke(
+      "agent.credentials.create",
+      createInput({ scopes: ["mail.read", "secrets.use"] }),
+      { actor: admin, skipConfirmation: true },
+    );
+    const stillExcessive = await registry.invoke(
+      "agent.credentials.create",
+      createInput({ scopes: ["secrets.use", "chat.post"] }),
+      { actor: admin, skipConfirmation: true },
+    );
+
+    expect(issued).toMatchObject({ ok: true });
+    expect(stillExcessive).toMatchObject({ ok: false, statusCode: 403 });
+    expect((await store.list({ orgId, includeRevoked: true })).map((c) => c.scopes)).toEqual([
+      ["mail.read", "secrets.use"],
+    ]);
+  });
+
   it("rotates one-time key material, preserves inventory, and revokes immediately", async () => {
     const store = new MemoryCredentialStore();
     const registry = createToolRegistry();

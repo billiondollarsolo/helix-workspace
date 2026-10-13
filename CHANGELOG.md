@@ -8,6 +8,24 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Added
 
+- Agent secrets. An administrator stores a password, token, or key under **Admin → Security →
+  Agent secrets**, chooses how agents may use it, and grants it to named agents and service
+  accounts. A **use-only** secret is sent by Helix in requests the agent asks for
+  (`secrets.http_request`), only to the hosts it was stored for, and can never be read back by
+  anyone; a secret **handed to the agent** can also be read by an agent holding a grant
+  (`secrets.get`), for use in other systems. `secrets.list` shows an agent what it was granted.
+  Nothing is available without a grant, people cannot read agent secrets, values are encrypted
+  per organization and never written to logs, and every store, change, grant, hand-over, use, and
+  refusal is in the audit log. Granting a secret needs a recent 2-step verification and, by
+  default, a second administrator; the request that stores a value is kept out of that approval so
+  no trace of the value waits with it.
+  The new `secrets.use` permission lets a credential reach these tools; it gives access to nothing
+  on its own, so an administrator can add it to a credential without holding it. See
+  "Agents and their secrets" in the admin guide.
+- Adding an agent from the Admin console. **Admin → Security → Agent credentials** can now create
+  an agent (`POST /api/admin/agents`); before, agent identities could only come from seed scripts.
+  `infra/scripts/production-boot-smoke.sh` now adds an agent, issues it a key, and proves it can
+  read the secret it was granted and nothing else.
 - Meet and Calendar as an optional install on a single production host. Adding
   `docker-compose.meet.yml` to the Compose commands (with `HELIX_MEET_DOMAIN` and
   `HELIX_MEET_PUBLIC_IP`) switches Helix to the Full Workspace profile and starts a bundled Jitsi:
@@ -557,6 +575,19 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Fixed
 
+- A workspace's own administrator was refused by every administration tool: Chat retention, legal
+  hold, exports and the room pickers, Drive administration, webhooks, agent credentials, and agent
+  controls. Tools check for an exact permission and an administrator holds the general one
+  (`admin.*`), which only the Admin console's own routes honoured. A signed-in administrator now
+  holds each administration permission a tool can ask for. Demo and test administrators list those
+  permissions one by one, which is why this went unseen; the production boot smoke test now calls
+  an administration tool as the first administrator.
+- **Admin → Security → Agent credentials** could not issue or revoke a credential: it sent fields
+  the server no longer accepted, so both were refused. The page now asks for what the server
+  needs (the agent, an API key or OAuth client, a label, what it is for, and an expiry of at most
+  366 days), offers only agents and service accounts, shows the key or client secret once, and
+  revokes by credential. When a change is waiting for a second administrator, the console now says
+  so and names the setting under **Admin → Policies** that a lone administrator can turn off.
 - The install guide asked for Docker Compose 2.24, which does not merge the production files
   correctly: 2.24 quietly drops settings and 2.25 refuses the files. The requirement is now
   2.27, the oldest release that resolves the production stack and the optional Meet install

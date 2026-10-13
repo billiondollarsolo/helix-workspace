@@ -67,6 +67,7 @@ const featureFlagsSchema = z
     drive_s3_api: z.boolean().optional(),
     chat_admin_private_rooms: z.boolean().optional(),
     passwords_app: z.boolean().optional(),
+    agent_secrets_unattended: z.boolean().optional(),
     mail_inbound_policy: inboundAuthenticationPolicySchema.optional(),
   })
   .strict();

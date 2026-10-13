@@ -36,6 +36,7 @@ import {
 import {
   evaluateAutomationPolicy,
   hashToolInput,
+  withStandingAuthorization,
   type AutomationPolicyDecision,
 } from "./tools/automation-policy.js";
 import {
@@ -401,7 +402,7 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
       }
       const compositionAllowed = inputAllowed && checkScopeComposition(actor, tool, parsedInput).ok;
       const automationDecision = inputAllowed
-        ? resolveAutomationDecision({
+        ? await resolveAutomationDecision({
             actor,
             tool,
             parsedInput,
@@ -541,7 +542,7 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
             `Actor is missing required scopes for tool ${toolId}: ${compositionResult.missingScopes.join(", ")}`,
           );
         }
-        const automationDecision = resolveAutomationDecision({
+        const automationDecision = await resolveAutomationDecision({
           actor,
           tool,
           parsedInput: input,
@@ -1611,25 +1612,22 @@ function shouldLimitActor(actor: Actor): boolean {
 }
 
 /**
- * Automation policy only ever bounds agent-originated mutations; human actors
- * and read-only tools produce no decision so downstream policy falls back to
- * the ordinary confirmation path.
+ * Only agent mutations are bounded: people and reads produce no decision. A
+ * credential's policy comes first, then an administrator's standing grant.
  */
-function resolveAutomationDecision(input: {
+async function resolveAutomationDecision(input: {
   readonly actor: Actor;
   readonly tool: ToolDefinition;
   readonly parsedInput: unknown;
   readonly credentialId: string | undefined;
   readonly credentialPolicy: CredentialPolicyOverrides | undefined;
-}): AutomationPolicyDecision | null {
+}): Promise<AutomationPolicyDecision | null> {
   if (input.actor.type !== "agent" || input.tool.sideEffects === "read") {
     return null;
   }
-  return evaluateAutomationPolicy({
-    // Without an authenticating credential there is no automation policy to
-    // honor, even if the caller supplied overrides.
-    policy: input.credentialId === undefined ? null : input.credentialPolicy?.automationPolicy,
-    tool: input.tool,
-    parsedInput: input.parsedInput,
-  });
+  const { tool, parsedInput } = input;
+  // No authenticating credential, no policy to honor, whatever the caller sent.
+  const policy = input.credentialId === undefined ? null : input.credentialPolicy?.automationPolicy;
+  const decision = evaluateAutomationPolicy({ policy, tool, parsedInput });
+  return withStandingAuthorization(decision, tool, parsedInput, input.actor);
 }

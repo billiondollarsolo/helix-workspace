@@ -75,8 +75,10 @@ interface Vault {
   updates: unknown[];
   grantChanges: unknown[];
   deleted: string[];
-  /** The organization's default: granting waits for another administrator. */
+  /** True once the organization asks for a second administrator's approval. */
   grantsNeedSecondAdministrator: boolean;
+  unattended: boolean;
+  settingUpdates: unknown[];
 }
 
 const holders = (ids: readonly string[]) =>
@@ -90,12 +92,37 @@ async function openAgentSecrets(page: Page): Promise<Vault> {
     grantChanges: [],
     deleted: [],
     grantsNeedSecondAdministrator: false,
+    unattended: true,
+    settingUpdates: [],
   };
   await page.route("**/api/**", async (route) => {
     if (await fulfillCoreAppsRoute(route)) return;
     const request = route.request();
     const pathname = new URL(request.url()).pathname;
     const method = request.method();
+    if (pathname === "/v1/api/admin/tenant-config") {
+      if (method === "PATCH") {
+        const update = request.postDataJSON() as {
+          features: { agent_secrets_unattended: boolean };
+        };
+        vault.settingUpdates.push(update);
+        vault.unattended = update.features.agent_secrets_unattended;
+      }
+      const features = { agent_secrets_unattended: vault.unattended };
+      return route.fulfill({
+        json: {
+          tenantConfig: {
+            orgId: "33333333-3333-4333-8333-333333333333",
+            orgName: "Example",
+            byo: {},
+            features: {},
+            quotas: {},
+            branding: {},
+            effective: { byo: {}, features, quotas: {}, branding: {} },
+          },
+        },
+      });
+    }
     if (pathname === "/v1/api/admin/agents") {
       return route.fulfill({ json: { agents: [DEPLOY_BOT, REPORTING, RETIRED] } });
     }
@@ -288,4 +315,22 @@ test("changes who holds a secret and deletes one after confirming", async ({ pag
   await expect(dialog).toBeHidden();
   await expect(page.getByText("No secrets yet. Add the first one below.")).toBeVisible();
   expect(vault.deleted).toEqual([PORTAL.id]);
+});
+
+test("lets the organization ask for a person to confirm each request", async ({ page }) => {
+  const vault = await openAgentSecrets(page);
+  const unattended = page
+    .getByRole("region", { name: "Requests agents make with a secret" })
+    .getByRole("switch", { name: "Agents send use-only secrets without asking a person" });
+  // Unattended unless the organization says otherwise.
+  await expect(unattended).toBeChecked();
+  await unattended.click();
+  await expect(unattended).not.toBeChecked();
+  expect(vault.settingUpdates).toEqual([
+    {
+      features: { agent_secrets_unattended: false },
+      reason: "admin settings update: agent_secrets_unattended",
+    },
+  ]);
+  await audit(page);
 });

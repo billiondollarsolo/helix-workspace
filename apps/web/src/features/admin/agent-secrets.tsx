@@ -20,6 +20,7 @@ import {
   type AgentSecretMode,
   type AgentSecretUpdateInput,
 } from "@/features/admin/agent-secrets-api";
+import { WorkspaceFlagsPanel } from "@/features/admin/console/app-settings";
 import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
 import { AdminField, AdminInput } from "@/features/admin/console/controls";
 import { formatRelativeTime } from "@/features/admin/console/format";
@@ -54,6 +55,15 @@ const MODES: readonly {
       "The agent can ask for the value and use it in another system. Each time is recorded in the audit log.",
   },
 ];
+
+const REQUEST_FLAGS = [
+  {
+    key: "agent_secrets_unattended",
+    label: "Agents send use-only secrets without asking a person",
+    description:
+      "A request goes only to the hosts its secret lists, and each one is recorded. Turn this off to have a person confirm every request first.",
+  },
+] as const;
 
 const modeLabel = (mode: AgentSecretMode) =>
   MODES.find((option) => option.mode === mode)?.label ?? mode;
@@ -159,6 +169,7 @@ export function AgentSecretsManagement() {
           }}
           onCancel={() => setEditing(null)}
         />
+        <WorkspaceFlagsPanel title="Requests agents make with a secret" flags={REQUEST_FLAGS} />
       </div>
 
       {toDelete === null ? null : (

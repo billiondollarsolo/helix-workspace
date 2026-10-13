@@ -1,5 +1,8 @@
 import type { Actor, ToolContext } from "@helix/sdk-types";
 import { describe, expect, it } from "vitest";
+import { tierDefaults } from "../config/tier.js";
+import { createToolRegistry } from "../tool-registry.js";
+import { InMemoryConfirmationGate, InMemoryPendingActionStore } from "../tools/registry.js";
 import type { OpenedAgentSecret } from "./store.js";
 import { createAgentSecretTools, type AgentSecretToolOptions } from "./tools.js";
 
@@ -31,7 +34,7 @@ const useOnly: OpenedAgentSecret = {
   value: "tok_live_abc123",
 };
 
-function setup(actor: Actor = agent) {
+function setup(actor: Actor = agent, unattended = true) {
   /** What happened, in order: audit records and uses counted. */
   const events: string[] = [];
   const store: AgentSecretToolOptions["store"] = {
@@ -51,6 +54,7 @@ function setup(actor: Actor = agent) {
   };
   const tools = createAgentSecretTools({
     store,
+    requestsRunUnattended: async () => unattended,
     outbound: {
       resolve: async () => [{ address: "93.184.216.34", family: 4 }],
       transport: async () => new Response("ok", { headers: { "content-type": "text/plain" } }),
@@ -157,5 +161,59 @@ describe("agent secret tools", () => {
       await expect(call(id, input), id).rejects.toThrow(/only to agents/u);
     }
     expect(events).toEqual([]);
+  });
+
+  it("runs a request unattended only when an administrator's grant covers exactly that request", async () => {
+    const request = (input: Record<string, unknown>, actor = agent, unattended = true) => {
+      const tool = setup(actor, unattended).tools.find((it) => it.id === "secrets.http_request");
+      if (tool?.standingAuthorization === undefined) throw new Error("Expected the hook.");
+      return tool.standingAuthorization(tool.inputSchema.parse(input), actor);
+    };
+    const granted = { secret: "billing-api", url: "https://api.example.com/v1/invoices" };
+    await expect(request(granted)).resolves.toEqual({
+      id: `agent-secret-grant:${useOnly.id}`,
+      version: "3",
+      requestsPerMinute: 60,
+      requestsPerDay: 5_000,
+    });
+    // Another host, a secret with no hosts, one that was not granted, an
+    // organization that asks for confirmation, a person: each waits.
+    await expect(request({ ...granted, url: "https://evil.example.net/" })).resolves.toBeNull();
+    await expect(request({ ...granted, secret: "portal-password" })).resolves.toBeNull();
+    await expect(request({ ...granted, secret: "someone-elses" })).resolves.toBeNull();
+    await expect(request(granted, agent, false)).resolves.toBeNull();
+    await expect(request(granted, person)).resolves.toBeNull();
+  });
+
+  it("goes through the registry without a person only with that authorization", async () => {
+    const audited: string[] = [];
+    const invoke = async (unattended: boolean, url: string) => {
+      const registry = createToolRegistry({
+        confirmationGate: new InMemoryConfirmationGate(new InMemoryPendingActionStore()),
+        confirmationDefaults: tierDefaults.business,
+        // An unattended request must be recorded or it does not run.
+        auditSink: { append: async (record) => audited.push(record.verb) },
+      });
+      for (const tool of setup(agent, unattended).tools) registry.register(tool);
+      return registry.invoke(
+        "secrets.http_request",
+        { secret: "billing-api", url },
+        { actor: agent, credentialId: "55555555-5555-4555-8555-555555555555" },
+      );
+    };
+    await expect(invoke(true, "https://api.example.com/v1/invoices")).resolves.toMatchObject({
+      ok: true,
+      output: { status: 200, body: "ok" },
+    });
+    expect(audited).toContain("tool.invocation.executed");
+    for (const [unattended, url] of [
+      [false, "https://api.example.com/v1/invoices"],
+      [true, "https://evil.example.net/"],
+    ] as const) {
+      await expect(invoke(unattended, url), url).resolves.toMatchObject({
+        ok: true,
+        status: "pending_confirmation",
+      });
+    }
   });
 });

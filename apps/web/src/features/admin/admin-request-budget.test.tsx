@@ -349,11 +349,12 @@ describe("admin console request budget", () => {
           ],
         },
         "agent-secrets": {
-          "requestCount": 2,
+          "requestCount": 3,
           "settled": true,
           "urls": [
             "/v1/api/admin/agent-secrets",
             "/v1/api/admin/agents",
+            "/v1/api/admin/tenant-config",
           ],
         },
         "ai-costs": {

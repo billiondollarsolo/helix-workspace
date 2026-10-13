@@ -14,11 +14,15 @@ All notable changes to Helix Workspace are documented here. This file follows
   (`secrets.http_request`), only to the hosts it was stored for, and can never be read back by
   anyone; a secret **handed to the agent** can also be read by an agent holding a grant
   (`secrets.get`), for use in other systems. `secrets.list` shows an agent what it was granted.
+  An agent sends a use-only secret without a person confirming each request: the administrator's
+  grant is the authorization for that agent, that secret, and those hosts, and nothing else. An
+  organization can ask for confirmation of every request instead (**Agents send use-only secrets
+  without asking a person**, on by default).
   Nothing is available without a grant, people cannot read agent secrets, values are encrypted
   per organization and never written to logs, and every store, change, grant, hand-over, use, and
-  refusal is in the audit log. Granting a secret needs a recent 2-step verification and, by
-  default, a second administrator; the request that stores a value is kept out of that approval so
-  no trace of the value waits with it.
+  refusal is in the audit log. Granting a secret needs a recent 2-step verification and follows the
+  second-administrator rule when an organization has turned it on; the request that stores a
+  value is kept out of that approval so no trace of the value waits with it.
   The new `secrets.use` permission lets a credential reach these tools; it gives access to nothing
   on its own, so an administrator can add it to a credential without holding it. See
   "Agents and their secrets" in the admin guide.
@@ -410,6 +414,12 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Changed
 
+- A second administrator's approval for sensitive actions is now something an organization turns
+  on, instead of being required until it was turned off. A new workspace has one administrator,
+  and with the old default that person could not issue an agent credential, grant an agent
+  secret, change a domain, or start a restore job until they found and cleared the setting. Recent 2-step
+  verification for those actions is still asked for by default. Organizations that saved a choice
+  either way keep it; turning the rule on still needs another active administrator.
 - The Admin console asks for people, not account IDs. **AI costs** and mail **Routing rules**
   ("Deliver to a person") use the people picker, and both lists show the person's name and
   email instead of an ID; an override or rule whose account is gone reads "Removed account".
@@ -587,7 +597,7 @@ All notable changes to Helix Workspace are documented here. This file follows
   needs (the agent, an API key or OAuth client, a label, what it is for, and an expiry of at most
   366 days), offers only agents and service accounts, shows the key or client secret once, and
   revokes by credential. When a change is waiting for a second administrator, the console now says
-  so and names the setting under **Admin → Policies** that a lone administrator can turn off.
+  so and names the setting under **Admin → Policies** that controls it.
 - The install guide asked for Docker Compose 2.24, which does not merge the production files
   correctly: 2.24 quietly drops settings and 2.25 refuses the files. The requirement is now
   2.27, the oldest release that resolves the production stack and the optional Meet install

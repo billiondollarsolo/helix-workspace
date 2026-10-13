@@ -79,7 +79,19 @@ export function checkSecretRequest(
   return { host: url.hostname, headers };
 }
 
-function assertSecretDestination(secret: OpenedAgentSecret, url: URL): void {
+/** Whether a request to `rawUrl` is one this secret was stored to be sent in. */
+export function secretMayBeSentTo(secret: SecretDestinations, rawUrl: string): boolean {
+  try {
+    assertSecretDestination(secret, new URL(rawUrl));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+type SecretDestinations = Pick<OpenedAgentSecret, "name" | "allowedHosts">;
+
+function assertSecretDestination(secret: SecretDestinations, url: URL): void {
   if (secret.allowedHosts.length === 0) {
     throw new BadRequestError(
       `The secret ${secret.name} is not set up to be sent in requests. An administrator can add the hosts it may be sent to.`,

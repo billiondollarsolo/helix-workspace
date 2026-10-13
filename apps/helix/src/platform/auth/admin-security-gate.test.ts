@@ -95,6 +95,19 @@ describe("operator security controls", () => {
     "honors explicit optional MFA on %s without changing inherited defaults",
     (tier) => {
       expect(resolveAdminSecurityControls(tier).adminMfaRequired).toBe(tier !== "personal");
+      // A workspace starts with one administrator: recent MFA is asked for by
+      // default, a second administrator only once the organization says so.
+      expect(resolveAdminSecurityControls(tier)).toMatchObject({
+        sensitiveActionMfaRequired: true,
+        secondAdminApprovalRequired: false,
+      });
+      expect(
+        resolveAdminSecurityControls(tier, {
+          enabled: true,
+          enforcement: "required",
+          settings: { secondAdminApprovalRequired: true },
+        }).secondAdminApprovalRequired,
+      ).toBe(true);
       expect(
         resolveAdminSecurityControls(tier, {
           enabled: true,

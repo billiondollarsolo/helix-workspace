@@ -113,7 +113,7 @@ the server currently enforces.
 | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Administrator MFA                                    | Follow the workspace tier, explicitly require MFA, or make administrator MFA optional. Existing policies without an explicit choice retain their legacy required setting. |
 | Require recent MFA for sensitive actions             | Independently controls MFA step-up for protected operations such as domain changes, credential issuance, and restore mutations.                                           |
-| Require a second administrator for sensitive actions | Independently controls second-party approval for protected operations.                                                                                                    |
+| Require a second administrator for sensitive actions | Independently controls second-party approval for protected operations. Off until an administrator turns it on, which needs another active administrator.                  |
 
 The last two controls apply independently of the general **Policy enabled** and
 **Enforcement** fields. Disabling that general switch does not disable them. A

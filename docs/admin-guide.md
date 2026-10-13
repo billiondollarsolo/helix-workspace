@@ -112,15 +112,17 @@ What to expect:
   value handed to an agent (`agent_secret.revealed`), every request a secret was sent in, with the
   host (`agent_secret.used`), and every refusal (`agent_secret.access_denied`). Values are never
   written to the log.
-- **Sending a secret is external communication.** `secrets.http_request` follows the workspace's
-  confirmation policy for agents, so in the default profile a person confirms each request unless
-  the credential has an automation policy that allows it. Reading a handed-over secret is a read
-  and is not held for confirmation.
+- **Agents send use-only secrets without asking a person.** Storing a use-only secret for a host
+  and granting it to an agent is your authorization for exactly that: this agent, this secret,
+  those hosts, at most 60 requests a minute and 5,000 a day. A request to anywhere else, or with
+  a secret the agent was not granted, waits for a person and is refused. To have a person confirm
+  every request instead, turn off **Agents send use-only secrets without asking a person** on the
+  Agent secrets page. Reading a handed-over secret is a read and is never held.
 - **Granting is the sensitive step.** Choosing which agents may use a secret needs a recent 2-step
-  verification, like issuing a credential, and until you say otherwise it also waits for a second
-  administrator. If you are the only administrator, turn off **Require a second administrator for
-  sensitive actions** under **Admin → Policies** first. A secret you store while a grant is
-  waiting is kept; nobody can use it until the grant goes through.
+  verification, like issuing a credential. If your organization has turned on **Require a second
+  administrator for sensitive actions** under **Admin → Policies**, it also waits for one. A
+  secret you store while a grant is waiting is kept; nobody can use it until the grant goes
+  through.
 - **To replace a value**, edit the secret and enter the new one. Agents get the new value on their
   next call; the stored version number goes up by one.
 

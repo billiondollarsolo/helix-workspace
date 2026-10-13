@@ -425,7 +425,10 @@ jobs:
           HELIX_SMOKE_K6_API_BASE_URL: http://127.0.0.1:39531/v1
           HELIX_SMOKE_K6_WEB_BASE_URL: http://127.0.0.1:39531
           HELIX_SMOKE_K6_SCENARIO_GROUPS: api_smoke,mail_api,search,chat,mcp,otel_health
-          HELIX_SMOKE_K6_DURATION: 2s
+          # Long enough for p95 to describe the service: over two seconds it is
+          # the single slowest request, which on a shared runner is usually the
+          # first one or one stall.
+          HELIX_SMOKE_K6_DURATION: 10s
           HELIX_K6_RUNNER: docker
           HELIX_K6_DOCKER_API_BASE_URL: http://host.docker.internal:39531/v1
           HELIX_K6_DOCKER_WEB_BASE_URL: http://host.docker.internal:39531

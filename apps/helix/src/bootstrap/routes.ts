@@ -1,3 +1,4 @@
+import { runtimeEnvironment } from "../config/env.js";
 import { installDriveRoutes } from "./drive-routes.js";
 import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
@@ -105,6 +106,7 @@ import {
   registerWebhookVerificationDocsRoute,
 } from "../platform/webhooks/index.js";
 import { registerBetterAuthRoutes } from "./auth-routes.js";
+import { installEdgeCertificateManagement } from "./edge-certificate.js";
 import { traceIdForRequest } from "./request-principal.js";
 import { isAdminMfaProtectedPath } from "./route-scope.js";
 import type { installTools } from "./tools.js";
@@ -158,6 +160,8 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
     sessionActorResolver,
     principalFromAuthenticatedRequest,
     actorFromAuthenticatedRequest,
+    tenantSecretCipher,
+    defaultOrg,
     coreApps,
     configuredMeetSecrets,
     dlp,
@@ -353,10 +357,10 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
 
   await registerAdminServicesRoutes(app, {
     catalog: new AdminServicesCatalog({
-      env: process.env,
+      env: runtimeEnvironment(),
     }),
     statusStore: new PostgresAdminServiceStatusStore(sql, {
-      env: process.env,
+      env: runtimeEnvironment(),
     }),
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
   });
@@ -364,7 +368,7 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
   if (coreApps.shouldRegister("mail")) {
     await registerMailAdminRoutes(app, {
       service: new MailAdminStatusService({
-        env: process.env,
+        env: runtimeEnvironment(),
         deliveryHealthStore: mailStore,
       }),
       actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
@@ -531,6 +535,17 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
     mfa: mfaResolver,
     securityTier: () => runtimeConfiguration.current.security.tier,
     hasOtherAdministrator: (actor) => securityPoliciesStore.hasOtherAdministrator(actor),
+  });
+
+  installEdgeCertificateManagement({
+    app,
+    sql,
+    bootEnv,
+    cipher: tenantSecretCipher,
+    auditSink: auditStore,
+    actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+    defaultOrgId: defaultOrg.id,
+    leaderGatedWorkers,
   });
 
   await registerTenantConfigAdminRoutes(app, {

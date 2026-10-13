@@ -12,6 +12,7 @@ import {
   sendForbidden,
   type AdminConsoleAuditSink,
 } from "../../admin/console-shared.js";
+import { runtimeEnvironment } from "../../../config/env.js";
 import type { OrgRecord, UpdateTenantConfigInput } from "../../tenancy/orgs.js";
 import { hasControlCharacter } from "../../util/strings.js";
 import { toJsonObject } from "../../util/json.js";
@@ -123,7 +124,7 @@ export function registerMailDecisionAdminRoutes(
     if (!canRead(actor)) return sendForbidden(reply, adminConsoleReadScope);
     const config = await loadConfig(actor.orgId);
     if (config === null) return reply.code(404).send(notFound("Organization not found."));
-    const beta = getMailSpamAiConfig(options.env ?? process.env);
+    const beta = getMailSpamAiConfig(options.env ?? runtimeEnvironment());
     const spamd = options.spamd;
     const credential = await options.store.credentialStatus(actor.orgId);
     return {

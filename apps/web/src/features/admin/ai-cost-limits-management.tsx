@@ -16,6 +16,9 @@ import {
 } from "@/components/ui/table";
 import { PageHeading, ErrorNotice, LoadingState } from "@/features/admin/console/primitives";
 import { EmptyState } from "@/components/ui/empty-state";
+import { PeoplePicker } from "@/components/people/people-picker";
+import type { PersonRef } from "@/features/people/person-ref";
+import { adminUsersQueryOptions, type AdminUsersQueryInput } from "./admin-users";
 import {
   aiCostLimitsQueryKeys,
   aiCostLimitsQueryOptions,
@@ -45,6 +48,13 @@ const defaultFormValues: AICostLimitFormState = {
   featureDailyUsd: "",
 };
 
+/* Overrides are stored by account, so the list looks names up in the
+   directory, including suspended accounts whose override is still in force. */
+const DIRECTORY_LOOKUP_INPUT = {
+  includeDisabled: true,
+  limit: 250,
+} as const satisfies AdminUsersQueryInput;
+
 /**
  * Admin UI to view and set per-user AI cost limits (P0-7 / TASK-217).
  *
@@ -54,7 +64,13 @@ const defaultFormValues: AICostLimitFormState = {
 export function AICostLimitsManagement() {
   const queryClient = useQueryClient();
   const [formError, setFormError] = useState<string | null>(null);
+  const [person, setPerson] = useState<PersonRef | null>(null);
   const limitsQuery = useQuery(aiCostLimitsQueryOptions());
+  const directoryQuery = useQuery(adminUsersQueryOptions(DIRECTORY_LOOKUP_INPUT));
+  const directory = useMemo(
+    () => new Map((directoryQuery.data?.users ?? []).map((user) => [user.id, user])),
+    [directoryQuery.data],
+  );
 
   const upsertMutation = useMutation({
     mutationFn: (input: Parameters<typeof setAICostLimit>[0]) => setAICostLimit(input),
@@ -84,21 +100,25 @@ export function AICostLimitsManagement() {
     () => [
       {
         accessorKey: "actorId",
-        header: "Actor",
-        cell: ({ row }) => (
-          <code className="block max-w-[18rem] truncate type-caption text-muted-foreground">
-            {row.original.actorId}
-          </code>
-        ),
+        header: "Person",
+        cell: ({ row }) => {
+          const user = directory.get(row.original.actorId);
+          return (
+            <span className="block max-w-[18rem] truncate">
+              {personName(user)}
+              {user?.email ? <span className="admin-row-detail">{user.email}</span> : null}
+            </span>
+          );
+        },
       },
       {
         id: "actorDaily",
-        header: "Actor daily budget",
+        header: "Daily budget",
         cell: ({ row }) => formatUsd(row.original.actorDailyUsd),
       },
       {
         id: "featureDaily",
-        header: "Feature daily budget",
+        header: "Daily budget per feature",
         cell: ({ row }) => formatUsd(row.original.featureDailyUsd),
       },
       {
@@ -114,7 +134,7 @@ export function AICostLimitsManagement() {
           // default rather than deleting anything, and a filled button per row
           // would out-shout the panel's own Save action.
           <Button
-            aria-label={`Clear AI cost limit for ${row.original.actorId}`}
+            aria-label={`Clear AI cost limit for ${personName(directory.get(row.original.actorId))}`}
             disabled={clearMutation.isPending}
             onClick={() => clearMutation.mutate(row.original.actorId)}
             size="sm"
@@ -127,7 +147,7 @@ export function AICostLimitsManagement() {
         ),
       },
     ],
-    [clearMutation],
+    [clearMutation, directory],
   );
 
   const table = useReactTable({
@@ -148,6 +168,7 @@ export function AICostLimitsManagement() {
       setFormError(null);
       await upsertMutation.mutateAsync(normalized);
       limitForm.reset();
+      setPerson(null);
     },
   });
 
@@ -170,7 +191,7 @@ export function AICostLimitsManagement() {
           id="ai-cost-limits-form-heading"
         >
           <BadgeDollarSign aria-hidden="true" size={16} />
-          Set a per-user override
+          Give one person a different budget
         </h2>
 
         <form
@@ -182,23 +203,26 @@ export function AICostLimitsManagement() {
         >
           <limitForm.Field name="actorId">
             {(field) => (
-              <label className="grid gap-1 text-xs">
-                <span className="font-medium">Actor ID</span>
-                <Input
-                  aria-label="Actor ID"
-                  onChange={(event) => field.handleChange(event.target.value)}
-                  placeholder="00000000-0000-0000-0000-000000000000"
-                  value={field.state.value}
-                />
-              </label>
+              <PeoplePicker
+                label="Person"
+                max={1}
+                placeholder="Search by name or email"
+                stacked
+                value={person === null ? [] : [person]}
+                onChange={(next) => {
+                  const chosen = next[0] ?? null;
+                  setPerson(chosen);
+                  field.handleChange(chosen?.actorId ?? "");
+                }}
+              />
             )}
           </limitForm.Field>
           <limitForm.Field name="actorDailyUsd">
             {(field) => (
               <label className="grid gap-1 text-xs">
-                <span className="font-medium">Actor daily (USD)</span>
+                <span className="font-medium">Daily budget (USD)</span>
                 <Input
-                  aria-label="Actor daily budget in USD"
+                  aria-label="Daily budget for this person in USD"
                   inputMode="decimal"
                   onChange={(event) => field.handleChange(event.target.value)}
                   placeholder="tier default"
@@ -210,9 +234,9 @@ export function AICostLimitsManagement() {
           <limitForm.Field name="featureDailyUsd">
             {(field) => (
               <label className="grid gap-1 text-xs">
-                <span className="font-medium">Feature daily (USD)</span>
+                <span className="font-medium">Per feature, daily (USD)</span>
                 <Input
-                  aria-label="Feature daily budget in USD"
+                  aria-label="Daily budget per feature in USD"
                   inputMode="decimal"
                   onChange={(event) => field.handleChange(event.target.value)}
                   placeholder="tier default"
@@ -244,7 +268,9 @@ export function AICostLimitsManagement() {
 
         {limitsQuery.isPending ? <LoadingState label="Loading cost limits…" /> : null}
         {limitsQuery.isError ? (
-          <ErrorNotice>Cost limits are unavailable or admin AI scope is missing.</ErrorNotice>
+          <ErrorNotice>
+            Cost limits could not be loaded. You may not have permission to manage AI costs.
+          </ErrorNotice>
         ) : null}
         {clearMutation.isError ? (
           <ErrorNotice>
@@ -302,6 +328,15 @@ export function AICostLimitsManagement() {
   );
 }
 
+/** A name for an account, also when it is no longer in the directory. */
+function personName(
+  user: { readonly displayName: string; readonly email: string | null } | undefined,
+): string {
+  return user === undefined
+    ? "Removed account"
+    : user.displayName || user.email || "Unnamed account";
+}
+
 function tierDefaultSubtitle(tierDefault: AICostTierDefault | undefined): string {
   const lead = "Daily AI budgets. People without an override use the";
   if (tierDefault === undefined) {
@@ -332,15 +367,15 @@ export function normalizeFormInput(value: AICostLimitFormState):
   | string {
   const actorId = value.actorId.trim();
   if (!UUID_PATTERN.test(actorId)) {
-    return "Actor ID must be a valid UUID.";
+    return "Choose the person this budget is for.";
   }
   const actorDailyUsd = parseOptionalUsd(value.actorDailyUsd);
   if (actorDailyUsd === "invalid") {
-    return "Actor daily budget must be a non-negative number.";
+    return "Enter the daily budget as an amount of zero or more, or leave it empty.";
   }
   const featureDailyUsd = parseOptionalUsd(value.featureDailyUsd);
   if (featureDailyUsd === "invalid") {
-    return "Feature daily budget must be a non-negative number.";
+    return "Enter the per-feature budget as an amount of zero or more, or leave it empty.";
   }
   return { actorId, actorDailyUsd, featureDailyUsd };
 }

@@ -251,6 +251,36 @@ services:
       start_period: 30s
     restart: unless-stopped
 
+  # Optional password manager (Vaultwarden, Bitwarden-compatible). People get
+  # the Passwords app once an admin turns it on in Admin → Apps → Passwords and
+  # HELIX_PASSWORDS_URL points at this service.
+  vaultwarden:
+    image: vaultwarden/server:1.37.4-alpine@sha256:19ea2b669945d842dadc3d500f2d6a795866a003330f59a47b9634658bae98bb
+    profiles: ["passwords"]
+    environment:
+      DOMAIN: ${HELIX_PASSWORDS_URL:-http://127.0.0.1:28462}
+      ROCKET_PORT: 8080
+      SIGNUPS_ALLOWED: "true"
+      SIGNUPS_VERIFY: "true"
+      SHOW_PASSWORD_HINT: "false"
+      # No outbound requests to addresses that vault entries name.
+      DISABLE_ICON_DOWNLOAD: "true"
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
+      SMTP_SECURITY: "off"
+      SMTP_FROM: passwords@helix.local
+    ports:
+      - "127.0.0.1:${VAULTWARDEN_PORT:-28462}:8080"
+    volumes:
+      - vaultwarden-data:/data
+    healthcheck:
+      test: ["CMD", "/healthcheck.sh"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
   mailpit:
     image: axllent/mailpit:v1.31.4@sha256:b68349e3a014b90c5610bfb26b2ae36f3892d7b8cf25ee140c6c71c98d2fcf48
     ports:
@@ -471,7 +501,8 @@ services:
       XMPP_RECORDER_DOMAIN: ${JITSI_XMPP_RECORDER_DOMAIN:-recorder.meet.jitsi}
     volumes:
       - jitsi-jicofo-config:/config
-      - ./infra/meet/jicofo/custom-jicofo.conf:/config/custom-jicofo.conf:ro
+      - ./infra/meet/init/02-helix-config:/etc/cont-init.d/02-helix-config:ro
+      - ./infra/meet/jicofo/custom-jicofo.conf:/run/helix-jitsi-config/custom-jicofo.conf:ro
     secrets:
       - jitsi_xmpp_truststore
     networks: [meet-control]
@@ -503,7 +534,8 @@ services:
       - "127.0.0.1:${JITSI_JVB_UDP_PORT:-28453}:10000/udp"
     volumes:
       - jitsi-jvb-config:/config
-      - ./infra/meet/jvb/custom-jvb.conf:/config/custom-jvb.conf:ro
+      - ./infra/meet/init/02-helix-config:/etc/cont-init.d/02-helix-config:ro
+      - ./infra/meet/jvb/custom-jvb.conf:/run/helix-jitsi-config/custom-jvb.conf:ro
     secrets:
       - jitsi_xmpp_truststore
     networks: [meet-control, meet-media]
@@ -525,7 +557,7 @@ services:
         --external-ip="$${JITSI_TURN_EXTERNAL_IP}" --listening-port=3478
         --tls-listening-port=5349 --min-port=49160 --max-port=49200
         --cert=/run/secrets/jitsi_turn_cert --pkey=/run/secrets/jitsi_turn_key
-        --no-dtls --stale-nonce=600 --user-quota=12 --total-quota=1200 --no-cli
+        --stale-nonce=600 --user-quota=12 --total-quota=1200 --no-cli
         --no-multicast-peers --log-file=stdout
     environment:
       JITSI_TURN_REALM: ${JITSI_TURN_HOST:-turn.localhost}
@@ -694,6 +726,7 @@ volumes:
   nats-data:
   meili-data:
   searxng-data:
+  vaultwarden-data:
   rustfs-data:
   caddy-data:
   caddy-config:

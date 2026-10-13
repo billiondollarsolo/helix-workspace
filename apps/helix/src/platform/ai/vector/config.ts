@@ -1,3 +1,4 @@
+import { runtimeEnvironment } from "../../../config/env.js";
 import type { AiConfig, JsonObject } from "@helix/sdk-types";
 import type postgres from "postgres";
 import { configuredProviderFetch } from "../providers/factory.js";
@@ -57,7 +58,7 @@ function httpVectorConfig(
   if (baseUrl === undefined) {
     throw new TypeError(`${label} vector store requires config.baseUrl`);
   }
-  const apiKey = secretConfig(config, options.env ?? process.env);
+  const apiKey = secretConfig(config, options.env ?? runtimeEnvironment());
   return {
     baseUrl,
     ...(apiKey === undefined ? {} : { apiKey }),

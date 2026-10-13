@@ -33,7 +33,7 @@ export function SpamFiltering() {
         {spamQuery.isPending ? <LoadingState label="Loading spam settings…" /> : null}
         {spamQuery.isError ? (
           <ErrorNotice>
-            Spam settings are unavailable or you lack the mail admin scope.{" "}
+            Spam settings could not be loaded. You may not have permission to manage mail.{" "}
             {spamQuery.error.message}
           </ErrorNotice>
         ) : null}
@@ -45,7 +45,7 @@ export function SpamFiltering() {
                 <ShieldIcon size={16} aria-hidden="true" />
               </span>
               <div className="flex-1">
-                <div className="type-body font-semibold">spamd daemon</div>
+                <div className="type-body font-semibold">SpamAssassin</div>
                 <div className="type-meta [color:var(--text-2)]">
                   {settings.enabled
                     ? `Ruleset ${settings.rulesetVersion ?? "as installed"}`

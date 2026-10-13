@@ -142,6 +142,7 @@ export const ADMIN_NAV_GROUPS = [
       { id: "calendar", label: "Calendar", icon: "Calendar" },
       { id: "meet", label: "Meet", icon: "Video" },
       { id: "assistant", label: "Assistant", icon: "Sparkles" },
+      { id: "passwords", label: "Passwords", icon: "Key" },
     ],
   },
   {

@@ -1,4 +1,6 @@
 import { passkey } from "@better-auth/passkey";
+import { env } from "../../config/env.js";
+import { resolvePostgresSsl } from "../../config/postgres-connection.js";
 import { sso, type SSOUserResolutionInput } from "@better-auth/sso";
 import type { Actor, JsonObject } from "@helix/sdk";
 import { betterAuth } from "better-auth";
@@ -349,7 +351,13 @@ export interface BetterAuthRuntime {
 }
 
 export function createBetterAuthRuntime(config: BetterAuthRuntimeConfig): BetterAuthRuntime {
-  const pool = new Pool({ connectionString: config.databaseUrl });
+  // Same CA-pinned TLS policy as the application client: production PostgreSQL
+  // rejects unencrypted connections, and this pool is a separate driver.
+  const ssl = resolvePostgresSsl(env());
+  const pool = new Pool({
+    connectionString: config.databaseUrl,
+    ...(ssl === false ? {} : { ssl }),
+  });
   const sendPasswordReset = config.sendPasswordReset;
   const cookiePolicy = sessionCookiePolicyForBaseUrl(config.baseUrl);
   const auth = betterAuth({

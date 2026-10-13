@@ -1,13 +1,33 @@
 {
-	admin off
+	# Off unless the deployment shares an admin socket with Helix, which uses
+	# it only to make Caddy load its certificate folder again. A Unix socket
+	# only: never give this a network address.
+	admin {$HELIX_CADDY_ADMIN:off}
 	servers {
 		protocols h1 h2 h3
 	}
 }
 
+# Container health probe. The site below redirects plain HTTP to HTTPS, so the
+# probe needs its own unpublished plain-HTTP listener.
+:8081 {
+	respond /healthz "ok" 200
+	respond 404
+}
+
 {$HELIX_DOMAIN} {
+	# Certificate source. Empty: automatic HTTPS (Let's Encrypt, ZeroSSL).
+	# "<cert> <key>": operator-provided PEM files. "internal": Caddy's local CA,
+	# for tests only. See docs/deployment-production.md.
+	tls {$HELIX_CADDY_TLS:} {
+		protocols tls1.2 tls1.3
+		# A certificate uploaded in Admin → Domains is written here by Helix.
+		# While one is present Caddy serves it and stops obtaining its own.
+		load {$HELIX_EDGE_CERT_DIR:/run/helix-edge-certs}
+	}
+
 	# S3 clients verify Content-Length and checksums of raw object bytes.
-	@compressible not path /v1/s3 /v1/s3/*
+	@compressible not path /v1/s3 /v1/s3/* /{$HELIX_STORAGE_BUCKET:helix-objects}/*
 	encode @compressible zstd gzip
 
 	header {
@@ -21,6 +41,24 @@
 		Cross-Origin-Resource-Policy "same-origin"
 		Origin-Agent-Cluster "?1"
 		-Server
+	}
+
+	# Presigned Drive and Mail object URLs. Browsers cannot reach the bundled
+	# object store, so its bucket path is served here. Every request must carry
+	# a valid S3 signature; the Host header is passed through because it is
+	# part of that signature.
+	@objects path /{$HELIX_STORAGE_BUCKET:helix-objects}/*
+	handle @objects {
+		reverse_proxy {$HELIX_STORAGE_UPSTREAM:https://rustfs:9000} {
+			# Caddy rewrites Host to the upstream for HTTPS backends; the
+			# signature covers the public host, so keep it.
+			header_up Host {host}
+			header_up -X-Helix-Mfa-Verified
+			transport http {
+				tls_server_name rustfs
+				tls_trust_pool file {$HELIX_STORAGE_CA_FILE:/run/secrets/rustfs_ca}
+			}
+		}
 	}
 
 	@health path /healthz /readyz
@@ -47,3 +85,9 @@
 		file_server
 	}
 }
+
+# Optional installs each bring their own site. The file name ends in "-on" only
+# when the deployment sets the matching variable; otherwise an empty file is
+# imported and nothing is served.
+import optional/passwords{$HELIX_PASSWORDS_SITE:}.caddy
+import optional/meet{$HELIX_MEET_SITE:}.caddy

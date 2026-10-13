@@ -51,11 +51,17 @@ export interface SqlClientOptions {
   readonly readTlsFile?: (path: string) => Buffer;
 }
 
+/**
+ * Build the application connection. Without an explicit URL it uses the
+ * validated environment, so a production `DATABASE_URL_FILE` secret is honoured
+ * instead of falling back to the local development database.
+ */
 export function createSqlClient(
-  databaseUrl = resolveDatabaseUrl(),
+  databaseUrl?: string,
   options: SqlClientOptions = {},
 ): postgres.Sql {
   const validatedEnv = loadValidatedEnv();
+  databaseUrl ??= resolveDatabaseUrl(validatedEnv);
   return tenantAwarePostgresSql(
     createConfiguredSqlClient(databaseUrl, {
       poolMax: options.poolMax ?? validatedEnv.POSTGRES_POOL_MAX,

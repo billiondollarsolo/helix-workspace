@@ -1,15 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
   tenantConfigSchema,
+  OPT_IN_TENANT_FEATURE_FLAGS,
   SYSTEM_TENANT_FEATURE_FLAGS,
   SYSTEM_TENANT_CONFIG,
   SYSTEM_TENANT_QUOTAS,
 } from "./tenant-config.js";
 
 describe("tenant-config contract", () => {
-  it("turns features on by default and leaves calendar invitation import opt-in", () => {
+  it("turns features on by default and leaves the opt-in flags off", () => {
     for (const [key, value] of Object.entries(SYSTEM_TENANT_FEATURE_FLAGS)) {
-      const expected = key !== "calendar_import_invitations";
+      const expected = !OPT_IN_TENANT_FEATURE_FLAGS.includes(key);
       expect({ key, value }).toEqual({ key, value: expected });
     }
   });

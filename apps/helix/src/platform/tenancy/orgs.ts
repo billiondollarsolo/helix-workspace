@@ -217,7 +217,41 @@ export class PostgresOrgStore implements OrgStore {
       );
     }
 
+    // Migration 0031 creates the default org under a placeholder name before the
+    // application first runs, so the configured name has to replace it here. A
+    // name chosen afterwards is never overwritten.
+    if (displayName !== DEFAULT_ORG_DISPLAY_NAME && org.displayName === DEFAULT_ORG_DISPLAY_NAME) {
+      org = (await this.replacePlaceholderName(org.id, displayName)) ?? org;
+    }
+
     return org;
+  }
+
+  private async replacePlaceholderName(id: string, displayName: string): Promise<OrgRecord | null> {
+    const rows = await this.sql<OrgRow[]>`
+      update orgs
+      set
+        display_name = ${displayName},
+        updated_at = now()
+      where id = ${id}
+        and display_name = ${DEFAULT_ORG_DISPLAY_NAME}
+      returning
+        id,
+        slug,
+        display_name,
+        status,
+        tier,
+        region,
+        byo_config,
+        feature_flags,
+        quotas,
+        branding,
+        suspended_at,
+        soft_deleted_at,
+        hard_deleted_at
+    `;
+    // Zero rows means another replica renamed it first.
+    return rows[0] === undefined ? this.findById(id) : mapOrgRow(rows[0]);
   }
 
   private regionForWrite(requested: string | undefined): string {

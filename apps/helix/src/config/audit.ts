@@ -5,7 +5,7 @@ import {
 } from "../platform/audit/immutable-s3.js";
 import type { SiemAuditFormat } from "../platform/audit/siem-format.js";
 import type { SiemSyslogTransport } from "../platform/audit/siem-syslog.js";
-import { createS3CompatibleStorage } from "../platform/storage/index.js";
+import { createS3CompatibleStorage, operatorStorageFetch } from "../platform/storage/index.js";
 import { envValueFlag } from "../platform/util/env.js";
 
 export interface ImmutableAuditShippingConfig {
@@ -112,6 +112,7 @@ export function getAuditDestinationConfigs(
       intervalMs: s3Config.intervalMs,
       storage: createS3CompatibleStorage({
         endpoint: s3Config.endpoint,
+        fetch: operatorStorageFetch(s3Config.endpoint),
         region: s3Config.region,
         bucket: s3Config.bucket,
         credentials: {

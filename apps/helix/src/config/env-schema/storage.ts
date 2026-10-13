@@ -2,6 +2,8 @@ import { z } from "zod";
 import { optionalPositiveInt, optionalString, optionalUrl } from "./common.js";
 export const storageEnv = {
   RUSTFS_ENDPOINT: optionalUrl,
+  /** Browser-reachable address for presigned URLs when RUSTFS_ENDPOINT is private. */
+  RUSTFS_PUBLIC_ENDPOINT: optionalUrl,
   RUSTFS_API_PORT: optionalString,
   RUSTFS_ACCESS_KEY: z.string().default("helixrustfs"),
   RUSTFS_SECRET_KEY: z.string().default("helix_rustfs_dev_secret"),

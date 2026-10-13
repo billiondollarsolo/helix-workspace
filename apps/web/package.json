@@ -16,6 +16,7 @@
     "lint:e2e": "eslint tests/e2e --max-warnings=0",
     "typecheck": "tsc --noEmit",
     "typecheck:e2e": "tsc --noEmit -p tests/e2e/tsconfig.json",
+    "meet:media-probe": "node scripts/meet-media-probe.mjs",
     "test:e2e:meet-live": "playwright test --config playwright.meet-live.config.ts",
     "test:performance": "playwright test --config playwright.performance.config.ts"
   },

@@ -56,7 +56,7 @@ describe("AppLauncher", () => {
 
     const menu = container.querySelector<HTMLElement>('[role="menu"]');
     const items = Array.from(container.querySelectorAll<HTMLAnchorElement>('[role="menuitem"]'));
-    expect(items).toHaveLength(9);
+    expect(items).toHaveLength(10);
     expect(items.map((item) => item.textContent)).toContain("Search");
     expect(items[0]?.dataset.preload).toBe("intent");
     expect(document.activeElement).toBe(items[0]);

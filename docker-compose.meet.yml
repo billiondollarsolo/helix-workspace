@@ -1,0 +1,277 @@
+# Optional install: Meet (video meetings on a bundled Jitsi) and Calendar.
+#
+#   docker compose --env-file .env.production \
+#     -f docker-compose.yml -f docker-compose.production.yml \
+#     -f docker-compose.meet.yml up -d
+#
+# Without this file nothing here is deployed: the production stack stays on the
+# Mail, Drive, Chat, Assistant packaging and runs no media services. Adding it
+# switches Helix to the Full Workspace profile (Calendar and Meet) and starts
+# Jitsi behind the edge.
+#
+# Before the first start:
+#   1. Point HELIX_MEET_DOMAIN (for example meet.example.com) at this host.
+#   2. Set HELIX_MEET_PUBLIC_IP to the address browsers reach this host on.
+#   3. Open UDP 10000 (media), TCP and UDP 3478 and TCP 5349 (TURN), and UDP
+#      49160-49200 (TURN relay) in the host firewall.
+#   4. Create the Meet secret files:
+#        node infra/scripts/generate-production-secrets.mjs --add-meet \
+#          --dir "$HELIX_PRODUCTION_SECRETS_DIR" --meet-host "$HELIX_MEET_DOMAIN"
+#
+# Recording (Jibri) is not part of this install. See docs/deployment-production.md.
+
+x-jitsi-hardening: &jitsi-hardening
+  profiles: !override []
+  security_opt: !override
+    - no-new-privileges:true
+  restart: unless-stopped
+
+services:
+  helix:
+    environment:
+      # The Full Workspace profile: Calendar and Meet on top of the core apps.
+      # Helix refuses to start on it without the Jitsi domain and secrets below.
+      HELIX_WORKSPACE_PROFILE: full
+      HELIX_APPS: mail,drive,chat,assistant,calendar,meet
+      HELIX_CONFIG_JSON: >-
+        {"security":{"tier":"business"},"modules":{"docs":{"enabled":false},"editors":{"enabled":false}}}
+      MEET_JITSI_ENABLED: "true"
+      # Media stays in the deployment's region; Helix refuses to start otherwise.
+      MEET_JITSI_REGION: ${HELIX_REGION:?deployment region label is required}
+      MEET_JITSI_DOMAIN: ${HELIX_MEET_DOMAIN:?HELIX_MEET_DOMAIN is required for the Meet install}
+      MEET_JITSI_PUBLIC_URL: https://${HELIX_MEET_DOMAIN:?HELIX_MEET_DOMAIN is required for the Meet install}
+      MEET_JITSI_JWT_SECRET_FILE: /run/secrets/meet_jwt_secret
+      MEET_JITSI_WEBHOOK_SHARED_SECRET_FILE: /run/secrets/meet_webhook_secret
+      # No recorder in this install.
+      MEET_JIBRI_HEALTH_URL: ""
+      BETTER_AUTH_TRUSTED_ORIGINS: https://${HELIX_DOMAIN:?HELIX_DOMAIN is required},https://${HELIX_MEET_DOMAIN:?HELIX_MEET_DOMAIN is required for the Meet install}
+    secrets:
+      - meet_jwt_secret
+      - meet_webhook_secret
+
+  caddy:
+    environment:
+      # Lets the workspace embed the meeting page, and serves that page.
+      HELIX_JITSI_ORIGIN: https://${HELIX_MEET_DOMAIN:?HELIX_MEET_DOMAIN is required for the Meet install}
+      HELIX_MEET_DOMAIN: ${HELIX_MEET_DOMAIN:?HELIX_MEET_DOMAIN is required for the Meet install}
+      HELIX_MEET_SITE: -on
+
+  # Java reads the private CA from a PKCS#12 trust store. It is built here from
+  # the PEM file so the host needs no Java tooling.
+  jitsi-truststore-init:
+    image: jitsi/jvb:stable-11031@sha256:3460de3541a8f96d007b8f2b4681ea8321cae64c17387338eabf776e73cd0f51
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        rm -f /out/xmpp-truststore.p12
+        keytool -importcert -noprompt -alias helix-meet-ca -file /run/secrets/jitsi_xmpp_ca \
+          -keystore /out/xmpp-truststore.p12 -storetype PKCS12 -storepass changeit >/dev/null
+        chmod 0444 /out/xmpp-truststore.p12
+    secrets:
+      - jitsi_xmpp_ca
+    volumes:
+      - jitsi-truststore:/out
+    network_mode: none
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+
+  jitsi-web:
+    <<: *jitsi-hardening
+    environment:
+      PUBLIC_URL: https://${HELIX_MEET_DOMAIN:?HELIX_MEET_DOMAIN is required for the Meet install}
+      ENABLE_RECORDING: "0"
+      # Caddy terminates TLS; this container only speaks HTTP to it.
+      DISABLE_HTTPS: "1"
+      ENABLE_HTTP_REDIRECT: "0"
+      ENABLE_LETSENCRYPT: "0"
+      # The page never needs the signing secret.
+      JWT_APP_SECRET: !reset null
+    ports: !override []
+    networks: !override
+      - meet-control
+      - edge
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512m
+          pids: 256
+
+  jitsi-prosody:
+    <<: *jitsi-hardening
+    environment:
+      PUBLIC_URL: https://${HELIX_MEET_DOMAIN:?HELIX_MEET_DOMAIN is required for the Meet install}
+      STUN_HOST: ${HELIX_MEET_DOMAIN:?HELIX_MEET_DOMAIN is required for the Meet install}
+      TURN_HOST: ${HELIX_MEET_DOMAIN:?HELIX_MEET_DOMAIN is required for the Meet install}
+      TURNS_HOST: ${HELIX_MEET_DOMAIN:?HELIX_MEET_DOMAIN is required for the Meet install}
+      # Browsers are told the ports that are published below.
+      STUN_PORT: ${HELIX_MEET_TURN_PORT:-3478}
+      TURN_PORT: ${HELIX_MEET_TURN_PORT:-3478}
+      TURNS_PORT: ${HELIX_MEET_TURNS_PORT:-5349}
+      ENABLE_RECORDING: "0"
+      # Every credential comes from a secret file (see infra/meet/init/01-helix-secrets); the
+      # development defaults must never reach a production container.
+      JICOFO_AUTH_PASSWORD: !reset null
+      JICOFO_COMPONENT_SECRET: !reset null
+      JVB_AUTH_PASSWORD: !reset null
+      JWT_APP_SECRET: !reset null
+      JIBRI_XMPP_USER: !reset null
+      JIBRI_XMPP_PASSWORD: !reset null
+      JIBRI_RECORDER_USER: !reset null
+      JIBRI_RECORDER_PASSWORD: !reset null
+    volumes:
+      - ./infra/meet/init/01-helix-secrets:/etc/cont-init.d/01-helix-secrets:ro
+    secrets:
+      - source: jitsi_jicofo_auth_password
+        target: /run/helix-jitsi-env/JICOFO_AUTH_PASSWORD
+      - source: jitsi_jicofo_component_secret
+        target: /run/helix-jitsi-env/JICOFO_COMPONENT_SECRET
+      - source: jitsi_jvb_auth_password
+        target: /run/helix-jitsi-env/JVB_AUTH_PASSWORD
+      - source: meet_jwt_secret
+        target: /run/helix-jitsi-env/JWT_APP_SECRET
+    ports: !override []
+    networks: !override
+      - meet-control
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512m
+          pids: 256
+
+  jitsi-jicofo:
+    <<: *jitsi-hardening
+    environment:
+      ENABLE_RECORDING: "0"
+      JICOFO_AUTH_PASSWORD: !reset null
+      JICOFO_COMPONENT_SECRET: !reset null
+      JAVA_TOOL_OPTIONS: >-
+        -Djavax.net.ssl.trustStore=/run/helix-truststore/xmpp-truststore.p12
+        -Djavax.net.ssl.trustStoreType=PKCS12
+        -Djavax.net.ssl.trustStorePassword=changeit
+    volumes:
+      - ./infra/meet/init/01-helix-secrets:/etc/cont-init.d/01-helix-secrets:ro
+      - jitsi-truststore:/run/helix-truststore:ro
+    secrets: !override
+      - source: jitsi_jicofo_auth_password
+        target: /run/helix-jitsi-env/JICOFO_AUTH_PASSWORD
+      - source: jitsi_jicofo_component_secret
+        target: /run/helix-jitsi-env/JICOFO_COMPONENT_SECRET
+    depends_on:
+      jitsi-truststore-init:
+        condition: service_completed_successfully
+    networks: !override
+      - meet-control
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1g
+          pids: 512
+
+  jitsi-jvb:
+    <<: *jitsi-hardening
+    environment:
+      JVB_AUTH_PASSWORD: !reset null
+      # The address and port browsers send media to. The bridge advertises its
+      # own listening port, so it listens on the published one.
+      JVB_ADVERTISE_IPS: ${HELIX_MEET_PUBLIC_IP:?HELIX_MEET_PUBLIC_IP is required for the Meet install}
+      JVB_PORT: ${HELIX_MEET_MEDIA_PORT:-10000}
+      JAVA_TOOL_OPTIONS: >-
+        -Djavax.net.ssl.trustStore=/run/helix-truststore/xmpp-truststore.p12
+        -Djavax.net.ssl.trustStoreType=PKCS12
+        -Djavax.net.ssl.trustStorePassword=changeit
+    volumes:
+      - ./infra/meet/init/01-helix-secrets:/etc/cont-init.d/01-helix-secrets:ro
+      - jitsi-truststore:/run/helix-truststore:ro
+    secrets: !override
+      - source: jitsi_jvb_auth_password
+        target: /run/helix-jitsi-env/JVB_AUTH_PASSWORD
+    depends_on:
+      jitsi-truststore-init:
+        condition: service_completed_successfully
+    # Media is the one thing that cannot go through the edge.
+    ports: !override
+      - target: ${HELIX_MEET_MEDIA_PORT:-10000}
+        published: ${HELIX_MEET_MEDIA_PORT:-10000}
+        host_ip: ${HELIX_MEET_BIND_IP:-0.0.0.0}
+        protocol: udp
+        mode: host
+    networks: !override
+      - meet-control
+      - meet-media
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 2g
+          pids: 1024
+
+  # TURN relays media for people whose network blocks UDP to the bridge.
+  jitsi-turn:
+    <<: *jitsi-hardening
+    environment:
+      JITSI_TURN_REALM: ${HELIX_MEET_DOMAIN:?HELIX_MEET_DOMAIN is required for the Meet install}
+      JITSI_TURN_EXTERNAL_IP: ${HELIX_MEET_PUBLIC_IP:?HELIX_MEET_PUBLIC_IP is required for the Meet install}
+    ports: !override
+      - target: 3478
+        published: ${HELIX_MEET_TURN_PORT:-3478}
+        host_ip: ${HELIX_MEET_BIND_IP:-0.0.0.0}
+        protocol: tcp
+        mode: host
+      - target: 3478
+        published: ${HELIX_MEET_TURN_PORT:-3478}
+        host_ip: ${HELIX_MEET_BIND_IP:-0.0.0.0}
+        protocol: udp
+        mode: host
+      - target: 5349
+        published: ${HELIX_MEET_TURNS_PORT:-5349}
+        host_ip: ${HELIX_MEET_BIND_IP:-0.0.0.0}
+        protocol: tcp
+        mode: host
+      - "${HELIX_MEET_BIND_IP:-0.0.0.0}:49160-49200:49160-49200/udp"
+    networks: !override
+      - meet-media
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 512m
+          pids: 256
+
+networks:
+  meet-control:
+    name: ${HELIX_COMPOSE_PROJECT_NAME:-helix-production}-meet-control
+    internal: true
+  meet-media:
+    name: ${HELIX_COMPOSE_PROJECT_NAME:-helix-production}-meet-media
+
+volumes:
+  jitsi-truststore:
+
+secrets:
+  meet_jwt_secret:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/meet_jwt_secret
+  meet_webhook_secret:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/meet_webhook_secret
+  jitsi_jicofo_auth_password:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/jitsi_jicofo_auth_password
+  jitsi_jicofo_component_secret:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/jitsi_jicofo_component_secret
+  jitsi_jvb_auth_password:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/jitsi_jvb_auth_password
+  jitsi_xmpp_ca:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/jitsi_xmpp_ca
+  jitsi_turn_shared_secret:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/jitsi_turn_shared_secret
+  jitsi_turn_cert:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/jitsi_turn_cert
+  jitsi_turn_key:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/jitsi_turn_key
+  jitsi_xmpp_cert:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/jitsi_xmpp_cert
+  jitsi_xmpp_key:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/jitsi_xmpp_key

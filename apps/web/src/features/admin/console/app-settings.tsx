@@ -4,7 +4,7 @@
  * because it affects everyone. */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { notify } from "@/components/ui/toast";
 import {
   coreAppsAdminQueryOptions,
@@ -54,7 +54,7 @@ export interface WorkspaceFlag {
 }
 
 /** Reads and saves one boolean tenant feature flag. */
-function useWorkspaceFlag(key: string) {
+function useWorkspaceFlag(key: string, onSaved?: () => void) {
   const queryClient = useQueryClient();
   const query = useQuery(tenantConfigQueryOptions());
   const mutation = useMutation({
@@ -64,6 +64,7 @@ function useWorkspaceFlag(key: string) {
     onSuccess: (config) => {
       queryClient.setQueryData(tenantConfigQueryKeys.detail(), config);
       notify({ message: "Setting saved" });
+      onSaved?.();
     },
     onError: (error: Error) => {
       notify({ message: "Couldn't save the setting", description: error.message, tone: "error" });
@@ -80,8 +81,14 @@ function useWorkspaceFlag(key: string) {
   };
 }
 
-function FlagToggle({ flag }: { readonly flag: WorkspaceFlag }) {
-  const { query, checked, saving, set } = useWorkspaceFlag(flag.key);
+function FlagToggle({
+  flag,
+  onSaved,
+}: {
+  readonly flag: WorkspaceFlag;
+  readonly onSaved?: (() => void) | undefined;
+}) {
+  const { query, checked, saving, set } = useWorkspaceFlag(flag.key, onSaved);
   return (
     <SettingToggle
       label={flag.label}
@@ -93,13 +100,19 @@ function FlagToggle({ flag }: { readonly flag: WorkspaceFlag }) {
   );
 }
 
-/** Workspace switches for one app, in a settings card. */
+/** Workspace switches for one app, in a settings card. `children` are further
+ *  rows of the same list, for switches that are not stored workspace flags.
+ *  `onSaved` runs after any switch is saved, for what else reads the setting. */
 export function WorkspaceFlagsPanel({
   title,
   flags,
+  children,
+  onSaved,
 }: {
   readonly title: string;
   readonly flags: readonly WorkspaceFlag[];
+  readonly children?: ReactNode;
+  readonly onSaved?: () => void;
 }) {
   const queryClient = useQueryClient();
   const query = useQuery(tenantConfigQueryOptions());
@@ -122,8 +135,9 @@ export function WorkspaceFlagsPanel({
       ) : (
         <div className="admin-setting-list">
           {flags.map((flag) => (
-            <FlagToggle key={flag.key} flag={flag} />
+            <FlagToggle key={flag.key} flag={flag} onSaved={onSaved} />
           ))}
+          {children}
         </div>
       )}
     </section>

@@ -1,19 +1,25 @@
 /* Helix Admin — Chat retention, legal hold, and organization export.
  *
  * Wired to real Chat admin tools (`chat.retention.*`, `chat.legal_hold.set`,
- * `chat.export.organization`). When tools are missing or the operator lacks
- * `admin.chat`, controls disable with an explicit reason — never a silent
- * no-op.
+ * `chat.export.organization`, `chat.room.list_organization`). When tools are
+ * missing or the operator lacks `admin.chat`, controls disable with an explicit
+ * reason — never a silent no-op.
+ *
+ * Rooms are chosen by name. Private rooms and direct messages stay out of the
+ * pickers until the organization turns on "Administrators can see private
+ * rooms"; agent-only rooms are listed on request either way.
  */
 
-import { AppStatusPanel } from "@/features/admin/console/app-settings";
+import { AppStatusPanel, WorkspaceFlagsPanel } from "@/features/admin/console/app-settings";
 import { formatDuration } from "@/features/admin/console/format";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { useServerSeededDraft } from "@/lib/use-server-seeded-draft";
 import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
-import { AdminField, AdminInput } from "@/features/admin/console/controls";
+import { AdminField, AdminInput, AdminSelect } from "@/features/admin/console/controls";
+import { SettingToggle } from "@/features/admin/console/widgets";
+import { tenantConfigQueryOptions } from "@/features/admin/tenant-config-api";
 import {
   PageHeading,
   QueryFailureBanner,
@@ -23,9 +29,13 @@ import {
   Notice,
 } from "@/features/admin/console/primitives";
 import {
+  CHAT_EXPORT_ROOM_LIMIT,
+  CHAT_ROOM_PICKER_LIMIT,
   chatAdminQueryKeys,
+  chatOrganizationRoomsQueryOptions,
   chatRetentionQueryOptions,
   describeChatAdminUnavailable,
+  describeChatRoom,
   exportChatOrganization,
   formatRetentionSummary,
   mapExportFormToToolInput,
@@ -36,11 +46,24 @@ import {
   setChatRetentionPolicy,
   type ChatExportFormInput,
   type ChatExportResult,
+  type ChatOrganizationRoom,
+  type ChatOrganizationRooms,
   type ChatRetentionFormInput,
   type ChatRetentionPolicyView,
 } from "@/features/admin/chat-admin-api";
 
 const PANEL = "grid gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4";
+
+const PRIVATE_ROOMS_FLAG = "chat_admin_private_rooms";
+
+const ROOM_VISIBILITY_FLAGS = [
+  {
+    key: PRIVATE_ROOMS_FLAG,
+    label: "Administrators can see private rooms",
+    description:
+      "Lists private rooms and direct messages by name in the room pickers on this page. Off by default.",
+  },
+] as const;
 
 /** What differs between enabling and disabling a legal hold. Everything else
  *  about the two confirmations was identical. */
@@ -76,10 +99,33 @@ function downloadExportJson(result: ChatExportResult): void {
  */
 export function ChatAdminSection() {
   const queryClient = useQueryClient();
-  const retentionQuery = useQuery(chatRetentionQueryOptions());
+  /* "" is the organization default; otherwise the room the policy applies to. */
+  const [scopeRoomId, setScopeRoomId] = useState("");
+  const [showAgentRooms, setShowAgentRooms] = useState(false);
+  const retentionQuery = useQuery(
+    chatRetentionQueryOptions(scopeRoomId === "" ? undefined : scopeRoomId),
+  );
   const retentionFailure = useQueryFailure(retentionQuery, () => {
-    void queryClient.invalidateQueries({ queryKey: chatAdminQueryKeys.retention() });
+    void queryClient.invalidateQueries({ queryKey: ["admin", "chat", "retention"] });
   });
+  const tenantConfigQuery = useQuery(tenantConfigQueryOptions());
+  const roomsQuery = useQuery({
+    ...chatOrganizationRoomsQueryOptions({
+      includeAgentOnly: showAgentRooms,
+      privateRoomsVisible: tenantConfigQuery.data?.effective.features[PRIVATE_ROOMS_FLAG] === true,
+    }),
+    /* Waits for the setting it is keyed on, so the list is not fetched twice. */
+    enabled: !tenantConfigQuery.isPending,
+  });
+  const rooms = roomsQuery.data?.rooms ?? [];
+  const scopeRoom = rooms.find((room) => room.id === scopeRoomId);
+  const scopeName =
+    scopeRoomId === ""
+      ? null
+      : scopeRoom === undefined
+        ? "the selected room"
+        : describeChatRoom(scopeRoom);
+  const holdScope = scopeName ?? "the organization default";
 
   const policy = retentionQuery.data;
   const unavailableReason =
@@ -93,18 +139,20 @@ export function ChatAdminSection() {
           retentionDays: "2555",
           editWindowMinutes: "1440",
           deleteWindowMinutes: "1440",
-          roomId: "",
+          roomId: scopeRoomId,
         }
       : retentionFormFromPolicy(loaded),
   );
-  const { draft: retentionForm, setDraft: setRetentionForm } = retentionDraft;
+  const { draft: loadedRetentionForm, setDraft: setRetentionForm } = retentionDraft;
+  /* The picker, not the loaded policy, decides which room a save or hold applies to. */
+  const retentionForm = { ...loadedRetentionForm, roomId: scopeRoomId };
   const [formError, setFormError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [exportForm, setExportForm] = useState<ChatExportFormInput>({
     from: "",
     to: "",
     limit: "1000",
-    roomIds: "",
+    roomIds: [],
   });
   const [exportError, setExportError] = useState<string | null>(null);
   const [lastExport, setLastExport] = useState<ChatExportResult | null>(null);
@@ -126,7 +174,9 @@ export function ChatAdminSection() {
       setStatusMessage(
         `Retention saved: messages kept for ${formatDuration(result.retentionDays * 86_400)}, editable for ${formatDuration(result.editWindowSeconds)}, deletable for ${formatDuration(result.deleteWindowSeconds)}.`,
       );
-      await queryClient.invalidateQueries({ queryKey: chatAdminQueryKeys.retention() });
+      await queryClient.invalidateQueries({
+        queryKey: chatAdminQueryKeys.retention(result.roomId ?? undefined),
+      });
     },
     onSettled: () => {
       setConfirmRetention(false);
@@ -143,12 +193,10 @@ export function ChatAdminSection() {
       setFormError(error instanceof Error ? error.message : "Failed to set legal hold.");
     },
     onSuccess: async (result) => {
-      setStatusMessage(
-        result.legalHold
-          ? "Legal hold enabled for the organization default scope."
-          : "Legal hold disabled for the organization default scope.",
-      );
-      await queryClient.invalidateQueries({ queryKey: chatAdminQueryKeys.retention() });
+      setStatusMessage(`Legal hold ${result.legalHold ? "enabled" : "disabled"} for ${holdScope}.`);
+      await queryClient.invalidateQueries({
+        queryKey: chatAdminQueryKeys.retention(result.roomId ?? undefined),
+      });
     },
     onSettled: () => {
       setConfirmHold(null);
@@ -178,6 +226,14 @@ export function ChatAdminSection() {
   });
 
   const policySummary = policy === undefined ? null : formatRetentionSummary(policy);
+  const exportRoomCount = exportForm.roomIds.length;
+
+  function changeScope(roomId: string): void {
+    /* Typed values belong to the scope they were typed for. */
+    retentionDraft.reset();
+    setFormError(null);
+    setScopeRoomId(roomId);
+  }
 
   function requestRetentionSave(): void {
     const mapped = mapRetentionFormToToolInput(retentionForm);
@@ -223,15 +279,19 @@ export function ChatAdminSection() {
           enabled: confirmHold === "enable",
           roomId: retentionForm.roomId,
         });
-  const holdScope =
-    retentionForm.roomId.trim() === ""
-      ? "the organization default scope"
-      : `room ${retentionForm.roomId.trim()}`;
 
   return (
     <section className="grid gap-5">
       <PageHeading title="Chat" subtitle="Message retention, legal hold, and exports." />
       <AppStatusPanel appId="chat" />
+      <WorkspaceFlagsPanel title="Room visibility" flags={ROOM_VISIBILITY_FLAGS}>
+        <SettingToggle
+          label="Show agent-only rooms"
+          description="Adds rooms whose members are all agents to the room pickers, including private ones."
+          checked={showAgentRooms}
+          onCheckedChange={setShowAgentRooms}
+        />
+      </WorkspaceFlagsPanel>
 
       {retentionFailure !== null ? (
         <QueryFailureBanner
@@ -311,21 +371,27 @@ export function ChatAdminSection() {
               value={retentionForm.deleteWindowMinutes}
             />
           </AdminField>
-          <AdminField label="Room ID override (optional)">
-            <AdminInput
-              aria-label="Room ID override"
-              disabled={controlsDisabled || retentionMutation.isPending}
-              onChange={(event) =>
-                setRetentionForm((current) => ({
-                  ...current,
-                  roomId: event.target.value,
-                }))
-              }
-              placeholder="org default when empty"
-              value={retentionForm.roomId}
-            />
+          <AdminField label="Applies to">
+            <AdminSelect
+              aria-label="Retention applies to"
+              disabled={unavailableReason !== null || retentionMutation.isPending}
+              onChange={(event) => changeScope(event.target.value)}
+              value={scopeRoomId}
+            >
+              <option value="">Whole organization</option>
+              {/* Keeps the choice selected if the room drops out of the list. */}
+              {scopeRoomId !== "" && scopeRoom === undefined ? (
+                <option value={scopeRoomId}>Selected room</option>
+              ) : null}
+              {rooms.map((room) => (
+                <option key={room.id} value={room.id}>
+                  {describeChatRoom(room)}
+                </option>
+              ))}
+            </AdminSelect>
           </AdminField>
         </div>
+        <RoomListNote query={roomsQuery} />
 
         <div className="flex flex-wrap gap-2">
           <Button
@@ -372,7 +438,7 @@ export function ChatAdminSection() {
 
         {exportError !== null ? <ErrorNotice>{exportError}</ErrorNotice> : null}
 
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <AdminField label="From (ISO datetime, optional)">
             <AdminInput
               aria-label="Export from datetime"
@@ -406,18 +472,15 @@ export function ChatAdminSection() {
               value={exportForm.limit}
             />
           </AdminField>
-          <AdminField label="Room IDs (comma-separated, optional)">
-            <AdminInput
-              aria-label="Export room IDs"
-              disabled={controlsDisabled || exportMutation.isPending}
-              onChange={(event) =>
-                setExportForm((current) => ({ ...current, roomIds: event.target.value }))
-              }
-              placeholder="all rooms when empty"
-              value={exportForm.roomIds}
-            />
-          </AdminField>
         </div>
+
+        <ExportRoomChecklist
+          rooms={rooms}
+          selected={exportForm.roomIds}
+          disabled={controlsDisabled || exportMutation.isPending}
+          onChange={(roomIds) => setExportForm((current) => ({ ...current, roomIds }))}
+        />
+        <RoomListNote query={roomsQuery} />
 
         <div className="flex flex-wrap items-center gap-2">
           <Button
@@ -443,7 +506,7 @@ export function ChatAdminSection() {
         title="Save Chat retention policy"
         confirmLabel="Save policy"
         isPending={retentionMutation.isPending}
-        blastRadius="Applies to messages already stored for this organization (or the named room). Shorter retention will cause older messages to be tombstoned by the retention worker."
+        blastRadius="Applies to messages already stored for this organization (or the chosen room). A shorter period removes older messages the next time retention runs."
         onConfirm={() => {
           if (typeof pendingRetentionInput === "string") {
             setFormError(pendingRetentionInput);
@@ -459,9 +522,7 @@ export function ChatAdminSection() {
         Keep messages for {formatDuration(Number(retentionForm.retentionDays) * 86_400)}, editable
         for {formatDuration(Number(retentionForm.editWindowMinutes) * 60)} and deletable for{" "}
         {formatDuration(Number(retentionForm.deleteWindowMinutes) * 60)}
-        {retentionForm.roomId.trim() === ""
-          ? " as the organization default."
-          : ` for room ${retentionForm.roomId.trim()}.`}
+        {scopeName === null ? " as the organization default." : ` in ${scopeName}.`}
       </ConfirmDestructive>
 
       {/* One dialog, not two: enable and disable are the same confirmation with
@@ -509,12 +570,120 @@ export function ChatAdminSection() {
         }}
       >
         Export up to {exportForm.limit} messages
-        {exportForm.roomIds.trim() === "" ? " from all rooms" : " from the listed rooms"}
+        {exportRoomCount === 0
+          ? " from every room, including private rooms and direct messages"
+          : ` from ${String(exportRoomCount)} chosen ${exportRoomCount === 1 ? "room" : "rooms"}`}
         {exportForm.from.trim() === "" && exportForm.to.trim() === ""
           ? "."
           : ` between ${exportForm.from.trim() || "the start"} and ${exportForm.to.trim() || "now"}.`}
       </ConfirmDestructive>
     </section>
+  );
+}
+
+/** Why a picker may be shorter than the organization's room list. */
+function RoomListNote({
+  query,
+}: {
+  readonly query: { readonly data: ChatOrganizationRooms | undefined; readonly isError: boolean };
+}) {
+  if (query.isError) {
+    return (
+      <p className="m-0 text-[var(--text-3)] type-caption" role="status">
+        Rooms couldn't be loaded, so only the whole organization can be chosen.
+      </p>
+    );
+  }
+  if (query.data === undefined) return null;
+  const { hiddenPrivateCount, rooms } = query.data;
+  const notes = [
+    ...(hiddenPrivateCount > 0
+      ? [
+          `${String(hiddenPrivateCount)} private ${hiddenPrivateCount === 1 ? "room or direct message is" : "rooms and direct messages are"} not listed.`,
+        ]
+      : []),
+    ...(rooms.length >= CHAT_ROOM_PICKER_LIMIT
+      ? [`Showing the ${String(CHAT_ROOM_PICKER_LIMIT)} most recently active rooms.`]
+      : []),
+  ];
+  return notes.length === 0 ? null : (
+    <p className="m-0 text-[var(--text-3)] type-caption">{notes.join(" ")}</p>
+  );
+}
+
+/** Rooms to export, ticked by name. None ticked exports every room. */
+function ExportRoomChecklist({
+  rooms,
+  selected,
+  disabled,
+  onChange,
+}: {
+  readonly rooms: readonly ChatOrganizationRoom[];
+  readonly selected: readonly string[];
+  readonly disabled: boolean;
+  readonly onChange: (roomIds: readonly string[]) => void;
+}) {
+  const [filter, setFilter] = useState("");
+  const needle = filter.trim().toLowerCase();
+  const shown = rooms.filter(
+    (room) => needle === "" || describeChatRoom(room).toLowerCase().includes(needle),
+  );
+  const full = selected.length >= CHAT_EXPORT_ROOM_LIMIT;
+  return (
+    <fieldset className="m-0 grid min-w-0 gap-2 border-0 p-0" disabled={disabled}>
+      <legend className="admin-field-label p-0">
+        Rooms ({selected.length === 0 ? "every room" : `${String(selected.length)} chosen`})
+      </legend>
+      {rooms.length === 0 ? (
+        <p className="m-0 text-[var(--text-3)] type-caption">
+          No rooms to choose from, so the export covers every room.
+        </p>
+      ) : (
+        <>
+          <AdminInput
+            aria-label="Filter rooms"
+            onChange={(event) => setFilter(event.target.value)}
+            placeholder="Filter rooms"
+            type="search"
+            value={filter}
+          />
+          <ul className="m-0 grid max-h-48 list-none gap-1 overflow-y-auto rounded-md border border-[var(--border)] p-2">
+            {shown.map((room) => {
+              const checked = selected.includes(room.id);
+              return (
+                <li key={room.id}>
+                  <label className="flex items-center gap-2 type-meta">
+                    <input
+                      checked={checked}
+                      disabled={!checked && full}
+                      onChange={() =>
+                        onChange(
+                          checked
+                            ? selected.filter((id) => id !== room.id)
+                            : [...selected, room.id],
+                        )
+                      }
+                      type="checkbox"
+                    />
+                    {describeChatRoom(room)}
+                  </label>
+                </li>
+              );
+            })}
+            {shown.length === 0 ? (
+              <li className="text-[var(--text-3)] type-caption">No rooms match.</li>
+            ) : null}
+          </ul>
+          {selected.length > 0 ? (
+            <div>
+              <Button onClick={() => onChange([])} size="sm" type="button" variant="outline">
+                Clear and export every room
+              </Button>
+            </div>
+          ) : null}
+        </>
+      )}
+    </fieldset>
   );
 }
 

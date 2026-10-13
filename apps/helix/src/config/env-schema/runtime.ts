@@ -38,6 +38,17 @@ export const runtimeEnv = {
   HELIX_MIGRATION_DATABASE_WAIT_SECONDS: coerceNonNegInt(0),
   HELIX_DEFAULT_ORG_ID: z.string().default("00000000-0000-0000-0000-000000000000"),
   HELIX_PUBLIC_URL: optionalUrl,
+  /**
+   * How the deployment told the edge to obtain its HTTPS certificate:
+   * `automatic`, `internal`, or anything else for certificate files.
+   */
+  HELIX_EDGE_TLS_SOURCE: optionalString,
+  /** Certificate folder shared with the edge; with the socket, enables uploads. */
+  HELIX_EDGE_CERT_DIR: optionalString,
+  /** The edge's admin Unix socket, used only to reload its certificates. */
+  HELIX_EDGE_ADMIN_SOCKET: optionalString,
+  /** host:port where Helix reads the certificate the edge serves. */
+  HELIX_EDGE_PROBE_ADDRESS: optionalString,
   PUBLIC_BASE_URL: optionalUrl,
   HELIX_API_BASE_URL: optionalUrl,
   HELIX_APP_VERSION: optionalString,

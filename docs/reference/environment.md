@@ -75,6 +75,10 @@ Production assertions impose additional requirements; follow the [deployment gui
 | `HELIX_DRIVE_SCAN_RETRY_DELAY_MS`                  | Optional     | `30000`                                                     |
 | `HELIX_DRIVE_SCAN_RETRY_INTERVAL_MS`               | Optional     | `10000`                                                     |
 | `HELIX_DRIVE_SCANNER_KIND`                         | Optional     | —                                                           |
+| `HELIX_EDGE_ADMIN_SOCKET`                          | Optional     | —                                                           |
+| `HELIX_EDGE_CERT_DIR`                              | Optional     | —                                                           |
+| `HELIX_EDGE_PROBE_ADDRESS`                         | Optional     | —                                                           |
+| `HELIX_EDGE_TLS_SOURCE`                            | Optional     | —                                                           |
 | `HELIX_GLOBAL_READ_ONLY`                           | Optional     | —                                                           |
 | `HELIX_IMAGE`                                      | Optional     | —                                                           |
 | `HELIX_LOCAL_DEMO_ANCHOR_DATE`                     | Optional     | —                                                           |
@@ -94,6 +98,7 @@ Production assertions impose additional requirements; follow the [deployment gui
 | `HELIX_OBJECT_STORAGE_ENCRYPTION_AT_REST_ATTESTED` | Optional     | —                                                           |
 | `HELIX_OTEL_REGION`                                | Optional     | —                                                           |
 | `HELIX_OUTBOUND_HTTP_PROXY_URL`                    | Optional     | —                                                           |
+| `HELIX_PASSWORDS_URL`                              | Optional     | —                                                           |
 | `HELIX_POSTGRES_ENCRYPTION_AT_REST_ATTESTED`       | Optional     | —                                                           |
 | `HELIX_POSTGRES_IMAGE`                             | Optional     | —                                                           |
 | `HELIX_PUBLIC_URL`                                 | Optional     | —                                                           |
@@ -252,6 +257,7 @@ Production assertions impose additional requirements; follow the [deployment gui
 | `RUSTFS_ENDPOINT`                                  | Optional     | —                                                           |
 | `RUSTFS_OBJECT_LOCK_MODE`                          | Optional     | —                                                           |
 | `RUSTFS_OBJECT_LOCK_RETENTION_DAYS`                | Optional     | —                                                           |
+| `RUSTFS_PUBLIC_ENDPOINT`                           | Optional     | —                                                           |
 | `RUSTFS_REGION`                                    | Optional     | `us-east-1`                                                 |
 | `RUSTFS_SECRET_KEY`                                | Optional     | Set explicitly in production                                |
 | `RUSTFS_SERVER_SIDE_ENCRYPTION`                    | Optional     | —                                                           |

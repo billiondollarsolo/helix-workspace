@@ -19,6 +19,10 @@ name: helix-production
 # Do NOT enable Meet, Calendar, Docs, Sheets, Slides, or Editors here until
 # PKG.* + domain evidence (CAL/MT/ED) + O-D.7–O-D.10 gates pass.
 #
+# An operator who chooses to run Meet and Calendar on a single host adds
+# docker-compose.meet.yml after this file. That is an explicit opt-in outside
+# the 1.0 release scope; this file on its own never deploys them.
+#
 # PKG flip procedure (operators — after evidence, not a silent default):
 #   1. Bind release evidence under artifacts/release-readiness/<date>/<sha>/
 #   2. Promote web image built with VITE_HELIX_MVP_ONLY=false
@@ -60,6 +64,9 @@ services:
         reference with digest is required}
       HELIX_CLAMAV_IMAGE: ${HELIX_CLAMAV_IMAGE:?immutable HELIX_CLAMAV_IMAGE registry
         reference with digest is required}
+      # The first migration records the default organization's region, and the
+      # application refuses organizations stored under another region.
+      HELIX_REGION: ${HELIX_REGION:?deployment region label is required, for example eu-central}
       DATABASE_URL: !reset "null"
       DATABASE_URL_FILE: /run/secrets/migration_database_url
       POSTGRES_TLS_CA_FILE: /run/secrets/postgres_ca
@@ -120,6 +127,9 @@ services:
       HELIX_CLAMAV_IMAGE: ${HELIX_CLAMAV_IMAGE:?immutable HELIX_CLAMAV_IMAGE registry
         reference with digest is required}
       HELIX_SECURITY_TIER: business
+      HELIX_REGION: ${HELIX_REGION:?deployment region label is required, for example eu-central}
+      # Shown in invitations and on the sign-in page.
+      HELIX_DEFAULT_ORG_NAME: ${HELIX_DEFAULT_ORG_NAME:?workspace name is required}
       HELIX_PUBLIC_URL: https://${HELIX_DOMAIN:?HELIX_DOMAIN is required}
       PUBLIC_BASE_URL: https://${HELIX_DOMAIN:?HELIX_DOMAIN is required}
       BETTER_AUTH_URL: https://${HELIX_DOMAIN:?HELIX_DOMAIN is required}
@@ -146,8 +156,11 @@ services:
       BETTER_AUTH_SECRET_FILE: /run/secrets/better_auth_secret
       HELIX_MFA_ASSERTION_SECRET: !reset "null"
       HELIX_MFA_ASSERTION_SECRET_FILE: /run/secrets/mfa_assertion_secret
-      HELIX_MFA_ASSERTION_ISSUER: ${HELIX_MFA_ASSERTION_ISSUER:?trusted MFA assertion issuer is required}
-      HELIX_MFA_ASSERTION_AUDIENCE: ${HELIX_MFA_ASSERTION_AUDIENCE:?MFA assertion audience is required}
+      # Administrators satisfy the Business-tier MFA gate by signing in with an
+      # authenticator app or passkey. An upstream authenticator that signs MFA
+      # assertions is optional; these default to this deployment.
+      HELIX_MFA_ASSERTION_ISSUER: ${HELIX_MFA_ASSERTION_ISSUER:-https://${HELIX_DOMAIN}}
+      HELIX_MFA_ASSERTION_AUDIENCE: ${HELIX_MFA_ASSERTION_AUDIENCE:-helix-workspace}
       RUSTFS_ACCESS_KEY: !reset "null"
       RUSTFS_ACCESS_KEY_FILE: /run/secrets/rustfs_access_key
       RUSTFS_SECRET_KEY: !reset "null"
@@ -162,7 +175,22 @@ services:
         true only after verifying encrypted object storage}
       HELIX_BACKUP_ENCRYPTION_AT_REST_ATTESTED: ${HELIX_BACKUP_ENCRYPTION_AT_REST_ATTESTED:?set
         true only after verifying encrypted backups}
-      RUSTFS_SERVER_SIDE_ENCRYPTION: ${RUSTFS_SERVER_SIDE_ENCRYPTION:-AES256}
+      # Bundled RustFS: TLS from the deployment PKI and its local KMS. For an
+      # external S3 service set RUSTFS_ENDPOINT, RUSTFS_SSE_KMS_KEY_ID and the
+      # object-lock values to match that bucket.
+      RUSTFS_ENDPOINT: ${RUSTFS_ENDPOINT:-https://rustfs:9000}
+      # Browsers upload and download through presigned URLs. The bundled store is
+      # private, so those URLs use this deployment's address and Caddy forwards
+      # the bucket path. Leave empty for an external store browsers can reach.
+      RUSTFS_PUBLIC_ENDPOINT: ${RUSTFS_PUBLIC_ENDPOINT-https://${HELIX_DOMAIN}}
+      # Residency: object storage must live in the deployment region.
+      RUSTFS_REGION: ${RUSTFS_REGION:-${HELIX_REGION}}
+      RUSTFS_SERVER_SIDE_ENCRYPTION: aws:kms
+      RUSTFS_SSE_KMS_KEY_ID: ${RUSTFS_SSE_KMS_KEY_ID:-helix-default}
+      RUSTFS_OBJECT_LOCK_MODE: ${RUSTFS_OBJECT_LOCK_MODE:-GOVERNANCE}
+      RUSTFS_OBJECT_LOCK_RETENTION_DAYS: ${RUSTFS_OBJECT_LOCK_RETENTION_DAYS:-30}
+      # Trust the deployment CA that signs the bundled RustFS certificate.
+      NODE_EXTRA_CA_CERTS: /run/secrets/rustfs_ca
 
       MAIL_OUTBOUND_ENABLED: "true"
       MAIL_PROVIDER: ${MAIL_PROVIDER:?a managed outbound provider is required}
@@ -179,6 +207,19 @@ services:
       MAIL_SMTP_RECEIVER_ENABLED: "true"
       MAIL_SMTP_RECEIVER_HOST: 0.0.0.0
       MAIL_SMTP_RECEIVER_PORT: 2525
+      # Admin → Domains → HTTPS certificate: Helix writes an uploaded certificate
+      # to the folder the edge loads and asks it, over its admin socket, to load
+      # the folder again.
+      HELIX_EDGE_TLS_SOURCE: ${HELIX_CADDY_TLS:-automatic}
+      HELIX_EDGE_CERT_DIR: /run/helix-edge-certs
+      HELIX_EDGE_ADMIN_SOCKET: /run/caddy-admin/admin.sock
+      HELIX_EDGE_PROBE_ADDRESS: caddy:443
+      # Inbound SMTP offers STARTTLS with the mail hostname's certificate.
+      MAIL_SMTP_RECEIVER_TRANSPORT_SECURITY: starttls
+      MAIL_SMTP_RECEIVER_TLS_CERT: !reset "null"
+      MAIL_SMTP_RECEIVER_TLS_CERT_FILE: /run/secrets/smtp_tls_cert
+      MAIL_SMTP_RECEIVER_TLS_KEY: !reset "null"
+      MAIL_SMTP_RECEIVER_TLS_KEY_FILE: /run/secrets/smtp_tls_key
       MAIL_SPAMD_ENABLED: "true"
       MAIL_SPAMD_HOST: spamd
       MAIL_SPAMD_PORT: 783
@@ -199,11 +240,28 @@ services:
       # Meet is outside the core Workspace MVP and its development credentials
       # from the base Compose file must never reach a production process.
       MEET_JITSI_ENABLED: "false"
+      MEET_JITSI_PUBLIC_URL: !reset "null"
+      MEET_JITSI_DOMAIN: !reset "null"
       MEET_JITSI_JWT_SECRET: !reset "null"
       MEET_JITSI_WEBHOOK_SHARED_SECRET: !reset "null"
-      AUDIT_IMMUTABLE_S3_ENABLED: "false"
+      # Where people open the optional password manager. Empty unless the
+      # deployment sets HELIX_PASSWORDS_DOMAIN (and starts --profile passwords).
+      HELIX_PASSWORDS_URL: ${HELIX_PASSWORDS_DOMAIN:+https://${HELIX_PASSWORDS_DOMAIN}}
+      # The Business tier requires an immutable copy of the audit log. It goes
+      # to an object-locked bucket on the same store, signed with the anchor
+      # secret, using the same store credentials.
+      AUDIT_IMMUTABLE_S3_ENABLED: "true"
+      AUDIT_IMMUTABLE_S3_ENDPOINT: ${RUSTFS_ENDPOINT:-https://rustfs:9000}
+      AUDIT_IMMUTABLE_S3_REGION: ${RUSTFS_REGION:-${HELIX_REGION}}
+      AUDIT_IMMUTABLE_S3_BUCKET: ${AUDIT_IMMUTABLE_S3_BUCKET:-helix-audit}
       AUDIT_IMMUTABLE_S3_ACCESS_KEY: !reset "null"
+      AUDIT_IMMUTABLE_S3_ACCESS_KEY_FILE: /run/secrets/rustfs_access_key
       AUDIT_IMMUTABLE_S3_SECRET_KEY: !reset "null"
+      AUDIT_IMMUTABLE_S3_SECRET_KEY_FILE: /run/secrets/rustfs_secret_key
+      AUDIT_IMMUTABLE_S3_ANCHOR_KEY_ID: ${AUDIT_IMMUTABLE_S3_ANCHOR_KEY_ID:-helix-audit-anchor-1}
+      AUDIT_IMMUTABLE_S3_ANCHOR_SECRET_FILE: /run/secrets/audit_anchor_secret
+      AUDIT_IMMUTABLE_S3_OBJECT_LOCK_MODE: ${AUDIT_IMMUTABLE_S3_OBJECT_LOCK_MODE:-COMPLIANCE}
+      AUDIT_IMMUTABLE_S3_RETENTION_DAYS: ${AUDIT_IMMUTABLE_S3_RETENTION_DAYS:-365}
       AUDIT_WORM_POSTGRES_ENABLED: "true"
     secrets:
       - database_url
@@ -221,6 +279,10 @@ services:
       - meili_master_key
       - mail_smtp_password
       - mail_provider_webhook_secret
+      - rustfs_ca
+      - smtp_tls_cert
+      - smtp_tls_key
+      - audit_anchor_secret
     ports: !override
       - target: 2525
         published: ${HELIX_SMTP_RECEIVE_PORT:-25}
@@ -240,6 +302,10 @@ services:
         condition: service_healthy
       rustfs:
         condition: service_healthy
+      helix-storage-init:
+        condition: service_completed_successfully
+      edge-volumes-init:
+        condition: service_completed_successfully
       cerbos:
         condition: service_healthy
       spamd:
@@ -249,6 +315,9 @@ services:
     networks: !override
       - edge
       - data-plane
+    volumes:
+      - edge-certs:/run/helix-edge-certs
+      - caddy-admin:/run/caddy-admin
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=256m
@@ -263,6 +332,9 @@ services:
     security_opt:
       - no-new-privileges:true
     stop_grace_period: 60s
+    healthcheck:
+      # First boot waits for ClamAV to download and load current signatures.
+      start_period: 600s
     deploy:
       resources:
         limits:
@@ -451,24 +523,106 @@ services:
           cpus: "1.0"
           memory: 1g
 
+  # One-shot: the two volumes Helix and the edge share start out root-owned,
+  # and both services run as the same unprivileged user.
+  edge-volumes-init:
+    image: rustfs/rustfs:1.0.1@sha256:1803faef57627e2d9c2e7d89d655d712ddded5389040054987163043fecb6a3c
+    user: "0:0"
+    entrypoint:
+      - /bin/sh
+      - -euc
+      - install -d -m 0700 -o 10001 -g 10001 /certs /admin
+    volumes:
+      - edge-certs:/certs
+      - caddy-admin:/admin
+    network_mode: none
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+    security_opt:
+      - no-new-privileges:true
+    restart: "no"
+
+  # One-shot: the RustFS local KMS refuses a key directory it does not own with
+  # mode 0700, and a new named volume is root-owned.
+  rustfs-kms-init:
+    image: rustfs/rustfs:1.0.1@sha256:1803faef57627e2d9c2e7d89d655d712ddded5389040054987163043fecb6a3c
+    user: "0:0"
+    entrypoint:
+      - /bin/sh
+      - -euc
+      - install -d -m 0700 -o 10001 -g 10001 /kms
+    volumes:
+      - rustfs-kms:/kms
+    network_mode: none
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+    security_opt:
+      - no-new-privileges:true
+    restart: "no"
+
   rustfs:
     environment:
       RUSTFS_ACCESS_KEY: !reset "null"
       RUSTFS_SECRET_KEY: !reset "null"
+      RUSTFS_SSE_S3_MASTER_KEY: !reset "null"
       RUSTFS_CONSOLE_ENABLE: "false"
+      RUSTFS_SERVER_DOMAINS: rustfs,rustfs:9000,${HELIX_DOMAIN}
+      RUSTFS_REGION: ${RUSTFS_REGION:-${HELIX_REGION}}
+      # Serve the S3 API over TLS and encrypt objects with the local KMS.
+      RUSTFS_TLS_PATH: /tmp/tls
+      RUSTFS_KMS_ENABLE: "true"
+      RUSTFS_KMS_BACKEND: local
+      RUSTFS_KMS_KEY_DIR: /kms
+      RUSTFS_KMS_DEFAULT_KEY_ID: ${RUSTFS_SSE_KMS_KEY_ID:-helix-default}
     entrypoint:
       - /bin/sh
       - -euc
       - |
         export RUSTFS_ACCESS_KEY="$$(cat /run/secrets/rustfs_access_key)"
         export RUSTFS_SECRET_KEY="$$(cat /run/secrets/rustfs_secret_key)"
+        export RUSTFS_KMS_LOCAL_MASTER_KEY="$$(cat /run/secrets/rustfs_kms_master_key)"
+        install -d -m 0700 /tmp/tls
+        install -m 0644 /run/secrets/rustfs_server_cert /tmp/tls/rustfs_cert.pem
+        install -m 0600 /run/secrets/rustfs_server_key /tmp/tls/rustfs_key.pem
         exec rustfs /data
+    volumes:
+      - rustfs-data:/data
+      - rustfs-kms:/kms
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m,uid=10001,gid=10001,mode=0700
     secrets:
       - rustfs_access_key
       - rustfs_secret_key
+      - rustfs_kms_master_key
+      - rustfs_ca
+      - rustfs_server_cert
+      - rustfs_server_key
+    depends_on:
+      rustfs-kms-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - curl -fsS --cacert /run/secrets/rustfs_ca https://rustfs:9000/health/ready | grep -q '"ready":true'
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
     ports: !override []
+    # `edge` lets Caddy forward presigned object requests; no port is published.
     networks: !override
       - data-plane
+      - edge
     security_opt:
       - no-new-privileges:true
     deploy:
@@ -476,6 +630,88 @@ services:
         limits:
           cpus: "2.0"
           memory: 2g
+
+  # One-shot: create the named KMS key Helix encrypts with. RustFS answers 200
+  # the first time and 409 once the key exists.
+  rustfs-kms-key:
+    image: rustfs/rustfs:1.0.1@sha256:1803faef57627e2d9c2e7d89d655d712ddded5389040054987163043fecb6a3c
+    entrypoint:
+      - /bin/sh
+      - -euc
+      - |
+        # The credentials reach curl on standard input, never on its command line.
+        status="$$(printf 'user = "%s:%s"\n' \
+          "$$(cat /run/secrets/rustfs_access_key)" "$$(cat /run/secrets/rustfs_secret_key)" |
+          curl -sS -K - -o /tmp/kms-key.out -w '%{http_code}' \
+            --cacert /run/secrets/rustfs_ca \
+            --aws-sigv4 "aws:amz:$${RUSTFS_REGION}:s3" \
+            -X POST "https://rustfs:9000/rustfs/admin/v3/kms/key/create?key-id=$${KMS_KEY_ID}")"
+        case "$$status" in
+          200) echo "Created KMS key $${KMS_KEY_ID}." ;;
+          409) echo "KMS key $${KMS_KEY_ID} already exists." ;;
+          *) echo "Creating KMS key $${KMS_KEY_ID} failed with HTTP $$status." >&2; exit 1 ;;
+        esac
+    environment:
+      KMS_KEY_ID: ${RUSTFS_SSE_KMS_KEY_ID:-helix-default}
+      RUSTFS_REGION: ${RUSTFS_REGION:-${HELIX_REGION}}
+    secrets:
+      - rustfs_access_key
+      - rustfs_secret_key
+      - rustfs_ca
+    depends_on:
+      rustfs:
+        condition: service_healthy
+    networks:
+      - data-plane
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=1m,uid=10001,gid=10001
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: "no"
+
+  # One-shot: the application refuses to start unless its bucket enforces
+  # versioning, the SSE-KMS key, and object-lock retention.
+  helix-storage-init:
+    image: ${HELIX_IMAGE:?immutable HELIX_IMAGE registry reference with digest is
+      required}
+    pull_policy: always
+    entrypoint:
+      - /nodejs/bin/node
+      - dist/db/provision-object-store.js
+    environment:
+      NODE_ENV: production
+      NODE_EXTRA_CA_CERTS: /run/secrets/rustfs_ca
+      RUSTFS_ENDPOINT: ${RUSTFS_ENDPOINT:-https://rustfs:9000}
+      RUSTFS_REGION: ${RUSTFS_REGION:-${HELIX_REGION}}
+      RUSTFS_BUCKET: ${RUSTFS_BUCKET:-helix-objects}
+      RUSTFS_ACCESS_KEY_FILE: /run/secrets/rustfs_access_key
+      RUSTFS_SECRET_KEY_FILE: /run/secrets/rustfs_secret_key
+      RUSTFS_SSE_KMS_KEY_ID: ${RUSTFS_SSE_KMS_KEY_ID:-helix-default}
+      RUSTFS_OBJECT_LOCK_MODE: ${RUSTFS_OBJECT_LOCK_MODE:-GOVERNANCE}
+      RUSTFS_OBJECT_LOCK_RETENTION_DAYS: ${RUSTFS_OBJECT_LOCK_RETENTION_DAYS:-30}
+      AUDIT_IMMUTABLE_S3_BUCKET: ${AUDIT_IMMUTABLE_S3_BUCKET:-helix-audit}
+    secrets:
+      - rustfs_access_key
+      - rustfs_secret_key
+      - rustfs_ca
+    depends_on:
+      rustfs-kms-key:
+        condition: service_completed_successfully
+    networks:
+      - data-plane
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    user: "10001:10001"
+    init: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: "no"
 
   cerbos:
     image: ${HELIX_CERBOS_IMAGE:?immutable HELIX_CERBOS_IMAGE registry reference
@@ -536,6 +772,45 @@ services:
           memory: 512m
           pids: 256
 
+  # Optional password manager (Vaultwarden). Not started unless the operator
+  # passes --profile passwords; reachable only through Caddy at
+  # HELIX_PASSWORDS_DOMAIN. Its accounts are separate from Helix accounts:
+  # people sign up with an address in the workspace's mail domain and confirm
+  # it by email. The server administration page stays off (no ADMIN_TOKEN).
+  vaultwarden:
+    profiles: !override
+      - passwords
+    environment:
+      DOMAIN: https://${HELIX_PASSWORDS_DOMAIN:-passwords.invalid}
+      SIGNUPS_DOMAINS_WHITELIST: ${HELIX_PASSWORDS_SIGNUP_DOMAINS:-${MAIL_FROM_DOMAIN:-}}
+      # Caddy is the only client, so its forwarded address is the real one.
+      IP_HEADER: X-Forwarded-For
+      SMTP_HOST: ${MAIL_SMTP_HOST:-}
+      SMTP_PORT: ${MAIL_SMTP_PORT:-587}
+      SMTP_SECURITY: ${HELIX_PASSWORDS_SMTP_SECURITY:-starttls}
+      SMTP_USERNAME: ${MAIL_SMTP_USER:-}
+      SMTP_PASSWORD_FILE: /run/secrets/mail_smtp_password
+      SMTP_FROM: ${HELIX_PASSWORDS_MAIL_FROM:-passwords@${MAIL_FROM_DOMAIN:-invalid}}
+      SMTP_FROM_NAME: ${HELIX_DEFAULT_ORG_NAME:-Helix} Passwords
+    secrets:
+      - mail_smtp_password
+    ports: !override []
+    networks: !override
+      - edge
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512m
+          pids: 256
+
   spamd:
     image: ${HELIX_SPAMD_IMAGE:?immutable HELIX_SPAMD_IMAGE registry reference with
       digest is required}
@@ -548,6 +823,7 @@ services:
     ports: !override []
     networks: !override
       - data-plane
+      - scanner-updates-egress
     security_opt:
       - no-new-privileges:true
     deploy:
@@ -562,9 +838,14 @@ services:
     build: !reset "null"
     pull_policy: always
     profiles: !override []
+    environment:
+      # Pick up signature updates within a minute. The image's bundled
+      # signatures are older than Helix accepts, so first boot depends on it.
+      CLAMD_CONF_SelfCheck: "60"
     ports: !override []
     networks: !override
       - data-plane
+      - scanner-updates-egress
     security_opt:
       - no-new-privileges:true
     deploy:
@@ -582,6 +863,22 @@ services:
       HELIX_DOMAIN: ${HELIX_DOMAIN:?HELIX_DOMAIN is required}
       HELIX_UPSTREAM: helix:3000
       HELIX_JITSI_ORIGIN: ${MEET_JITSI_PUBLIC_URL:-https://meet.localhost}
+      # Serves the optional password manager's site only when its domain is set.
+      HELIX_PASSWORDS_DOMAIN: ${HELIX_PASSWORDS_DOMAIN:-}
+      HELIX_PASSWORDS_SITE: ${HELIX_PASSWORDS_DOMAIN:+-on}
+      # Certificate source: empty for automatic HTTPS (Let's Encrypt). Add
+      # docker-compose.tls-files.yml to serve operator-provided PEM files.
+      HELIX_CADDY_TLS: ${HELIX_CADDY_TLS:-}
+      # Reachable only through a volume shared with Helix; mode 0200, so only
+      # the shared service user can use it.
+      HELIX_CADDY_ADMIN: unix//run/caddy-admin/admin.sock
+      HELIX_EDGE_CERT_DIR: /run/helix-edge-certs
+      # Certificates persist in the caddy-data volume.
+      XDG_DATA_HOME: /data
+      XDG_CONFIG_HOME: /config
+      HELIX_STORAGE_BUCKET: ${RUSTFS_BUCKET:-helix-objects}
+    secrets:
+      - rustfs_ca
     ports: !override
       - target: 80
         published: ${CADDY_HTTP_PORT:-80}
@@ -601,9 +898,13 @@ services:
     volumes: !override
       - caddy-data:/data
       - caddy-config:/config
+      - edge-certs:/run/helix-edge-certs:ro
+      - caddy-admin:/run/caddy-admin
     depends_on: !override
       helix:
         condition: service_healthy
+      edge-volumes-init:
+        condition: service_completed_successfully
     networks: !override
       - edge
     read_only: true
@@ -621,7 +922,7 @@ services:
     security_opt:
       - no-new-privileges:true
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1/healthz"]
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8081/healthz"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -688,6 +989,10 @@ networks:
     internal: true
   web-search-egress:
     name: ${HELIX_COMPOSE_PROJECT_NAME:-helix-production}-web-search-egress
+  # ClamAV and SpamAssassin download signature and rule updates. Without
+  # egress the signatures go stale and Helix reports not ready.
+  scanner-updates-egress:
+    name: ${HELIX_COMPOSE_PROJECT_NAME:-helix-production}-scanner-updates-egress
 
 secrets:
   searxng_secret:
@@ -746,8 +1051,30 @@ secrets:
     file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/mail_smtp_password
   mail_provider_webhook_secret:
     file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/mail_provider_webhook_secret
+  rustfs_kms_master_key:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/rustfs_kms_master_key
+  rustfs_ca:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/rustfs_ca
+  rustfs_server_cert:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/rustfs_server_cert
+  rustfs_server_key:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/rustfs_server_key
+  smtp_tls_cert:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/smtp_tls_cert
+  smtp_tls_key:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/smtp_tls_key
+  audit_anchor_secret:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/audit_anchor_secret
 
 volumes:
+  # An HTTPS certificate uploaded in Admin → Domains, as the edge loads it. It
+  # is rewritten from the database, so it needs no backup of its own.
+  edge-certs:
+  # Holds only the edge's admin socket.
+  caddy-admin:
+  # Local KMS key material for the bundled RustFS. Back it up with rustfs-data:
+  # objects cannot be decrypted without it and the rustfs_kms_master_key secret.
+  rustfs-kms:
   # The base recording profile references this volume but does not declare it.
   # It remains private and inactive in the core Workspace MVP.
   jibri-recordings:

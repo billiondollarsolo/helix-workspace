@@ -20,6 +20,24 @@
     font-size: var(--text-body-sm);
   }
 
+  /* In a form: the label above the field, like the labels around it. */
+  .people-picker[data-stacked] {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+  }
+
+  .people-picker[data-stacked] .people-picker-label {
+    padding-top: 0;
+    color: var(--text);
+    font-size: var(--text-caption);
+    font-weight: 500;
+  }
+
+  .people-picker[data-stacked] .people-picker-field {
+    flex: none;
+  }
+
   .people-picker-field {
     display: flex;
     flex: 1;

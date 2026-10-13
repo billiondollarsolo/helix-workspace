@@ -349,10 +349,11 @@ describe("admin console request budget", () => {
           ],
         },
         "ai-costs": {
-          "requestCount": 1,
+          "requestCount": 2,
           "settled": true,
           "urls": [
             "/v1/api/admin/ai/cost-limits",
+            "/v1/api/admin/users?includeDisabled=true&limit=250",
           ],
         },
         "ai-observability": {
@@ -390,18 +391,21 @@ describe("admin console request budget", () => {
           ],
         },
         "chat": {
-          "requestCount": 2,
+          "requestCount": 4,
           "settled": true,
           "urls": [
             "/v1/api/admin/core-apps",
+            "/v1/api/admin/tenant-config",
             "/v1/api/tools/chat.retention.get",
+            "/v1/api/tools/chat.room.list_organization",
           ],
         },
         "domains": {
-          "requestCount": 1,
+          "requestCount": 2,
           "settled": true,
           "urls": [
             "/v1/api/admin/domains",
+            "/v1/api/admin/edge/certificate",
           ],
         },
         "drive": {
@@ -457,6 +461,11 @@ describe("admin console request budget", () => {
           "urls": [
             "/v1/api/admin/overview",
           ],
+        },
+        "passwords": {
+          "requestCount": 0,
+          "settled": true,
+          "urls": [],
         },
         "policies": {
           "requestCount": 1,

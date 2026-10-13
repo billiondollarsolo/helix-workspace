@@ -50,6 +50,53 @@ rendered HPA, PDB, NetworkPolicy, CloudNativePG, Vault, SIEM, FIPS/STIG, air-gap
 PrometheusRule contracts. CI also requires kubeconform 0.8.0 and validates rendered manifests
 against Kubernetes schemas; local validation reports an explicit skip when kubeconform is absent.
 
+## Optional password manager
+
+The chart can deploy a [Vaultwarden](https://github.com/dani-garcia/vaultwarden) password manager
+next to the workspace. It is off by default: with `passwords.enabled=false` nothing is rendered
+and the application advertises nothing.
+
+```yaml
+passwords:
+  enabled: true
+  host: vault.example.com # its own hostname, never a path on the workspace's
+  signupDomains: example.com # who may create a vault account
+  smtp:
+    host: smtp.example.com
+    from: passwords@example.com
+    username: provider-user
+    passwordSecretName: helix-passwords-smtp # an existing Secret, key "password"
+  ingress:
+    className: nginx
+    tlsSecretName: vault-example-com-tls
+  networkPolicy:
+    ingress:
+      - namespace: ingress-nginx
+        podLabels:
+          app.kubernetes.io/name: ingress-nginx
+    smtpCidr: 203.0.113.10/32
+```
+
+This renders a single-replica Deployment, a Service, an Ingress for `passwords.host`, a
+PersistentVolumeClaim, and a NetworkPolicy that allows only the listed ingress sources, DNS, and
+the SMTP relay. The claim is annotated `helm.sh/resource-policy: keep`, so uninstalling the
+release does not delete people's vaults. The application learns the address through
+`HELIX_PASSWORDS_URL`; an administrator then turns it on in **Admin → Apps → Passwords**.
+
+Accounts are separate from workspace accounts and vaults are end-to-end encrypted. Back up the
+claim: nothing Helix stores can rebuild a lost vault.
+
+## Optional Meet and Calendar
+
+Meet and Calendar are not enabled by default. To opt in, deploy the media plane from
+[`infra/meet/ha`](../../meet/ha/README.md), then set `workspace.profile=full`, the Full Workspace
+`workspace.apps`, `workspace.modules.meet.enabled=true`, `workspace.modules.calendar.enabled=true`,
+`workspace.meet.jitsiDomain`, and the JWT secret reference described under
+[Workspace packaging](#workspace-packaging-mvp-fail-closed). The chart refuses the Full
+Workspace app list without `workspace.profile=full`, and Helix refuses to start Meet without a
+Jitsi domain and secrets. A single host can use `docker-compose.meet.yml` instead; see
+[Optional installs](../../../docs/deployment-production.md#optional-installs).
+
 ## Signed plugin trust
 
 Enterprise and sovereign pods fail closed unless the operator provides the

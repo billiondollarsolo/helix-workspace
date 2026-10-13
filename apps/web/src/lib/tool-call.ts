@@ -105,12 +105,23 @@ function retryAfterMilliseconds(headers: Headers): number | undefined {
 function errorMessage(output: unknown): string | undefined {
   if (!isRecord(output)) return undefined;
   // Legacy plain `{ error: "..." }` payloads.
-  if (typeof output.error === "string") return output.error;
+  if (typeof output.error === "string") return plainLanguage(output.error);
   // Standard Helix error envelope: `{ error: { code, message, traceId } }`.
   if (isRecord(output.error) && typeof output.error.message === "string") {
-    return output.error.message;
+    return plainLanguage(output.error.message);
   }
   return undefined;
+}
+
+/** The API names internal tools in two authorization errors; people see what to do instead. */
+function plainLanguage(message: string): string {
+  if (message.startsWith("Actor cannot invoke tool:")) {
+    return "You don’t have permission to do that. Ask an administrator for access.";
+  }
+  if (message.startsWith("Unknown tool:")) {
+    return "That action isn’t available in this workspace.";
+  }
+  return message;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -14,7 +14,7 @@ function record(
 ): ImmutableAuditActivityRecord {
   return {
     id,
-    orgId: "org-1",
+    orgId: "00000000-0000-4000-8000-0000000000a1",
     actorId: "actor-1",
     verb: "document.created",
     objectType: "document",
@@ -40,12 +40,20 @@ interface RecordedQuery {
  */
 function createRecordingSql(responses: readonly (readonly unknown[])[] = []): {
   readonly sql: postgres.Sql;
+  /** Statements that touch the WORM table. */
   readonly calls: readonly RecordedQuery[];
+  /** Everything else: the tenant context the batch runs in. */
+  readonly context: readonly RecordedQuery[];
 } {
   const calls: RecordedQuery[] = [];
+  const context: RecordedQuery[] = [];
   const queue = [...responses];
   const tag = (strings: TemplateStringsArray, ...values: unknown[]): Promise<unknown> => {
     const text = strings.join("$");
+    if (!/audit_immutable_postgres/i.test(text)) {
+      context.push({ text, values });
+      return Promise.resolve([]);
+    }
     calls.push({ text, values });
     if (/audit_immutable_postgres/i.test(text) && /\b(update|delete|truncate)\b/i.test(text)) {
       return Promise.reject(
@@ -58,10 +66,29 @@ function createRecordingSql(responses: readonly (readonly unknown[])[] = []): {
     begin: async <T>(callback: (sql: typeof tag) => Promise<T>): Promise<T> => callback(tag),
     json: (value: unknown) => value,
   }) as unknown as postgres.Sql;
-  return { sql, calls };
+  return { sql, calls, context };
 }
 
 describe("PostgresWormAuditShipper", () => {
+  it("writes each batch inside its organization's tenant context", async () => {
+    const recording = createRecordingSql();
+    const first = record("11111111-1111-4111-8111-111111111111");
+    await new PostgresWormAuditShipper(recording.sql).ship([first]);
+    // The table enforces row-level security; without the context the runtime
+    // role's insert is rejected.
+    expect(recording.context.some((call) => call.values.includes(first.orgId))).toBe(true);
+    await expect(
+      new PostgresWormAuditShipper(recording.sql).ship([
+        first,
+        {
+          ...first,
+          id: "22222222-2222-4222-8222-222222222222",
+          orgId: "00000000-0000-4000-8000-0000000000b2",
+        },
+      ]),
+    ).rejects.toThrow("one organization per batch");
+  });
+
   it("appends each record with an idempotent insert into the WORM table", async () => {
     const recording = createRecordingSql();
     const shipper = new PostgresWormAuditShipper(recording.sql);
@@ -135,7 +162,10 @@ describe("PostgresWormAuditReader", () => {
     ]);
     const reader = new PostgresWormAuditReader(recording.sql);
 
-    await expect(reader.countForOrg("org-1")).resolves.toBe(3);
-    await expect(reader.listHashesForOrg("org-1")).resolves.toEqual([digest("a"), digest("b")]);
+    await expect(reader.countForOrg("00000000-0000-4000-8000-0000000000a1")).resolves.toBe(3);
+    await expect(reader.listHashesForOrg("00000000-0000-4000-8000-0000000000a1")).resolves.toEqual([
+      digest("a"),
+      digest("b"),
+    ]);
   });
 });

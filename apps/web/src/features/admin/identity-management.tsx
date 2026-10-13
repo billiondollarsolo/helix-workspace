@@ -265,7 +265,7 @@ export function IdentityManagement() {
           <div className="mb-3 flex items-center gap-2">
             <ShieldIcon size={16} />
             <h2 id="identity-tenant-idps" className="text-sm font-semibold">
-              Tenant IdPs
+              Identity providers
             </h2>
             {/* A count of 0 is a claim. Nothing was counted until the list
                 arrives, so nothing is shown. */}
@@ -275,9 +275,9 @@ export function IdentityManagement() {
           </div>
 
           {identityQuery.isPending ? (
-            <EmptyRow>Loading tenant IdPs…</EmptyRow>
+            <EmptyRow>Loading identity providers…</EmptyRow>
           ) : identityQuery.data === undefined ? (
-            <EmptyRow>Tenant IdPs could not be loaded.</EmptyRow>
+            <EmptyRow>Identity providers could not be loaded.</EmptyRow>
           ) : sortedConfigs.length === 0 ? (
             <EmptyState
               icon={<ShieldIcon size={16} />}

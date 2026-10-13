@@ -1,3 +1,4 @@
+import { runtimeEnvironment } from "../../../config/env.js";
 import type {
   AICallContext,
   AiConfig,
@@ -594,12 +595,12 @@ export function createAssistantProviders(
   if (aiConfig?.enabled === false) return [];
   const providers: LLMProviderCapability[] = [];
   // Admin platform-config overlay (operator LLM) wins over process env bootstrap.
-  const aiEnv = resolveAiEnv(process.env);
+  const aiEnv = resolveAiEnv(runtimeEnvironment());
   for (const provider of aiConfig?.providers ?? []) {
     if (provider.enabled === false) {
       continue;
     }
-    const configured = createConfiguredAssistantProvider(provider, process.env);
+    const configured = createConfiguredAssistantProvider(provider, runtimeEnvironment());
     if (configured !== undefined) {
       providers.push(configured);
     }

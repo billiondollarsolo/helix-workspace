@@ -146,7 +146,7 @@ export type RoutingAction = (typeof ROUTING_ACTIONS)[number];
 
 export const routingActionLabels: Record<RoutingAction, string> = {
   forward: "Forward",
-  alias: "Deliver to user",
+  alias: "Deliver to a person",
   tag: "Apply tag",
   mailbox: "Deliver to mailbox",
   drop: "Drop",

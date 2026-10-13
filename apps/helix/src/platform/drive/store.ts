@@ -215,3 +215,31 @@ export class PostgresDriveStore
     return projections.setDriveAutoTags(this.context, input);
   }
 }
+
+/**
+ * Metadata-only reader for search projection rebuilds.
+ *
+ * Reindexing reads file metadata rows and never stores or reads file bytes, so
+ * it does not need the write-capable {@link PostgresDriveStore} or its
+ * production antivirus requirement. The context deliberately carries no object
+ * storage client and a scanner that refuses every scan, so this reader can
+ * never become an unscanned write path.
+ */
+export function createDriveSearchProjectionReader(
+  sql: postgres.Sql,
+): Pick<DriveSearchProjectionStore, "getDriveSearchRecord"> {
+  const context: DriveStoreContext = {
+    sql,
+    storage: undefined,
+    options: {},
+    virusScanner: {
+      scan: () =>
+        Promise.reject(new Error("The Drive search projection reader cannot scan or store files.")),
+    },
+    virusScanOrgCursor: undefined,
+    nextBlobReconciliation: new Map(),
+  };
+  return {
+    getDriveSearchRecord: (fileId) => projections.getDriveSearchRecord(context, fileId, false),
+  };
+}

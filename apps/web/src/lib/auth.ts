@@ -56,29 +56,29 @@ export async function authenticatedFetch(
 ): Promise<Response> {
   if (redirectingForSession) return sessionNavigation;
   const headers = new Headers(init?.headers);
-  if (!SAFE_METHODS.has((init?.method ?? "GET").toUpperCase())) {
-    headers.set("x-helix-csrf-token", await browserCsrfToken());
+  const mutation = !SAFE_METHODS.has((init?.method ?? "GET").toUpperCase());
+  if (mutation) headers.set("x-helix-csrf-token", await browserCsrfToken());
+  const send = () => fetch(versionedApiInput(input), { ...init, credentials: "include", headers });
+  let response = await send();
+  let refusal = await stepUpRefusal(response);
+  // The refusal happens before the request is acted on, so sending it again
+  // after the person verifies is safe. A consumed body cannot be sent twice.
+  if (
+    refusal !== null &&
+    !(input instanceof Request) &&
+    !(init?.body instanceof ReadableStream) &&
+    (await requestSecondFactorStepUp(refusal, mutation))
+  ) {
+    response = await send();
+    refusal = await stepUpRefusal(response);
   }
-  const response = await fetch(versionedApiInput(input), {
-    ...init,
-    credentials: "include",
-    headers,
-  });
   if (
     response.status === 401 &&
     typeof window !== "undefined" &&
     window.location.pathname !== "/login"
   ) {
     if (redirectingForSession) return sessionNavigation;
-    const output: unknown = await response
-      .clone()
-      .json()
-      .catch(() => null);
-    if (
-      isRecord(output) &&
-      isRecord(output.error) &&
-      output.error.code === "session_reauthentication_required"
-    ) {
+    if (refusal === "reauthentication") {
       redirectToLogin(true);
       return sessionNavigation;
     }
@@ -509,6 +509,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 import { passkeyClient } from "@better-auth/passkey/client";
 import { createAuthClient } from "better-auth/client";
 import { twoFactorClient } from "better-auth/client/plugins";
+import { requestSecondFactorStepUp, stepUpRefusal } from "./second-factor-step-up";
 
 /** Keep post-login navigation inside this app, excluding a login loop. */
 export function safeLoginReturnTo(value: unknown): string {

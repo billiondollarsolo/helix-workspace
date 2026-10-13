@@ -394,9 +394,7 @@ describe("AdminDomain — deleting a domain", () => {
     // An empty table body with no explanation reads as a broken panel — and
     // "no records" here means the deployment has no public mail hostname, not
     // that the request failed.
-    expect(table?.querySelector("tbody")?.textContent ?? "").toContain(
-      "HELIX_MAIL_PUBLIC_HOSTNAME",
-    );
+    expect(table?.querySelector("tbody")?.textContent ?? "").toContain("public mail hostname");
   });
 
   it("cancelling leaves the domain in place", async () => {

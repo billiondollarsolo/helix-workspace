@@ -27,15 +27,16 @@ full production configuration guide.
 
 ## Preconditions
 
-| Need                            | Notes                                                                               |
-| ------------------------------- | ----------------------------------------------------------------------------------- |
-| Linux amd64 host                | ClamAV official image is amd64-only in the Compose stack.                           |
-| Docker Engine + Compose plugin  | Production overlay pulls digest-pinned images only.                                 |
-| Public DNS control              | For your mail/workspace domain(s).                                                  |
-| Managed mail provider account   | SES, Postmark, Mailgun, managed SMTP, or SMTP relay — see provider docs.            |
-| Upstream MFA assertion producer | Business admin paths require signed `X-Helix-Mfa-Assertion` (see deployment guide). |
-| Secret storage outside git      | Operator-owned directory mode `0700` with secret files mode `0600`.                 |
-| Promoted image digests          | Every `HELIX_*_IMAGE` value must be `registry/repo@sha256:<64 hex>`.                |
+| Need                           | Notes                                                                                                                                                                        |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Linux amd64 host               | 4 CPUs, 16 GB memory, 80 GB disk. The ClamAV image is amd64-only.                                                                                                            |
+| Docker Engine + Compose plugin | Compose 2.27 or newer (`docker compose version`). Older releases merge the production files incorrectly. The secrets generator needs Node.js and `openssl`, or Docker alone. |
+| A checkout of this repository  | At the commit you deploy; the overlay mounts configuration files from it.                                                                                                    |
+| Public DNS control             | An `A`/`AAAA` record for `HELIX_DOMAIN` pointing at the host, and `MX` for inbound mail.                                                                                     |
+| Open inbound ports             | 80 and 443 for the web app; 25 for inbound mail (many hosting providers block it — ask).                                                                                     |
+| Managed mail provider account  | SES, Postmark, Mailgun, managed SMTP, or SMTP relay, with STARTTLS — see provider docs.                                                                                      |
+| An authenticator app           | Administrators need 2-step verification before the Admin console works.                                                                                                      |
+| Promoted image digests         | Every `HELIX_*_IMAGE` value must be `registry/repo@sha256:<64 hex>`.                                                                                                         |
 
 Read claims before you brief pilot users: [`product-claims-mvp.md`](../product-claims-mvp.md).
 
@@ -51,44 +52,70 @@ gate package says otherwise:
 
 See [`docs/architecture/v1-packaging-matrix.md`](../architecture/v1-packaging-matrix.md).
 
+Optional installs, such as the password manager, are not part of this path. Add them afterwards
+from [Optional installs](../deployment-production.md#optional-installs).
+
 ---
 
 ## 1. Prepare secrets and env (no secrets in git)
 
-1. Copy non-secret inputs:
+Run every command from the repository root on the deployment host.
+
+1. Generate the secret files and certificates:
+
+   ```sh
+   sudo install -d -m 0700 -o "$USER" /srv/helix-secrets
+   node infra/scripts/generate-production-secrets.mjs \
+     --dir /srv/helix-secrets --mail-host mail.example.com
+   ```
+
+   Without Node.js on the host, run the same script in a container:
+
+   ```sh
+   docker run --rm --user "$(id -u):$(id -g)" \
+     -v "$PWD/infra/scripts:/scripts:ro" -v /srv/helix-secrets:/out \
+     node:24 node /scripts/generate-production-secrets.mjs \
+     --dir /out --mail-host mail.example.com
+   ```
+
+   Then put your mail provider's SMTP password in `/srv/helix-secrets/mail_smtp_password`,
+   move `/srv/helix-secrets/ca` offline, and back the directory up. See
+   [Secret files](../deployment-production.md#secret-files).
+
+2. Copy the non-secret inputs:
 
    ```sh
    cp .env.production.example .env.production
+   echo 'HELIX_PRODUCTION_SECRETS_DIR=/srv/helix-secrets' >> .env.production
    ```
 
-2. Edit `.env.production`: set `HELIX_DOMAIN`, mail provider fields, MFA issuer/audience,
-   encryption attestations (only after real evidence), and digest-qualified image refs.
+3. Edit `.env.production`:
+   - `HELIX_DOMAIN`, `HELIX_REGION`, and `HELIX_DEFAULT_ORG_NAME`. Choose the region label
+     before the first start; it cannot be changed afterwards.
+   - The eight image references, resolved as described in
+     [Image references](../deployment-production.md#image-references).
+   - The mail provider fields (`MAIL_PROVIDER`, `MAIL_FROM_DOMAIN`, `MAIL_SMTP_*`).
+   - The three encryption attestations, only after collecting the evidence.
+
    Do **not** put passwords or API keys in this file.
 
-3. Create `HELIX_PRODUCTION_SECRETS_DIR` (absolute path, mode `0700`) with the secret
-   files listed in [`deployment-production.md`](../deployment-production.md)
-   (database URLs, TLS material, Redis/NATS passwords, Better Auth secret, object-store
-   keys, Meilisearch master key, mail SMTP password, mail provider webhook secret, MFA
-   assertion HMAC secret, etc.).
-
-4. Generate each secret from a CSPRNG; minimum length and character diversity rules
-   are enforced at startup. Never reuse one password across services.
+4. Choose where the HTTPS certificate comes from. With nothing set, Caddy obtains one from
+   Let's Encrypt, and an administrator can later upload the organization's own under
+   **Admin → Domains**. To deliver certificate files to the server instead, see
+   [TLS certificates](../deployment-production.md#tls-certificates) and add
+   `-f docker-compose.tls-files.yml` to every command below.
 
 ---
 
 ## 2. Validate Compose, then bring the stack up
 
-From the repository root on the deployment host (or a bastion that can reach Docker):
-
 ```sh
-export HELIX_PRODUCTION_SECRETS_DIR=/path/to/operator-secrets
+compose="docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.production.yml"
 
-docker compose \
-  --env-file .env.production \
-  -f docker-compose.yml \
-  -f docker-compose.production.yml \
-  config
+$compose config --quiet
 ```
+
+(In zsh, define `compose` as a function instead; zsh does not split the variable into words.)
 
 A failed `config` because a secret file or digest is missing is intentional. Fix
 inputs; do not bypass production assertions.
@@ -96,41 +123,54 @@ inputs; do not bypass production assertions.
 Start:
 
 ```sh
-docker compose \
-  --env-file .env.production \
-  -f docker-compose.yml \
-  -f docker-compose.production.yml \
-  up -d
+$compose up -d
 ```
 
-Expected shape (high level):
+The first start takes up to ten minutes: ClamAV downloads its signatures before Helix
+reports ready. Expected shape:
 
-- One-shot `helix-migrate` completes successfully before app replicas serve traffic.
-- App depends on healthy Postgres, Redis, NATS, Meilisearch, RustFS, Cerbos, ClamAV,
-  SpamAssassin (Business scanners required).
-- Public published ports: Caddy HTTP/HTTPS and the chosen inbound SMTP port only.
-  Data-plane ports stay private (VPN / SSH tunnel for operator access).
+- The one-shot services (`helix-migrate`, `rustfs-kms-init`, `rustfs-kms-key`,
+  `helix-storage-init`) exit with status 0 before the application starts.
+- The application depends on healthy Postgres, Redis, NATS, Meilisearch, RustFS, Cerbos,
+  ClamAV, and SpamAssassin.
+- Published ports: Caddy HTTP/HTTPS and the inbound SMTP port only. Data-plane ports stay
+  private (VPN / SSH tunnel for operator access).
 
 Smoke:
 
 ```sh
+$compose ps
 curl -fsS "https://${HELIX_DOMAIN}/readyz"
-# or, if TLS is not yet pointed: curl against the edge with appropriate host/SNI
 ```
 
-If `/readyz` fails, check migrate job logs, secret mount paths, scanner health, and
-encryption attestation env flags before continuing.
+If `/readyz` does not answer 200, the application log names the dependency that is failing:
+
+```sh
+$compose logs helix | grep -i 'not ready'
+```
 
 ---
 
 ## 3. First admin
 
-Production does **not** use the local seed accounts from `scripts/dev-up.sh`
-(`admin@helix.local` is for development evidence only).
+Production has no default accounts and no public sign-up. The local seed accounts from
+`scripts/dev-up.sh` (`admin@helix.local`) exist only in development.
 
-The 1.0 pilot requires an operator-provisioned first organization owner. This
-runbook assumes that a deployment-specific bootstrap procedure has already been
-validated. Public self-service account and workspace creation are absent.
+1. Create the workspace owner's invitation:
+
+   ```sh
+   $compose exec helix /nodejs/bin/node dist/db/bootstrap-owner.js \
+     --email owner@example.com --name "Owner Name"
+   ```
+
+   The command prints a single-use link that expires in 7 days. Treat it as a credential.
+
+2. Open the link, choose a password, and you are signed in at `https://$HELIX_DOMAIN/`.
+3. Open **Settings → Security → 2-step verification** and add an authenticator app. On the
+   Business tier the Admin console refuses administrator requests until the account has a
+   second step, and asks you to set one up.
+4. Confirm the Admin console opens (`/admin/overview`). Helix asks for a fresh code after
+   10 minutes of administrator work and then continues what you were doing.
 
 **Adding people:** in **Admin → Users**, choose **Invite people**, enter the person's
 email address, and choose Member or Administrator (only a full administrator,
@@ -141,14 +181,6 @@ invitation. The same actions are available from the CLI (`helix admin users invi
 Invitation email uses the managed mail provider; finish sections 4 and 5, then confirm one test
 invitation arrives before inviting the pilot cohort.
 
-Then:
-
-1. Sign in at `https://$HELIX_DOMAIN/` with the owner account.
-2. Confirm Admin is reachable (`/admin/overview`) with admin scopes.
-3. Business tier: ensure the upstream authenticator issues valid MFA assertions for
-   admin API calls. Without them, admin-scoped requests fail closed.
-
-Rotate the owner password immediately if any temporary bootstrap credential was used.
 Never commit credentials or paste them into tickets/logs.
 
 ---
@@ -318,7 +350,7 @@ Org-scoped disable is available on the same page for a single organization UUID.
 | Public DNS                        | Domain ownership and mail authentication records    |
 | Managed mail provider             | Outbound delivery, DKIM, bounce/complaint webhooks  |
 | TLS certificates at edge          | User and API trust (Caddy / ACME or operator certs) |
-| Upstream MFA assertion issuer     | Business admin API access                           |
+| Authenticator app per admin       | Business admin access needs 2-step verification     |
 | Object/volume encryption evidence | Business encryption-at-rest attestations            |
 | Off-host backup target            | RPO ≤ 24h / RTO ≤ 4h pilot objectives (ADR-0006)    |
 

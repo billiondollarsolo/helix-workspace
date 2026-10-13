@@ -1,11 +1,15 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type postgres from "postgres";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadMigrationEnv, resetEnvCacheForTests } from "../config/env.js";
 import { assertProductionPostgresConfiguration } from "../config/production-assertions.js";
 import {
   assertTenantRlsCoverage,
   assertTenantSafeDatabaseRole,
   createMigrationSqlClient,
+  createSqlClient,
   resolveDatabaseUrl,
   resolveMigrationDatabaseUrl,
 } from "./client.js";
@@ -59,6 +63,31 @@ describe("database URL resolution", () => {
         HELIX_MIGRATION_DATABASE_URL: "postgres://admin/migrations",
       }),
     ).toBe("postgres://admin/migrations");
+  });
+
+  it("connects to the file-backed DATABASE_URL when no URL is passed", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "helix-db-client-test-"));
+    try {
+      const secretPath = join(directory, "database_url");
+      writeFileSync(secretPath, "postgres://helix_app:file-secret@postgres.internal:6543/helix\n", {
+        mode: 0o600,
+      });
+      vi.stubEnv("DATABASE_URL", undefined);
+      vi.stubEnv("DATABASE_URL_FILE", secretPath);
+      resetEnvCacheForTests();
+
+      const sql = createSqlClient();
+      try {
+        // A missing URL must never fall back to the local development database.
+        expect(sql.options.host).toEqual(["postgres.internal"]);
+        expect(sql.options.port).toEqual([6543]);
+      } finally {
+        await sql.end({ timeout: 0 });
+      }
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it("keeps MIGRATION_DATABASE_URL as a shorter alias for local tooling", () => {

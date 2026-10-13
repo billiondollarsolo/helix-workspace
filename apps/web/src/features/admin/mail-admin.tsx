@@ -62,6 +62,9 @@ import {
 } from "@/features/admin/mail-admin-api";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState, type ReactNode } from "react";
+import { PeoplePicker } from "@/components/people/people-picker";
+import type { PersonRef } from "@/features/people/person-ref";
+import { adminUsersQueryOptions, type AdminUser } from "./admin-users";
 
 /* ------------------------------------------------------------------ */
 /* Mail sub-navigation                                                */
@@ -187,9 +190,11 @@ function ProviderForm({ onCancel, onSubmit, pending }: ProviderFormProps) {
       <div className="grid [grid-template-columns:1fr_1fr] gap-2.5">
         {(kind === "ses" || kind === "mailgun" || kind === "postmark") && (
           <label>
-            <span className="type-caption text-muted-foreground block">API key (env ref)</span>
+            <span className="type-caption text-muted-foreground block">
+              API key (secret reference)
+            </span>
             <input
-              aria-label="API key env ref"
+              aria-label="API key secret reference"
               value={config.apiKeyRef ?? ""}
               onChange={(event) => setField("apiKeyRef", event.target.value)}
               placeholder="env:MAIL_API_KEY"
@@ -306,7 +311,7 @@ function MailProviders() {
       {providersQuery.isPending ? <LoadingState label="Loading outbound providers…" /> : null}
       {providersQuery.isError ? (
         <ErrorNotice>
-          Outbound providers are unavailable or you lack the mail admin scope.
+          Outbound providers could not be loaded. You may not have permission to manage mail.
         </ErrorNotice>
       ) : null}
       {createMutation.isError ? <ErrorNotice>{createMutation.error.message}</ErrorNotice> : null}
@@ -414,7 +419,9 @@ function MailDomains() {
 
       {domainsQuery.isPending ? <LoadingState label="Loading mail domains…" /> : null}
       {domainsQuery.isError ? (
-        <ErrorNotice>Mail domains are unavailable or you lack the mail admin scope.</ErrorNotice>
+        <ErrorNotice>
+          Mail domains could not be loaded. You may not have permission to manage mail.
+        </ErrorNotice>
       ) : null}
       <p className="[color:var(--text-2)] mb-3">
         Verify and enable mail capability in Domain settings before configuring DKIM here.
@@ -530,7 +537,9 @@ function Deliverability() {
 
       {dmarcQuery.isPending ? <LoadingState label="Loading deliverability summary…" /> : null}
       {dmarcQuery.isError ? (
-        <ErrorNotice>DMARC reports are unavailable or you lack the mail admin scope.</ErrorNotice>
+        <ErrorNotice>
+          DMARC reports could not be loaded. You may not have permission to manage mail.
+        </ErrorNotice>
       ) : null}
 
       {summary ? (
@@ -610,6 +619,8 @@ function RoutingForm({ onCancel, onSubmit, pending }: RoutingFormProps) {
   const [headerContains, setHeaderContains] = useState("");
   const [action, setAction] = useState<RoutingAction>("mailbox");
   const [destination, setDestination] = useState("");
+  /* "Deliver to user" names a person; the rule stores that person's account. */
+  const [recipient, setRecipient] = useState<PersonRef | null>(null);
   const [priority, setPriority] = useState("100");
   const [stopProcessing, setStopProcessing] = useState(false);
 
@@ -670,7 +681,12 @@ function RoutingForm({ onCancel, onSubmit, pending }: RoutingFormProps) {
           <select
             aria-label="Routing action"
             value={action}
-            onChange={(event) => setAction(event.target.value as RoutingAction)}
+            onChange={(event) => {
+              setAction(event.target.value as RoutingAction);
+              // A mailbox name is not a person, and the other way round.
+              setDestination("");
+              setRecipient(null);
+            }}
             className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] type-meta w-full"
           >
             {ROUTING_ACTIONS.map((value) => (
@@ -680,23 +696,32 @@ function RoutingForm({ onCancel, onSubmit, pending }: RoutingFormProps) {
             ))}
           </select>
         </label>
-        <label>
-          <span className="type-caption text-muted-foreground block">Destination</span>
-          <input
-            aria-label="Destination"
-            value={destination}
-            onChange={(event) => setDestination(event.target.value)}
-            disabled={action === "drop"}
-            placeholder={
-              action === "alias"
-                ? "User actor UUID"
-                : action === "tag"
-                  ? "Tag"
-                  : "Mailbox or forwarding address"
-            }
-            className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] type-meta w-full"
+        {action === "alias" ? (
+          <PeoplePicker
+            label="Deliver to"
+            max={1}
+            placeholder="Search by name or email"
+            stacked
+            value={recipient === null ? [] : [recipient]}
+            onChange={(next) => {
+              const chosen = next[0] ?? null;
+              setRecipient(chosen);
+              setDestination(chosen?.actorId ?? "");
+            }}
           />
-        </label>
+        ) : (
+          <label>
+            <span className="type-caption text-muted-foreground block">Destination</span>
+            <input
+              aria-label="Destination"
+              value={destination}
+              onChange={(event) => setDestination(event.target.value)}
+              disabled={action === "drop"}
+              placeholder={action === "tag" ? "Tag" : "Mailbox or forwarding address"}
+              className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] type-meta w-full"
+            />
+          </label>
+        )}
         <label>
           <span className="type-caption text-muted-foreground block">Priority</span>
           <input
@@ -765,12 +790,18 @@ function RoutingForm({ onCancel, onSubmit, pending }: RoutingFormProps) {
   );
 }
 
-function routingRuleDestination(rule: RoutingRule): string {
+function routingRuleDestination(
+  rule: RoutingRule,
+  directory: ReadonlyMap<string, AdminUser>,
+): string {
   switch (rule.actionKind) {
     case "forward":
       return rule.action.forwardTo ?? "—";
-    case "alias":
-      return rule.action.aliasActorId ?? "—";
+    case "alias": {
+      if (rule.action.aliasActorId === undefined) return "—";
+      const user = directory.get(rule.action.aliasActorId);
+      return user === undefined ? "Removed account" : user.displayName || user.email || "—";
+    }
     case "tag":
       return rule.action.tag ?? "—";
     case "mailbox":
@@ -800,6 +831,13 @@ function routingRuleMatch(rule: RoutingRule): string {
 function RoutingRules() {
   const queryClient = useQueryClient();
   const rulesQuery = useQuery(routingRulesQueryOptions());
+  /* Rules that deliver to a person store an account; show who that is, also
+     when the account has since been suspended. */
+  const directoryQuery = useQuery(adminUsersQueryOptions({ includeDisabled: true, limit: 250 }));
+  const directory = useMemo(
+    () => new Map((directoryQuery.data?.users ?? []).map((user) => [user.id, user])),
+    [directoryQuery.data],
+  );
   const [showForm, setShowForm] = useState(false);
 
   const invalidate = () =>
@@ -851,7 +889,9 @@ function RoutingRules() {
 
       {rulesQuery.isPending ? <LoadingState label="Loading routing rules…" /> : null}
       {rulesQuery.isError ? (
-        <ErrorNotice>Routing rules are unavailable or you lack the mail admin scope.</ErrorNotice>
+        <ErrorNotice>
+          Routing rules could not be loaded. You may not have permission to manage mail.
+        </ErrorNotice>
       ) : null}
       {createMutation.isError ? <ErrorNotice>{createMutation.error.message}</ErrorNotice> : null}
       {patchMutation.isError || deleteMutation.isError ? (
@@ -893,7 +933,9 @@ function RoutingRules() {
               <span>
                 <span className="chip">{routingActionLabels[rule.actionKind]}</span>
               </span>
-              <span className="truncate [color:var(--text-2)]">{routingRuleDestination(rule)}</span>
+              <span className="truncate [color:var(--text-2)]">
+                {routingRuleDestination(rule, directory)}
+              </span>
               <span>
                 <span className={`chip ${rule.isEnabled ? "success" : "warning"}`}>
                   <span className="chip-dot" />

@@ -6,6 +6,8 @@
  *   - Admin is offered only to people whose scopes open the Admin console.
  *   - Helix AI is offered only while a model provider answers
  *     (`assistant.status`), so nobody is led into a chat that cannot reply.
+ *   - Passwords is offered only where the deployment installed the password
+ *     manager and an admin turned it on (it rides on the same response).
  *
  * Used by:
  *   - components/shell/rail.tsx
@@ -44,6 +46,7 @@ export function useEnabledApps(): EnabledApps {
     isLoading: query.isLoading || admin.isLoading || assistant.isLoading,
     isEnabled: (id) => {
       if (id === "admin") return admin.isAdmin;
+      if (id === "passwords") return (query.data?.passwords?.url ?? null) !== null;
       const registered = map.get(id as CoreAppId) ?? true;
       return id === "assistant" ? registered && assistant.available : registered;
     },

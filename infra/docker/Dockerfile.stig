@@ -54,17 +54,24 @@ WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@11.18.0 --activate
 
 # Copy manifests first for a cacheable dependency layer.
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .pnpmfile.mjs ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .pnpmfile.mjs turbo.json ./
 COPY apps/helix/package.json apps/helix/
 COPY packages/ packages/
 
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
     pnpm install --frozen-lockfile --filter @helix/app...
 
-# Copy sources and build the helix app.
+# Copy sources, then build the app and the workspace packages it depends on.
+# The steps match the default image (infra/docker/Dockerfile): the compiled
+# output must carry the SQL migrations, and the deployed tree is pruned.
 COPY apps/helix/ apps/helix/
-RUN pnpm --filter @helix/app build \
-    && pnpm --filter @helix/app deploy --prod /app/deploy
+COPY infra/scripts/prune-production-deploy.mjs infra/scripts/prune-production-deploy.mjs
+
+RUN pnpm --filter @helix/app... run build \
+    && mkdir -p apps/helix/dist/db/migrations \
+    && cp apps/helix/src/db/migrations/*.sql apps/helix/dist/db/migrations/ \
+    && pnpm --filter @helix/app deploy --prod /app/deploy \
+    && node infra/scripts/prune-production-deploy.mjs /app/deploy
 
 # --- runtime stage ---------------------------------------------------------
 FROM ${RUNTIME_BASE} AS runtime
@@ -86,6 +93,20 @@ ENV NODE_ENV=production \
     HELIX_TLS_MIN_VERSION=1.2
 
 WORKDIR /app
+
+# The generic default base trails its security updates and ships npm, Corepack
+# and Yarn, whose bundled dependencies are the image's largest source of
+# fixable findings. Apply the updates and remove the package managers: the
+# runtime needs only node. Hardened bases without apt skip the first step and
+# have nothing for the second to remove.
+RUN if command -v apt-get >/dev/null 2>&1; then \
+      apt-get update \
+      && apt-get upgrade -y --no-install-recommends \
+      && rm -rf /var/lib/apt/lists/*; \
+    fi \
+    && rm -rf /usr/local/lib/node_modules /opt/yarn-* \
+      /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
+      /usr/local/bin/yarn /usr/local/bin/yarnpkg
 
 # Non-root, fixed UID/GID matching the STIG image policy in values-sovereign.yaml
 # (stig.imagePolicy.expectedRunAsUser / expectedRunAsGroup = 10001).

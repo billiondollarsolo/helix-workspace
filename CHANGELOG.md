@@ -8,6 +8,72 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Added
 
+- Meet and Calendar as an optional install on a single production host. Adding
+  `docker-compose.meet.yml` to the Compose commands (with `HELIX_MEET_DOMAIN` and
+  `HELIX_MEET_PUBLIC_IP`) switches Helix to the Full Workspace profile and starts a bundled Jitsi:
+  the meeting page behind Caddy on its own hostname, the XMPP server and conference focus on a
+  network with no route out, and the media bridge and TURN on the only published ports. Every
+  development credential is replaced by a generated secret file
+  (`generate-production-secrets.mjs --add-meet`), XMPP is verified against the deployment CA, and
+  people can join only with a pass Helix signs. Without the file nothing is deployed and the
+  default packaging is unchanged; this install is outside the 1.0 release scope.
+  `infra/scripts/production-boot-smoke.sh --with meet` boots it and holds a meeting between two
+  browsers, using the new `apps/web/scripts/meet-media-probe.mjs`.
+- Passwords, an optional install. A bundled Vaultwarden server (compatible with the Bitwarden
+  apps and browser extensions) can be installed with the workspace and is not deployed unless the
+  operator opts in: `COMPOSE_PROFILES=passwords` and `HELIX_PASSWORDS_DOMAIN` for Docker Compose,
+  or `passwords.enabled=true` in the Helm chart. It is served on its own hostname so the vault
+  never shares a browser origin with the workspace, publishes no port, keeps its server
+  administration page off, and limits sign-up to the workspace's mail domain with email
+  confirmation. An administrator then turns it on in **Admin → Apps → Passwords** (the audited
+  workspace setting `passwords_app`, off by default), and people get a Passwords entry in the app
+  launcher that opens the vault and shows the server address for the Bitwarden apps. Accounts and
+  vaults are separate from Helix and end-to-end encrypted; Helix never sees them. New setting
+  `HELIX_PASSWORDS_URL`; `GET /api/core-apps` now also reports `passwords`.
+  `infra/scripts/production-boot-smoke.sh --with passwords` proves the install end to end.
+- Choose Chat rooms by name in the Admin console. **Admin → Chat** retention, legal hold, and
+  export now offer a room picker instead of asking for room IDs, and choosing a room shows that
+  room's own policy. Private rooms and direct messages stay out of the pickers (only a count is
+  shown) until an administrator turns on **Administrators can see private rooms**, a workspace
+  setting that is off by default and audited like every other workspace setting
+  (`chat_admin_private_rooms`). **Show agent-only rooms** adds rooms whose members are all
+  agents, private or not. New tool `chat.room.list_organization` (`admin.chat`, read) returns
+  room names, kinds, and member counts, never messages. An export with no rooms chosen still
+  covers every room, including private ones, and the confirmation now says so.
+- Manage the HTTPS certificate from the Admin console. **Admin → Domains → HTTPS certificate**
+  shows the certificate the workspace serves, who issued it, and when it expires. In the
+  production Compose stack an administrator can upload the organization's own certificate and key
+  (checked for the right name, validity, chain order, and a matching key, with the reason for any
+  refusal), which the edge starts serving within seconds and without a restart, or go back to
+  automatic certificates. The key is stored encrypted and never returned; uploads and removals are
+  audited (`edge.tls.certificate_uploaded`, `edge.tls.certificate_removed`); the console and the
+  application log warn from 30 days before an uploaded certificate expires. New routes `GET`,
+  `PUT`, and `DELETE /api/admin/edge/certificate`; new settings `HELIX_EDGE_TLS_SOURCE`,
+  `HELIX_EDGE_CERT_DIR`, `HELIX_EDGE_ADMIN_SOCKET`, and `HELIX_EDGE_PROBE_ADDRESS`; migration
+  `0223_edge_tls_certificate`.
+- Single-host production deployment that starts from one command.
+  `infra/scripts/generate-production-secrets.mjs` writes every secret file and the internal
+  service certificates; the production Compose overlay now provisions object storage (TLS, a KMS
+  key, a versioned object-locked bucket, and an object-locked audit bucket) before the application
+  starts; and `node dist/db/bootstrap-owner.js --email <address>` prints the first
+  administrator's single-use invitation link (audited as `identity.owner.bootstrapped`). New
+  required settings `HELIX_REGION` and `HELIX_DEFAULT_ORG_NAME`; optional `RUSTFS_PUBLIC_ENDPOINT`
+  for the address browsers use for signed upload and download links (defaults to
+  `https://$HELIX_DOMAIN`, routed by Caddy to the bucket only). See
+  [`docs/runbooks/pilot-install-zero-to-mail.md`](docs/runbooks/pilot-install-zero-to-mail.md).
+- The Admin console asks for a 2-step verification code in place when an administrator session
+  must be verified again (after 10 minutes by default) or an action needs a second step, then
+  continues what the person was doing. Previously the page was replaced by the sign-in page, or
+  showed a refusal with nothing to do about it. People without a second step are sent to their
+  security settings, or to sign-in when the whole session has lapsed.
+- `infra/scripts/production-boot-smoke.sh` boots the production Compose stack from nothing on a
+  Docker host and checks the path a new deployment takes, with either certificate source.
+- Serve your own HTTPS certificate: add `docker-compose.tls-files.yml` and place `tls_cert` and
+  `tls_key` in the secrets directory. Automatic Let's Encrypt certificates remain the default.
+- `/readyz` failures are explained in the application log ("Not ready: dependency probes are
+  failing", with each dependency and reason, credentials removed), and logged errors now include
+  their type, message, code, and stack instead of `{}`.
+
 - AI decision model for mail spam and triage. Admin → Mail → Spam filtering can send a compact
   summary of mail from outside senders to Cloudflare Workers AI Clef or TypeSafe Jev after it is
   stored (never delaying delivery). Off by default; **Shadow** records verdicts only, **Enforce**
@@ -326,6 +392,11 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Changed
 
+- The Admin console asks for people, not account IDs. **AI costs** and mail **Routing rules**
+  ("Deliver to a person") use the people picker, and both lists show the person's name and
+  email instead of an ID; an override or rule whose account is gone reads "Removed account".
+  Messages that said "scope", "actor", or "tenant" now say what happened and what to do
+  ("Routing rules could not be loaded. You may not have permission to manage mail.").
 - The Helix-built dependency images run as unprivileged users: PostgreSQL as `postgres` (70),
   ClamAV as `clamav` (100:101), and NATS, Meilisearch, Cerbos, and SpamAssassin as 10001.
   SpamAssassin's runit services no longer need root; rules refresh daily without the root
@@ -451,6 +522,9 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Removed
 
+- Development sign-in shortcuts on the sign-in page, and internal wording in the Admin console
+  (feature identifiers, "tool" and "actor" error text) that was never meant for people using the
+  product.
 - The previous seeds and their scripts: `db:seed:logins`, `db:seed:scenarios`, `db:seed:team`,
   `db:verify:team`, `db:prepare:demo`, `db:verify:demo`, `db:seed:mail-corpus`,
   `db:fetch:corpus`, `corpus:fetch` and `corpus:seed`, the `test-corpus/` and
@@ -483,6 +557,36 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Fixed
 
+- The install guide asked for Docker Compose 2.24, which does not merge the production files
+  correctly: 2.24 quietly drops settings and 2.25 refuses the files. The requirement is now
+  2.27, the oldest release that resolves the production stack and the optional Meet install
+  the same way current releases do, and the boot smoke test checks it before starting.
+- The bundled Jitsi stack (`--profile meet`) starts again. The pinned TURN server rejected the
+  removed `--no-dtls` option and restarted in a loop, and the conference focus and media bridge
+  exited at startup because the images take ownership of `/config`, where two override files
+  were mounted read-only. The overrides are now copied into place before the images configure
+  themselves.
+- The nightly image scan no longer fails on the licences of the base image's own Debian
+  packages, which are GPL or LGPL and cannot be changed. Vulnerability, secret, and
+  misconfiguration scanning still cover the whole image; the licence check now covers what the
+  application adds.
+- `db:migrate` names the database it is about to change (`Migrating helix on 127.0.0.1:5432 as
+helix_migrator.`). It reads only the process environment and otherwise uses the local
+  development default, which on a host with several stacks can be the wrong database.
+- Admin → Domains no longer shows an HTTPS certificate panel where there is no HTTPS edge to
+  describe or manage, as in local development over plain HTTP.
+- The production Compose stack starts. It previously could not: the application was missing
+  required region and workspace settings, object storage had no TLS, encryption key, or bucket,
+  the Business tier had no immutable audit destination, the sign-in database pool connected
+  without TLS and was refused, ClamAV and SpamAssassin could not download updates from the
+  internal network, Caddy could not store certificates on its read-only filesystem, and Drive
+  upload links pointed at an address browsers cannot reach.
+- The workspace takes the name in `HELIX_DEFAULT_ORG_NAME` on first start; it stayed
+  "Default Organization". A name chosen later is kept.
+- Audit copies written to the WORM-Postgres destination run inside the organization's tenant
+  context, so row-level security no longer rejects them under the runtime database role.
+- Meet stays off in production unless `MEET_JITSI_ENABLED=true` is set explicitly, and the search
+  reindex no longer requires object-storage credentials to read file metadata.
 - Meilisearch stored its database in the container layer (`/data.ms`) instead of the
   `meili-data` volume, so indexes were lost when the container was recreated and the production
   overlay's read-only root filesystem blocked startup. The image now works in `/meili_data`, as

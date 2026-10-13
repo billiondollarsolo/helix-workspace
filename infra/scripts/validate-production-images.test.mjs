@@ -46,7 +46,7 @@ describe("production image validation", () => {
     const web = metadata({
       entrypoint: ["caddy"],
       command: ["run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"],
-      health: "wget http://127.0.0.1/healthz",
+      health: "wget http://127.0.0.1:8081/healthz",
     });
     const run = vi.fn((command, args) => {
       if (args[0] === "image" && args[2] === "app:test") {
@@ -121,7 +121,7 @@ describe("production image validation", () => {
       metadata({
         entrypoint: null,
         command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"],
-        health: "127.0.0.1/healthz",
+        health: "127.0.0.1:8081/healthz",
       }),
       "entrypoint",
     ],
@@ -130,7 +130,7 @@ describe("production image validation", () => {
       metadata({
         entrypoint: ["caddy", "run"],
         command: ["--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"],
-        health: "127.0.0.1/healthz",
+        health: "127.0.0.1:8081/healthz",
       }),
       "entrypoint",
     ],
@@ -139,7 +139,7 @@ describe("production image validation", () => {
       metadata({
         entrypoint: ["caddy"],
         command: ["run", "--config", "/tmp/untrusted.Caddyfile"],
-        health: "127.0.0.1/healthz",
+        health: "127.0.0.1:8081/healthz",
       }),
       "command",
     ],
@@ -155,7 +155,7 @@ describe("production image validation", () => {
           "--adapter",
           "caddyfile",
         ],
-        requiredHealthFragment: "127.0.0.1/healthz",
+        requiredHealthFragment: "127.0.0.1:8081/healthz",
       }),
     ).toThrow(expected);
   });

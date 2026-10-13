@@ -525,6 +525,26 @@ test("domain identity choices retain MFA and second-administrator gates", async 
           },
     );
   });
+  // The administrator has an authenticator app; a fresh code clears the refusal.
+  const verifiedUser = {
+    id: "e2e-user",
+    actorId,
+    email: "admin@example.test",
+    name: "Test admin",
+    scopes: ["*"],
+    twoFactorEnabled: true,
+  };
+  await page.route("**/api/auth/get-session", (route) =>
+    route.fulfill({ json: { user: verifiedUser } }),
+  );
+  await page.route("**/api/auth/passkey/list-user-passkeys", (route) =>
+    route.fulfill({ json: [] }),
+  );
+  const verifications: unknown[] = [];
+  await page.route("**/api/auth/two-factor/verify-totp", async (route) => {
+    verifications.push(route.request().postDataJSON());
+    await route.fulfill({ json: { token: "e2e-session", user: verifiedUser } });
+  });
   await page.goto("/admin/domains");
   const entry = (name: string) =>
     page
@@ -539,8 +559,15 @@ test("domain identity choices retain MFA and second-administrator gates", async 
   ]);
   await secondary.getByLabel("Alias target domain").selectOption("first");
   await secondary.getByRole("button", { name: "Save domain identity" }).click();
-  await expect(secondary.getByRole("alert")).toContainText("Recent MFA verification is required.");
-  await secondary.getByRole("button", { name: "Save domain identity" }).click();
+  // The refused change asks for a code, then goes ahead without a second click.
+  const confirm = page.getByRole("dialog", { name: "Confirm it’s you" });
+  await expect(confirm.getByLabel("Authenticator code")).toBeFocused();
+  await audit(page);
+  await page.screenshot({ path: "/tmp/helix-release-work/second-factor-prompt.png" });
+  await confirm.getByLabel("Authenticator code").fill("123456");
+  await confirm.getByRole("button", { name: "Verify" }).click();
+  await expect(confirm).toBeHidden();
+  expect(verifications).toEqual([{ code: "123456", trustDevice: false }]);
   await expect(secondary.getByRole("alert")).toContainText(
     "A second administrator must approve this change (request approval-1). The requested change has not been applied.",
   );

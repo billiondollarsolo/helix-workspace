@@ -100,14 +100,19 @@ export function flush() {
   });
 }
 
-/* Repeatedly flush microtasks until the container shows `text` (or give up). */
+/* Wait until the container shows `text`. On the clock, not for a number of
+   turns: the hub's code is loaded on demand, and on a busy machine that takes
+   more turns than any fixed count. */
 export async function waitForText(container: HTMLElement, text: string) {
-  for (let attempt = 0; attempt < 50; attempt += 1) {
+  const deadline = Date.now() + 5_000;
+  do {
     if (container.textContent.includes(text)) {
       return;
     }
     await flush();
-  }
+    // Let module loading and timers run, which microtasks alone do not.
+    await act(() => new Promise<void>((resolve) => setTimeout(resolve, 0)));
+  } while (Date.now() < deadline);
   throw new Error(`Timed out waiting for text: ${text}`);
 }
 

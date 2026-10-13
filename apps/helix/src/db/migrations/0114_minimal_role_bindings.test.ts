@@ -24,7 +24,17 @@ describe("0114 minimal role bindings migration", () => {
       new URL("./0215_contacts_app.sql", import.meta.url),
       "utf8",
     );
-    const catalogSources = [migration, delegatedMigration, mergeMigration, contactsMigration];
+    const agentSecretsMigration = await readFile(
+      new URL("./0224_agent_secrets.sql", import.meta.url),
+      "utf8",
+    );
+    const catalogSources = [
+      migration,
+      delegatedMigration,
+      mergeMigration,
+      contactsMigration,
+      agentSecretsMigration,
+    ];
     for (const permission of ALL_SCOPES) {
       expect(catalogSources.join("\n")).toContain(`('${permission}',`);
     }

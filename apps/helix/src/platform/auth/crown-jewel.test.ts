@@ -34,6 +34,14 @@ describe("crown-jewel gate", () => {
     expect(action("POST", "/api/admin/users/user-id/mfa/reset")).toBe("identity.mfa.reset");
     expect(action("POST", "/api/admin/plugins/plugin.example/install")).toBeNull();
     expect(action("POST", "/api/tools/agent.credentials.create")).toBe("credential.issue");
+    expect(
+      action("PUT", "/api/admin/agent-secrets/7f1f0f6e-1111-4111-8111-111111111111/grants"),
+    ).toBe("agent_secret.grant");
+    // A request that carries a secret's value never waits in an approval record.
+    expect(action("POST", "/api/admin/agent-secrets")).toBeNull();
+    expect(
+      action("PATCH", "/api/admin/agent-secrets/7f1f0f6e-1111-4111-8111-111111111111"),
+    ).toBeNull();
     expect(action("POST", "/api/tools/agent.credentials.rotate")).toBe("key.rotate");
     expect(action("GET", "/api/admin/domains")).toBeNull();
     // Restore already has a durable two-approver workflow; never double-gate it.

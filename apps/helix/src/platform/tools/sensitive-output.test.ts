@@ -1,6 +1,7 @@
 import type { Actor, ToolDefinition } from "@helix/sdk-types";
 import { describe, expect, it } from "vitest";
 import { registerAppPasswordTools } from "../auth/app-passwords.js";
+import { registerAgentSecretTools } from "../agent-secrets/tools.js";
 import { registerAgentCredentialTools } from "../auth/tools.js";
 import { tierDefaults } from "../config/tier.js";
 import { registerDriveS3KeyTools, registerDriveTools } from "../drive/index.js";
@@ -72,10 +73,12 @@ describe("sensitive tool output", () => {
     registerAgentCredentialTools(registry, unused);
     registerDriveTools(registry, unused);
     registerDriveS3KeyTools(registry, unused);
+    registerAgentSecretTools(registry, unused);
     expect(registry.get("app.passwords.create")?.sensitiveOutputKeys).toEqual(["password"]);
     expect(registry.get("agent.credentials.create")?.sensitiveOutputKeys).toEqual(["secret"]);
     expect(registry.get("agent.credentials.rotate")?.sensitiveOutputKeys).toEqual(["secret"]);
     expect(registry.get("drive.link.create")?.sensitiveOutputKeys).toEqual(["token"]);
     expect(registry.get("drive.s3-keys.create")?.sensitiveOutputKeys).toEqual(["secretAccessKey"]);
+    expect(registry.get("secrets.get")?.sensitiveOutputKeys).toEqual(["value"]);
   });
 });

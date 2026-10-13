@@ -14,7 +14,7 @@ import type postgres from "postgres";
 import { ApiError } from "../../api/api-error.js";
 import { internalApiUrl } from "../../api/version.js";
 import { parseActorRoleBindings } from "../permissions/roles.js";
-import { validatedPermissions } from "../permissions/scope-catalog.js";
+import { sessionPermissions } from "../permissions/scope-catalog.js";
 import { detachedFromTenantPostgresContext } from "../tenancy/postgres-roles.js";
 import { isRecord } from "../util/json.js";
 import { isSecurityPolicyRecoveryRequest } from "./admin-security-policy.js";
@@ -604,7 +604,7 @@ function toActor(record: ActorUserRecord): Actor {
     displayName: record.displayName,
     // Carry the actor's scopes so session-authenticated requests are
     // authorized identically to bearer-token (OAuth) requests.
-    scopes: validatedPermissions(record.scopes),
+    scopes: sessionPermissions(record.scopes),
     ...(record.roleBindings === undefined ? {} : { roleBindings: record.roleBindings }),
     ...(record.email === null ? {} : { email: record.email }),
   };

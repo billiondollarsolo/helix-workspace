@@ -75,6 +75,59 @@ assistant provider lists built at process start may require an API restart to pi
 stored key. Cost limits and observability remain under **AI → Cost limits** and **AI →
 Observability**. See [Mail security](mail-security-and-reliability.md) for the spam pipeline.
 
+## Agents and their secrets
+
+An agent is an identity with no sign-in of its own. It acts through a credential an administrator
+issues, and can use only the secrets an administrator grants it.
+
+1. **Add the agent and issue it a credential** under **Admin → Security → Agent credentials**
+   (`/admin/agent-credentials`). Type a name and choose **Add agent**, then create an API key or
+   an OAuth client for it with the permissions it needs. The key or client secret is shown once.
+   Include `secrets.use` if the agent will use stored secrets.
+2. **Store the secret and grant it** under **Admin → Security → Agent secrets**
+   (`/admin/agent-secrets`). Give it a name agents will ask for, enter the value, choose how it may
+   be used, and tick the agents that may use it.
+
+| How agents may use it   | What the agent can do                                                                                                                                                    |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Use only**            | Ask Helix to make an HTTPS request with the secret added (`secrets.http_request`). The agent never sees the value, and nobody can read it back, administrators included. |
+| **Handed to the agent** | Ask for the value (`secrets.get`) and use it in another system, the way a colleague would look up a password.                                                            |
+
+A use-only secret lists the hosts it may be sent to and the header it is sent in (by default
+`Authorization: Bearer <value>`). Helix sends it nowhere else, does not follow a redirect to
+another host, and removes any copy of the value from the response before the agent sees it. To
+change where a use-only secret is sent, or to let agents read it, the value has to be entered
+again: otherwise whoever edits it could point it at a server of their own and learn it.
+
+What to expect:
+
+- **Nothing is available without a grant.** `secrets.use` on a credential only reaches the tools;
+  each secret is granted agent by agent, and a grant stops counting the moment it is removed or
+  the agent is disabled. An agent asking for a secret it was not granted is told only that no such
+  secret is available to it.
+- **People cannot read agent secrets**, administrators included. Passwords for people belong in
+  the optional [password manager](deployment-production.md#optional-installs).
+- **Everything is recorded.** The audit log shows who stored, changed, granted, or deleted a
+  secret (`agent_secret.created`, `.updated`, `.rotated`, `.grants_changed`, `.deleted`), every
+  value handed to an agent (`agent_secret.revealed`), every request a secret was sent in, with the
+  host (`agent_secret.used`), and every refusal (`agent_secret.access_denied`). Values are never
+  written to the log.
+- **Sending a secret is external communication.** `secrets.http_request` follows the workspace's
+  confirmation policy for agents, so in the default profile a person confirms each request unless
+  the credential has an automation policy that allows it. Reading a handed-over secret is a read
+  and is not held for confirmation.
+- **Granting is the sensitive step.** Choosing which agents may use a secret needs a recent 2-step
+  verification, like issuing a credential, and until you say otherwise it also waits for a second
+  administrator. If you are the only administrator, turn off **Require a second administrator for
+  sensitive actions** under **Admin → Policies** first. A secret you store while a grant is
+  waiting is kept; nobody can use it until the grant goes through.
+- **To replace a value**, edit the secret and enter the new one. Agents get the new value on their
+  next call; the stored version number goes up by one.
+
+Values are encrypted with a key derived for each organization. They are covered by database
+backups in that encrypted form, so restoring a backup needs the same `HELIX_SECRET_ENCRYPTION_KEY`
+(or sign-in secret) the deployment ran with.
+
 ## Quality Gate Responsibilities
 
 Admins own release readiness for:

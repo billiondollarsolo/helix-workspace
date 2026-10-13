@@ -30,8 +30,8 @@ const RETIRED = [
   "slides.read",
   "slides.write",
 ];
-/** Catalog entries that later migrations add (0215: the Contacts app). */
-const ADDED_AFTER_0203 = ["contacts.read", "contacts.write"];
+/** Catalog entries that later migrations add (0215: the Contacts app; 0224: agent secrets). */
+const ADDED_AFTER_0203 = ["contacts.read", "contacts.write", "secrets.use"];
 const byCodePoint = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
 class Rollback extends Error {}

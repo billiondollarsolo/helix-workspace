@@ -2,6 +2,10 @@ import type { Actor } from "@helix/sdk-types";
 import { createResourceClassifier } from "../api/classify-resource.js";
 import { createHelixTRPCRouter } from "../api/trpc.js";
 import { agentLimitBudgetOverrideFromEnv, resolveConfirmationTimeoutMs } from "../bootstrap/env.js";
+import {
+  PostgresAgentSecretStore,
+  registerAgentSecretTools,
+} from "../platform/agent-secrets/index.js";
 import { registerMemoryTools } from "../platform/ai/memory/index.js";
 import { registerAskUserTool } from "../platform/assistant/ask-user.js";
 import { registerChatRecallTools } from "../platform/assistant/chats.js";
@@ -124,6 +128,7 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
     mailAppRegistered,
     outboundProviderStore,
     mailDeliveryEventStore,
+    tenantSecretCipher,
   } = context;
   const eventSchemas = createEventSchemaRegistry([
     ...signupEventSchemas,
@@ -397,6 +402,10 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
       });
     });
   }
+
+  registerAgentSecretTools(tools, {
+    store: new PostgresAgentSecretStore(sql, tenantSecretCipher),
+  });
 
   if (coreApps.shouldRegister("chat")) {
     registerChatTools(tools, {

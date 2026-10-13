@@ -12,6 +12,7 @@ import {
   permissionSchema,
   permissionsSchema,
   scopesForSurface,
+  sessionPermissions,
   validatedPermissions,
 } from "./scope-catalog.js";
 
@@ -89,5 +90,28 @@ describe("canonical scope catalog", () => {
     expect(() => openApiScopeCatalog(["legacy.permission"])).toThrow(
       "Unknown tool permission: legacy.permission",
     );
+  });
+
+  it("gives a full administrator each administration permission a tool can ask for", () => {
+    const owner = sessionPermissions(["mail.read", "admin.*"]);
+    // Tools match exactly, so these have to be held by name.
+    for (const scope of [
+      "admin.agents",
+      "admin.chat",
+      "admin.drive",
+      "admin.webhooks",
+      "mail.admin",
+    ]) {
+      expect(owner, scope).toContain(scope);
+    }
+    expect(owner).toContain("mail.read");
+    // Nothing beyond administration, and nothing an agent credential could then be issued.
+    expect(owner).not.toContain("drive.delete");
+    expect(owner).not.toContain("secrets.use");
+    expect(owner).not.toContain("mail.system");
+
+    const member = ["mail.read", "admin.users"];
+    expect(sessionPermissions(member)).toEqual(member);
+    expect(sessionPermissions(["not.a.scope", "admin.*"])).toEqual([]);
   });
 });

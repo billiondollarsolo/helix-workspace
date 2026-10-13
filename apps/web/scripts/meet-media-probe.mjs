@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Prove that two people can hold a meeting on a Meet install.
 //
-//   node infra/scripts/meet-media-probe.mjs --join-url <url> --join-url <url> \
+//   node apps/web/scripts/meet-media-probe.mjs --join-url <url> --join-url <url> \
 //     [--forged-url <url>] [--map <host:port=address:port>]... [--insecure]
 //
 // Each --join-url is a meeting link minted by Helix (`meet.mint-token`) for the
@@ -15,12 +15,9 @@
 // private certificate; a real deployment needs neither. Requires Playwright's
 // Chromium (`pnpm --filter @helix/web exec playwright install chromium`).
 
-import { createRequire } from "node:module";
 import process from "node:process";
 import { parseArgs } from "node:util";
-
-const require = createRequire(new URL("../../apps/web/package.json", import.meta.url));
-const { chromium } = require("@playwright/test");
+import { chromium } from "@playwright/test";
 
 const { values } = parseArgs({
   options: {

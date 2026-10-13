@@ -18,7 +18,7 @@ All notable changes to Helix Workspace are documented here. This file follows
   people can join only with a pass Helix signs. Without the file nothing is deployed and the
   default packaging is unchanged; this install is outside the 1.0 release scope.
   `infra/scripts/production-boot-smoke.sh --with meet` boots it and holds a meeting between two
-  browsers, using the new `infra/scripts/meet-media-probe.mjs`.
+  browsers, using the new `apps/web/scripts/meet-media-probe.mjs`.
 - Passwords, an optional install. A bundled Vaultwarden server (compatible with the Bitwarden
   apps and browser extensions) can be installed with the workspace and is not deployed unless the
   operator opts in: `COMPOSE_PROFILES=passwords` and `HELIX_PASSWORDS_DOMAIN` for Docker Compose,

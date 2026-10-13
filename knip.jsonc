@@ -8,7 +8,6 @@
         "infra/k6/validate-quality-gates.mjs",
         "infra/meet/custom-config.js",
         "infra/scripts/*smoke.mjs",
-        "infra/scripts/meet-media-probe.mjs",
       ],
     },
     "apps/web": {

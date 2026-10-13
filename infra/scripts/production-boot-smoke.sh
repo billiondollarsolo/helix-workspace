@@ -569,7 +569,7 @@ else
     url.searchParams.set("jwt", `${header}.${payload}.${signature}`);
     process.stdout.write(url.toString());
   ' "$first_url" 2>/dev/null || true)
-  node infra/scripts/meet-media-probe.mjs --join-url "$first_url" --join-url "$second_url" \
+  node apps/web/scripts/meet-media-probe.mjs --join-url "$first_url" --join-url "$second_url" \
     --forged-url "$forged_url" --map "$MEET_DOMAIN:443=127.0.0.1:$HTTPS_PORT" --insecure \
     >"$WORK/media.log" 2>&1 || true
   grep -E '^PASS' "$WORK/media.log" || true

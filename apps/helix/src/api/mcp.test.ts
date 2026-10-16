@@ -34,6 +34,7 @@ describe("handleMcpJsonRpcRequest", () => {
       id: 1,
       result: {
         tools: [
+          { name: "platform.identity" },
           {
             name: "platform.ping",
             title: "Platform ping",

@@ -1,3 +1,4 @@
+import { createDriveFileDescriptionTool } from "./file-description-tool.js";
 import {
   serializeUpload,
   serializeVersion,
@@ -311,6 +312,7 @@ export function createDriveToolDefinitions(
     name: z.string().min(1).max(255),
   });
   return [
+    createDriveFileDescriptionTool(options.store),
     defineTool<z.output<typeof createSchema>, unknown>({
       id: "drive.create",
       description: `Create a new Drive ${allowedCreateKinds.join(", ")}.`,

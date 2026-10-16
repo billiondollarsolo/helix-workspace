@@ -307,7 +307,7 @@ describe("Assistant models, attachments and saved history", () => {
         "pending_confirmation",
       );
       const resumed = await resume();
-      expect(chat.mock.calls[1]?.[0].tools).toHaveLength(2);
+      expect(chat.mock.calls[1]?.[0].tools).toHaveLength(3);
       expect(chat.mock.calls[1]?.[0].tools).toContain("test.write");
       expect(chat.mock.calls[1]?.[0]).toMatchObject({
         model: "openai/gpt-oss-20b",

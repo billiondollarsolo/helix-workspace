@@ -23,6 +23,7 @@ export const liveEventPageSchema = z.object({
   events: z.array(liveEventSchema).max(100),
   cursor: z.number().int().nonnegative().safe(),
   latestCursor: z.number().int().nonnegative().safe(),
+  oldestCursor: z.number().int().positive().safe().optional(),
   resetRequired: z.boolean(),
   hasMore: z.boolean(),
 });

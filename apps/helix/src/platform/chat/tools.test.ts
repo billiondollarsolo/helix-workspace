@@ -55,6 +55,7 @@ describe("chat tools", () => {
         "chat.send",
         "chat.thread.list",
         "chat.unpin",
+        "platform.identity",
         "platform.ping",
       ].sort(),
     );

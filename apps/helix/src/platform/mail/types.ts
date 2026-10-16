@@ -444,7 +444,11 @@ export interface MailThreadGetRequest {
   readonly orgId: string;
   readonly actorId: string;
   readonly threadId: string;
-  readonly resourcePage?: { readonly limit: number; readonly after?: string };
+  readonly resourcePage?: {
+    readonly limit: number;
+    readonly after?: string;
+    readonly messageId?: string;
+  };
 }
 
 export interface MailThreadMessage {

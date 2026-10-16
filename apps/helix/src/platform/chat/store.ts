@@ -226,6 +226,7 @@ export interface ChatStore {
     readonly orgId: string;
     readonly actorId: string;
     readonly roomId: string;
+    readonly messageId?: string | undefined;
     readonly before?: ChatMessageCursor | undefined;
     readonly direction?: "older" | "newer" | undefined;
     readonly limit?: number | undefined;
@@ -1742,6 +1743,7 @@ export class PostgresChatStore
     readonly orgId: string;
     readonly actorId: string;
     readonly roomId: string;
+    readonly messageId?: string | undefined;
     readonly before?: ChatMessageCursor | undefined;
     readonly direction?: "older" | "newer" | undefined;
     readonly limit?: number | undefined;
@@ -1756,6 +1758,7 @@ export class PostgresChatStore
         and m.thread_id = ${input.roomId}
         and m.kind = 'chat'
         and m.deleted_at is null
+        and (${input.messageId ?? null}::uuid is null or m.id=${input.messageId ?? null}::uuid)
         and (
           ${input.before?.sentAt ?? null}::timestamptz is null
           or (

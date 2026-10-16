@@ -22,6 +22,7 @@ export interface StoreBackedMcpResourceProviderOptions {
       readonly orgId: string;
       readonly actorId: string;
       readonly roomId: string;
+      readonly messageId?: string;
       readonly limit?: number;
     }): Promise<readonly ChatMessageRecord[]>;
     getRoomForActor(input: {
@@ -55,7 +56,11 @@ export interface StoreBackedMcpResourceProviderOptions {
       readonly orgId: string;
       readonly actorId: string;
       readonly threadId: string;
-      readonly resourcePage?: { readonly limit: number; readonly after?: string };
+      readonly resourcePage?: {
+        readonly limit: number;
+        readonly after?: string;
+        readonly messageId?: string;
+      };
     }): Promise<MailThreadDetail | null>;
   };
   readonly drive?: {
@@ -131,6 +136,7 @@ export function createStoreBackedMcpResourceProvider(
           resourcePage: {
             limit: 20,
             ...(parsed.after === undefined ? {} : { after: parsed.after }),
+            ...(parsed.messageId === undefined ? {} : { messageId: parsed.messageId }),
           },
         });
         return thread === null ? null : mailThreadToContent(uri, thread);
@@ -169,7 +175,10 @@ export function createStoreBackedMcpResourceProvider(
           actorId: actor.id,
           roomId: parsed.id,
           limit: 25,
+          ...(parsed.messageId === undefined ? {} : { messageId: parsed.messageId }),
         });
+        if (parsed.messageId !== undefined && !messages.some((m) => m.id === parsed.messageId))
+          return null;
         return {
           uri,
           mimeType: "text/markdown",
@@ -198,6 +207,7 @@ type ParsedStoreResourceUri =
   | {
       readonly kind: "chat";
       readonly id: string;
+      readonly messageId?: string;
     }
   | {
       readonly kind: "calendar";
@@ -206,6 +216,7 @@ type ParsedStoreResourceUri =
   | {
       readonly kind: "mail";
       readonly id: string;
+      readonly messageId?: string;
       readonly after?: string;
     }
   | {
@@ -232,8 +243,14 @@ export function parseStoreResourceUri(uri: string): ParsedStoreResourceUri | nul
   } catch {
     return null;
   }
+  const messageId = parsed.searchParams.get("messageId");
+  if (
+    messageId !== null &&
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(messageId)
+  )
+    return null;
   if (parsed.hostname === "chat" && resourceType === "room") {
-    return { kind: "chat", id };
+    return { kind: "chat", id, ...(messageId === null ? {} : { messageId }) };
   }
   if (parsed.hostname === "calendar" && resourceType === "event") {
     return { kind: "calendar", id };
@@ -245,7 +262,12 @@ export function parseStoreResourceUri(uri: string): ParsedStoreResourceUri | nul
       !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(after)
     )
       return null;
-    return { kind: "mail", id, ...(after === null ? {} : { after }) };
+    return {
+      kind: "mail",
+      id,
+      ...(after === null ? {} : { after }),
+      ...(messageId === null ? {} : { messageId }),
+    };
   }
   if (parsed.hostname === "drive" && resourceType === "file") {
     return { kind: "drive", id };

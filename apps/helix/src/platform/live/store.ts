@@ -7,7 +7,7 @@ import type {
 } from "@helix/contracts";
 import type postgres from "postgres";
 import { actorHasScope } from "../../api/scopes.js";
-import { BadRequestError, RateLimitedError } from "../../api/api-error.js";
+import { BadRequestError, NotFoundError, RateLimitedError } from "../../api/api-error.js";
 import { withTenantPostgresContext } from "../tenancy/postgres-roles.js";
 
 export class LiveStore {
@@ -28,6 +28,7 @@ export class LiveStore {
           events: [],
           cursor: latestCursor,
           latestCursor,
+          oldestCursor: floor,
           hasMore: false,
           resetRequired: true,
         };
@@ -73,7 +74,55 @@ export class LiveStore {
           createdAt: r.created_at.toISOString(),
         }));
       const cursor = Number(rows.at(-1)?.sequence ?? after);
-      return { events, cursor, latestCursor, hasMore: cursor < latestCursor, resetRequired: false };
+      return {
+        events,
+        cursor,
+        latestCursor,
+        oldestCursor: floor,
+        hasMore: cursor < latestCursor,
+        resetRequired: false,
+      };
+    });
+  }
+  async resolve(actor: Actor, eventId: string) {
+    const prefix = `${actor.id}:`;
+    const sequence = eventId.startsWith(prefix) ? Number(eventId.slice(prefix.length)) : NaN;
+    if (!Number.isSafeInteger(sequence) || sequence < 1)
+      throw new NotFoundError("Event unavailable.");
+    const page = await this.list(actor, sequence - 1, 1);
+    const event = page.events.find((entry) => entry.id === eventId);
+    if (!event) throw new NotFoundError("Event unavailable.");
+    if (!event.type.startsWith("chat.") && event.type !== "mail.received")
+      return { event, source: null };
+    return this.scoped(actor, async (tx) => {
+      const [message] = await tx<
+        {
+          actor_id: string | null;
+          sender_type: string | null;
+          thread_id: string;
+          parent_message_id: string | null;
+          address: string | null;
+        }[]
+      >`
+        select m.actor_id,a.type as sender_type,m.thread_id,m.parent_message_id,m.metadata->'from'->>'address' as address
+        from messages m left join actors a on a.org_id=m.org_id and a.id=m.actor_id
+        where m.org_id=${actor.orgId} and m.id=${event.resourceId} and m.deleted_at is null
+          and case when m.kind='chat' then helix_chat_message_visible_to(m.org_id,${actor.id},m.thread_id,m.sent_at)
+            else helix_can_read_mail_message(m.org_id,m.id) end`;
+      if (!message) throw new NotFoundError("Event unavailable.");
+      const mail = event.type === "mail.received";
+      return {
+        event,
+        source: {
+          messageId: event.resourceId,
+          threadId: message.thread_id,
+          parentMessageId: message.parent_message_id,
+          senderActorId: message.actor_id,
+          senderType: message.sender_type ?? "external",
+          replyTo: mail ? message.address : null,
+          uri: `helix://${mail ? "mail/thread" : "chat/room"}/${message.thread_id}?messageId=${event.resourceId}`,
+        },
+      };
     });
   }
   async status(actor: Actor, ids: readonly string[]): Promise<PresenceRecord[]> {

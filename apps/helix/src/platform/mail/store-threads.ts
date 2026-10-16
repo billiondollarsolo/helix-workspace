@@ -113,7 +113,11 @@ export class MailThreadStore {
       input.resourcePage === undefined
         ? undefined
         : z
-            .object({ limit: z.number().int().min(1).max(50), after: z.string().uuid().optional() })
+            .object({
+              limit: z.number().int().min(1).max(50),
+              after: z.string().uuid().optional(),
+              messageId: z.string().uuid().optional(),
+            })
             .parse(input.resourcePage);
     const bounded = page !== undefined;
     const rows = await this.sql<MailThreadRow[]>`
@@ -170,6 +174,7 @@ export class MailThreadStore {
        and mts.org_id = ${input.orgId}
       where t.org_id = ${input.orgId}
         and t.kind = 'mail'
+        and (${page?.messageId ?? null}::uuid is null or m.id=${page?.messageId ?? null}::uuid)
         and (
           t.id = ${input.threadId}
           or exists (

@@ -1,3 +1,5 @@
+import { PostgresChatStore } from "../chat/index.js";
+import { createStoreBackedMcpResourceProvider } from "../../api/mcp-resources.js";
 import Fastify from "fastify";
 import { LiveRoutes } from "./routes.js";
 import { randomUUID } from "node:crypto";
@@ -6,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Actor } from "@helix/sdk-types";
 import { cleanupTestTenants } from "../../test-support/cleanup-tenants.js";
 import { skipUnlessLiveDatabase } from "../../test-support/live-suite.js";
-import { tenantAwarePostgresSql } from "../tenancy/postgres-roles.js";
+import { tenantAwarePostgresSql, withTenantPostgresContext } from "../tenancy/postgres-roles.js";
 import { LiveStore } from "./store.js";
 
 describe.skipIf(skipUnlessLiveDatabase("Live inbox and presence"))(
@@ -48,6 +50,16 @@ describe.skipIf(skipUnlessLiveDatabase("Live inbox and presence"))(
         expect.objectContaining({ resourceId: id, type: "notification", cursor: 1 }),
       ]);
       expect(JSON.stringify(page)).not.toContain("Private");
+      const first = page.events[0];
+      if (!first) throw new Error("Missing event");
+      expect(await store.resolve(actor, first.id)).toEqual({
+        event: page.events[0],
+        source: null,
+      });
+      await expect(store.resolve(other, first.id)).rejects.toThrow("Event unavailable");
+      await expect(store.resolve({ ...actor, scopes: [] }, first.id)).rejects.toThrow(
+        "Event unavailable",
+      );
       expect((await store.list(other, 0)).events).toEqual([]);
       expect((await store.list({ ...actor, id: other.id }, 0)).events).toEqual([]);
       await expect(
@@ -64,6 +76,43 @@ describe.skipIf(skipUnlessLiveDatabase("Live inbox and presence"))(
         events: [],
       });
       expect(await store.list(actor, 999)).toMatchObject({ resetRequired: true, cursor: 1 });
+    });
+    it("resolves authenticated senders, reads the exact referenced message, and denies revoked room access", async () => {
+      const sender = randomUUID(),
+        room = randomUUID(),
+        message = randomUUID();
+      await admin`insert into actors(id,org_id,type,email,display_name) values(${sender},${orgId},'user',${`${sender}@example.test`},'Sender')`;
+      await admin`insert into threads(id,org_id,kind,subject,created_by_actor_id) values(${room},${orgId},'chat_room','Resolver',${sender})`;
+      await admin`insert into chat_room_settings(thread_id,org_id,name) values(${room},${orgId},'Resolver')`;
+      await admin`insert into permissions(org_id,actor_id,resource_type,resource_id,role,granted_by_actor_id) values
+        (${orgId},${sender},'thread',${room},'owner',${sender}),(${orgId},${actor.id},'thread',${room},'member',${sender})`;
+      await admin`insert into messages(id,org_id,thread_id,actor_id,kind,body,metadata) values(${message},${orgId},${room},${sender},'chat','the exact message',${admin.json({ mentions: [{ id: actor.id, displayName: "Live test" }] })})`;
+      await admin`insert into notifications(org_id,actor_id,verb,object_type,object_id,summary) values(${orgId},${actor.id},'chat.mentioned','chat.message',${message},'Mention')`;
+      const [event] = await admin<
+        { sequence: string }[]
+      >`select sequence::text from actor_events where actor_id=${actor.id} and resource_id=${message}`;
+      if (!event) throw new Error("Missing chat event");
+      const id = `${actor.id}:${event.sequence}`;
+      const resolved = await store.resolve(actor, id);
+      expect(resolved.source).toMatchObject({
+        senderActorId: sender,
+        senderType: "user",
+        messageId: message,
+        threadId: room,
+      });
+      if (!resolved.source) throw new Error("Missing source");
+      const resources = createStoreBackedMcpResourceProvider({ chat: new PostgresChatStore(app) });
+      const read = (uri: string) =>
+        withTenantPostgresContext(app, { orgId, actorId: actor.id }, () =>
+          resources.read(actor, uri),
+        );
+      const content = await read(resolved.source.uri);
+      expect(content?.text).toContain("the exact message");
+      await expect(read(`helix://chat/room/${room}?messageId=${randomUUID()}`)).resolves.toBeNull();
+      await expect(store.resolve(other, id)).rejects.toThrow("Event unavailable");
+      await admin`delete from permissions where org_id=${orgId} and actor_id=${actor.id} and resource_id=${room}`;
+      await expect(store.resolve(actor, id)).rejects.toThrow("Event unavailable");
+      await expect(read(resolved.source.uri)).resolves.toBeNull();
     });
     it("aggregates multiple leases, keeps chosen status and expires both leases and statuses", async () => {
       const one = randomUUID(),
@@ -303,7 +352,16 @@ describe.skipIf(skipUnlessLiveDatabase("Live inbox and presence"))(
         await reader.read();
         allowed = false;
         await notification();
-        expect((await reader.read()).done).toBe(true);
+        let ended = false;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const next = await reader.read();
+          if (next.done) {
+            ended = true;
+            break;
+          }
+          expect(new TextDecoder().decode(next.value).trim()).toMatch(/^:/u);
+        }
+        expect(ended).toBe(true);
       } finally {
         await reader.cancel().catch(() => undefined);
         await server.close();

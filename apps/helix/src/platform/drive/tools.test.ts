@@ -49,6 +49,7 @@ describe("drive tools", () => {
         "drive.create",
         "drive.delete",
         "drive.finalize",
+        "drive.file.describe",
         "drive.folder.move",
         "drive.lifecycle.get",
         "drive.lifecycle.set",

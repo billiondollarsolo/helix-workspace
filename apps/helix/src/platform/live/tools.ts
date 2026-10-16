@@ -16,6 +16,33 @@ const schema = <T extends z.ZodTypeAny>(value: T) => zodToolSchema(value, shape)
 export function registerLiveTools(tools: RuntimeToolRegistry, store: LiveStore) {
   tools.register(
     defineTool({
+      id: "events.resolve",
+      description:
+        "Resolve one currently authorized inbox event to its authoritative sender and reply target. Content must be read separately through the permission-checked resource URI.",
+      permission: "notifications.read",
+      sideEffects: "read",
+      inputSchema: schema(z.object({ id: z.string().min(1).max(160) }).strict()),
+      outputSchema: schema(
+        z.object({
+          event: liveEventPageSchema.shape.events.element,
+          source: z
+            .object({
+              messageId: z.string().uuid(),
+              threadId: z.string().uuid(),
+              parentMessageId: z.string().uuid().nullable(),
+              senderActorId: z.string().uuid().nullable(),
+              senderType: z.string(),
+              replyTo: z.string().nullable(),
+              uri: z.string(),
+            })
+            .nullable(),
+        }),
+      ),
+      handler: (input, ctx) => store.resolve(ctx.actor, input.id),
+    }),
+  );
+  tools.register(
+    defineTool({
       id: "events.list",
       description:
         "Read private event references after a durable cursor. Does not mark messages read or approve actions. A reset requires resynchronization.",

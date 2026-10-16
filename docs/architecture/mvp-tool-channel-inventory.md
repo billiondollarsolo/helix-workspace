@@ -95,50 +95,51 @@ Channels that project the same registry (REST / MCP / tRPC / assistant / CLI) mu
 
 ## drive.\*
 
-| Tool id                       | Permission     | sideEffects | Tool `confirmationRequired` | Agent confirmation expectation                          |
-| ----------------------------- | -------------- | ----------- | --------------------------- | ------------------------------------------------------- |
-| `drive.access.list`           | `drive.read`   | read        | unset                       | allow-read                                              |
-| `drive.access.remove`         | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
-| `drive.access.update`         | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
-| `drive.comment.create`        | `drive.read`   | write       | unset                       | **queue-confirmation**                                  |
-| `drive.comment.delete`        | `drive.read`   | write       | true                        | **queue-confirmation**                                  |
-| `drive.comment.evidence.list` | `drive.read`   | read        | unset                       | allow-read                                              |
-| `drive.comment.list`          | `drive.read`   | read        | unset                       | allow-read                                              |
-| `drive.comment.reopen`        | `drive.read`   | write       | unset                       | **queue-confirmation**                                  |
-| `drive.comment.resolve`       | `drive.read`   | write       | unset                       | **queue-confirmation**                                  |
-| `drive.comment.update`        | `drive.read`   | write       | unset                       | **queue-confirmation**                                  |
-| `drive.create`                | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
-| `drive.delete`                | `drive.delete` | destructive | true                        | **queue-confirmation**                                  |
-| `drive.finalize`              | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
-| `drive.folder.move`           | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
-| `drive.lifecycle.get`         | `admin.drive`  | read        | unset                       | allow-read                                              |
-| `drive.lifecycle.set`         | `admin.drive`  | write       | true                        | **queue-confirmation**                                  |
-| `drive.link.create`           | `drive.write`  | write       | true                        | **queue-confirmation**                                  |
-| `drive.link.list`             | `drive.read`   | read        | unset                       | allow-read                                              |
-| `drive.link.revoke`           | `drive.write`  | write       | true                        | **queue-confirmation**                                  |
-| `drive.list`                  | `drive.read`   | read        | unset                       | allow-read (clean-read metadata only; no raw blob tool) |
-| `drive.move`                  | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
-| `drive.quota.usage`           | `admin.drive`  | read        | unset                       | allow-read                                              |
-| `drive.rename`                | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
-| `drive.restore`               | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
-| `drive.s3-keys.create`        | `drive.write`  | write       | true                        | **queue-confirmation**                                  |
-| `drive.s3-keys.list`          | `drive.read`   | read        | unset                       | allow-read                                              |
-| `drive.s3-keys.revoke`        | `drive.write`  | destructive | true                        | **queue-confirmation**                                  |
-| `drive.search`                | `drive.read`   | read        | unset                       | allow-read                                              |
-| `drive.share`                 | `drive.write`  | write       | true                        | **queue-confirmation**                                  |
-| `drive.star.set`              | `drive.read`   | write       | unset                       | **queue-confirmation**                                  |
-| `drive.storage.usage`         | `drive.read`   | read        | unset                       | allow-read                                              |
-| `drive.trash`                 | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
-| `drive.upload`                | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
-| `drive.upload.complete`       | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
-| `drive.upload.status`         | `drive.read`   | read        | unset                       | allow-read                                              |
-| `drive.versions.list`         | `drive.read`   | read        | unset                       | allow-read                                              |
-| `drive.versions.revert`       | `drive.write`  | write       | true                        | **queue-confirmation**                                  |
-| `drive.view.get`              | `drive.read`   | read        | unset                       | allow-read                                              |
-| `drive.view.set`              | `drive.read`   | write       | unset                       | **queue-confirmation**                                  |
-| `drive.workflow.create`       | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
-| `drive.workflow.list`         | `drive.read`   | read        | unset                       | allow-read                                              |
-| `drive.workflow.transition`   | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
+| Tool id                       | Permission     | sideEffects | Tool `confirmationRequired`                                             | Agent confirmation expectation                          |
+| ----------------------------- | -------------- | ----------- | ----------------------------------------------------------------------- | ------------------------------------------------------- |
+| `drive.access.list`           | `drive.read`   | read        | unset                                                                   | allow-read                                              |
+| `drive.access.remove`         | `drive.write`  | write       | unset                                                                   | **queue-confirmation**                                  |
+| `drive.access.update`         | `drive.write`  | write       | unset                                                                   | **queue-confirmation**                                  |
+| `drive.comment.create`        | `drive.read`   | write       | unset                                                                   | **queue-confirmation**                                  |
+| `drive.comment.delete`        | `drive.read`   | write       | true                                                                    | **queue-confirmation**                                  |
+| `drive.comment.evidence.list` | `drive.read`   | read        | unset                                                                   | allow-read                                              |
+| `drive.comment.list`          | `drive.read`   | read        | unset                                                                   | allow-read                                              |
+| `drive.comment.reopen`        | `drive.read`   | write       | unset                                                                   | **queue-confirmation**                                  |
+| `drive.comment.resolve`       | `drive.read`   | write       | unset                                                                   | **queue-confirmation**                                  |
+| `drive.comment.update`        | `drive.read`   | write       | unset                                                                   | **queue-confirmation**                                  |
+| `drive.create`                | `drive.write`  | write       | unset                                                                   | **queue-confirmation**                                  |
+| `drive.delete`                | `drive.delete` | destructive | true                                                                    | **queue-confirmation**                                  |
+| `drive.file.describe`         | `drive.read`   | read        | Scanned, permission-checked file metadata; authenticated byte retrieval |
+| `drive.finalize`              | `drive.write`  | write       | unset                                                                   | **queue-confirmation**                                  |
+| `drive.folder.move`           | `drive.write`  | write       | unset                                                                   | **queue-confirmation**                                  |
+| `drive.lifecycle.get`         | `admin.drive`  | read        | unset                                                                   | allow-read                                              |
+| `drive.lifecycle.set`         | `admin.drive`  | write       | true                                                                    | **queue-confirmation**                                  |
+| `drive.link.create`           | `drive.write`  | write       | true                                                                    | **queue-confirmation**                                  |
+| `drive.link.list`             | `drive.read`   | read        | unset                                                                   | allow-read                                              |
+| `drive.link.revoke`           | `drive.write`  | write       | true                                                                    | **queue-confirmation**                                  |
+| `drive.list`                  | `drive.read`   | read        | unset                                                                   | allow-read (clean-read metadata only; no raw blob tool) |
+| `drive.move`                  | `drive.write`  | write       | unset                                                                   | **queue-confirmation**                                  |
+| `drive.quota.usage`           | `admin.drive`  | read        | unset                                                                   | allow-read                                              |
+| `drive.rename`                | `drive.write`  | write       | unset                                                                   | **queue-confirmation**                                  |
+| `drive.restore`               | `drive.write`  | write       | unset                                                                   | **queue-confirmation**                                  |
+| `drive.s3-keys.create`        | `drive.write`  | write       | true                                                                    | **queue-confirmation**                                  |
+| `drive.s3-keys.list`          | `drive.read`   | read        | unset                                                                   | allow-read                                              |
+| `drive.s3-keys.revoke`        | `drive.write`  | destructive | true                                                                    | **queue-confirmation**                                  |
+| `drive.search`                | `drive.read`   | read        | unset                                                                   | allow-read                                              |
+| `drive.share`                 | `drive.write`  | write       | true                                                                    | **queue-confirmation**                                  |
+| `drive.star.set`              | `drive.read`   | write       | unset                                                                   | **queue-confirmation**                                  |
+| `drive.storage.usage`         | `drive.read`   | read        | unset                                                                   | allow-read                                              |
+| `drive.trash`                 | `drive.write`  | write       | unset                                                                   | **queue-confirmation**                                  |
+| `drive.upload`                | `drive.write`  | write       | unset                                                                   | **queue-confirmation**                                  |
+| `drive.upload.complete`       | `drive.write`  | write       | unset                                                                   | **queue-confirmation**                                  |
+| `drive.upload.status`         | `drive.read`   | read        | unset                                                                   | allow-read                                              |
+| `drive.versions.list`         | `drive.read`   | read        | unset                                                                   | allow-read                                              |
+| `drive.versions.revert`       | `drive.write`  | write       | true                                                                    | **queue-confirmation**                                  |
+| `drive.view.get`              | `drive.read`   | read        | unset                                                                   | allow-read                                              |
+| `drive.view.set`              | `drive.read`   | write       | unset                                                                   | **queue-confirmation**                                  |
+| `drive.workflow.create`       | `drive.write`  | write       | unset                                                                   | **queue-confirmation**                                  |
+| `drive.workflow.list`         | `drive.read`   | read        | unset                                                                   | allow-read                                              |
+| `drive.workflow.transition`   | `drive.write`  | write       | unset                                                                   | **queue-confirmation**                                  |
 
 Agent clean-read note: the Drive tool surface deliberately omits raw content/download tools; availability is metadata (`available` / upload state) rather than silent byte delivery of non-clean objects.
 

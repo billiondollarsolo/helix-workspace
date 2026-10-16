@@ -1038,6 +1038,25 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
     handler: async () => ({ ok: true, id: nanoid(), service: "helix-app" }),
   });
 
+  registry.register({
+    id: "platform.identity",
+    description:
+      "Return the authenticated identity and scopes for this credential. Names and network location do not establish identity.",
+    permission: "platform.read",
+    sideEffects: "read",
+    inputSchema: {
+      parse: () => ({}),
+      toJsonSchema: () => ({ type: "object", additionalProperties: false }),
+    },
+    outputSchema: { parse: (value) => value, toJsonSchema: () => ({ type: "object" }) },
+    handler: async (_input, context) => ({
+      actorId: context.actor.id,
+      organizationId: context.actor.orgId,
+      type: context.actor.type,
+      scopes: context.actor.scopes ?? [],
+    }),
+  });
+
   return registry;
 
   async function completeInvocation<Output>(

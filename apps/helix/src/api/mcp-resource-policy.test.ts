@@ -70,7 +70,11 @@ describe("MCP resource policy", () => {
       verb: "tool.invocation.denied",
       metadata: { toolId: "mail.resource.read", credentialId: "credential", requestChannel: "mcp" },
     });
-    expect(tools.list().map((tool) => tool.id)).toEqual([readTool.id, "platform.ping"]);
+    expect(tools.list().map((tool) => tool.id)).toEqual([
+      readTool.id,
+      "platform.identity",
+      "platform.ping",
+    ]);
   });
 
   it("counts a successful resource once and blocks a later tool call", async () => {

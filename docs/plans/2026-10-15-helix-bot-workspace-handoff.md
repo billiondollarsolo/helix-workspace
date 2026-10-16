@@ -671,3 +671,38 @@ part of the implementation work, not ignored by the integrating Bot agent.
 This update did not run live Bot enrollment, database isolation qualification,
 Playwright or new browser accessibility checks, and did not deploy. Use the
 acceptance tasks above to qualify the integration before enabling it.
+
+## App-family contract update — 2026-10-16
+
+Bot and Workspace remain independently deployable applications within one organization.
+Network proximity does not establish trust. Each installation/account uses the same
+credential, actor and resource-grant checks on one host, a container network or a remote
+endpoint. Outside-organization connections remain a separate future relationship.
+
+Workspace now supplies four additions for Bot and other first-party clients:
+
+- `platform.identity` returns the authenticated actor, organization, principal type and
+  credential scopes. Verify issued identity before starting background processing.
+- `events.resolve({id})` resolves only that actor's currently readable retained event to
+  authoritative sender metadata, source message and reply target. It does not return the
+  message body. Exact-message URIs (`?messageId=<uuid>`) read through existing resource
+  permission and DLP checks; guessed, deleted, quarantined or revoked sources remain denied.
+- `events.list` includes optional `oldestCursor`. A client detecting a retention gap can
+  resume at `oldestCursor - 1`, deduplicate its existing receipts and audit the gap. This
+  does not recover content beyond retention.
+- `drive.file.describe` returns readable scanned file metadata, current version/ETag and
+  the fixed authenticated content path. The content endpoint checks access, export policy,
+  DLP and conditional reads again. It returns no signed download capability.
+
+Bot implements opt-in expiring background reply grants, durable inbox and write receipts,
+separate room/thread histories, approval refresh and explicit presence. Its interactive
+file adapter performs signed byte PUTs and finalization internally. Neither setup nor
+being on the same machine grants background authority automatically.
+
+Local cross-app qualification exercised the real Workspace API and SSE with Bot's real
+queue and a deterministic model: one correctly routed reply after human logout, scanned
+32-byte and 9-MiB uploads, authenticated file retrieval/hash checks and trash. Test
+credentials were revoked, synthetic identities disabled, and private test rooms archived.
+External-mail arrival, paid-model behavior and actual remote/container/cluster deployment
+remain unqualified. Bot's transfer adapter reports pending file phases but does not yet
+resume those phases automatically after a Workspace review.

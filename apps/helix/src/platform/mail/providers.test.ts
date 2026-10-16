@@ -123,6 +123,40 @@ describe("PostmarkMailProvider", () => {
 });
 
 describe("SES and SMTP relay providers", () => {
+  it.each(["ses", "mail-manager", "smtp"])(
+    "preserves a threading anchor only for Message-ID rewriting services (%s)",
+    async (kind) => {
+      const transport = fakeTransport("provider-delivery-id");
+      const provider =
+        kind === "ses"
+          ? new SesMailProvider(
+              { name: "ses", region: "us-east-2", host: "email-smtp.us-east-2.amazonaws.com" },
+              transport as never,
+            )
+          : new SmtpRelayMailProvider(
+              {
+                name: kind,
+                host:
+                  kind === "mail-manager"
+                    ? "ingress.fips.region.mail-manager-smtp.amazonaws.com"
+                    : "relay.example.test",
+              },
+              transport as never,
+            );
+      await new ProviderMailTransport(provider).send(
+        { ...envelope, messageId: "<local@helix.test>", references: ["<parent@example.test>"] },
+        { idempotencyKey: "handoff-test" },
+      );
+      expect(transport.sendMail.mock.calls[0]?.[0]).toMatchObject({
+        headers: {
+          "Message-ID": "<local@helix.test>",
+          References:
+            kind === "smtp" ? "<parent@example.test>" : "<parent@example.test> <local@helix.test>",
+        },
+      });
+    },
+  );
+
   it("delivers SES mail through its SMTP transport", async () => {
     const transport = fakeTransport("ses-1");
     const provider = new SesMailProvider(

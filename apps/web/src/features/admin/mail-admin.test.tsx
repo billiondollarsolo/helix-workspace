@@ -30,7 +30,15 @@ const providersPayload = {
       kind: "ses",
       isDefault: true,
       enabled: true,
-      config: { apiKeyRef: "env:SES_KEY", region: "us-east-1" },
+      config: {
+        host: "email-smtp.us-east-1.amazonaws.com",
+        region: "us-east-1",
+        port: 2465,
+        secure: true,
+        user: "smtp-user",
+      },
+      secretRef: "ses-password",
+      orgId: "00000000-0000-4000-8000-000000000001",
     },
     {
       id: "p-mg",
@@ -38,7 +46,8 @@ const providersPayload = {
       kind: "mailgun",
       isDefault: false,
       enabled: true,
-      config: { apiKeyRef: "env:MG_KEY", domain: "mg.helix.io" },
+      config: { domain: "mg.helix.io", baseUrl: "https://api.eu.mailgun.net" },
+      secretRef: "mailgun-key",
     },
   ],
 };
@@ -205,14 +214,33 @@ function requestUrlOf(input: unknown): string {
   return "";
 }
 
+function requestJsonBody(init: RequestInit | undefined): Record<string, unknown> {
+  if (typeof init?.body !== "string") throw new Error("Expected a JSON request body");
+  return JSON.parse(init.body) as Record<string, unknown>;
+}
+
 /** Route fetch mock by URL substring. */
 function routedFetch(): ReturnType<typeof vi.fn<typeof fetch>> {
-  return vi.fn<typeof fetch>((input) => {
+  return vi.fn<typeof fetch>((input, init) => {
     const url = requestUrlOf(input);
     if (url.includes("/api/auth/csrf-token")) {
       return Promise.resolve(jsonResponse({ csrfToken: "test-csrf-token" }));
     }
     if (url.includes("/api/admin/mail/providers")) {
+      if (init?.method === "POST" || init?.method === "PATCH") {
+        const inputBody = requestJsonBody(init);
+        const existing = providersPayload.providers.find((provider) => url.endsWith(provider.id));
+        return Promise.resolve(
+          jsonResponse({
+            id: "new-provider",
+            kind: "ses",
+            enabled: true,
+            isDefault: false,
+            ...existing,
+            ...inputBody,
+          }),
+        );
+      }
       return Promise.resolve(jsonResponse(providersPayload));
     }
     if (url.includes("/api/admin/tenant-config")) {
@@ -286,7 +314,7 @@ describe("MailAdminSection", () => {
   }
 
   function clickButton(label: string): Promise<void> {
-    const button = [...container.querySelectorAll("button")].find(
+    const button = [...document.body.querySelectorAll("button")].find(
       (element) => element.textContent?.trim() === label,
     );
     if (!button) {
@@ -346,7 +374,7 @@ describe("MailAdminSection", () => {
 
     await render(createElement(MailAdminSection));
 
-    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe(
+    expect(document.body.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe(
       "General",
     );
     await waitFor(() => {
@@ -386,7 +414,7 @@ describe("MailAdminSection", () => {
 
     await clickButton("Add provider");
 
-    const nameInput = container.querySelector<HTMLInputElement>(
+    const nameInput = document.body.querySelector<HTMLInputElement>(
       'input[aria-label="Provider name"]',
     );
     if (!nameInput) {
@@ -394,10 +422,18 @@ describe("MailAdminSection", () => {
     }
     await act(() => {
       setInputValue(nameInput, "New SES");
+      setInputValue(
+        document.body.querySelector<HTMLInputElement>('input[aria-label="SMTP host"]')!,
+        "email-smtp.us-east-2.amazonaws.com",
+      );
+      setInputValue(
+        document.body.querySelector<HTMLInputElement>('input[aria-label="Region"]')!,
+        "us-east-2",
+      );
       return Promise.resolve();
     });
 
-    const submit = [...container.querySelectorAll("button")].find(
+    const submit = [...document.body.querySelectorAll("button")].find(
       (element) => element.textContent?.trim() === "Add provider" && element.type === "submit",
     );
     await act(() => {
@@ -411,8 +447,111 @@ describe("MailAdminSection", () => {
           requestUrlOf(call[0]).includes("/api/admin/mail/providers") && call[1]?.method === "POST",
       );
       expect(post).toBeDefined();
+      expect(requestJsonBody(post?.[1])).toMatchObject({
+        name: "New SES",
+        kind: "ses",
+        config: { host: "email-smtp.us-east-2.amazonaws.com", region: "us-east-2", secure: false },
+        secretRef: null,
+      });
+    });
+    await waitFor(() =>
+      expect(document.body.querySelector('input[aria-label="Provider name"]')).toBeNull(),
+    );
+  });
+
+  it.each([
+    ["resend", "smtp.resend.com", "resend"],
+    ["sendgrid", "smtp.sendgrid.net", "apikey"],
+  ])("creates the %s SMTP preset with STARTTLS", async (preset, host, user) => {
+    const fetchMock = routedFetch();
+    vi.stubGlobal("fetch", fetchMock);
+    routerMocks.search = { tab: "providers" };
+    await render(createElement(MailAdminSection));
+    await waitFor(() => expect(container.textContent).toContain("Primary SES"));
+    await clickButton("Add provider");
+    act(() => {
+      const kind = document.body.querySelector<HTMLSelectElement>(
+        'select[aria-label="Provider kind"]',
+      );
+      if (!kind) throw new Error("Kind field missing");
+      kind.value = preset;
+      kind.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    act(() => {
+      const name = document.body.querySelector<HTMLInputElement>(
+        'input[aria-label="Provider name"]',
+      );
+      if (!name) throw new Error("Name missing");
+      setInputValue(name, preset);
+    });
+    act(() => {
+      document.body
+        .querySelector<HTMLFormElement>('[role="dialog"] form')
+        ?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find((call) => call[1]?.method === "POST");
+      expect(requestJsonBody(post?.[1])).toMatchObject({
+        name: preset,
+        kind: "smtp",
+        config: { host, user, port: 587, secure: false },
+      });
     });
   });
+
+  it.each(["Primary SES", "Backup Mailgun"])(
+    "edits %s without dropping SMTP security, secret handles or regional API endpoints",
+    async (name) => {
+      const fetchMock = routedFetch();
+      vi.stubGlobal("fetch", fetchMock);
+      routerMocks.search = { tab: "providers" };
+      await render(createElement(MailAdminSection));
+      await waitFor(() => expect(container.textContent).toContain(name));
+      const edit = document.body.querySelector<HTMLButtonElement>(
+        `button[aria-label="Edit ${name}"]`,
+      );
+      if (!edit) throw new Error("Provider edit action is missing");
+      await act(() => {
+        edit.click();
+        return Promise.resolve();
+      });
+      if (name === "Primary SES") {
+        const topic = document.body.querySelector<HTMLInputElement>(
+          'input[aria-label="SES feedback topic ARN"]',
+        );
+        if (!topic) throw new Error("SES topic field is missing");
+        await act(() => {
+          setInputValue(topic, "arn:aws:sns:us-east-1:123456789012:helix-feedback");
+          return Promise.resolve();
+        });
+      }
+      await clickButton("Save provider");
+      await waitFor(() =>
+        expect(fetchMock.mock.calls.some((call) => call[1]?.method === "PATCH")).toBe(true),
+      );
+      const patch = fetchMock.mock.calls.find((call) => call[1]?.method === "PATCH");
+      const body = requestJsonBody(patch?.[1]);
+      if (name === "Primary SES")
+        expect(body).toMatchObject({
+          secretRef: "ses-password",
+          config: {
+            host: "email-smtp.us-east-1.amazonaws.com",
+            port: 2465,
+            secure: true,
+            user: "smtp-user",
+            feedbackTopicArn: "arn:aws:sns:us-east-1:123456789012:helix-feedback",
+          },
+        });
+      else
+        expect(body).toMatchObject({
+          secretRef: "mailgun-key",
+          config: { domain: "mg.helix.io", baseUrl: "https://api.eu.mailgun.net" },
+        });
+      await waitFor(() =>
+        expect(document.body.querySelector('input[aria-label="Provider name"]')).toBeNull(),
+      );
+    },
+  );
 
   it("navigates to mail domains and shows active DKIM keys", async () => {
     vi.stubGlobal("fetch", routedFetch());
@@ -438,7 +577,7 @@ describe("MailAdminSection", () => {
       expect(container.textContent).toContain("mail.helix.io");
     });
 
-    const generate = container.querySelector<HTMLButtonElement>(
+    const generate = document.body.querySelector<HTMLButtonElement>(
       '[aria-label="Generate DKIM key for mail.helix.io"]',
     );
     await act(() => {
@@ -481,9 +620,9 @@ describe("MailAdminSection", () => {
       ),
     ).toBe(true);
     await clickButton("Add rule");
-    expect(container.querySelector('[aria-label="Sender pattern"]')).not.toBeNull();
-    expect(container.querySelector('[aria-label="Subject contains"]')).not.toBeNull();
-    expect(container.querySelector('[aria-label="Header name"]')).not.toBeNull();
+    expect(document.body.querySelector('[aria-label="Sender pattern"]')).not.toBeNull();
+    expect(document.body.querySelector('[aria-label="Subject contains"]')).not.toBeNull();
+    expect(document.body.querySelector('[aria-label="Header name"]')).not.toBeNull();
     expect(container.textContent).toContain("Stop processing later rules");
   });
 
@@ -496,9 +635,9 @@ describe("MailAdminSection", () => {
     expect(container.textContent).not.toContain("00000000-0000-4000-8000-0000000000aa");
 
     await clickButton("Add rule");
-    expect(container.querySelector('[aria-label="Destination"]')).not.toBeNull();
-    expect(container.querySelector('[role="combobox"]')).toBeNull();
-    const action = container.querySelector<HTMLSelectElement>('[aria-label="Routing action"]');
+    expect(document.body.querySelector('[aria-label="Destination"]')).not.toBeNull();
+    expect(document.body.querySelector('[role="combobox"]')).toBeNull();
+    const action = document.body.querySelector<HTMLSelectElement>('[aria-label="Routing action"]');
     if (action === null) throw new Error("No routing action field");
     await act(async () => {
       Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value")?.set?.call(
@@ -510,8 +649,8 @@ describe("MailAdminSection", () => {
     });
 
     expect(action.selectedOptions[0]?.textContent).toBe("Deliver to a person");
-    expect(container.querySelector('[role="combobox"]')).not.toBeNull();
-    expect(container.querySelector('[aria-label="Destination"]')).toBeNull();
+    expect(document.body.querySelector('[role="combobox"]')).not.toBeNull();
+    expect(document.body.querySelector('[aria-label="Destination"]')).toBeNull();
     expect(container.textContent).toContain("Deliver to");
   });
 

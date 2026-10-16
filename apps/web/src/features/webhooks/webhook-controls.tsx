@@ -1,3 +1,4 @@
+import { Button } from "@/components/ui/button";
 import { Save, X } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import type { WebhookDeliveryStatus } from "./types";
@@ -86,9 +87,9 @@ export function EditorTitle({
         {prefix}
         {title}
       </h2>
-      <button className="icon-button" onClick={onCancel} title="Close editor" type="button">
+      <Button variant="ghost" size="icon-sm" onClick={onCancel} title="Close editor" type="button">
         <X aria-hidden="true" size={16} />
-      </button>
+      </Button>
     </div>
   );
 }
@@ -112,6 +113,7 @@ export function TextField({
     <label className="webhooks-field">
       <span>{label}</span>
       <input
+        className="input"
         pattern={pattern}
         required={required}
         type={type}
@@ -136,7 +138,12 @@ export function TextareaField({
   return (
     <label className="webhooks-field">
       <span>{label}</span>
-      <textarea rows={rows} value={value} onChange={(event) => onChange(event.target.value)} />
+      <textarea
+        className="input"
+        rows={rows}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      />
     </label>
   );
 }
@@ -155,7 +162,11 @@ export function SelectField<T extends string>({
   return (
     <label className="webhooks-field">
       <span>{label}</span>
-      <select value={value} onChange={(event) => onChange(event.target.value as T)}>
+      <select
+        className="select"
+        value={value}
+        onChange={(event) => onChange(event.target.value as T)}
+      >
         {values.map((item) => (
           <option key={item} value={item}>
             {item}
@@ -181,23 +192,23 @@ export function FormActions({
 }) {
   return (
     <div className="webhooks-form-actions">
-      <button className="helix-button helix-button-secondary" onClick={onCancel} type="button">
+      <Button variant="outline" size="sm" onClick={onCancel} type="button">
         Cancel
-      </button>
+      </Button>
       {onBack !== undefined ? (
-        <button className="helix-button helix-button-secondary" onClick={onBack} type="button">
+        <Button variant="outline" size="sm" onClick={onBack} type="button">
           Back
-        </button>
+        </Button>
       ) : null}
       {isLastStep ? (
-        <button className="helix-button" disabled={isSaving} type="submit">
+        <Button size="sm" disabled={isSaving} type="submit">
           <Save aria-hidden="true" size={16} />
           Save
-        </button>
+        </Button>
       ) : (
-        <button className="helix-button" onClick={onNext} type="button">
+        <Button size="sm" onClick={onNext} type="button">
           Continue
-        </button>
+        </Button>
       )}
     </div>
   );
@@ -280,16 +291,6 @@ export function FormError({ message }: { readonly message: string }) {
 
 export function RowActions({ children }: { readonly children: ReactNode }) {
   return <div className="webhooks-row-actions">{children}</div>;
-}
-
-export function EmptyRow({ colSpan, text }: { readonly colSpan: number; readonly text: string }) {
-  return (
-    <tr>
-      <td className="webhooks-empty-cell" colSpan={colSpan}>
-        {text}
-      </td>
-    </tr>
-  );
 }
 
 export function StatusPill({ enabled }: { readonly enabled: boolean }) {

@@ -67,9 +67,10 @@ test("admin profile dialog is accessible on mobile and restores keyboard focus",
   const dialog = page.getByRole("dialog", { name: "Edit profile for Morgan Lee", exact: true });
   const displayName = dialog.getByLabel("Display name", { exact: true });
   await expect(displayName).toHaveValue("Morgan Lee");
+  await expect(dialog).not.toHaveAttribute("aria-modal", "true");
   await displayName.focus();
   await page.keyboard.press("Shift+Tab");
-  await expect(dialog.getByRole("button", { name: "Cancel", exact: true })).toBeFocused();
+  await expect(dialog.getByRole("button", { name: "Close", exact: true })).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(displayName).toBeFocused();
   await page.addScriptTag({ content: axe.source });

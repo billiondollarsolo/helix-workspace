@@ -72,7 +72,7 @@ export function ProfileMenu({ openSettings }: ProfileMenuProps) {
               openSettings("profile");
             }}
           >
-            Manage your account
+            Manage your account and status
           </button>
           {isAdmin ? (
             <Link

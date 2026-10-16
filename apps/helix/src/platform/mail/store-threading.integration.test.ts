@@ -6,6 +6,7 @@ import { skipUnlessLiveDatabase } from "../../test-support/live-suite.js";
 import { tenantAwarePostgresSql, withTenantPostgresContext } from "../tenancy/postgres-roles.js";
 import { MailThreadNotFoundError } from "./errors.js";
 import { PostgresMailStore } from "./store.js";
+import { outboundThreadReferences } from "./threading.js";
 import type { MailMessageInput } from "./types.js";
 
 const adminUrl = process.env.HELIX_MIGRATION_DATABASE_URL;
@@ -142,5 +143,53 @@ describe.skipIf(skip)("Mail threading through the public store facade", () => {
     const rows =
       await admin`select id from messages where thread_id in (${chatThread}, ${foreignThread})`;
     expect(rows).toEqual([]);
+  });
+
+  it("finds a persisted parent when a reply inherits references after an SES rewrite", async () => {
+    const messageId = "<local-ses-anchor@example.test>";
+    const parent = await receive({ messageId });
+    const references = outboundThreadReferences({ messageId }, true);
+    const providerMessageId = "<ses-delivered-id@us-east-2.amazonses.com>";
+    const reply = await receive({
+      messageId: "<gmail-reply@example.test>",
+      inReplyTo: providerMessageId,
+      references: [...(references ?? []), providerMessageId],
+    });
+    expect(reply.threadId).toBe(parent.threadId);
+    const thread = await withTenantPostgresContext(app, { orgId, actorId: alice }, () =>
+      store.getThread({ orgId, actorId: alice, threadId: parent.threadId }),
+    );
+    expect(thread?.messages.map((message) => message.id)).toEqual([
+      parent.messageId,
+      reply.messageId,
+    ]);
+  });
+
+  it("resolves a repaired link only when both mailboxes belong to the caller's tenant and actor", async () => {
+    const destination = await receive({ messageId: "<repair-destination@example.test>" });
+    const source = randomUUID();
+    const foreignSource = randomUUID();
+    await admin`insert into threads (id, org_id, kind, metadata) values
+      (${source}, ${orgId}, 'mail', ${admin.json({ mergedIntoThreadId: destination.threadId })}),
+      (${foreignSource}, ${otherOrgId}, 'mail', ${admin.json({ mergedIntoThreadId: destination.threadId })})`;
+    // Maintenance keeps the original mailbox state so bookmarks can resolve.
+    await admin`insert into mail_thread_state (org_id, actor_id, thread_id) values
+      (${orgId}, ${alice}, ${source}), (${orgId}, ${bob}, ${source}),
+      (${otherOrgId}, ${outsider}, ${foreignSource})`;
+    const resolved = await withTenantPostgresContext(app, { orgId, actorId: alice }, () =>
+      store.getThread({ orgId, actorId: alice, threadId: source }),
+    );
+    expect(resolved?.id).toBe(destination.threadId);
+    expect(resolved?.messages.map((message) => message.id)).toEqual([destination.messageId]);
+    expect(
+      await withTenantPostgresContext(app, { orgId, actorId: bob }, () =>
+        store.getThread({ orgId, actorId: bob, threadId: source }),
+      ),
+    ).toBeNull();
+    expect(
+      await withTenantPostgresContext(app, { orgId: otherOrgId, actorId: outsider }, () =>
+        store.getThread({ orgId: otherOrgId, actorId: outsider, threadId: foreignSource }),
+      ),
+    ).toBeNull();
   });
 });

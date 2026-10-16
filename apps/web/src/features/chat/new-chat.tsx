@@ -5,7 +5,7 @@
 import { PeoplePicker } from "@/components/people/people-picker";
 import { Avatar } from "@/components/ui/avatar";
 import { EmptyState } from "@/components/ui/empty-state";
-import { Dialog } from "@/components/ui/helix-dialog";
+import { FormPanel } from "@/components/ui/form-panel";
 import { InlineError } from "@/components/ui/inline-error";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -133,7 +133,7 @@ export function StartChatDialog({
   const actorIds = people.flatMap((person) => (person.actorId === null ? [] : [person.actorId]));
 
   return (
-    <Dialog
+    <FormPanel
       title="Start a chat"
       onClose={onClose}
       footer={
@@ -179,7 +179,7 @@ export function StartChatDialog({
           />
         ) : null}
       </form>
-    </Dialog>
+    </FormPanel>
   );
 }
 
@@ -199,7 +199,7 @@ function CreateSpaceDialog({
   const valid = name.trim().length > 0;
 
   return (
-    <Dialog
+    <FormPanel
       title="Create a space"
       onClose={onClose}
       footer={
@@ -299,7 +299,7 @@ function CreateSpaceDialog({
           />
         ) : null}
       </form>
-    </Dialog>
+    </FormPanel>
   );
 }
 
@@ -327,7 +327,7 @@ function BrowseSpacesDialog({
   });
 
   return (
-    <Dialog title="Browse spaces" onClose={onClose} width={520}>
+    <FormPanel title="Browse spaces" onClose={onClose}>
       <div className="chat-form">
         <input
           type="search"
@@ -397,6 +397,6 @@ function BrowseSpacesDialog({
           </ul>
         )}
       </div>
-    </Dialog>
+    </FormPanel>
   );
 }

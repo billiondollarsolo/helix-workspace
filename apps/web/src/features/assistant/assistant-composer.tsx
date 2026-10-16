@@ -214,6 +214,8 @@ export function AssistantComposer({
   async function submit() {
     if (!canSend) return;
     onModelChange(selectedModel);
+    const sentText = text;
+    setText("");
     if (
       await onSend(
         text,
@@ -227,10 +229,11 @@ export function AssistantComposer({
         chosenGroups === undefined || !tools.data ? chosenGroups : selectedGroups,
       )
     ) {
-      setText("");
       setUploads([]);
       setRetainedAttachments([]);
       setError(null);
+    } else {
+      setText((current) => (current.length === 0 ? sentText : current));
     }
   }
 

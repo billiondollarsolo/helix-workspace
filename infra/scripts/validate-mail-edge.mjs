@@ -26,13 +26,15 @@ const files = Object.fromEntries(
 
 const required = {
   compose: [
-    "docker-mailserver:15.1.0@sha256:",
+    "docker-mailserver:16.0.1@sha256:",
+    'SMTP_ONLY: "1"',
     "PERMIT_DOCKER: none",
     'ENABLE_DNSBL: "1"',
     "POSTSCREEN_ACTION: enforce",
     'ENABLE_RSPAMD: "1"',
     'RSPAMD_GREYLISTING: "1"',
     'ENABLE_FAIL2BAN: "1"',
+    "dms-healthcheck &&",
     "SSL_TYPE: manual",
     "TLS_LEVEL: modern",
     ':25"',

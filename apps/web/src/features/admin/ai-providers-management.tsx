@@ -7,8 +7,11 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { SettingToggle } from "@/features/admin/console/widgets";
-import { Plus, Save, Shield, Sparkles, Trash2 } from "lucide-react";
+import { AiProviderForm } from "./ai-provider-form";
+import { AdminTable } from "./console/table";
+import { AdminInput, AdminSelect, AdminToolbar } from "./console/controls";
+import { Dialog } from "@/components/ui/helix-dialog";
+import { Plus, Save, Shield, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,294 +27,29 @@ import {
   adminPlatformConfigQueryOptions,
   updatePlatformAiSettings,
 } from "@/features/admin/tier-readiness/api";
-import type {
-  AIConfigStatus,
-  AIProviderConfig,
-  AIRoutingRule,
-  PlatformConfigPatch,
-  PlatformConfigStatus,
-} from "@/features/admin/tier-readiness/types";
-
-const OPENAI_COMPAT_PLUGIN = "com.helix.ai-provider-openai-compat@^1.0.0";
-
-/* The console has no Select primitive, so the routing selects restate the
-   shell they share. */
-const SELECT_CLASS = "h-10 w-full rounded-md border border-border bg-background px-2 text-sm";
-
-/** The models field is one free-text line; blank entries are dropped so a
- *  trailing comma does not become an empty model id. */
-function parseModelsCsv(csv: string): string[] {
-  return csv
-    .split(",")
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0);
-}
-
-/** Product slots operators assign in Admin. */
-const AI_FEATURE_SLOTS = [
-  {
-    feature: "assistant.chat",
-    label: "Assistant chat (default model)",
-    hint: "Default model when a user opens Assistant.",
-  },
-  {
-    feature: "mail.spam-ai",
-    label: "Mail spam AI (beta)",
-    hint: "Second-pass after SpamAssassin. Enable the beta toggle below.",
-  },
-  {
-    feature: "mail.compose-help",
-    label: "Mail compose assist",
-    hint: "Rewrite / suggest for compose (when that feature is wired).",
-  },
-] as const;
-
-export type AiFeatureSlotId = (typeof AI_FEATURE_SLOTS)[number]["feature"];
-
-export interface ProviderFormRow {
-  readonly id: string;
-  readonly displayName: string;
-  readonly baseUrl: string;
-  readonly defaultModel: string;
-  /** Comma-separated model ids offered under this provider. */
-  readonly modelsCsv: string;
-  readonly apiKey: string;
-  readonly enabled: boolean;
-  /** When true, models appear in the Assistant model picker. */
-  readonly offerInChat: boolean;
-  readonly apiKeyConfigured: boolean;
-  /** Stable React key for the row; the editable id can't be the key or typing in it remounts the row.
-   *  Saved rows key on their stored id so a refetch keeps the same rows mounted. */
-  readonly rowKey?: string;
-}
-
-let nextProviderRowKey = 0;
-function providerRowKey(): string {
-  nextProviderRowKey += 1;
-  return `provider-row-${String(nextProviderRowKey)}`;
-}
-
-export interface FeatureRouteFormRow {
-  readonly feature: AiFeatureSlotId;
-  readonly providerId: string;
-  readonly model: string;
-}
-
-export interface AiProvidersEditorState {
-  readonly maxToolRounds: string;
-  readonly providers: readonly ProviderFormRow[];
-  readonly routes: readonly FeatureRouteFormRow[];
-  readonly spamBetaMode: "env" | "on" | "off";
-}
-
-export function emptyProviderRow(index = 0): ProviderFormRow {
-  return {
-    id: index === 0 ? "openai-compatible.default" : `provider-${String(index + 1)}`,
-    displayName: index === 0 ? "Default OpenAI-compatible" : `Provider ${String(index + 1)}`,
-    baseUrl: "https://api.openai.com/v1",
-    defaultModel: "gpt-4o-mini",
-    modelsCsv: "gpt-4o-mini",
-    apiKey: "",
-    enabled: true,
-    offerInChat: true,
-    apiKeyConfigured: false,
-    rowKey: providerRowKey(),
-  };
-}
-
-/* Named providers when the config has them; otherwise the env-bootstrapped
-   operator default shown as a single editable row, or nothing at all when there
-   is not even that. */
-function providerRowsFrom(ai: AIConfigStatus | undefined): ProviderFormRow[] {
-  const providersRaw = ai?.providers ?? [];
-  if (providersRaw.length > 0) {
-    return providersRaw.map((provider, index) => providerToFormRow(provider, index));
-  }
-  if (ai?.operatorLlm === undefined) {
-    return [];
-  }
-  return [
-    {
-      id: "openai-compatible.default",
-      displayName: "Operator default",
-      baseUrl: ai.operatorLlm.baseUrl ?? "https://api.openai.com/v1",
-      defaultModel: ai.operatorLlm.model ?? "gpt-4o-mini",
-      modelsCsv: ai.operatorLlm.model ?? "gpt-4o-mini",
-      apiKey: "",
-      enabled: true,
-      offerInChat: true,
-      apiKeyConfigured: ai.operatorLlm.apiKeyConfigured === true,
-      rowKey: "server:operator-default",
-    },
-  ];
-}
-
-export function editorStateFromAiConfig(ai: AIConfigStatus | undefined): AiProvidersEditorState {
-  const providers = providerRowsFrom(ai);
-
-  const rules = ai?.routing?.rules ?? [];
-  const routes: FeatureRouteFormRow[] = AI_FEATURE_SLOTS.map((slot) => {
-    const rule = rules.find((entry) => entry.feature === slot.feature);
-    return {
-      feature: slot.feature,
-      providerId: rule?.primary.providerId ?? providers[0]?.id ?? "",
-      model: rule?.primary.model ?? providers[0]?.defaultModel ?? "",
-    };
-  });
-
-  /* Three states, not two: an unset `betaEnabled` means the env default is
-     still in charge, which is a different answer from an explicit off. */
-  const betaEnabled = ai?.mailSpamAi?.betaEnabled;
-  const spamBetaMode: AiProvidersEditorState["spamBetaMode"] =
-    betaEnabled === true ? "on" : betaEnabled === false ? "off" : "env";
-
-  return {
-    providers,
-    routes,
-    spamBetaMode,
-    maxToolRounds: String(ai?.assistant?.maxToolRounds ?? 128),
-  };
-}
-
-function providerToFormRow(provider: AIProviderConfig, index: number): ProviderFormRow {
-  const cfg = provider.config ?? {};
-  const models = Array.isArray(cfg.models)
-    ? cfg.models.filter((entry): entry is string => typeof entry === "string")
-    : [];
-  const defaultModel = cfg.defaultModel ?? cfg.model ?? models[0] ?? "gpt-4o-mini";
-  const modelsCsv =
-    models.length > 0 ? models.join(", ") : defaultModel.length > 0 ? defaultModel : "";
-  const tags = provider.tags ?? [];
-  return {
-    id: provider.id || `provider-${String(index + 1)}`,
-    displayName:
-      (typeof cfg.displayName === "string" && cfg.displayName) ||
-      provider.id ||
-      `Provider ${String(index + 1)}`,
-    baseUrl: cfg.baseUrl ?? "https://api.openai.com/v1",
-    defaultModel,
-    modelsCsv,
-    apiKey: "",
-    enabled: provider.enabled !== false,
-    offerInChat: tags.includes("assistant") || tags.length === 0,
-    apiKeyConfigured: cfg.apiKeyConfigured === true,
-    rowKey: `server:${provider.id || String(index)}`,
-  };
-}
-
-/**
- * Build platform-config AI PATCH from the editor. Empty provider apiKey omits
- * the secret so the API keeps the stored key.
- */
-export function buildMultiProviderAiPatch(
-  state: AiProvidersEditorState,
-  baseline: AiProvidersEditorState,
-): NonNullable<PlatformConfigPatch["ai"]> | string {
-  const maxToolRounds = Number(state.maxToolRounds);
-  if (!Number.isInteger(maxToolRounds) || maxToolRounds < 1 || maxToolRounds > 256)
-    return "Assistant tool steps must be a whole number from 1 to 256.";
-  if (state.providers.length === 0) {
-    return "Add at least one provider, or clear routing assignments first.";
-  }
-  const ids = new Set<string>();
-  for (const provider of state.providers) {
-    const id = provider.id.trim();
-    if (id.length === 0) {
-      return "Each provider needs a stable id (e.g. openai-primary).";
-    }
-    if (ids.has(id)) {
-      return `Duplicate provider id “${id}”.`;
-    }
-    ids.add(id);
-    if (provider.baseUrl.trim().length > 0) {
-      try {
-        const url = new URL(provider.baseUrl.trim());
-        if (url.protocol !== "http:" && url.protocol !== "https:") {
-          return `Provider ${id}: base URL must use http or https.`;
-        }
-      } catch {
-        return `Provider ${id}: base URL is not a valid URL.`;
-      }
-    }
-    if (provider.defaultModel.trim().length === 0) {
-      return `Provider ${id}: default model is required.`;
-    }
-  }
-
-  const providers: AIProviderConfig[] = state.providers.map((provider) => {
-    const models = parseModelsCsv(provider.modelsCsv);
-    const defaultModel = provider.defaultModel.trim();
-    const modelList = models.length > 0 ? models : [defaultModel];
-    const tags = provider.offerInChat ? (["assistant"] as const) : (["backend"] as const);
-    const apiKey = provider.apiKey.trim();
-    return {
-      id: provider.id.trim(),
-      plugin: OPENAI_COMPAT_PLUGIN,
-      enabled: provider.enabled,
-      tags: [...tags],
-      config: {
-        displayName: provider.displayName.trim() || provider.id.trim(),
-        baseUrl: provider.baseUrl.trim(),
-        defaultModel,
-        models: modelList,
-        ...(apiKey.length > 0 ? { apiKey } : {}),
-      },
-    };
-  });
-
-  const rules: AIRoutingRule[] = [];
-  for (const route of state.routes) {
-    if (route.providerId.trim().length === 0) {
-      continue;
-    }
-    if (!ids.has(route.providerId.trim())) {
-      return `Routing for ${route.feature} points at unknown provider “${route.providerId}”.`;
-    }
-    rules.push({
-      feature: route.feature,
-      primary: {
-        providerId: route.providerId.trim(),
-        ...(route.model.trim().length > 0 ? { model: route.model.trim() } : {}),
-      },
-    });
-  }
-
-  const spamChanged = state.spamBetaMode !== baseline.spamBetaMode;
-  const mailSpamAi =
-    !spamChanged || state.spamBetaMode === "env"
-      ? undefined
-      : { betaEnabled: state.spamBetaMode === "on" };
-
-  // Keep operatorLlm mirrored from assistant.chat (or first provider) for
-  // older consumers that only read the shared defaults.
-  const assistantRoute = rules.find((rule) => rule.feature === "assistant.chat");
-  const defaultProvider =
-    providers.find((provider) => provider.id === assistantRoute?.primary.providerId) ??
-    providers[0];
-  const operatorLlm =
-    defaultProvider === undefined
-      ? undefined
-      : {
-          baseUrl: defaultProvider.config?.baseUrl,
-          model: assistantRoute?.primary.model ?? defaultProvider.config?.defaultModel,
-          ...(typeof defaultProvider.config?.apiKey === "string" &&
-          defaultProvider.config.apiKey.length > 0
-            ? { apiKey: defaultProvider.config.apiKey }
-            : {}),
-        };
-
-  return {
-    providers,
-    routing: { rules },
-    ...(state.maxToolRounds === baseline.maxToolRounds ? {} : { assistant: { maxToolRounds } }),
-    ...(mailSpamAi === undefined ? {} : { mailSpamAi }),
-    ...(operatorLlm === undefined ? {} : { operatorLlm }),
-  };
-}
+import type { PlatformConfigPatch } from "./tier-readiness/types";
+import {
+  providerSupportsFeature,
+  AI_FEATURE_SLOTS,
+  buildMultiProviderAiPatch,
+  editorStateFromAiConfig,
+  emptyProviderRow,
+  parseModelsCsv,
+  editableProvider,
+  providerProtocolLabel,
+  type AiFeatureSlotId,
+  type AiProvidersEditorState,
+  type FeatureRouteFormRow,
+  type ProviderFormRow,
+} from "./ai-providers-config";
 
 export function AIProvidersManagement() {
   const queryClient = useQueryClient();
   const [formError, setFormError] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [editing, setEditing] = useState<ProviderFormRow | null>(null);
+  const [removing, setRemoving] = useState<ProviderFormRow | null>(null);
+  const [creating, setCreating] = useState(false);
   const [savedNotice, setSavedNotice] = useState<string | null>(null);
   const configQuery = useQuery(adminPlatformConfigQueryOptions());
   /* Refetches (realtime config events, another section's save) must not wipe
@@ -336,7 +74,7 @@ export function AIProvidersManagement() {
     onSuccess: async (status) => {
       queryClient.setQueryData(adminPlatformConfigQueryKey, status);
       await queryClient.invalidateQueries({ queryKey: adminPlatformConfigQueryKey });
-      await queryClient.invalidateQueries({ queryKey: ["assistant", "models"] });
+      await queryClient.invalidateQueries({ queryKey: ["assistant"] });
       setSavedNotice("Saved. AI settings now apply to new requests.");
     },
     onError: (error) => {
@@ -349,35 +87,44 @@ export function AIProvidersManagement() {
     [editor.providers],
   );
 
-  const updateProvider = (index: number, patch: Partial<ProviderFormRow>) => {
-    setEditor((current) => ({
-      ...current,
-      providers: current.providers.map((provider, i) =>
-        i === index ? { ...provider, ...patch } : provider,
+  const openProvider = (provider: ProviderFormRow, isNew = false) => {
+    setFormError(null);
+    setCreating(isNew);
+    setEditing(provider);
+  };
+  const removeProvider = async (provider: ProviderFormRow) => {
+    const providers = editor.providers.filter((row) => row.rowKey !== provider.rowKey);
+    const fallback = providers.find((row) => row.enabled);
+    const next = {
+      ...editor,
+      providers,
+      routes: editor.routes.map((route) =>
+        route.providerId === provider.id
+          ? {
+              ...route,
+              providerId: route.feature.startsWith("meet.") ? "" : (fallback?.id ?? ""),
+              model: route.feature.startsWith("meet.") ? "" : (fallback?.defaultModel ?? ""),
+            }
+          : route,
       ),
-    }));
+    };
+    if (await onSave(next)) setRemoving(null);
   };
-
-  const removeProvider = (index: number) => {
-    setEditor((current) => {
-      const removed = current.providers[index]?.id;
-      const providers = current.providers.filter((_, i) => i !== index);
-      const fallback = providers[0]?.id ?? "";
-      return {
-        ...current,
-        providers,
-        routes: current.routes.map((route) =>
-          route.providerId === removed ? { ...route, providerId: fallback } : route,
-        ),
-      };
-    });
-  };
-
-  const addProvider = () => {
-    setEditor((current) => ({
-      ...current,
-      providers: [...current.providers, emptyProviderRow(current.providers.length)],
-    }));
+  const saveProvider = async (provider: ProviderFormRow) => {
+    const next = {
+      ...editor,
+      providers: creating
+        ? [...editor.providers, provider]
+        : editor.providers.map((row) => (row.rowKey === provider.rowKey ? provider : row)),
+      routes: editor.routes.map((route) =>
+        route.providerId === provider.id &&
+        !route.feature.startsWith("meet.") &&
+        !parseModelsCsv(provider.modelsCsv).includes(route.model)
+          ? { ...route, model: provider.defaultModel }
+          : route,
+      ),
+    };
+    if (await onSave(next)) setEditing(null);
   };
 
   const updateRoute = (feature: AiFeatureSlotId, patch: Partial<FeatureRouteFormRow>) => {
@@ -389,16 +136,20 @@ export function AIProvidersManagement() {
     }));
   };
 
-  const onSave = async () => {
-    const patch = buildMultiProviderAiPatch(editor, baseline);
+  const onSave = async (submitted = editor): Promise<boolean> => {
+    const patch = buildMultiProviderAiPatch(submitted, baseline);
     if (typeof patch === "string") {
       setFormError(patch);
-      return;
+      return false;
     }
     setFormError(null);
-    const submitted = editor;
-    await saveMutation.mutateAsync(patch);
-    markSaved(submitted);
+    try {
+      await saveMutation.mutateAsync(patch);
+      markSaved(editor);
+      return true;
+    } catch {
+      return false;
+    }
   };
 
   return (
@@ -416,132 +167,180 @@ export function AIProvidersManagement() {
             : "Could not load platform configuration."}
         </ErrorNotice>
       ) : null}
-      {formError !== null ? <ErrorNotice>{formError}</ErrorNotice> : null}
+      {formError !== null && editing === null && removing === null ? (
+        <ErrorNotice>{formError}</ErrorNotice>
+      ) : null}
       {savedNotice !== null ? <Notice>{savedNotice}</Notice> : null}
 
-      <section
-        aria-labelledby="ai-providers-list-heading"
-        className="grid gap-3 rounded-lg border border-border bg-card p-4 text-card-foreground"
-      >
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2
-            className="m-0 flex items-center gap-2 text-sm font-semibold"
-            id="ai-providers-list-heading"
+      <section aria-label="Provider catalog" className="admin-stack">
+        <AdminToolbar label="Provider filters">
+          <AdminInput
+            type="search"
+            className="min-w-0 flex-1"
+            aria-label="Search providers"
+            placeholder="Search providers or models…"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+          <span className="admin-muted">{editor.providers.length} providers</span>
+          <Button
+            type="button"
+            size="sm"
+            disabled={
+              configQuery.isPending ||
+              configQuery.isError ||
+              editing !== null ||
+              saveMutation.isPending
+            }
+            onClick={() => openProvider(emptyProviderRow(editor.providers.length), true)}
           >
-            <Sparkles aria-hidden="true" size={16} />
-            Providers
-          </h2>
-          <Button size="sm" type="button" variant="outline" onClick={addProvider}>
             <Plus aria-hidden="true" />
             Add provider
           </Button>
-        </div>
-        <p className="m-0 text-xs text-muted-foreground">
-          Each row is an OpenAI-compatible endpoint (OpenAI, Azure OpenAI, Ollama, Groq, etc.).
-          Secrets are write-only after save.
+        </AdminToolbar>
+        <p className="admin-muted">
+          OpenAI-compatible and Anthropic endpoints. Keys stay private after saving. Cloud-managed
+          providers keep their deployment configuration.
         </p>
-
-        {editor.providers.length === 0 ? (
-          <Notice>No providers yet. Add one to turn on Helix AI for your workspace.</Notice>
-        ) : null}
-
-        <div className="grid gap-4">
-          {editor.providers.map((provider, index) => (
-            <article
-              key={provider.rowKey ?? String(index)}
-              className="grid gap-3 rounded-md border border-border/80 p-3"
-            >
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-xs font-semibold text-muted-foreground">
-                  Provider {String(index + 1)}
-                  {provider.apiKeyConfigured ? " · key stored" : ""}
+        <AdminTable<ProviderFormRow>
+          label="AI providers"
+          rows={editor.providers.filter((provider) =>
+            `${provider.displayName} ${provider.id} ${provider.modelsCsv}`
+              .toLowerCase()
+              .includes(search.toLowerCase().trim()),
+          )}
+          rowKey={(row) => row.rowKey ?? row.id}
+          empty={
+            search
+              ? "No providers match your search."
+              : "No providers yet. Add a provider to enable workspace AI."
+          }
+          columns={[
+            {
+              id: "name",
+              header: "Provider",
+              sortValue: (row) => row.displayName || row.id,
+              cell: (row) => (
+                <div>
+                  <strong>{row.displayName || row.id}</strong>
+                  <div className="admin-muted">{row.id}</div>
+                </div>
+              ),
+            },
+            { id: "protocol", header: "Connection", cell: (row) => providerProtocolLabel(row) },
+            {
+              id: "models",
+              header: "Models",
+              sortValue: (row) => parseModelsCsv(row.modelsCsv).length,
+              cell: (row) => (
+                <div>
+                  {row.defaultModel}
+                  <div className="admin-muted">
+                    {parseModelsCsv(row.modelsCsv).length} available ·{" "}
+                    {row.offerInChat ? "Assistant" : "Backend only"}
+                  </div>
+                </div>
+              ),
+            },
+            {
+              id: "status",
+              header: "Status",
+              sortValue: (row) => (row.enabled ? 1 : 0),
+              cell: (row) => (
+                <span className={`chip ${row.enabled ? "success" : "warning"}`}>
+                  {row.enabled ? "Enabled" : "Disabled"}
                 </span>
-                <Button
-                  aria-label={`Remove provider ${provider.id}`}
-                  size="sm"
-                  type="button"
-                  variant="outline"
-                  onClick={() => removeProvider(index)}
-                >
-                  <Trash2 aria-hidden="true" />
-                  Remove
-                </Button>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <label className="grid gap-1 text-xs">
-                  <span className="font-medium">Id</span>
-                  <Input
-                    aria-label={`Provider ${String(index + 1)} id`}
-                    value={provider.id}
-                    onChange={(event) => updateProvider(index, { id: event.target.value })}
-                  />
-                </label>
-                <label className="grid gap-1 text-xs">
-                  <span className="font-medium">Display name</span>
-                  <Input
-                    aria-label={`Provider ${String(index + 1)} display name`}
-                    value={provider.displayName}
-                    onChange={(event) => updateProvider(index, { displayName: event.target.value })}
-                  />
-                </label>
-                <label className="grid gap-1 text-xs sm:col-span-2">
-                  <span className="font-medium">Base URL</span>
-                  <Input
-                    aria-label={`Provider ${String(index + 1)} base URL`}
-                    value={provider.baseUrl}
-                    onChange={(event) => updateProvider(index, { baseUrl: event.target.value })}
-                    placeholder="https://api.openai.com/v1"
-                  />
-                </label>
-                <label className="grid gap-1 text-xs">
-                  <span className="font-medium">Default model</span>
-                  <Input
-                    aria-label={`Provider ${String(index + 1)} default model`}
-                    value={provider.defaultModel}
-                    onChange={(event) =>
-                      updateProvider(index, { defaultModel: event.target.value })
+              ),
+            },
+            {
+              id: "key",
+              header: "API key",
+              cell: (row) => (row.apiKeyConfigured ? "Stored" : "Deployment / none"),
+            },
+            {
+              id: "actions",
+              header: "Actions",
+              headerHidden: true,
+              cell: (row) => (
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    aria-label={`Edit provider ${row.id}`}
+                    disabled={!editableProvider(row) || editing !== null || saveMutation.isPending}
+                    onClick={() => openProvider(row)}
+                  >
+                    Edit
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    aria-label={`Remove provider ${row.id}`}
+                    disabled={
+                      editor.providers.length < 2 || editing !== null || saveMutation.isPending
                     }
-                  />
-                </label>
-                <label className="grid gap-1 text-xs">
-                  <span className="font-medium">Models (comma-separated)</span>
-                  <Input
-                    aria-label={`Provider ${String(index + 1)} models`}
-                    value={provider.modelsCsv}
-                    onChange={(event) => updateProvider(index, { modelsCsv: event.target.value })}
-                    placeholder="gpt-4o-mini, gpt-4o"
-                  />
-                </label>
-                <label className="grid gap-1 text-xs sm:col-span-2">
-                  <span className="font-medium">API key</span>
-                  <Input
-                    aria-label={`Provider ${String(index + 1)} API key`}
-                    type="password"
-                    autoComplete="new-password"
-                    value={provider.apiKey}
-                    onChange={(event) => updateProvider(index, { apiKey: event.target.value })}
-                    placeholder={
-                      provider.apiKeyConfigured
-                        ? "•••••••• (leave blank to keep)"
-                        : "sk-… or provider token"
-                    }
-                  />
-                </label>
-                <SettingToggle
-                  label="Enabled"
-                  checked={provider.enabled}
-                  onCheckedChange={(checked) => updateProvider(index, { enabled: checked })}
-                />
-                <SettingToggle
-                  label="Offer models in Assistant chat picker"
-                  checked={provider.offerInChat}
-                  onCheckedChange={(checked) => updateProvider(index, { offerInChat: checked })}
-                />
-              </div>
-            </article>
-          ))}
-        </div>
+                    onClick={() => {
+                      setFormError(null);
+                      setRemoving(row);
+                    }}
+                  >
+                    <Trash2 aria-hidden="true" />
+                  </Button>
+                </div>
+              ),
+            },
+          ]}
+        />
       </section>
+      {editing !== null ? (
+        <AiProviderForm
+          initial={editing}
+          creating={creating}
+          pending={saveMutation.isPending}
+          error={formError}
+          onClose={() => {
+            if (!saveMutation.isPending) {
+              setEditing(null);
+              setFormError(null);
+            }
+          }}
+          onSubmit={saveProvider}
+        />
+      ) : null}
+      {removing !== null ? (
+        <Dialog
+          title="Remove provider?"
+          onClose={() => {
+            if (!saveMutation.isPending) setRemoving(null);
+          }}
+          footer={
+            <>
+              <Button
+                variant="outline"
+                disabled={saveMutation.isPending}
+                onClick={() => setRemoving(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                disabled={saveMutation.isPending}
+                onClick={() => void removeProvider(removing)}
+              >
+                Remove provider
+              </Button>
+            </>
+          }
+        >
+          <p>
+            Remove {removing.displayName || removing.id}? Its feature routes will use the next
+            enabled provider’s default model, except meeting routes, which are cleared. This also
+            saves pending routing settings.
+          </p>
+          {formError ? <ErrorNotice>{formError}</ErrorNotice> : null}
+        </Dialog>
+      ) : null}
 
       <section
         aria-labelledby="ai-providers-routing-heading"
@@ -556,7 +355,8 @@ export function AIProvidersManagement() {
         </h2>
         <p className="m-0 text-xs text-muted-foreground">
           Assign which provider and model each Helix AI feature uses. Leave provider empty to skip a
-          dedicated route (fallback to shared defaults / env).
+          dedicated route (fallback to shared defaults / env). Meeting features require explicit
+          assignments and remain off when unassigned.
         </p>
         <div className="grid gap-3">
           {AI_FEATURE_SLOTS.map((slot) => {
@@ -565,7 +365,10 @@ export function AIProvidersManagement() {
               providerId: "",
               model: "",
             };
-            const selected = providerOptions.find((provider) => provider.id === route.providerId);
+            const routeProviders = providerOptions.filter((provider) =>
+              providerSupportsFeature(provider, slot.feature),
+            );
+            const selected = routeProviders.find((provider) => provider.id === route.providerId);
             const modelChoices = selected ? parseModelsCsv(selected.modelsCsv) : [];
             return (
               <div
@@ -578,28 +381,32 @@ export function AIProvidersManagement() {
                 </div>
                 <label className="grid gap-1 text-xs">
                   <span className="font-medium">Provider</span>
-                  <select
+                  <AdminSelect
                     aria-label={`${slot.label} provider`}
-                    className={SELECT_CLASS}
                     value={route.providerId}
                     onChange={(event) =>
-                      updateRoute(slot.feature, { providerId: event.currentTarget.value })
+                      updateRoute(slot.feature, {
+                        providerId: event.currentTarget.value,
+                        model:
+                          providerOptions.find(
+                            (provider) => provider.id === event.currentTarget.value,
+                          )?.defaultModel ?? "",
+                      })
                     }
                   >
                     <option value="">— not assigned —</option>
-                    {providerOptions.map((provider) => (
+                    {routeProviders.map((provider) => (
                       <option key={provider.id} value={provider.id}>
                         {provider.displayName || provider.id}
                       </option>
                     ))}
-                  </select>
+                  </AdminSelect>
                 </label>
                 <label className="grid gap-1 text-xs">
                   <span className="font-medium">Model</span>
                   {modelChoices.length > 0 ? (
-                    <select
+                    <AdminSelect
                       aria-label={`${slot.label} model`}
-                      className={SELECT_CLASS}
                       value={route.model}
                       onChange={(event) =>
                         updateRoute(slot.feature, { model: event.currentTarget.value })
@@ -610,7 +417,7 @@ export function AIProvidersManagement() {
                           {model}
                         </option>
                       ))}
-                    </select>
+                    </AdminSelect>
                   ) : (
                     <Input
                       aria-label={`${slot.label} model`}
@@ -627,9 +434,8 @@ export function AIProvidersManagement() {
 
         <label className="grid max-w-md gap-1 text-xs">
           <span className="font-medium">Mail spam AI beta</span>
-          <select
+          <AdminSelect
             aria-label="Mail spam AI beta mode"
-            className={SELECT_CLASS}
             value={editor.spamBetaMode}
             onChange={(event) => {
               /* Read the value before the updater, not inside it.
@@ -646,7 +452,7 @@ export function AIProvidersManagement() {
             <option value="env">Use the deployment default</option>
             <option value="on">Enabled</option>
             <option value="off">Disabled in Admin</option>
-          </select>
+          </AdminSelect>
         </label>
       </section>
 
@@ -681,7 +487,12 @@ export function AIProvidersManagement() {
 
       <div className="flex flex-wrap items-center gap-2">
         <Button
-          disabled={saveMutation.isPending || configQuery.isPending}
+          disabled={
+            saveMutation.isPending ||
+            configQuery.isPending ||
+            configQuery.isError ||
+            editing !== null
+          }
           type="button"
           onClick={() => void onSave()}
         >
@@ -689,65 +500,6 @@ export function AIProvidersManagement() {
           {saveMutation.isPending ? "Saving…" : "Save AI settings"}
         </Button>
       </div>
-
-      <AiCatalogSummary status={configQuery.data} />
-    </section>
-  );
-}
-
-function AiCatalogSummary({ status }: { readonly status: PlatformConfigStatus | undefined }) {
-  if (status === undefined) {
-    return null;
-  }
-  const ai = status.config.ai;
-  const providers = ai?.providers ?? [];
-  const rules = ai?.routing?.rules ?? [];
-  return (
-    <section
-      aria-labelledby="ai-providers-summary-heading"
-      className="grid gap-2 rounded-lg border border-border bg-card p-4 text-card-foreground"
-    >
-      <h2 className="m-0 text-sm font-semibold" id="ai-providers-summary-heading">
-        Saved catalog
-      </h2>
-      <p className="m-0 text-xs text-muted-foreground">
-        {providers.length === 0
-          ? "No named providers stored yet (env bootstrap only)."
-          : `${String(providers.length)} provider(s), ${String(rules.length)} routing rule(s).`}
-      </p>
-      {providers.length === 0 ? null : (
-        <ul className="m-0 grid list-none gap-1 p-0 text-xs">
-          {providers.map((provider) => (
-            <li
-              key={provider.id}
-              className="flex flex-wrap justify-between gap-2 border-b border-border/50 py-1"
-            >
-              <span className="font-medium">{provider.id}</span>
-              <span className="text-muted-foreground">
-                {provider.config?.defaultModel ?? provider.config?.model ?? "—"}
-                {provider.config?.apiKeyConfigured === true ? " · key" : ""}
-                {provider.enabled === false ? " · disabled" : ""}
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-      {rules.length === 0 ? null : (
-        <ul className="m-0 mt-2 grid list-none gap-1 p-0 text-xs">
-          {rules.map((rule) => (
-            <li
-              key={rule.feature}
-              className="flex flex-wrap justify-between gap-2 border-b border-border/50 py-1"
-            >
-              <code>{rule.feature}</code>
-              <span className="text-muted-foreground">
-                {rule.primary.providerId}
-                {rule.primary.model ? ` / ${rule.primary.model}` : ""}
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
     </section>
   );
 }

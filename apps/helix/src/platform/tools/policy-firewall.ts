@@ -34,7 +34,8 @@ export type ToolPolicyDecision =
         | "agent_write_requires_approval"
         | "assistant_write_requires_approval"
         | "tier_or_tool_requires_approval"
-        | "automation_policy_no_match";
+        | "automation_policy_no_match"
+        | "untrusted_context_requires_approval";
     }
   | {
       readonly outcome: "deny";
@@ -77,6 +78,9 @@ export interface ToolPolicyFirewallInput {
 }
 
 export function evaluateToolPolicyFirewall(input: ToolPolicyFirewallInput): ToolPolicyDecision {
+  const externalCommunication =
+    input.tool?.sideEffects === "external_communication" &&
+    !(input.automationDecision?.allowed && input.automationDecision.internalCommunicationOnly);
   if (input.tool === undefined) {
     return { outcome: "deny", reason: "unknown_tool" };
   }
@@ -110,8 +114,7 @@ export function evaluateToolPolicyFirewall(input: ToolPolicyFirewallInput): Tool
   if (
     input.blockHighRiskWhenUntrusted === true &&
     input.sourceProvenance.containsUntrustedContext &&
-    (input.tool.sideEffects === "destructive" ||
-      input.tool.sideEffects === "external_communication")
+    (input.tool.sideEffects === "destructive" || externalCommunication)
   ) {
     return { outcome: "deny", reason: "untrusted_context_high_risk_blocked" };
   }
@@ -121,6 +124,13 @@ export function evaluateToolPolicyFirewall(input: ToolPolicyFirewallInput): Tool
   if (input.approvedPendingExecution === true) {
     return { outcome: "allow", reason: "approved_pending_execution" };
   }
+  if (
+    (input.actor.type === "agent" || input.actor.type === "service_account") &&
+    ["mcp", "rest", "trpc"].includes(input.requestChannel) &&
+    input.sourceProvenance.containsUntrustedContext &&
+    (input.tool.sideEffects === "destructive" || externalCommunication)
+  )
+    return { outcome: "queue-confirmation", reason: "untrusted_context_requires_approval" };
   if (input.actor.type === "agent") {
     if (input.automationDecision?.allowed === true) {
       return { outcome: "allow-automation", reason: "automation_policy_match" };

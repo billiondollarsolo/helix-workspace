@@ -1,3 +1,4 @@
+import type { MailBodyMatches } from "./body-search.js";
 import type postgres from "postgres";
 import { escapeMailLike, type ParsedMailSearchQuery } from "./store-search-query.js";
 
@@ -34,6 +35,7 @@ export function mailMessageMatchSql(
   sql: postgres.Sql,
   query: ParsedMailSearchQuery,
   mailbox: Mailbox,
+  bodyMatches?: MailBodyMatches,
 ): Fragment {
   const sent = sql`helix_mailbox_sent_message(mm.org_id, mm.id, ${mailbox.actorId})`;
   const subject = sql`coalesce(mm.metadata->>'subject', (select st.subject from threads st where st.id = mm.thread_id), '')`;
@@ -46,7 +48,7 @@ export function mailMessageMatchSql(
   const parts: Fragment[] = [];
   for (const term of query.terms) {
     parts.push(
-      sql`(${subject} ilike ${like(term)} or mm.body ilike ${like(term)} or ${sender} ilike ${like(term)})`,
+      sql`(${subject} ilike ${like(term)} or mm.body ilike ${like(term)} or mm.id = any(${sql.array([...(bodyMatches?.get(term) ?? [])])}::uuid[]) or ${sender} ilike ${like(term)})`,
     );
   }
   for (const value of query.from) {

@@ -818,7 +818,7 @@ function readableBookSql(
   addressBookId: string | undefined,
 ): postgres.PendingQuery<postgres.Row[]> {
   return sql`
-    (${addressBookId ?? null}::uuid is null and book.owner_actor_id = ${actorId} and book.is_default)
+    ((${addressBookId ?? null}::uuid is null and book.owner_actor_id = ${actorId} and book.is_default)
     or (${addressBookId ?? null}::uuid is not null and book.id = ${addressBookId ?? null}::uuid and (
       book.owner_actor_id = ${actorId} or exists (
         select 1 from permissions permission
@@ -826,7 +826,7 @@ function readableBookSql(
           and permission.resource_id = book.id and permission.actor_id = ${actorId}
           and (permission.expires_at is null or permission.expires_at > statement_timestamp())
       )
-    ))
+    )))
   `;
 }
 
@@ -836,7 +836,7 @@ function writableBookSql(
   addressBookId: string | undefined,
 ): postgres.PendingQuery<postgres.Row[]> {
   return sql`
-    (${addressBookId ?? null}::uuid is null and book.owner_actor_id = ${actorId} and book.is_default)
+    ((${addressBookId ?? null}::uuid is null and book.owner_actor_id = ${actorId} and book.is_default)
     or (${addressBookId ?? null}::uuid is not null and book.id = ${addressBookId ?? null}::uuid and (
       book.owner_actor_id = ${actorId} or exists (
         select 1 from permissions permission
@@ -845,7 +845,7 @@ function writableBookSql(
           and permission.role in ('owner', 'editor')
           and (permission.expires_at is null or permission.expires_at > statement_timestamp())
       )
-    ))
+    )))
   `;
 }
 

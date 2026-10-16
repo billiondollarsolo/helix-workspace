@@ -1,3 +1,6 @@
+import type { FastifyRequest } from "fastify";
+import { actorHasScope } from "../../api/scopes.js";
+import { ChatRoomAccessError } from "./errors.js";
 import type { Actor } from "@helix/sdk-types";
 import type postgres from "postgres";
 import { randomBytes, sha256Hex } from "../crypto/index.js";
@@ -140,4 +143,26 @@ export function chatWebSocketTicketFromProtocols(
   return tickets.length === 1 && TICKET_PATTERN.test(tickets[0] ?? "")
     ? (tickets[0] ?? null)
     : null;
+}
+
+/** Recheck the real browser session; a redeemed ticket never extends its lifetime. */
+export async function requireChatSocketSession(
+  request: FastifyRequest,
+  actor: Actor,
+  roomId: string,
+  resolveActor: (request: FastifyRequest) => Actor | Promise<Actor>,
+): Promise<Actor> {
+  try {
+    const current = await resolveActor(request);
+    if (
+      current.type === "user" &&
+      current.id === actor.id &&
+      current.orgId === actor.orgId &&
+      actorHasScope(current, "chat.read")
+    )
+      return current;
+  } catch {
+    // Revocation and verifier outages both fail closed.
+  }
+  throw new ChatRoomAccessError(roomId);
 }

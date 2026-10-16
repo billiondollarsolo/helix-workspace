@@ -60,7 +60,7 @@ describe("meet flow", () => {
       {
         roomId: created.output.id,
         recordingNoticeAccepted: true,
-        recordingNoticeVersion: "2026-09-02",
+        recordingNoticeVersion: "2026-10-15",
         deviceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         joinGrantId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
       },
@@ -118,7 +118,7 @@ describe("meet flow", () => {
       {
         roomId: created.output.id,
         recordingNoticeAccepted: true,
-        recordingNoticeVersion: "2026-09-02",
+        recordingNoticeVersion: "2026-10-15",
         deviceId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
         joinGrantId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
       },

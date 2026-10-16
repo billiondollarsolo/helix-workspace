@@ -7,6 +7,7 @@ import {
   type BetterAuthSessionVerifier,
 } from "../platform/auth/better-auth.js";
 import { createBetterAuthRequest } from "../platform/auth/better-auth-request.js";
+import type { ExternalEmailMfa } from "../platform/auth/external-email-mfa.js";
 import { type PostgresDomainIdentityStore } from "../platform/auth/domain-identity.js";
 import {
   authResponseSessionToken,
@@ -23,6 +24,7 @@ export function registerBetterAuthRoutes(
   recoveryCodes?: PostgresRecoveryCodeBroker,
   sessionVerifier?: BetterAuthSessionVerifier,
   sessionActorResolver?: SessionActorResolver,
+  emailMfa?: ExternalEmailMfa,
 ): void {
   if (auth === undefined) {
     return;
@@ -73,13 +75,46 @@ export function registerBetterAuthRoutes(
         const bridge = await recoveryCodes.consume(requestBody.code);
         requestBody = { ...requestBody, code: bridge ?? "invalid-recovery-code" };
       }
-      const response = await auth.handler(createBetterAuthRequest(request, { body: requestBody }));
+      if (
+        path === "/api/auth/two-factor/enable" &&
+        isRecord(requestBody) &&
+        requestBody.method === "otp"
+      ) {
+        return reply
+          .code(400)
+          .send({ message: "Verify and enable your external email in Security settings first." });
+      }
+      const operation = () => auth.handler(createBetterAuthRequest(request, { body: requestBody }));
+      const response =
+        emailMfa === undefined ? await operation() : await emailMfa.handleAuth(operation);
       let body = response.body === null ? null : await response.text();
+      if (
+        response.ok &&
+        path === "/api/auth/sign-in/email" &&
+        emailMfa !== undefined &&
+        isRecord(requestBody) &&
+        typeof requestBody.email === "string"
+      ) {
+        const payload = jsonRecord(body);
+        if (payload?.twoFactorRedirect === true && Array.isArray(payload.twoFactorMethods)) {
+          const emailAvailable = await emailMfa.availableForEmail(requestBody.email);
+          body = JSON.stringify({
+            ...payload,
+            twoFactorMethods: payload.twoFactorMethods.filter(
+              (method) => method !== "otp" || emailAvailable,
+            ),
+          });
+        }
+      }
       if (response.ok && path === "/api/auth/get-session" && request.tenant != null) {
         const payload = jsonRecord(body);
         if (isRecord(payload?.user)) {
           const actor = await sessionActorResolver?.resolve(request);
           if (actor?.type === "user" && actor.orgId === request.tenant.orgId) {
+            const factors =
+              emailMfa === undefined || typeof payload.user.id !== "string"
+                ? null
+                : await emailMfa.status(payload.user.id, false);
             body = JSON.stringify({
               ...payload,
               user: {
@@ -88,6 +123,9 @@ export function registerBetterAuthRoutes(
                 actorId: actor.id,
                 orgId: actor.orgId,
                 scopes: sessionScopes(actor),
+                ...(factors === null
+                  ? {}
+                  : { totpEnabled: factors.totpEnabled, emailOtpEnabled: factors.enabled }),
               },
             });
           }
@@ -122,6 +160,7 @@ export function registerBetterAuthRoutes(
         path === "/api/auth/two-factor/disable"
       ) {
         await recoveryCodes.clear(sessionUser.id);
+        await emailMfa?.retainEmailFactor(sessionUser.id);
       }
       const verifiedSessionToken = verifiedMfaSessionToken(
         request.url,
@@ -161,6 +200,7 @@ const FACTOR_MUTATION_PATHS = new Set([
   "/api/auth/two-factor/enable",
   "/api/auth/two-factor/disable",
   "/api/auth/two-factor/verify-totp",
+  "/api/auth/two-factor/verify-otp",
   "/api/auth/two-factor/generate-backup-codes",
   "/api/auth/passkey/verify-registration",
   "/api/auth/passkey/delete-passkey",

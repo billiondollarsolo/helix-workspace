@@ -19,6 +19,7 @@ export type MailDeliveryEventType = (typeof MAIL_DELIVERY_EVENT_TYPES)[number];
 export interface NormalizedMailDeliveryEvent {
   readonly providerEventId: string;
   readonly providerMessageId: string;
+  readonly handoffKey?: string;
   readonly recipient: string;
   readonly type: MailDeliveryEventType;
   readonly occurredAt: Date;

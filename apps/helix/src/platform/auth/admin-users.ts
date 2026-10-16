@@ -155,6 +155,10 @@ export class PostgresAdminUsersStore implements AdminUsersStore {
       const userId = rows[0]?.auth_user_id;
       if (userId === undefined) return false;
       await tx`delete from auth_recovery_codes where auth_user_id = ${userId}`;
+      await tx`delete from auth_external_email_factors where auth_user_id = ${userId}`;
+      await tx`delete from verification where starts_with(identifier, ${`2fa-otp-${userId}!`})
+        or identifier in (select '2fa-otp-' || identifier from verification where value = ${userId} and identifier like '2fa-%')`;
+      await tx`delete from verification where value = ${userId} and identifier like '2fa-%'`;
       await tx`delete from passkey where "userId" = ${userId}`;
       await tx`delete from "twoFactor" where "userId" = ${userId}`;
       await tx`delete from "session" where "userId" = ${userId}`;

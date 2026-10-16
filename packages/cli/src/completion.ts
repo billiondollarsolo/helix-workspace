@@ -25,6 +25,7 @@ const topLevelCommands = withWorkspaceScopes([
   "openapi",
   "asyncapi",
   "mcp",
+  "events",
   "completion",
 ] as const);
 
@@ -107,6 +108,7 @@ export const commandActions: Record<string, readonly string[]> = withWorkspaceAc
   openapi: ["get"],
   asyncapi: ["get"],
   mcp: ["serve", "resources"],
+  events: ["watch"],
   completion: ["bash", "zsh", "fish"],
 });
 

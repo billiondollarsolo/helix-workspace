@@ -23,8 +23,12 @@ describe("PostgresMailStore raw source", () => {
     const recording = createRecordingSql([
       [],
       [],
+      [], // independent tenant context
+      [], // durable body upload intent
       [{ id: threadId }],
       [],
+      [{ id: "body-intent" }],
+      [], // body reference
       [], // canonical identity
       [{ id: objectId }],
       [],
@@ -49,8 +53,9 @@ describe("PostgresMailStore raw source", () => {
     });
 
     const expectedKey = `mail/sources/${storedMessageId}/${source.sha256}.eml`;
-    expect(storage.puts).toHaveLength(1);
-    expect(storage.puts[0]).toMatchObject({
+    const rawPuts = storage.puts.filter((object) => object.contentType === "message/rfc822");
+    expect(rawPuts).toHaveLength(1);
+    expect(rawPuts[0]).toMatchObject({
       key: expectedKey,
       body: raw,
       contentType: "message/rfc822",

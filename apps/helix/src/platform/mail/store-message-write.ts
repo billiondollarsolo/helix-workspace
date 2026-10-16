@@ -6,6 +6,8 @@ import {
 import type { JsonObject } from "@helix/sdk-types";
 import type postgres from "postgres";
 import { randomUUID } from "node:crypto";
+import { linkMailBody, type StagedMailBody } from "./body-storage.js";
+import { mailPreviewText } from "./store-thread-projection.js";
 import type { TenantStorageClient } from "../storage/tenant-resolver.js";
 import { toSqlJson } from "../util/sql.js";
 import type { StagedMailAttachment } from "./attachment-ingestion.js";
@@ -144,6 +146,7 @@ export async function insertMailMessage(
   sql: SqlLike,
   input: MailMessageInput,
   sourceStorage?: TenantStorageClient,
+  stagedBody?: StagedMailBody,
 ): Promise<
   StoredMailMessage & { readonly authoritativeAttachments: readonly MailAttachmentInput[] }
 > {
@@ -175,8 +178,14 @@ export async function insertMailMessage(
     throw new Error("Unable to resolve mail thread.");
   }
 
-  const metadata = {
-    ...(input.metadata ?? {}),
+  const {
+    plainBody: _oldPlain,
+    bodyStorage: _oldStorage,
+    preview: _oldPreview,
+    ...inputMetadata
+  } = input.metadata ?? {};
+  const metadata: JsonObject = {
+    ...inputMetadata,
     from: input.from,
     to: input.to,
     cc: input.cc ?? [],
@@ -185,7 +194,18 @@ export async function insertMailMessage(
     messageId: normalizedMessageId,
     inReplyTo: normalizedInReplyTo,
     references: normalizedReferences,
-    ...(input.bodyHtml === undefined ? {} : { plainBody: input.bodyText }),
+    ...(stagedBody === undefined
+      ? input.bodyHtml === undefined
+        ? {}
+        : { plainBody: input.bodyText }
+      : {
+          bodyStorage: "object-v1",
+          preview: mailPreviewText({
+            body: input.bodyHtml ?? input.bodyText,
+            bodyFormat: input.bodyHtml === undefined ? "plain" : "html",
+            plainBody: input.bodyText,
+          }),
+        }),
   } satisfies JsonObject;
 
   // Separate statements let RLS identity checks see the newly persisted message.
@@ -194,10 +214,11 @@ export async function insertMailMessage(
     insert into messages (id, org_id, thread_id, actor_id, kind, body, body_format, metadata, sent_at)
     values (
       ${messageId}, ${input.orgId}, ${threadId}, ${input.actorId ?? null}, 'mail',
-      ${input.bodyHtml ?? input.bodyText}, ${input.bodyHtml === undefined ? "plain" : "html"},
+      ${stagedBody === undefined ? (input.bodyHtml ?? input.bodyText) : ""}, ${input.bodyHtml === undefined ? "plain" : "html"},
       ${sql.json(toSqlJson(metadata))}, ${input.receivedAt ?? new Date()}
     )
   `;
+  if (stagedBody !== undefined) await linkMailBody(sql, messageId, stagedBody);
   if (
     normalizedMessageId !== null ||
     input.rawSource !== undefined ||

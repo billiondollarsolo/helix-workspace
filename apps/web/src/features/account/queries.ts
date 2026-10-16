@@ -2,6 +2,17 @@ import type { AccountPreferences, AccountPreferencesSetInput } from "@helix/cont
 import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query";
 import { getAccountPreferences, setAccountPreferences } from "./api";
 
+export function accountEmailFactorQueryOptions() {
+  return queryOptions({
+    queryKey: ["account", "email-mfa"] as const,
+    queryFn: async () => {
+      const { getEmailFactorStatus } = await import("./email-factor");
+      return getEmailFactorStatus();
+    },
+    throwOnError: false,
+  });
+}
+
 /** One cache entry for `account.preferences`, shared by every surface that reads them. */
 export function accountPreferencesQueryOptions() {
   return queryOptions({

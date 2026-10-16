@@ -70,6 +70,13 @@ describe("AdminTable", () => {
     });
   }
 
+  function typeInto(input: HTMLInputElement, value: string) {
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
   function names(): readonly string[] {
     return [...container.querySelectorAll("tbody tr")].map(
       (row) => row.querySelector("td")?.textContent ?? "",
@@ -201,6 +208,28 @@ describe("AdminTable", () => {
     expect(scroll?.getAttribute("tabindex")).toBe("0");
     // Windowed, not all 400 in the DOM.
     expect(container.querySelectorAll("tbody tr").length).toBeLessThan(many.length);
+  });
+
+  it("searches explicit fields, preserves ordering and focus across background updates, and recovers from no matches", () => {
+    const props = { searchText: (row: Person) => row.name, partialNote: "Loaded people only." };
+    render(PEOPLE, props);
+    const search = container.querySelector<HTMLInputElement>('input[type="search"]')!;
+    search.focus();
+    typeInto(search, " ada ");
+    expect(names()).toEqual(["Ada"]);
+    expect(document.activeElement).toBe(search);
+    render([...PEOPLE, { id: "new", name: "Ada II", email: null, seats: 4 }], props);
+    expect(search.value).toBe(" ada ");
+    expect(names()).toEqual(["Ada", "Ada II"]);
+    clickHeader("Name");
+    clickHeader("Name");
+    expect(names()).toEqual(["Ada II", "Ada"]);
+    typeInto(search, "no such person");
+    expect(container.textContent).toContain("No matching results");
+    typeInto(search, "");
+    expect(names()).toHaveLength(PEOPLE.length + 1);
+    expect(header("Name").getAttribute("aria-sort")).toBe("descending");
+    expect(container.textContent).toContain("Loaded people only.");
   });
 
   it("says so when a sort only covers the rows that are loaded", () => {

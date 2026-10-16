@@ -311,6 +311,8 @@ capture_snapshot_metadata() {
       where storage_key <> ''
         and coalesce(metadata->>'status', 'ready') = 'ready'
       union all
+      select storage_key, byte_size, lower(sha256) from mail_message_bodies
+      union all
       select version.storage_key, version.byte_size::bigint, lower(version.sha256)
       from drive_versions version
       join objects object on object.id = version.object_id and object.org_id = version.org_id

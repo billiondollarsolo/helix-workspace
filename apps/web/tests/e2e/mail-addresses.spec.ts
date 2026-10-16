@@ -230,7 +230,7 @@ async function openAddresses(page: Page) {
 }
 /** Opens the Create group sheet from the page header and returns its form. */
 async function openCreateGroup(page: Page) {
-  await page.getByRole("button", { name: "Create group", exact: true }).first().click();
+  await page.getByRole("button", { name: "Add group", exact: true }).first().click();
   const form = page.getByRole("form", { name: "New group", exact: true });
   await expect(form).toBeVisible();
   return form;

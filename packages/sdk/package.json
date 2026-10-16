@@ -6,7 +6,8 @@
   "private": true,
   "dependencies": {
     "@helix/sdk-types": "workspace:*",
-    "drizzle-orm": "0.45.2"
+    "drizzle-orm": "0.45.2",
+    "@helix/contracts": "workspace:*"
   },
   "exports": {
     ".": {
@@ -28,6 +29,10 @@
     "./metering": {
       "types": "./dist/metering.d.ts",
       "default": "./dist/metering.js"
+    },
+    "./live": {
+      "types": "./dist/live.d.ts",
+      "default": "./dist/live.js"
     }
   },
   "types": "./dist/index.d.ts",

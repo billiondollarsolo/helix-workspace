@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { dlpToolInvocation } from "../dlp.js";
-import { featureFlagForTool } from "../tool-registry.js";
+import { createToolRegistry, featureFlagForTool } from "../tool-registry.js";
+import { InMemoryConfirmationGate, InMemoryPendingActionStore } from "../tools/registry.js";
 import { MAX_REFERENCES, replyThreadingHeaders } from "./reply-context.js";
 import type { CreateOutboundMailInput } from "./store-contracts.js";
 import type { MailStore } from "./store.js";
@@ -96,9 +97,9 @@ function setup(
     createOutbound: vi.fn(async (input: CreateOutboundMailInput) => {
       queued.push(input);
       return {
-        id: "outbound-1",
-        messageId: "message-new",
-        threadId: input.threadId ?? "thread-new",
+        id: sentId,
+        messageId: inboundId,
+        threadId: input.threadId ?? threadId,
         status: "queued",
         undoUntil: new Date(),
         createdAt: new Date(),
@@ -106,7 +107,7 @@ function setup(
       };
     }),
   } as unknown as MailStore;
-  const tools = createMailToolDefinitions({ store, ...extra });
+  const tools = createMailToolDefinitions({ store, internalDomains: ["helix.test"], ...extra });
   const tool = (id: string) => {
     const found = tools.find((candidate) => candidate.id === id);
     if (found === undefined) throw new Error(`missing ${id}`);
@@ -134,6 +135,100 @@ function setup(
 
 const addresses = (list: readonly { address: string }[] | undefined) =>
   (list ?? []).map((entry) => entry.address);
+
+describe("internal agent mail authorization", () => {
+  it.each(["mail.send", "mail.reply", "mail.forward"])(
+    "delivers %s locally without action approval",
+    async (id) => {
+      const f = setup(undefined, {
+        areLocalRecipients: async (_org, addresses) =>
+          addresses.every((address) => address === "peer@helix.test"),
+      });
+      const registry = createToolRegistry({
+        confirmationGate: new InMemoryConfirmationGate(new InMemoryPendingActionStore()),
+      });
+      registry.register(f.tool(id));
+      const result = await registry.invoke(
+        id,
+        {
+          to: ["peer@helix.test"],
+          subject: "Hello",
+          bodyText: "Hello",
+          threadId,
+          messageId: inboundId,
+          includeAttachments: false,
+          idempotencyKey: "internal-mail-test",
+        },
+        {
+          actor: {
+            id: actorId,
+            orgId,
+            type: "agent",
+            email: "me@helix.test",
+            scopes: ["mail.send"],
+          },
+          credentialId: "credential",
+          enforceConfirmation: true,
+          policyContext: {
+            requestChannel: "mcp",
+            effectiveClassification: "standard",
+            sourceIds: [],
+            containsUntrustedContext: true,
+            blockHighRiskWhenUntrusted: true,
+          },
+        },
+      );
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+      expect(f.queued).toHaveLength(1);
+      expect(f.queued[0]?.envelope.localOnly).toBe(true);
+    },
+  );
+
+  it.each(["external", "mixed-bcc", "unresolved", "always-confirm"])(
+    "keeps %s mail behind approval",
+    async (reason) => {
+      const f = setup(undefined, {
+        areLocalRecipients: async (_org, addresses) =>
+          reason !== "unresolved" && addresses.every((address) => address === "peer@helix.test"),
+      });
+      const registry = createToolRegistry({
+        confirmationGate: new InMemoryConfirmationGate(new InMemoryPendingActionStore()),
+      });
+      registry.register(f.tool("mail.send"));
+      const result = await registry.invoke(
+        "mail.send",
+        {
+          to: [reason === "external" ? "outside@example.com" : "peer@helix.test"],
+          bcc: reason === "mixed-bcc" ? ["outside@example.com"] : [],
+          subject: "Hello",
+          bodyText: "Hello",
+        },
+        {
+          actor: {
+            id: actorId,
+            orgId,
+            type: "agent",
+            email: "me@helix.test",
+            scopes: ["mail.send", "mail.external"],
+          },
+          credentialId: "credential",
+          enforceConfirmation: true,
+          ...(reason === "always-confirm"
+            ? { credentialPolicy: { confirmationOverride: "always" as const } }
+            : {}),
+          policyContext: {
+            requestChannel: "mcp",
+            effectiveClassification: "standard",
+            sourceIds: [],
+            containsUntrustedContext: true,
+          },
+        },
+      );
+      expect(result).toMatchObject({ ok: true, status: "pending_confirmation" });
+      expect(f.queued).toHaveLength(0);
+    },
+  );
+});
 
 describe("mail.reply (ML4a-c)", () => {
   it("replies to Reply-To with In-Reply-To and References from the parent", async () => {

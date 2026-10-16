@@ -18,6 +18,10 @@ export function useMailRealtime(enabled = true): void {
     }
 
     const source = new EventSource("/v1/sse/mail", { withCredentials: true });
+    // Events missed while disconnected are not replayed by the mail stream.
+    const onOpen = () => {
+      void queryClient.invalidateQueries({ queryKey: ["mail"] });
+    };
 
     const onMessage = (event: MessageEvent<string>) => {
       try {
@@ -28,8 +32,10 @@ export function useMailRealtime(enabled = true): void {
     };
 
     source.addEventListener("message", onMessage);
+    source.addEventListener("open", onOpen);
     return () => {
       source.removeEventListener("message", onMessage);
+      source.removeEventListener("open", onOpen);
       source.close();
     };
   }, [enabled, queryClient]);

@@ -14,6 +14,7 @@ import {
   shouldResolveTenantForRequest,
 } from "./middleware.js";
 import { setTenantPostgresActorId, tenantAwarePostgresSql } from "./postgres-roles.js";
+import { sendMcpOutcome } from "../../bootstrap/agent-api.js";
 
 const tenant: TenantContext = {
   orgId: "11111111-1111-4111-8111-111111111111",
@@ -171,6 +172,40 @@ describe("tenant Fastify hook", () => {
       }
     },
   );
+
+  it("commits streamed MCP writes before exposing the terminal result", async () => {
+    const app = fastify();
+    const database = requestSql();
+    const sql = tenantAwarePostgresSql(database.sql);
+    installTenantContextHook(app, { resolveTenantContext: async () => tenant });
+    installTenantPostgresContextHook(app, sql);
+    app.post("/mcp", async (_request, reply) => {
+      const write = reply.raw.write.bind(reply.raw);
+      reply.raw.write = ((chunk: string) => {
+        if (chunk.includes('"result"')) expect(database.calls.at(-1)).toBe("commit");
+        else expect(database.calls).not.toContain("commit");
+        return write(chunk);
+      }) as typeof reply.raw.write;
+      return sendMcpOutcome(reply, {
+        kind: "stream",
+        statusCode: 200,
+        headers: {},
+        events: (async function* () {
+          yield { event: "message", data: { jsonrpc: "2.0", method: "notifications/progress" } };
+          await sql`insert into pending_actions (tool_id) values ('chat.send')`;
+          yield { event: "message", data: { jsonrpc: "2.0", id: 1, result: { saved: true } } };
+        })(),
+      });
+    });
+    try {
+      const response = await app.inject({ method: "POST", url: "/mcp" });
+      expect(response.body).toContain('"saved":true');
+      expect(database.calls.at(-1)).toBe("commit");
+      expect(database.calls).not.toContain("rollback");
+    } finally {
+      await app.close();
+    }
+  });
 
   it("rolls a privileged mutation back when its durable audit write fails", async () => {
     const app = fastify();

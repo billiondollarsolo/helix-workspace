@@ -43,6 +43,7 @@ import type {
   MailLabelRecord,
   MailMessageInput,
   MailOutboundRecord,
+  MailOutboundEnvelope,
   MailRawSourceRecord,
   MailSearchHit,
   MailSearchProjectionStore,
@@ -107,11 +108,16 @@ export class PostgresMailStore
     this.inbound = new MailInboundStore(sql, options);
     this.outbound = new MailOutboundStore(sql, options);
     this.preferences = new MailPreferencesStore(sql);
-    this.threads = new MailThreadStore(sql, this.drafts);
+    this.threads = new MailThreadStore(
+      sql,
+      this.drafts,
+      options.storageResolver,
+      options.searchEngine,
+    );
     this.folders = new MailFolderStore(sql);
     this.labels = new MailLabelStore(sql);
-    this.scheduled = new MailScheduledStore(sql);
-    this.searchProjection = new MailSearchStore(sql);
+    this.scheduled = new MailScheduledStore(sql, options.storageResolver);
+    this.searchProjection = new MailSearchStore(sql, options.storageResolver, options.searchEngine);
   }
 
   resolveInboundRecipient(address: string): Promise<MailInboundRecipient | null> {
@@ -234,6 +240,7 @@ export class PostgresMailStore
   }
 
   markOutboundRetry(input: {
+    readonly loadedEnvelope?: MailOutboundEnvelope;
     readonly id: string;
     readonly leaseToken: string;
     readonly nextAttemptAt: Date;
@@ -243,6 +250,7 @@ export class PostgresMailStore
   }
 
   markOutboundDeadLettered(input: {
+    readonly loadedEnvelope?: MailOutboundEnvelope;
     readonly id: string;
     readonly leaseToken: string;
     readonly lastError: string;
@@ -356,6 +364,14 @@ export class PostgresMailStore
     readonly messageId: string;
   }): Promise<MailSearchRecord | null> {
     return this.searchProjection.getMailSearchRecord(input);
+  }
+
+  getMailSearchRecordForIndexing(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly messageId: string;
+  }): Promise<MailSearchRecord | null> {
+    return this.searchProjection.getMailSearchRecord(input, true);
   }
 
   /** Trusted reindex path: project the canonical message once for every owning mailbox. */

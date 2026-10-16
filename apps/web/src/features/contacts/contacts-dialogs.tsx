@@ -58,6 +58,7 @@ export function LabelNameDialog({
 
   return (
     <Dialog
+      modal={false}
       title={<h2 className="type-h3 m-0">{title}</h2>}
       onClose={onClose}
       width="min(400px, 100%)"

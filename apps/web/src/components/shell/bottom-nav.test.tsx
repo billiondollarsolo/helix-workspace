@@ -48,11 +48,11 @@ describe("BottomNav", () => {
     vi.clearAllMocks();
   });
 
-  function render() {
+  function render(unread = { mail: 0, chat: 0 }) {
     act(() => {
       root.render(
         <ShellOverlayContext.Provider value={overlays}>
-          <BottomNav />
+          <BottomNav unread={unread} />
         </ShellOverlayContext.Provider>,
       );
     });
@@ -80,6 +80,18 @@ describe("BottomNav", () => {
     expect(mail?.hasAttribute("data-active")).toBe(true);
     expect(mail?.querySelector(".bottom-nav-pill")).not.toBeNull();
     expect(moreButton().hasAttribute("data-active")).toBe(false);
+  });
+
+  it("shows accessible unread counts and removes them when read", () => {
+    render({ mail: 120, chat: 2 });
+    const mail = container.querySelector('a[href="/mail"]');
+    const chat = container.querySelector('a[href="/chat"]');
+    expect(mail?.querySelector(".app-unread-badge")?.textContent).toBe("99+120 unread messages");
+    expect(chat?.getAttribute("aria-describedby")).toBe("bottom-chat-unread");
+    expect(document.getElementById("bottom-chat-unread")?.textContent).toBe("2 unread messages");
+    render();
+    expect(container.querySelector(".app-unread-badge")).toBeNull();
+    expect(chat?.hasAttribute("aria-describedby")).toBe(false);
   });
 
   it("opens a More sheet with the remaining apps, search, settings and About", () => {

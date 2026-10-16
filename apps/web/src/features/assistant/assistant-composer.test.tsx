@@ -136,7 +136,11 @@ describe("AssistantComposer tools and models", () => {
     queryClient.clear();
   });
 
-  async function renderComposer(toolGroups: readonly string[] | undefined, admin: boolean) {
+  async function renderComposer(
+    toolGroups: readonly string[] | undefined,
+    admin: boolean,
+    result = Promise.resolve(true),
+  ) {
     queryClient.setQueryData(assistantToolsQueryOptions().queryKey, {
       limit: 128,
       groups: [
@@ -146,7 +150,7 @@ describe("AssistantComposer tools and models", () => {
           : []),
       ],
     });
-    const onSend = vi.fn(() => Promise.resolve(true));
+    const onSend = vi.fn(() => result);
     act(() => {
       root.render(
         <QueryClientProvider client={queryClient}>
@@ -181,6 +185,33 @@ describe("AssistantComposer tools and models", () => {
       await Promise.resolve();
     });
   }
+
+  it.each(["", "My next question"])(
+    "clears the submitted draft while waiting and preserves '%s' on failure",
+    async (nextDraft) => {
+      let finish: ((sent: boolean) => void) | undefined;
+      const result = new Promise<boolean>((resolve) => {
+        finish = resolve;
+      });
+      await renderComposer(undefined, false, result);
+      await send();
+      const textarea = container.querySelector("textarea");
+      if (textarea === null) throw new Error("composer textarea not found");
+      expect(textarea.value).toBe("");
+      if (nextDraft) {
+        const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+        act(() => {
+          setter?.call(textarea, nextDraft);
+          textarea.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+      }
+      await act(async () => {
+        finish?.(false);
+        await result;
+      });
+      expect(textarea.value).toBe(nextDraft || "Catch me up on mail");
+    },
+  );
 
   it("lets the server choose tools until the person picks groups", async () => {
     const onSend = await renderComposer(undefined, false);

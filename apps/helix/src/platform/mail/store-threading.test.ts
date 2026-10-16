@@ -203,10 +203,22 @@ class RecordingStorage implements TenantStorageClient {
     this.puts.push(object);
   }
 
-  async get(): Promise<StorageObject | null> {
-    return null;
+  async get(key: string): Promise<StorageObject | null> {
+    return this.puts.find((object) => object.key === key) ?? null;
   }
 
   async delete(): Promise<void> {}
 }
-const recordingSql = (responses: readonly unknown[] = []) => sharedRecordingSql(responses, "?");
+const recordingSql = (responses: readonly unknown[] = []) => {
+  let index = 0;
+  return sharedRecordingSql((query) => {
+    if (
+      query.text.includes("set_config") ||
+      query.text.includes("insert into drive_quarantine_deletions") ||
+      query.text.includes("insert into mail_message_bodies")
+    )
+      return [];
+    if (query.text.includes("delete from drive_quarantine_deletions")) return [{ id: "intent" }];
+    return responses[index++] ?? [];
+  }, "?");
+};

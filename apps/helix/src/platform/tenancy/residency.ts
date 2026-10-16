@@ -51,7 +51,8 @@ export function assertDeploymentResidency(input: DeploymentResidencyInput): void
       "OPENAI_API_KEY has no residency declaration; configure a region-pinned AI provider instead.",
     );
   }
-  assertAiResidency(input.ai, input.region);
+  // Development can test global AI endpoints; production requires regional processing.
+  if (input.production === true) assertAiResidency(input.ai, input.region);
 
   if (input.telemetryEnabled === true) {
     assertSameRegion(input.region, input.telemetryRegion, "telemetry collector");

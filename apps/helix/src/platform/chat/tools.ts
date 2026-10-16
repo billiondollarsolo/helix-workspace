@@ -1,3 +1,7 @@
+import { serializeRoom } from "./tool-serialization.js";
+import { createDirectMessageTool } from "./direct-message-tool.js";
+import { collaborationAuthorization } from "../tools/collaboration-authorization.js";
+import { chatConversationAuthorization } from "./conversation-authorization.js";
 import {
   chatBodyFormatSchema,
   chatCreateRoomInputSchema,
@@ -45,17 +49,13 @@ import type {
   ChatPinRecord,
   ChatReactionRecord,
   ChatReadReceiptRecord,
-  ChatRoomRecord,
   ChatSearchHit,
 } from "./types.js";
-
 const listRoomsSchema = z.object({
   query: z.string().max(500).optional(),
   limit: z.number().int().positive().max(100).default(50),
 });
-
 const joinRoomSchema = z.object({ roomId: z.string().uuid() });
-
 const listThreadSchema = z.object({
   roomId: z.string().uuid(),
   parentMessageId: z.string().uuid(),
@@ -173,6 +173,7 @@ export function createChatToolDefinitions(
   return [
     defineTool<z.output<typeof chatSendInputSchema>, z.output<typeof chatMessageSchema>>({
       id: "chat.send",
+      standingAuthorization: chatConversationAuthorization(options.store),
       description: "Send a message to a chat room.",
       permission: "chat.post",
       sideEffects: "write",
@@ -210,6 +211,7 @@ export function createChatToolDefinitions(
     }),
     defineTool<z.output<typeof chatReplyInThreadInputSchema>, z.output<typeof chatMessageSchema>>({
       id: "chat.reply_in_thread",
+      standingAuthorization: chatConversationAuthorization(options.store),
       description: "Reply to a chat message in a thread.",
       permission: "chat.post",
       sideEffects: "write",
@@ -264,6 +266,7 @@ export function createChatToolDefinitions(
       description: "Pin a message in a chat room.",
       permission: "chat.post",
       sideEffects: "write",
+      standingAuthorization: collaborationAuthorization("chat.post"),
       inputSchema: zodToolSchema(chatPinInputSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(chatPinRecordSchema, genericObjectJsonSchema),
       handler: async (input, ctx) =>
@@ -281,6 +284,7 @@ export function createChatToolDefinitions(
       description: "Unpin a message in a chat room.",
       permission: "chat.post",
       sideEffects: "write",
+      standingAuthorization: collaborationAuthorization("chat.post"),
       inputSchema: zodToolSchema(chatPinInputSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(chatUnpinResultSchema, genericObjectJsonSchema),
       handler: async (input, ctx) =>
@@ -313,6 +317,7 @@ export function createChatToolDefinitions(
       description: "Add or remove a reaction on a chat message.",
       permission: "chat.post",
       sideEffects: "write",
+      standingAuthorization: collaborationAuthorization("chat.post"),
       inputSchema: zodToolSchema(chatReactInputSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(chatReactResultSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
@@ -374,6 +379,7 @@ export function createChatToolDefinitions(
       description: "Join a discoverable chat room.",
       permission: "chat.create",
       sideEffects: "write",
+      standingAuthorization: collaborationAuthorization("chat.create"),
       inputSchema: zodToolSchema(joinRoomSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(chatRoomSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
@@ -416,6 +422,7 @@ export function createChatToolDefinitions(
       description: "Edit one of the current actor's chat messages.",
       permission: "chat.post",
       sideEffects: "write",
+      standingAuthorization: collaborationAuthorization("chat.post"),
       inputSchema: zodToolSchema(chatEditInputSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(chatMessageSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
@@ -466,6 +473,7 @@ export function createChatToolDefinitions(
       description: "Create a chat room or direct message thread.",
       permission: "chat.create",
       sideEffects: "write",
+      standingAuthorization: collaborationAuthorization("chat.create"),
       inputSchema: zodToolSchema(chatCreateRoomInputSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(chatRoomSchema, genericObjectJsonSchema),
       handler: async (input, ctx) =>
@@ -489,6 +497,7 @@ export function createChatToolDefinitions(
           }),
         ),
     }),
+    createDirectMessageTool(options.store),
     defineTool<z.output<typeof chatRoomExportInputSchema>, z.output<typeof chatRoomExportSchema>>({
       id: "chat.export",
       description: "Export the room history visible to the current actor.",
@@ -544,6 +553,7 @@ export function createChatToolDefinitions(
       description: "Invite actors to a chat room.",
       permission: "chat.create",
       sideEffects: "write",
+      standingAuthorization: collaborationAuthorization("chat.create"),
       inputSchema: zodToolSchema(chatInviteInputSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(chatInviteResultSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
@@ -723,33 +733,6 @@ export function registerChatTools(
   for (const tool of createChatToolDefinitions(options)) {
     registry.register(tool);
   }
-}
-
-function serializeRoom(room: ChatRoomRecord) {
-  return {
-    id: room.id,
-    orgId: room.orgId,
-    kind: room.kind,
-    subject: room.subject,
-    createdByActorId: room.createdByActorId,
-    metadata: room.metadata,
-    members: room.members.map((m) => ({
-      actorId: m.actorId,
-      role: m.role,
-      displayName: m.displayName,
-      email: m.email,
-    })),
-    createdAt: room.createdAt.toISOString(),
-    updatedAt: room.updatedAt.toISOString(),
-    settings:
-      room.settings === null
-        ? null
-        : {
-            ...room.settings,
-            createdAt: room.settings.createdAt.toISOString(),
-            updatedAt: room.settings.updatedAt.toISOString(),
-          },
-  };
 }
 
 function serializeMessage(message: ChatMessageRecord) {

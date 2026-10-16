@@ -1,3 +1,5 @@
+import { createAICostGuard } from "./guard.js";
+import { InMemoryAICostLimitStore } from "./limit-store.js";
 import { describe, expect, it } from "vitest";
 import { InMemoryAICostLimiter, aiUsdToMicros, resolveAICostBudget } from "./index.js";
 
@@ -138,4 +140,39 @@ describe("InMemoryAICostLimiter", () => {
       },
     ]);
   });
+});
+
+it("enforces saved limits immediately and reserves concurrent spending until settlement", async () => {
+  const limiter = new InMemoryAICostLimiter();
+  const limitStore = new InMemoryAICostLimitStore();
+  const actor = { id: scope.actorId, orgId: scope.orgId, type: "user" as const };
+  const guard = createAICostGuard({ limiter, limitStore, tier: "business" });
+  const input = {
+    actor,
+    feature: scope.feature,
+    providerId: "test",
+    model: "test",
+    estimatedCostCents: 60,
+  };
+  await limitStore.upsert({
+    orgId: actor.orgId,
+    actorId: actor.id,
+    actorDailyUsdMicros: 1000000,
+    featureDailyUsdMicros: null,
+  });
+  const results = await Promise.allSettled([guard.reserve(input), guard.reserve(input)]);
+  expect(results.map((result) => result.status).sort()).toEqual(["fulfilled", "rejected"]);
+  const reserved = results.find((result) => result.status === "fulfilled");
+  if (reserved?.status !== "fulfilled" || !reserved.value) throw new Error("Missing reservation");
+  await guard.record({ ...input, costCents: 20, reservation: reserved.value });
+  expect((await limiter.getUsage(scope)).actorDaily.usedUsdMicros).toBe(200000);
+  await limitStore.upsert({
+    orgId: actor.orgId,
+    actorId: actor.id,
+    actorDailyUsdMicros: 0,
+    featureDailyUsdMicros: null,
+  });
+  await expect(guard.reserve({ ...input, estimatedCostCents: 0 })).rejects.toThrow(
+    "budget exceeded",
+  );
 });

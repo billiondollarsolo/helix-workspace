@@ -4,6 +4,13 @@ import { parseCliArgs } from "./parser.js";
 import { scopedUsage } from "./usage.js";
 
 describe("workspace command wrappers", () => {
+  it("opens direct conversations through the scoped collaboration tool", () => {
+    expect(parseCliArgs(["chat", "dm", "--json", '{"memberActorIds":["peer"]}'])).toEqual({
+      kind: "tool-call",
+      toolId: "chat.dm.open",
+      json: { source: "inline", value: '{"memberActorIds":["peer"]}' },
+    });
+  });
   it("maps mail label, scheduled, account and chat commands to their tools", () => {
     expect(parseCliArgs(["mail", "label-create", "--name", "Clients", "--color", "green"])).toEqual(
       {

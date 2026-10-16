@@ -45,6 +45,7 @@ import {
  * damage is an operator reading a quiet one as a checked workspace. */
 
 import { Button } from "@/components/ui/button";
+import { SetupGuides } from "@/features/admin/setup-guides";
 import {
   ADMIN_NAV_GROUPS,
   ADMIN_NAV_ROOT,
@@ -612,6 +613,7 @@ export function AdminOverview() {
 
       <AttentionBand signals={signals} />
       <CoverageNote coverage={coverage} />
+      <SetupGuides />
 
       {/* Full page width, not inside the card that failed. `describeFailure`'s
           cause sentence plus a raw backend message do not fit a 240px column —

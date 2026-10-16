@@ -91,6 +91,7 @@ function ShortcutHelpDialog({
   const enabled = useKeyboardShortcutsEnabled();
   return (
     <Dialog
+      modal={false}
       title="Keyboard shortcuts"
       onClose={onClose}
       width="min(820px, 100%)"
@@ -103,9 +104,6 @@ function ShortcutHelpDialog({
           </span>
           <button type="button" className="btn" onClick={onOpenSettings}>
             Shortcut settings
-          </button>
-          <button type="button" className="btn primary" onClick={onClose}>
-            Close
           </button>
         </>
       }

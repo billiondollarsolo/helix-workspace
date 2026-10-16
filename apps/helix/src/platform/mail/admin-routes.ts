@@ -232,16 +232,16 @@ function isRoutingValidationError(error: unknown): boolean {
 // Serialization
 // ---------------------------------------------------------------------------
 
-/** Project a provider config for the API — never exposes the secret value. */
 function serializeProvider(provider: OutboundProviderConfig): Record<string, unknown> {
   return {
     id: provider.id,
+    orgId: provider.orgId,
     name: provider.name,
     kind: provider.kind,
     enabled: provider.enabled,
     isDefault: provider.isDefault,
     config: provider.config,
-    // Only the env-var *name* is surfaced; the secret value never leaves the host.
+    // Only opaque tenant secret handles are surfaced.
     secretRef: provider.secretRef,
     hasSecret: provider.secretRef !== null,
     webhookSecretRef: provider.webhookSecretRef,

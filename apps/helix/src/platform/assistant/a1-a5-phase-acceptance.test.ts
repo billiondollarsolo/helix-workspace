@@ -418,7 +418,7 @@ describe("A3 — tool-call policy firewall", () => {
         actor: agent,
         policyContext: {
           effectiveClassification: "standard",
-          sourceIds: ["mail-1"],
+          sourceIds: [],
           containsUntrustedContext: true,
           requestChannel: "mcp",
           tenantId: orgId,
@@ -429,7 +429,7 @@ describe("A3 — tool-call policy firewall", () => {
     expect(explanation).toMatchObject({
       toolId: "demo.external",
       decision: { outcome: "deny", reason: "untrusted_context_high_risk_blocked" },
-      sourceIds: ["mail-1"],
+      sourceIds: [],
     });
     expect(JSON.stringify(explanation)).not.toContain("do-not-echo");
     expect(JSON.stringify(explanation)).not.toContain("outsider@example.com");

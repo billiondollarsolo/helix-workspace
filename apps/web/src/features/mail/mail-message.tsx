@@ -8,6 +8,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "@/components/ui/menu";
 import { externalPersonRef } from "@/features/people/person-ref";
 import { apiPath } from "@/lib/auth";
+import { useState } from "react";
 import {
   FileCode,
   Filter,
@@ -81,6 +82,7 @@ export function MailMessage({
   onMarkUnreadFromHere,
 }: MailMessageProps) {
   const sender = senderOf(message);
+  const [plainText, setPlainText] = useState(false);
 
   if (!expanded) {
     return (
@@ -114,14 +116,18 @@ export function MailMessage({
                 </button>
               )}
             </PersonHovercard>
-            {sender.address === "" ? null : (
+            {sender.address === "" || sender.address === sender.name ? null : (
               <span className="mail-message-address">&lt;{sender.address}&gt;</span>
             )}
           </div>
           <div className="mail-message-to">{recipientsLine(message, myAddress)}</div>
         </div>
-        <time className="mail-message-when" dateTime={message.sentAt}>
-          {formatFullDate(message.sentAt)}
+        <time
+          className="mail-message-when"
+          dateTime={message.sentAt}
+          title={formatFullDate(message.sentAt)}
+        >
+          {formatThreadTime(message.sentAt)}
           {relative === "" ? null : ` (${relative})`}
         </time>
         <div className="mail-message-actions">
@@ -175,6 +181,11 @@ export function MailMessage({
               <MenuItem icon={<Printer />} onSelect={() => printMessages(subject, [message])}>
                 Print
               </MenuItem>
+              {message.bodyFormat === "html" ? (
+                <MenuItem onSelect={() => setPlainText((value) => !value)}>
+                  {plainText ? "Show formatted message" : "Show plain text"}
+                </MenuItem>
+              ) : null}
               <MenuItem
                 icon={<FileCode />}
                 onSelect={() =>
@@ -195,16 +206,14 @@ export function MailMessage({
         </div>
       </header>
       <div className="mail-message-body">
-        {message.bodyFormat === "html" && message.source !== undefined ? (
+        {message.bodyFormat === "html" && !plainText ? (
           <MailHtmlBody
             html={message.body}
-            source={message.source}
-            plainBody={message.plainBody}
             remoteContentBlocked={message.remoteContentBlocked ?? false}
           />
         ) : (
           <div className="whitespace-pre-wrap type-body [overflow-wrap:anywhere]">
-            {message.body}
+            {messagePlainText(message)}
           </div>
         )}
         <MailAttachments attachments={message.attachments} />

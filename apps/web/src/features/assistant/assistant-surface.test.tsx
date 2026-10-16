@@ -296,7 +296,7 @@ describe("AssistantSurface", () => {
   }
 
   function buttonByText(text: string): HTMLButtonElement | undefined {
-    return [...container.querySelectorAll("button")].find(
+    return [...document.querySelectorAll("button")].find(
       (button) => button.textContent?.includes(text) === true,
     );
   }
@@ -428,7 +428,7 @@ describe("AssistantSurface", () => {
     render();
     await flush();
     setComposerValue("hi there");
-    const sendButton = [...container.querySelectorAll("button")].find(
+    const sendButton = [...document.querySelectorAll("button")].find(
       (button) => button.getAttribute("aria-label") === "Send message",
     );
     act(() => {
@@ -463,7 +463,7 @@ describe("AssistantSurface", () => {
 
     render();
     await flush();
-    const threadButton = [...container.querySelectorAll("button")].find(
+    const threadButton = [...document.querySelectorAll("button")].find(
       (button) => button.textContent?.includes("Summarize unread inbox") === true,
     );
     expect(threadButton).toBeDefined();
@@ -507,7 +507,7 @@ describe("AssistantSurface", () => {
 
     render();
     await flush();
-    const threadButton = [...container.querySelectorAll("button")].find(
+    const threadButton = [...document.querySelectorAll("button")].find(
       (button) => button.textContent?.includes("Summarize unread inbox") === true,
     );
     act(() => {
@@ -562,7 +562,7 @@ describe("AssistantSurface", () => {
       menuItem("Rename")?.click();
     });
     await flush();
-    const titleInput = container.querySelector<HTMLInputElement>('input[aria-label="Chat title"]');
+    const titleInput = document.querySelector<HTMLInputElement>('input[aria-label="Chat title"]');
     expect(titleInput).not.toBeNull();
     if (titleInput !== null) {
       setNativeValue(titleInput, "Renamed chat");
@@ -657,6 +657,7 @@ describe("AssistantSurface", () => {
     });
     await flush();
     expect(container.textContent ?? "").toContain("network down");
+    expect(container.textContent ?? "").toContain("Your message wasn't saved");
     expect(textarea().value).toBe("summarize my inbox");
   });
 

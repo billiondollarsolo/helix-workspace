@@ -201,7 +201,7 @@ export function EventEditor({
                     <input
                       aria-label="Location"
                       placeholder="Add location"
-                      className="cal-field type-body-sm flex-1 min-w-0"
+                      className="input type-body-sm flex-1 min-w-0"
                       value={draft.location}
                       onChange={(event) => setDraft({ ...draft, location: event.target.value })}
                     />
@@ -224,7 +224,7 @@ export function EventEditor({
                           type="number"
                           min={0}
                           max={MAX_REMINDER_MINUTES}
-                          className="cal-field type-body-sm w-20"
+                          className="input type-body-sm w-20"
                           value={String(draft.reminder.amount)}
                           onChange={(event) =>
                             setDraft({
@@ -238,7 +238,7 @@ export function EventEditor({
                         />
                         <select
                           aria-label="Notification unit"
-                          className="cal-field type-body-sm"
+                          className="input type-body-sm"
                           value={draft.reminder.unit}
                           onChange={(event) => {
                             const unit = REMINDER_UNITS.find(
@@ -286,7 +286,7 @@ export function EventEditor({
                         />
                         <span className="sr-only">Calendar</span>
                         <select
-                          className="cal-field type-body-sm"
+                          className="input type-body-sm"
                           value={draft.calendarId ?? ""}
                           disabled={draft.mode === "edit"}
                           onChange={(event) =>
@@ -304,7 +304,7 @@ export function EventEditor({
                     <label className="flex items-center gap-2 type-body-sm">
                       <span className="sr-only">Show as</span>
                       <select
-                        className="cal-field type-body-sm"
+                        className="input type-body-sm"
                         value={draft.busy ? "busy" : "free"}
                         onChange={(event) =>
                           setDraft({ ...draft, busy: event.target.value === "busy" })
@@ -321,7 +321,7 @@ export function EventEditor({
                       aria-label="Description"
                       placeholder="Add description"
                       rows={5}
-                      className="cal-field type-body-sm w-full resize-y"
+                      className="input type-body-sm w-full resize-y"
                       value={draft.description}
                       onChange={(event) => setDraft({ ...draft, description: event.target.value })}
                     />

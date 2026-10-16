@@ -1,5 +1,10 @@
 # Agent live evidence
 
+The persistent Atlas development exercise is recorded separately in
+[the 2026-10-14 MCP review](reviews/2026-10-14-atlas-mcp-live-test.md). It covers
+API-key MCP, file/chat mutations, scanners, CLI calls, browser indicators, and
+human mail review. It does not replace the dedicated OAuth release gate below.
+
 `pnpm quality:agent-live-evidence` is the opt-in A7 real-stack smoke. It writes
 `helix.agent-live-evidence.v1` JSON for the release evidence bundle.
 
@@ -46,9 +51,9 @@ HELIX_AGENT_LIVE_CLIENT_ID=<dedicated-client-id> \
 HELIX_AGENT_LIVE_CLIENT_SECRET=<one-time-test-secret> \
 HELIX_AGENT_LIVE_HUMAN_TOKEN=<credential-owner-session-token> \
 HELIX_AGENT_LIVE_ADMIN_TOKEN=<agent-and-audit-admin-token> \
-HELIX_AGENT_LIVE_RESOURCE_URIS='{"mail":"helix://mail/thread/<id>","drive":"helix://drive/object/<id>","chat":"helix://chat/room/<id>"}' \
-HELIX_AGENT_LIVE_FORBIDDEN_URIS='["helix://mail/thread/<forbidden>","helix://drive/object/<forbidden>","helix://chat/room/<forbidden>"]' \
-HELIX_AGENT_LIVE_INJECTION_URIS='{"mail":"helix://mail/thread/<fixture>","drive":"helix://drive/object/<fixture>","chat":"helix://chat/room/<fixture>"}' \
+HELIX_AGENT_LIVE_RESOURCE_URIS='{"mail":"helix://mail/thread/<id>","drive":"helix://drive/file/<id>","chat":"helix://chat/room/<id>"}' \
+HELIX_AGENT_LIVE_FORBIDDEN_URIS='["helix://mail/thread/<forbidden>","helix://drive/file/<forbidden>","helix://chat/room/<forbidden>"]' \
+HELIX_AGENT_LIVE_INJECTION_URIS='{"mail":"helix://mail/thread/<fixture>","drive":"helix://drive/file/<fixture>","chat":"helix://chat/room/<fixture>"}' \
 HELIX_AGENT_LIVE_CHAT_SEND_INPUT='{"roomId":"<uuid>","body":"replaced-by-smoke","bodyFormat":"plain","attachmentObjectIds":[],"metadata":{}}' \
 HELIX_AGENT_LIVE_MAIL_SEND_INPUT='{"to":["agent-live-denied@example.test"],"cc":[],"bcc":[],"subject":"must-not-send","bodyText":"must-not-send","attachments":[]}' \
 HELIX_AGENT_LIVE_OUTPUT="$evidence_dir/agent-live-evidence.json" \

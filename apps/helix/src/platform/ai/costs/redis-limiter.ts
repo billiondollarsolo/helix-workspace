@@ -53,9 +53,8 @@ export function ioredisAICostClient(client: object): RedisAICostClient {
 }
 
 /**
- * Atomically checks both the actor-daily and feature-daily budgets and, when
- * the estimated cost fits, returns without mutating state. Reads only — the
- * actual spend is recorded by RECORD_SCRIPT.
+ * Atomically checks both budgets and reserves estimated spend when a reservation
+ * is requested. Settlement replaces that estimate with the actual charge.
  */
 const CHECK_SCRIPT = `
 local actor_key = KEYS[1]
@@ -67,11 +66,19 @@ local estimated = tonumber(ARGV[3])
 local actor_used = tonumber(redis.call("GET", actor_key) or "0")
 local feature_used = tonumber(redis.call("GET", feature_key) or "0")
 
-if actor_limit >= 0 and actor_used + estimated > actor_limit then
+if actor_limit >= 0 and (actor_used >= actor_limit or actor_used + estimated > actor_limit) then
   return {0, "actor_daily_cost", actor_used, feature_used}
 end
-if feature_limit >= 0 and feature_used + estimated > feature_limit then
+if feature_limit >= 0 and (feature_used >= feature_limit or feature_used + estimated > feature_limit) then
   return {0, "feature_daily_cost", actor_used, feature_used}
+end
+if ARGV[4] ~= "" then
+  if redis.call("EXISTS", KEYS[3]) == 1 then return redis.error_reply("Duplicate AI reservation") end
+  redis.call("SET", KEYS[3], estimated, "EX", ARGV[5])
+  redis.call("INCRBY", actor_key, estimated)
+  redis.call("INCRBY", feature_key, estimated)
+  redis.call("EXPIRE", actor_key, ARGV[5])
+  redis.call("EXPIRE", feature_key, ARGV[5])
 end
 return {1, "", actor_used, feature_used}
 `;
@@ -84,6 +91,12 @@ const RECORD_SCRIPT = `
 local actor_key = KEYS[1]
 local feature_key = KEYS[2]
 local cost = tonumber(ARGV[1])
+if ARGV[3] ~= "" then
+  local reserved = redis.call("GET", KEYS[3])
+  if not reserved then return redis.error_reply("AI reservation already settled or missing") end
+  cost = cost - tonumber(reserved)
+  redis.call("DEL", KEYS[3])
+end
 local ttl_seconds = tonumber(ARGV[2])
 
 local actor_used = tonumber(redis.call("INCRBY", actor_key, cost))
@@ -140,12 +153,15 @@ export class RedisAICostLimiter implements AICostLimiter {
     const keys = this.#keys(input.orgId, input.actorId, input.feature, at);
     const raw = await this.redis.evalScript(
       CHECK_SCRIPT,
-      2,
+      3,
       keys.actor,
       keys.feature,
+      `${keys.actor}:reservation:${input.reservationId ?? "none"}`,
       budget.actorDailyUsdMicros ?? -1,
       budget.featureDailyUsdMicros ?? -1,
       estimated,
+      input.reservationId ?? "",
+      secondsUntilNextUtcDay(at) + 86400,
     );
     const response = checkScriptResponse(raw);
     const usage = costUsage(response.actorUsed, response.featureUsed, budget, at);
@@ -170,11 +186,13 @@ export class RedisAICostLimiter implements AICostLimiter {
     const keys = this.#keys(input.orgId, input.actorId, input.feature, at);
     const raw = await this.redis.evalScript(
       RECORD_SCRIPT,
-      2,
+      3,
       keys.actor,
       keys.feature,
+      `${keys.actor}:reservation:${input.reservationId ?? "none"}`,
       costUsdMicros,
-      secondsUntilNextUtcDay(at),
+      secondsUntilNextUtcDay(at) + 86400,
+      input.reservationId ?? "",
     );
     const totals = recordScriptResponse(raw);
     const usage = costUsage(totals.actorUsed, totals.featureUsed, budget, at);

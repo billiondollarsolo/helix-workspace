@@ -82,7 +82,7 @@ describe("ProfileMenu", () => {
 
   it("manages the account in settings", () => {
     const { card, openSettings } = openCard();
-    act(() => buttonIn(card, "Manage your account")?.click());
+    act(() => buttonIn(card, "Manage your account and status")?.click());
     expect(openSettings).toHaveBeenCalledWith("profile");
     expect(document.querySelector('[role="dialog"]')).toBeNull();
   });

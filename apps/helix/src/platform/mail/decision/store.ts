@@ -1,3 +1,5 @@
+import { readMailBody } from "../body-storage.js";
+import type { TenantStorageResolver } from "../../storage/tenant-resolver.js";
 import type { JsonObject } from "@helix/sdk-types";
 import type postgres from "postgres";
 import type { DataClassification } from "../../ai/classification/types.js";
@@ -69,6 +71,7 @@ export class PostgresMailDecisionStore {
   constructor(
     private readonly sql: postgres.Sql,
     private readonly cipher: Pick<TenantEnvelopeCipher, "seal" | "open">,
+    private readonly storageResolver?: TenantStorageResolver,
   ) {}
 
   async credentialStatus(
@@ -154,7 +157,42 @@ export class PostgresMailDecisionStore {
         and m.kind = 'mail' and m.deleted_at is null
     `;
     const row = rows[0];
-    return row === undefined ? null : mapCandidate(input.orgId, row);
+    if (row === undefined) return null;
+    if (row.metadata.bodyStorage !== "object-v1") return mapCandidate(input.orgId, row);
+    const content = await readMailBody(
+      this.sql,
+      this.storageResolver,
+      input.orgId,
+      input.messageId,
+    );
+    return mapCandidate(input.orgId, {
+      ...row,
+      body: content.html ?? content.text,
+      metadata: { ...row.metadata, plainBody: content.text },
+    });
+  }
+
+  /** Reserve the message before network I/O; caller holds the tenant transaction. */
+  async claimProviderCall(
+    input: Omit<DecisionVerdictWrite, "outcome">,
+    cap: number,
+  ): Promise<"claimed" | "daily_cap" | "already_recorded"> {
+    await this
+      .sql`select pg_advisory_xact_lock(hashtextextended(${"mail-decision:" + input.orgId}, 0))`;
+    const existing = await this
+      .sql`select id from mail_decision_verdicts where org_id = ${input.orgId} and message_id = ${input.messageId}`;
+    if (existing.length > 0) return "already_recorded";
+    const usage = await this.sql<
+      { count: number }[]
+    >`select count(*)::int as count from mail_decision_verdicts where org_id = ${input.orgId} and outcome in ('decided', 'error') and created_at >= date_trunc('day', statement_timestamp(), 'UTC')`;
+    if ((usage[0]?.count ?? 0) >= cap) return "daily_cap";
+    // A crashed call remains accounted for and never replays paid inference automatically.
+    await this.recordVerdict({
+      ...input,
+      outcome: "error",
+      reason: "provider_pending_or_interrupted",
+    });
+    return "claimed";
   }
 
   /** Insert the one verdict for a message; false when another worker already recorded it. */
@@ -183,7 +221,20 @@ export class PostgresMailDecisionStore {
         ${input.senderDomain}, ${summary?.proposedAction ?? "none"}, ${input.actionTaken ?? "none"},
         ${input.latencyMs ?? null}, ${input.inputTokens ?? null}, ${input.outputTokens ?? null}
       )
-      on conflict (org_id, message_id) do nothing
+      on conflict (org_id, message_id) do update set
+        model = excluded.model, outcome = excluded.outcome, reason = excluded.reason,
+        verdict = excluded.verdict, verdict_confidence = excluded.verdict_confidence,
+        verdict_probabilities = excluded.verdict_probabilities,
+        category = excluded.category, category_confidence = excluded.category_confidence,
+        category_probabilities = excluded.category_probabilities,
+        needs_reply_probability = excluded.needs_reply_probability,
+        urgency = excluded.urgency, urgency_confidence = excluded.urgency_confidence,
+        urgency_probabilities = excluded.urgency_probabilities,
+        proposed_action = excluded.proposed_action, action_taken = excluded.action_taken,
+        latency_ms = excluded.latency_ms, input_tokens = excluded.input_tokens,
+        output_tokens = excluded.output_tokens
+      where mail_decision_verdicts.reason = 'provider_pending_or_interrupted'
+        and excluded.reason is distinct from 'provider_pending_or_interrupted'
       returning id
     `;
     return rows.length > 0;

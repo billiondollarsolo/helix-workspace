@@ -9,7 +9,7 @@ import {
   mcpMethodNotAllowedOutcome,
   type McpHttpOutcome,
 } from "./mcp-http.js";
-import { MCP_PROTOCOL_VERSION } from "./version.js";
+import { MCP_LEGACY_PROTOCOL_VERSION } from "./version.js";
 
 const agentActor: Actor = {
   id: "agent-http",
@@ -38,6 +38,20 @@ async function post(
 }
 
 describe("MCP Streamable HTTP transport (MC5 / MC6)", () => {
+  it.each(["user", "agent", "service_account"] as const)(
+    "accepts an authenticated %s in the default workspace",
+    async (type) => {
+      const outcome = await post(
+        { jsonrpc: "2.0", id: 1, method: "initialize" },
+        { actor: { ...agentActor, type, orgId: "00000000-0000-0000-0000-000000000000" } },
+      );
+      expect(outcome).toMatchObject({
+        statusCode: 200,
+        body: { result: { capabilities: { tools: {}, resources: {} } } },
+      });
+    },
+  );
+
   it("returns 401 with a resource_metadata challenge before opening an SSE stream", async () => {
     const outcome = await post(
       { jsonrpc: "2.0", id: 1, method: "initialize" },
@@ -69,10 +83,10 @@ describe("MCP Streamable HTTP transport (MC5 / MC6)", () => {
       post(ping, { headers: { "mcp-protocol-version": "1999-01-01" } }),
     ).resolves.toMatchObject({
       statusCode: 400,
-      body: { id: "p", error: { code: -32600 } },
+      body: { id: "p", error: { code: -32022 } },
     });
     await expect(
-      post(ping, { headers: { "mcp-protocol-version": MCP_PROTOCOL_VERSION } }),
+      post(ping, { headers: { "mcp-protocol-version": MCP_LEGACY_PROTOCOL_VERSION } }),
     ).resolves.toMatchObject({ statusCode: 200, body: { id: "p", result: {} } });
     await expect(post(ping)).resolves.toMatchObject({ statusCode: 200 });
   });
@@ -95,7 +109,9 @@ describe("MCP Streamable HTTP transport (MC5 / MC6)", () => {
       method: "initialize",
       params: { protocolVersion: "1999-01-01" },
     });
-    expect(unknown).toMatchObject({ body: { result: { protocolVersion: MCP_PROTOCOL_VERSION } } });
+    expect(unknown).toMatchObject({
+      body: { result: { protocolVersion: MCP_LEGACY_PROTOCOL_VERSION } },
+    });
     const later = await post(
       { jsonrpc: "2.0", id: 3, method: "ping" },
       { headers: { "mcp-session-id": "session-1" } },

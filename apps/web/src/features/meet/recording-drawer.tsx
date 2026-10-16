@@ -1,4 +1,4 @@
-import { Video as VideoIcon, X as XIcon } from "lucide-react";
+import { SideSheet } from "@/components/ui/side-sheet";
 /* Recording playback drawer for the Meet hub.
  *
  * The Meet backend attaches Jibri uploads as Drive objects on the meeting
@@ -12,7 +12,6 @@ import { Video as VideoIcon, X as XIcon } from "lucide-react";
  * an "Open in Drive" link.
  */
 
-import { useEffect, useId, useRef } from "react";
 import type { MeetMeetingRecord, MeetRecordingArtifactRecord } from "./api";
 import { formatElapsed } from "./meet-call";
 
@@ -23,111 +22,32 @@ export interface RecordingDrawerProps {
 
 export function RecordingDrawer({ meeting, onClose }: RecordingDrawerProps) {
   const artifacts = meeting.recordingArtifacts ?? [];
-  const titleId = useId();
-  const drawerRef = useRef<HTMLElement | null>(null);
-  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
-
-  useEffect(() => {
-    const previouslyFocused =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    queueMicrotask(() => closeButtonRef.current?.focus());
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onClose();
-        return;
-      }
-      if (event.key !== "Tab" || drawerRef.current === null) return;
-      const controls = Array.from(
-        drawerRef.current.querySelectorAll<HTMLElement>(
-          'a[href], button:not([disabled]), video[controls], [tabindex]:not([tabindex="-1"])',
-        ),
-      );
-      if (controls.length === 0) {
-        event.preventDefault();
-        drawerRef.current.focus();
-        return;
-      }
-      const first = controls[0]!;
-      const last = controls[controls.length - 1]!;
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      document.body.style.overflow = previousOverflow;
-      previouslyFocused?.focus();
-    };
-  }, [onClose]);
-
   return (
-    <>
-      <button
-        type="button"
-        aria-hidden="true"
-        tabIndex={-1}
-        onClick={onClose}
-        className="fixed inset-0 [background:rgba(0,0,0,0.4)] [border:none] p-0 cursor-default [z-index:40]"
-      />
-      <aside
-        ref={drawerRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        tabIndex={-1}
-        className="fixed top-0 right-0 bottom-0 [width:min(520px,_90vw)] bg-card [border-left:1px_solid_var(--border)] flex flex-col [z-index:41] [box-shadow:-12px_0_30px_rgba(0,0,0,0.25)]"
-      >
-        <header className="[padding:14px_18px] [border-bottom:1px_solid_var(--border)] flex items-center gap-2.5">
-          <VideoIcon size={16} />
-          <div className="flex-1 min-w-0">
-            <h2
-              id={titleId}
-              className="m-0 font-semibold type-body-sm text-foreground overflow-hidden text-ellipsis whitespace-nowrap"
-            >
-              Recordings
-            </h2>
-            <div className="type-meta text-muted-foreground overflow-hidden text-ellipsis whitespace-nowrap">
-              {meeting.title || meeting.subject}
-            </div>
-          </div>
-          <button
-            ref={closeButtonRef}
-            type="button"
-            className="icon-btn"
-            aria-label="Close"
-            onClick={onClose}
-          >
-            <XIcon size={16} />
-          </button>
-        </header>
-
-        <div className="flex-1 overflow-y-auto p-4">
-          {artifacts.length === 0 ? (
-            <EmptyState recorded={meeting.recorded} />
-          ) : (
-            <div className="flex flex-col gap-4">
-              {artifacts.map((artifact, idx) => (
-                <RecordingCard
-                  key={artifact.objectId}
-                  artifact={artifact}
-                  index={idx}
-                  total={artifacts.length}
-                />
-              ))}
-            </div>
-          )}
+    <SideSheet
+      open
+      modal={false}
+      title="Recordings"
+      description={meeting.title || meeting.subject}
+      size="lg"
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      {artifacts.length === 0 ? (
+        <EmptyState recorded={meeting.recorded} />
+      ) : (
+        <div className="flex flex-col gap-4">
+          {artifacts.map((artifact, idx) => (
+            <RecordingCard
+              key={artifact.objectId}
+              artifact={artifact}
+              index={idx}
+              total={artifacts.length}
+            />
+          ))}
         </div>
-      </aside>
-    </>
+      )}
+    </SideSheet>
   );
 }
 

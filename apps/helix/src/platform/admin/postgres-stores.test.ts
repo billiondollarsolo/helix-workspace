@@ -113,6 +113,14 @@ describe("PostgresOAuthAppsStore", () => {
 });
 
 describe("PostgresDomainsStore", () => {
+  it("returns null when the verification function cannot find the claim", async () => {
+    const recording = createRecordingSql([[{ id: null }]]);
+    const store = new PostgresDomainsStore(recording.sql);
+    await expect(
+      store.recordDomainVerification({ orgId, id: actorId, verified: false, actorId }),
+    ).resolves.toBeNull();
+  });
+
   it("resolves tenant routing only through a verified exact domain", async () => {
     const recording = createRecordingSql([[]]);
     const store = new PostgresDomainsStore(recording.sql);

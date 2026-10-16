@@ -1,0 +1,56 @@
+{
+  "date": "2026-10-15",
+  "environment": "development",
+  "deployment": {
+    "deployed": true,
+    "webImage": "helix/workspace-web-development:ui-consistency-r8",
+    "webImageId": "sha256:3838ff2ff7ea9f6ffa318fbe546217f6322493ae287fabf07e453d54c544cd49",
+    "apiImage": "helix/workspace-development:admin-mail-r7",
+    "previousWebImage": "helix/workspace-web-development:admin-mail-r7",
+    "rollbackConfig": "/srv/helix/config/development-compose.pre-ui-consistency-r8-20261015T150305Z.json",
+    "publicReady": true,
+    "publicAssetsMatchBuild": true,
+    "migrationRequired": false
+  },
+  "changes": [
+    "Shared TanStack management tables for agent credentials, app passwords, AI cost limits, S3 keys, org units, webhooks and deliveries, with explicit public-field search and sorting.",
+    "Shared mobile sort controls, clear empty search results and preserved query/sort state during background updates.",
+    "Labelled Add/New creation actions and nonblocking creation/editing panels in the audited management, mail, profile and meeting flows.",
+    "Shared controls and global styles replace duplicate calendar and webhook control styles; isolated email document styling remains unchanged.",
+    "UI guidance documents creation panels, confirmation dialogs, accessibility and loaded-page search limits."
+  ],
+  "validation": {
+    "repositoryTests": {
+      "passed": 5560,
+      "skipped": 398
+    },
+    "browserSuite": {
+      "passed": 250,
+      "skipped": 1,
+      "skipReason": "Optional live SMTP/Mailpit browser case requires its infrastructure."
+    },
+    "finalFocusedBrowserCases": 34,
+    "finalFocusedUnitCases": 73,
+    "accessibility": "Management lists and panels passed axe checks at 390, 768 and 1440px in light and dark themes; checks include search, sorting, empty states, panel semantics and page overflow.",
+    "requiredCommands": [
+      "pnpm format:check",
+      "pnpm typecheck",
+      "pnpm lint",
+      "pnpm test",
+      "pnpm build",
+      "pnpm quality:boundaries"
+    ],
+    "additionalChecks": [
+      "E2E TypeScript and lint checks",
+      "Public readiness and exact deployed asset comparison",
+      "Web and API containers running healthy"
+    ],
+    "executionNote": "The full suites passed before final label refinements. Affected focused browser and unit suites, build, typecheck and lint passed afterward; the final shared-table note refinement also passed its 11 unit cases and the build."
+  },
+  "limits": [
+    "Search and sorting on paginated lists apply to the loaded results and are labelled accordingly.",
+    "Browser regression tests use fixture-backed APIs; no new live credentials or outbound email were created by this UI pass.",
+    "This records the audited flows and regression coverage, not an exhaustive manual inspection of every screen.",
+    "The deployment remains a development environment; API and database schema are unchanged."
+  ]
+}

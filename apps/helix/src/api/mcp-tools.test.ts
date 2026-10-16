@@ -1,3 +1,4 @@
+import { projectMcpTool } from "./mcp-tools.js";
 import type { Actor, ToolDefinition } from "@helix/sdk-types";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -132,6 +133,32 @@ describe("MCP tools/call idempotency (MC2)", () => {
 });
 
 describe("MCP pending actions (MC3)", () => {
+  it("links a pending email to a human review page without executing it", async () => {
+    const { tools, calls } = registryWithGate();
+    tools.register(
+      tool({
+        id: "mail.send",
+        permission: "mail.write",
+        sideEffects: "external_communication",
+        handler: async () => {
+          throw new Error("Send must wait for approval");
+        },
+      }),
+    );
+    const response = await handleMcpJsonRpcRequest({
+      tools,
+      principal: agentPrincipal,
+      publicBaseUrl: "https://helix.example.com/",
+      body: call("email", "mail.send", { subject: "Needs review" }),
+    });
+    const content = structured(response);
+    const pending = content.pending as { readonly id: string };
+    expect(content.reviewUrl).toBe(`https://helix.example.com/approvals/${pending.id}`);
+    expect((resultOf(response).content as readonly { readonly text: string }[])[0]?.text).toContain(
+      content.reviewUrl,
+    );
+    expect(calls()).toBe(0);
+  });
   it("returns approval and status links, expiry, and polling instructions", async () => {
     const { tools } = registryWithGate();
     const response = await handleMcpJsonRpcRequest({
@@ -298,6 +325,21 @@ describe("MCP tool failures (MC7)", () => {
 });
 
 describe("MCP tool annotations (MC8)", () => {
+  it("advertises conditional standing authorization without promising a policy bypass", () => {
+    const projected = projectMcpTool(
+      tool({
+        id: "drive.create",
+        permission: "drive.write",
+        sideEffects: "write",
+        standingAuthorization: async () => null,
+        handler: async () => ({}),
+      }),
+      agentActor,
+    );
+    expect(projected._meta).toMatchObject({ "helix/standingAuthorizationAvailable": true });
+    expect(projected.description).toContain("approved scopes and resource permissions");
+    expect(projected.description).toContain("DLP, and other policy checks still apply");
+  });
   it("publishes standard hints, keeps Helix fields in _meta, and flags approval", async () => {
     const tools = createToolRegistry({ accessPolicy: new AllowAllToolAccessPolicy() });
     tools.register(
@@ -460,7 +502,9 @@ describe("MCP prompts and client idempotency keys", () => {
         },
       },
     });
-    expect(duplicate).toEqual(first);
+    expect(duplicate).toMatchObject({
+      result: { isError: true, structuredContent: { code: "conflict" } },
+    });
     expect(calls).toBe(0);
 
     await expect(

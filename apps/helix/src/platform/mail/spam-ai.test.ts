@@ -262,3 +262,39 @@ describe("createBetaSpamSecondPass", () => {
     applyOperatorAiFromHelixConfig({ security: { tier: "personal" } });
   });
 });
+
+it.each([
+  "null",
+  "[]",
+  '{"label":12,"confidence":1}',
+  '{"label":"spam","confidence":100}',
+  '{"label":"spam","confidence":"1"}',
+  '{"label":"spam"}',
+])("does not trust malformed LLM verdict %s", (content) => {
+  expect(parseLlmSpamContent(content)).toMatchObject({ label: "unsure", confidence: 0 });
+});
+
+it("keeps classified content local and records why the LLM was skipped", async () => {
+  const fetchImpl = vi.fn();
+  const decision = await runBetaSpamSecondPass(
+    { subject: "Confidential", bodyText: "Internal roadmap", fromAddress: "alice@example.test" },
+    getMailSpamAiConfig({ MAIL_SPAM_AI_BETA_ENABLED: "true", MAIL_SPAM_AI_API_KEY: "test-key" }),
+    fetchImpl,
+  );
+  expect(fetchImpl).not.toHaveBeenCalled();
+  expect(decision.isSpam).toBe(false);
+  expect(decision.evidence.llmSkipped).toBe("classified_confidential");
+});
+
+it("blocks a private network endpoint in the production HTTP client", async () => {
+  const decision = await runBetaSpamSecondPass(
+    { subject: "Agenda", bodyText: "Meeting at noon", fromAddress: "alice@example.test" },
+    getMailSpamAiConfig({
+      MAIL_SPAM_AI_BETA_ENABLED: "true",
+      MAIL_SPAM_AI_BASE_URL: "https://127.0.0.1/v1",
+      MAIL_SPAM_AI_API_KEY: "test-key",
+    }),
+  );
+  expect(decision.isSpam).toBe(false);
+  expect(decision.evidence.llm).toBeNull();
+});

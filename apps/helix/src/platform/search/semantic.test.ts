@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { JsonObject } from "@helix/sdk-types";
 import type {
   VectorOrgScope,
@@ -54,6 +54,23 @@ describe("SemanticSearchEngine", () => {
         ids: ["mail:1", "drive:1"],
       },
     ]);
+  });
+
+  it("keeps external mail passages out of vector metadata while still embedding their text", async () => {
+    const keyword = new FakeSearchEngine();
+    const embeddings = new FakeEmbeddingProvider();
+    const vectorStore = new FakeVectorStore();
+    const upsert = vi.spyOn(vectorStore, "upsert");
+    const engine = new SemanticSearchEngine({ keyword, embeddings, vectorStore });
+    const document = {
+      ...(docs[0] ?? failDocument()),
+      attributes: { orgId: "org-1", metadata: { bodyStorage: "object-v1" } },
+    };
+    await engine.index(document);
+    expect(embeddings.texts[0]?.[0]).toContain(document.body);
+    expect(keyword.upserts[0]?.[0]?.body).toBe(document.body);
+    expect(upsert.mock.calls[0]?.[2][0]?.metadata?.document).not.toHaveProperty("body");
+    expect(upsert.mock.calls[0]?.[2][0]?.metadata?.document).toHaveProperty("id", document.id);
   });
 
   it("groups vector upserts by tenant when batches mix orgs", async () => {

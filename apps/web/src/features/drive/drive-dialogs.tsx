@@ -1,5 +1,6 @@
 /* Small Drive dialogs: name a new folder or rename an item, and confirm
    permanent deletion. */
+import { InlineError } from "@/components/ui/inline-error";
 import { useId, useState } from "react";
 import {
   AlertDialog,
@@ -11,7 +12,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Dialog } from "@/components/ui/helix-dialog";
+import { FormPanel } from "@/components/ui/form-panel";
 
 /** "New folder" and "Rename": one text field, selected on open. */
 export function DriveNameDialog({
@@ -26,17 +27,18 @@ export function DriveNameDialog({
   readonly label: string;
   readonly initialName: string;
   readonly submitLabel: string;
-  readonly onSubmit: (name: string) => void;
+  readonly onSubmit: (name: string) => Promise<boolean>;
   readonly onClose: () => void;
 }) {
   const inputId = useId();
   const [name, setName] = useState(initialName);
   const trimmed = name.trim();
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   return (
-    <Dialog
+    <FormPanel
       title={<h2 className="type-h3 m-0">{title}</h2>}
       onClose={onClose}
-      width={400}
       footer={
         <>
           <button type="button" className="btn" onClick={onClose}>
@@ -46,9 +48,10 @@ export function DriveNameDialog({
             type="submit"
             form={`${inputId}-form`}
             className="btn primary"
-            disabled={trimmed.length === 0}
+            disabled={trimmed.length === 0 || pending}
+            aria-busy={pending}
           >
-            {submitLabel}
+            {pending ? "Saving…" : submitLabel}
           </button>
         </>
       }
@@ -57,11 +60,21 @@ export function DriveNameDialog({
         id={`${inputId}-form`}
         onSubmit={(event) => {
           event.preventDefault();
-          if (trimmed.length === 0) return;
-          onSubmit(trimmed);
+          if (trimmed.length === 0 || pending) return;
+          setError(null);
+          setPending(true);
+          void onSubmit(trimmed)
+            .then((saved) => {
+              if (saved) onClose();
+              else setError("The name could not be saved. Your entry is kept; try again.");
+            })
+            .catch((cause) =>
+              setError(cause instanceof Error ? cause.message : "The name could not be saved."),
+            )
+            .finally(() => setPending(false));
         }}
       >
-        <label htmlFor={inputId} className="sr-only">
+        <label htmlFor={inputId} className="mb-2 block type-body-sm font-semibold">
           {label}
         </label>
         <input
@@ -75,8 +88,9 @@ export function DriveNameDialog({
             event.target.setSelectionRange(0, dot > 0 ? dot : event.target.value.length);
           }}
         />
+        {error ? <InlineError variant="compact" title="Couldn’t save" message={error} /> : null}
       </form>
-    </Dialog>
+    </FormPanel>
   );
 }
 

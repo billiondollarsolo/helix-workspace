@@ -216,6 +216,18 @@ const AUDIT_CONTACT = {
 };
 
 const TOOL_FIXTURES = new Map([
+  ["agent.credentials.list", { credentials: [] }],
+  [
+    "admin.agent_controls.get",
+    {
+      controls: {
+        globalReadOnly: false,
+        agentWritesEnabled: true,
+        agentWritesDisabledOrgIds: [],
+        disabledToolIds: [],
+      },
+    },
+  ],
   /* Contacts: one starred, labelled contact so the list, the contact page and
      the edit form audit their populated states. */
   ["contacts.list", { contacts: [AUDIT_CONTACT], total: 1 }],

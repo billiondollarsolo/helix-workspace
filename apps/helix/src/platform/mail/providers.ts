@@ -12,6 +12,8 @@ import {
   toNodemailerMail,
 } from "./outbound-format.js";
 import { mailgunMessageBody, postmarkMessageBody } from "./provider-http-payloads.js";
+import { isSesSmtpHost, smtpDeliveryMessageId } from "./threading.js";
+import { sesFeedbackTopicArnSchema } from "./ses-feedback.js";
 import type { MailOutboundDeliveryResult, MailOutboundEnvelope } from "./types.js";
 
 /**
@@ -65,6 +67,7 @@ const smtpSettings = {
   port: z.number().int().min(1).max(65_535).optional(),
   secure: z.boolean().optional(),
   user: z.string().trim().min(1).max(320).optional(),
+  feedbackTopicArn: sesFeedbackTopicArnSchema.optional(),
 };
 const httpsUrl = z
   .string()
@@ -169,9 +172,9 @@ export class SesMailProvider implements OutboundMailProvider {
 
   async send(message: HelixOutboundMailMessage): Promise<OutboundMailDelivery> {
     const dkim = await this.#resolveDkim?.(message.from.address);
-    const info = await this.#transport.sendMail(toNodemailerMail(message, dkim));
+    const info = await this.#transport.sendMail(toNodemailerMail(message, dkim, true));
     return {
-      providerMessageId: info.messageId,
+      providerMessageId: smtpDeliveryMessageId(info, true),
       metadata: {
         provider: "ses",
         region: this.#region,
@@ -274,9 +277,11 @@ export class SmtpRelayMailProvider implements OutboundMailProvider {
 
   async send(message: HelixOutboundMailMessage): Promise<OutboundMailDelivery> {
     const dkim = await this.#resolveDkim?.(message.from.address);
-    const info = await this.#transport.sendMail(toNodemailerMail(message, dkim));
+    const info = await this.#transport.sendMail(
+      toNodemailerMail(message, dkim, isSesSmtpHost(this.#host)),
+    );
     return {
-      providerMessageId: info.messageId,
+      providerMessageId: smtpDeliveryMessageId(info, isSesSmtpHost(this.#host)),
       metadata: {
         provider: "smtp",
         host: this.#host,

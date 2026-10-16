@@ -143,7 +143,7 @@ test("creates a nested, colored label from the Labels tab", async ({ page }) => 
   );
   await expect(settings.getByRole("list", { name: "Labels" })).toContainText("Clients");
 
-  await settings.getByRole("button", { name: "Create new label" }).click();
+  await settings.getByRole("button", { name: "Add label" }).click();
   const dialog = page.getByRole("dialog", { name: "New label" });
   await dialog.getByLabel("Label name").fill("Acme");
   await dialog.getByLabel("Nest label under").check();
@@ -170,7 +170,7 @@ test("creates a filter in two steps with a match preview", async ({ page }) => {
   await page.goto("/assistant?settings=mail/filters");
   const settings = settingsDialog(page);
   await expect(settings.getByText("No filters yet")).toBeVisible();
-  await settings.getByRole("button", { name: "Create a new filter" }).click();
+  await settings.getByRole("button", { name: "Add filter" }).click();
 
   const dialog = page.getByRole("dialog", { name: "Create a filter" });
   await dialog.getByLabel("From", { exact: true }).fill("billing@example.com");
@@ -245,8 +245,8 @@ test("switches tabs with the keyboard and keeps the tab in the URL", async ({ pa
 /** Buttons that only show once each part of the tab has loaded. */
 const READY = {
   general: ["Change in Language & region", "Save signature", "Save responder"],
-  labels: ["Create new label"],
-  filters: ["Create a new filter", "Unblock spam@example.net"],
+  labels: ["Add label"],
+  filters: ["Add filter", "Unblock spam@example.net"],
 } as const;
 
 for (const colorScheme of ["light", "dark"] as const) {
@@ -262,11 +262,11 @@ for (const colorScheme of ["light", "dark"] as const) {
         await expect(panel.getByRole("button", { name: loaded })).toBeVisible({ timeout: 15_000 });
       }
       if (tab === "filters") {
-        await panel.getByRole("button", { name: "Create a new filter" }).click();
+        await panel.getByRole("button", { name: "Add filter" }).click();
         await expect(page.getByRole("dialog", { name: "Create a filter" })).toBeVisible();
       }
       if (tab === "labels") {
-        await panel.getByRole("button", { name: "Create new label" }).click();
+        await panel.getByRole("button", { name: "Add label" }).click();
         await expect(page.getByRole("dialog", { name: "New label" })).toBeVisible();
       }
       await page.addScriptTag({ content: axe.source });

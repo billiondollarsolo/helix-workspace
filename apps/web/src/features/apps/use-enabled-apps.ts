@@ -46,8 +46,16 @@ export function useEnabledApps(): EnabledApps {
     isLoading: query.isLoading || admin.isLoading || assistant.isLoading,
     isEnabled: (id) => {
       if (id === "admin") return admin.isAdmin;
-      if (id === "passwords") return (query.data?.passwords?.url ?? null) !== null;
-      const registered = map.get(id as CoreAppId) ?? true;
+      if (id === "passwords") {
+        const passwords = query.data?.passwords;
+        return (
+          passwords?.installed === true &&
+          passwords.enabled &&
+          (passwords.native === true || passwords.url !== null)
+        );
+      }
+      if (id === "contacts") return query.data !== undefined;
+      const registered = map.get(id as CoreAppId) ?? false;
       return id === "assistant" ? registered && assistant.available : registered;
     },
   };

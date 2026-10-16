@@ -17,7 +17,7 @@ import {
   handleMcpStreamingRequest,
   type McpStreamEvent,
 } from "./mcp.js";
-import { HELIX_SERVER_VERSION, MCP_PROTOCOL_VERSION } from "./version.js";
+import { HELIX_SERVER_VERSION, MCP_LEGACY_PROTOCOL_VERSION } from "./version.js";
 
 describe("handleMcpJsonRpcRequest", () => {
   it("lists visible tools using MCP tool shape", async () => {
@@ -304,12 +304,12 @@ describe("handleMcpJsonRpcRequest", () => {
 
     expect(response).toMatchObject({
       result: {
-        protocolVersion: MCP_PROTOCOL_VERSION,
+        protocolVersion: MCP_LEGACY_PROTOCOL_VERSION,
         serverInfo: { name: "helix", version: HELIX_SERVER_VERSION },
         capabilities: { prompts: { listChanged: false } },
       },
     });
-    expect(MCP_PROTOCOL_VERSION).not.toBe("2024-11-05");
+    expect(MCP_LEGACY_PROTOCOL_VERSION).not.toBe("2024-11-05");
     expect(HELIX_SERVER_VERSION).not.toBe("0.0.0");
   });
 
@@ -471,7 +471,9 @@ describe("handleMcpJsonRpcRequest", () => {
     await expect(
       handleMcpJsonRpcRequest({
         tools,
-        principal: { actor: agentActor },
+        principal: {
+          actor: { ...agentActor, scopes: [...(agentActor.scopes ?? []), "drive.read"] },
+        },
         resources,
         body: {
           jsonrpc: "2.0",

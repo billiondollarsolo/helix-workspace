@@ -43,9 +43,14 @@ describe("what an agent may do with its mail without a person confirming", () =>
     ).resolves.toBeNull();
   });
 
-  it("never sends without one", () => {
+  it("does not authorize sending merely because drafts are enabled", async () => {
     for (const id of ["mail.send", "mail.reply"]) {
-      expect(tool(id, async () => true).standingAuthorization).toBeUndefined();
+      await expect(
+        tool(id, async () => true).standingAuthorization?.(
+          { to: [{ address: "peer@helix.example" }], cc: [], bcc: [] },
+          { ...actor("agent"), scopes: ["mail.send"] },
+        ),
+      ).resolves.toBeNull();
     }
   });
 });

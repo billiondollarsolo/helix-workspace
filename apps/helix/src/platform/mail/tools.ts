@@ -1,3 +1,4 @@
+import { collaborationAuthorization } from "../tools/collaboration-authorization.js";
 import {
   mailAliasCreateInputSchema,
   mailAliasDeleteInputSchema,
@@ -300,6 +301,8 @@ export interface CreateMailToolDefinitionsOptions {
    */
   readonly internalDomains?: readonly string[];
   readonly resolveInternalDomains?: (orgId: string) => Promise<readonly string[]>;
+  /** Resolves actual local mailboxes, not just a matching domain suffix. */
+  readonly areLocalRecipients?: (orgId: string, addresses: readonly string[]) => Promise<boolean>;
   /** Extra addresses that reach the actor (domain aliases); excluded from replies. */
   readonly resolveOwnAddresses?: (orgId: string, actorId: string) => Promise<readonly string[]>;
   /**
@@ -432,6 +435,7 @@ export function createMailToolDefinitions(
       description: "Apply or remove labels on a mail thread.",
       permission: "mail.write",
       sideEffects: "write",
+      standingAuthorization: collaborationAuthorization("mail.write"),
       inputSchema: zodToolSchema(labelApplySchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(mailLabelApplyOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
@@ -558,6 +562,7 @@ export function createMailToolDefinitions(
       description: "Mark a mail thread read or unread for the current user.",
       permission: "mail.write",
       sideEffects: "write",
+      standingAuthorization: collaborationAuthorization("mail.write"),
       inputSchema: zodToolSchema(readStateSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(mailOkThreadUnreadSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
@@ -575,6 +580,7 @@ export function createMailToolDefinitions(
       description: "Star or unstar a mail thread for the current user.",
       permission: "mail.write",
       sideEffects: "write",
+      standingAuthorization: collaborationAuthorization("mail.write"),
       inputSchema: zodToolSchema(starStateSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(mailOkThreadStarredSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
@@ -592,6 +598,7 @@ export function createMailToolDefinitions(
       description: "Snooze a mail thread until a future date.",
       permission: "mail.write",
       sideEffects: "write",
+      standingAuthorization: collaborationAuthorization("mail.write"),
       inputSchema: zodToolSchema(snoozeSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(mailOkThreadSnoozedSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
@@ -913,6 +920,7 @@ export function createMailToolDefinitions(
       description: "Cancel a queued outbound mail message during its undo-send window.",
       permission: "mail.write",
       sideEffects: "write",
+      standingAuthorization: collaborationAuthorization("mail.write"),
       inputSchema: zodToolSchema(mailOutboundCancelInputSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(mailOutboundCancelResultSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
@@ -1144,6 +1152,9 @@ function threadStateTool(
     description,
     permission,
     sideEffects: id === "mail.delete" ? "destructive" : "write",
+    ...(id === "mail.delete"
+      ? {}
+      : { standingAuthorization: collaborationAuthorization(permission) }),
     inputSchema: zodToolSchema(threadIdSchema, genericObjectJsonSchema),
     outputSchema: zodToolSchema(mailOkThreadSchema, genericObjectJsonSchema),
     handler,
@@ -1311,6 +1322,7 @@ function serializeThreadRow(row: MailThreadRowRecord) {
     time: row.time,
     unread: row.unread,
     starred: row.starred,
+    ...(row.followUp === undefined ? {} : { followUp: row.followUp }),
     hasAttachment: row.hasAttachment,
     messageCount: row.messageCount,
     labels: [...row.labels],

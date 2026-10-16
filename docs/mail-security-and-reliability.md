@@ -72,11 +72,18 @@ block SMTP accept (fail-open). Labeled **beta** until further notice.
 | `MAIL_SPAM_AI_MODEL`        | Model id (default `gpt-4o-mini`, or `OPENAI_MODEL`)                                    |
 | `MAIL_SPAM_AI_TIMEOUT_MS`   | LLM timeout (default `4000`)                                                           |
 
-**Admin path (preferred for day-2 ops):** Admin → **AI → AI providers**. Operators set the shared
-OpenAI-compatible **base URL / model / API key** and the **mail spam AI (beta)** enable toggle.
-Values persist in platform-config (`ai.operatorLlm`, `ai.mailSpamAi`), override env when set, and
-never return the raw key on GET (`apiKeyConfigured` only). Env remains valid bootstrap for airgap
-and first boot. Do not put secrets in the web build.
+**Admin path:** Admin → Mail → **Spam filtering** → **LLM spam second pass (beta)**.
+Choose a dedicated named provider and model, then enable and save. Provider credentials are
+managed in Admin → Assistant → **Models**. The LLM pass accepts OpenAI-compatible endpoints;
+Clef/Jev use the separate decision-model configuration below. The LLM pass has no shadow mode and
+may file spam immediately, so start evaluations with the decision model in shadow mode instead.
+
+Endpoint requests use HTTPS, a host allowlist, no redirects, no private-network access, bounded
+payloads and a timeout. Content heuristics keep sensitive message text local. Invalid model
+labels, confidence values, or response shapes yield no LLM spam vote. Failures retain the local
+rules result and never clear SpamAssassin or malware decisions. An explicitly assigned provider
+never borrows another provider's credentials. Environment settings remain available for bootstrap;
+Admin choices override them. Do not put secrets in the web build.
 
 ### AI decision model (per organization, optional)
 
@@ -110,7 +117,11 @@ never are.
 **Never sent (recorded as skipped).** Mail classified **confidential or restricted** — by an
 explicit or stored classification (`resource_classifications`), a classification label, or the
 content heuristics (sensitivity markings, payment cards, government IDs, credentials) — and anything
-past the organization's **daily message cap** (default 5,000 provider calls per UTC day).
+past the organization's **daily message cap** (default 5,000 messages per UTC day). A tenant-scoped
+database reservation counts in-flight calls and prevents duplicate events or concurrent workers
+from overshooting the cap. Provider retries remain bounded to three HTTP attempts per message.
+A process interruption leaves an accounted `provider_pending_or_interrupted` error record; it is
+not automatically replayed. While a call is in flight that provisional record is visible in the report.
 
 **Modes.**
 

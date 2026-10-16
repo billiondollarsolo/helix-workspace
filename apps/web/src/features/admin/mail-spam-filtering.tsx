@@ -1,3 +1,4 @@
+import { MailSpamLlmSettings } from "./mail-spam-llm-settings";
 /* Admin → Mail → Spam filtering: SpamAssassin status, the AI second pass, and
  * the organization's AI decision model (settings and report). */
 
@@ -106,6 +107,7 @@ export function SpamFiltering() {
 
       <DecisionModelSettings />
       <DecisionModelReportPanel />
+      {settings ? <MailSpamLlmSettings enabled={settings.betaSecondPass.enabled} /> : null}
     </div>
   );
 }

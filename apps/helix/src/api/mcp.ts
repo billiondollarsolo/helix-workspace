@@ -1,6 +1,11 @@
 import type { Actor, RequestContext } from "@helix/sdk-types";
 import { SpanStatusCode, trace } from "@opentelemetry/api";
-import type { ToolInvocationPrincipal } from "../platform/auth/tool-invocation-principal.js";
+import {
+  toolInvocationOptions,
+  type ToolInvocationPrincipal,
+} from "../platform/auth/tool-invocation-principal.js";
+import { NotFoundError } from "./api-error.js";
+import { parseStoreResourceUri } from "./mcp-resources.js";
 import {
   createScopedSearchRequest,
   globalSearchTypes,
@@ -21,7 +26,11 @@ import {
 } from "./mcp-jsonrpc.js";
 import { createCuratedPromptProvider, type McpPromptProvider } from "./mcp-prompts.js";
 import { callMcpTool, projectMcpTool } from "./mcp-tools.js";
-import { HELIX_SERVER_VERSION, MCP_PROTOCOL_VERSION } from "./version.js";
+import {
+  HELIX_SERVER_VERSION,
+  MCP_PROTOCOL_VERSION,
+  MCP_LEGACY_PROTOCOL_VERSION,
+} from "./version.js";
 
 const MCP_DEFAULT_MAX_BODY_BYTES = 256 * 1024;
 const MCP_DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
@@ -31,6 +40,7 @@ const MCP_MAX_RESOURCE_URI_LENGTH = 2_048;
 /** Protocol revisions this server speaks, newest first. */
 export const MCP_SUPPORTED_PROTOCOL_VERSIONS: readonly string[] = [
   MCP_PROTOCOL_VERSION,
+  MCP_LEGACY_PROTOCOL_VERSION,
   "2025-03-26",
 ];
 
@@ -40,6 +50,7 @@ interface McpRequestLimits {
 }
 
 export type McpHandlerInput = {
+  readonly live?: { readonly read: (actor: Actor, uri: string) => Promise<McpResourceContent> };
   readonly tools: RuntimeToolRegistry;
   readonly principal: ToolInvocationPrincipal;
   readonly request?: RequestContext;
@@ -47,6 +58,7 @@ export type McpHandlerInput = {
   readonly resources?: McpResourceProvider;
   readonly prompts?: McpPromptProvider;
   readonly idempotencyStore?: IdempotencyStore;
+  readonly finishTransaction?: (commit: boolean) => Promise<void>;
   readonly limits?: McpRequestLimits;
   /** `Mcp-Session-Id` echoed by the client, if any. */
   readonly sessionId?: string;
@@ -119,7 +131,28 @@ async function dispatchMcpJsonRpcRequest(
     return jsonRpcError(request.id, -32600, "MCP method name exceeds the allowed size.");
   }
 
+  const modern =
+    requestMeta(request.params)?.["io.modelcontextprotocol/protocolVersion"] ===
+    MCP_PROTOCOL_VERSION;
+  const cache = modern ? { ttlMs: 0, cacheScope: "private" } : {};
+  if (
+    modern &&
+    ["initialize", "resources/subscribe", "resources/unsubscribe"].includes(request.method)
+  )
+    return jsonRpcError(request.id, -32601, "Method is not part of this protocol revision.");
   switch (request.method) {
+    case "server/discover":
+      return jsonRpcResult(request.id, {
+        supportedVersions: MCP_SUPPORTED_PROTOCOL_VERSIONS,
+        capabilities: { tools: {}, resources: input.live ? { subscribe: true } : {}, prompts: {} },
+        instructions:
+          "Helix acts on your authorized workspace. Agent writes may require human approval; use actions.get and never retry to bypass approval. Subscribe to helix://events/inbox for change signals, then read it with your saved ?after= cursor. Notifications do not start model turns automatically.",
+        _meta: {
+          "io.modelcontextprotocol/serverInfo": { name: "helix", version: HELIX_SERVER_VERSION },
+        },
+        ttlMs: 0,
+        cacheScope: "private",
+      });
     case "initialize":
       return jsonRpcResult(request.id, {
         protocolVersion: negotiateProtocolVersion(request.params),
@@ -140,14 +173,18 @@ async function dispatchMcpJsonRpcRequest(
       return jsonRpcResult(request.id, {});
     case "tools/list":
       return jsonRpcResult(request.id, {
-        tools: (await input.tools.listVisible(input.principal.actor)).map((tool) =>
-          projectMcpTool(tool, input.principal.actor),
-        ),
+        ...cache,
+        tools: [...(await input.tools.listVisible(input.principal.actor))]
+          .sort((a, b) => a.id.localeCompare(b.id, "en"))
+          .map((tool) => projectMcpTool(tool, input.principal.actor)),
       });
     case "tools/call":
       return callMcpTool(request, {
         tools: input.tools,
         principal: input.principal,
+        ...(input.finishTransaction === undefined
+          ? {}
+          : { finishTransaction: input.finishTransaction }),
         ...(input.request === undefined ? {} : { request: input.request }),
         ...(input.idempotencyStore === undefined
           ? {}
@@ -158,7 +195,21 @@ async function dispatchMcpJsonRpcRequest(
     case "resources/list": {
       const provider = input.resources ?? emptyResourceProvider;
       return jsonRpcResult(request.id, {
-        resources: await provider.list(input.principal.actor),
+        ...cache,
+        resources: [
+          ...(input.live === undefined
+            ? []
+            : [
+                {
+                  uri: "helix://events/inbox",
+                  name: "Live event inbox",
+                  mimeType: "application/json",
+                  description:
+                    "Subscribe for private event references; read ?after=<cursor> to replay. The host decides whether to wake an agent.",
+                },
+              ]),
+          ...(await provider.list(input.principal.actor)),
+        ].sort((a, b) => a.uri.localeCompare(b.uri, "en")),
       });
     }
     case "resources/read": {
@@ -169,10 +220,91 @@ async function dispatchMcpJsonRpcRequest(
       if (params.uri.length > MCP_MAX_RESOURCE_URI_LENGTH) {
         return jsonRpcError(request.id, -32602, "Resource URI exceeds the allowed size.");
       }
+      if (
+        input.live !== undefined &&
+        (params.uri === "helix://events/inbox" || params.uri.startsWith("helix://events/inbox?"))
+      ) {
+        try {
+          return jsonRpcResult(request.id, {
+            ...cache,
+            contents: [await input.live.read(input.principal.actor, params.uri)],
+          });
+        } catch (error) {
+          const failure = mcpHttpError(error);
+          if (failure)
+            return jsonRpcError(
+              request.id,
+              statusToJsonRpcCode(failure.statusCode),
+              failure.message,
+            );
+          throw error;
+        }
+      }
       const provider = input.resources ?? emptyResourceProvider;
+      const parsed =
+        parseStoreResourceUri(params.uri) ??
+        (() => {
+          const value = parseResourceUri(params.uri);
+          return value === null ? null : { kind: value.type, id: value.id };
+        })();
+      if (parsed === null)
+        return jsonRpcError(request.id, -32004, `Resource not found: ${params.uri}`);
       let resource: McpResourceContent | null;
       try {
-        resource = await provider.read(input.principal.actor, params.uri);
+        if (params.approvalId !== undefined) {
+          const approved = await input.tools.getPendingAction(params.approvalId, {
+            actor: input.principal.actor,
+            resourceRead: {
+              toolId: `${parsed.kind}.resource.read`,
+              uri: params.uri,
+              credentialId: input.principal.credentialId ?? null,
+              policyVersion: input.principal.credentialPolicy?.version ?? "actor-session",
+            },
+          });
+          if (!approved.ok)
+            return jsonRpcError(
+              request.id,
+              statusToJsonRpcCode(approved.statusCode),
+              approved.error,
+            );
+        }
+        const result = await input.tools.invoke<McpResourceContent>(
+          `${parsed.kind}.resource.read`,
+          { uri: params.uri, resourceId: parsed.id },
+          {
+            ...toolInvocationOptions(input.principal, input.request),
+            policyContext: {
+              effectiveClassification: "standard",
+              sourceIds: [],
+              containsUntrustedContext: true,
+              requestChannel: "mcp",
+              tenantId: input.principal.actor.orgId,
+            },
+            ...(params.approvalId === undefined ? {} : { pendingActionId: params.approvalId }),
+            executeHandler: async () => {
+              const content = await provider.read(input.principal.actor, params.uri);
+              if (content === null) throw new NotFoundError(`Resource not found: ${params.uri}`);
+              return content;
+            },
+          },
+        );
+        if (!result.ok)
+          return jsonRpcError(request.id, statusToJsonRpcCode(result.statusCode), result.error);
+        if (result.status === "pending_confirmation")
+          return jsonRpcError(
+            request.id,
+            -32003,
+            `This resource requires human approval. Poll actions.get; after execution, repeat resources/read with this URI and approvalId before approval expires.`,
+            {
+              pending: result.pending,
+              ...(input.publicBaseUrl === undefined
+                ? {}
+                : {
+                    reviewUrl: `${input.publicBaseUrl.replace(/\/+$/u, "")}/approvals/${encodeURIComponent(result.pending.id)}`,
+                  }),
+            },
+          );
+        resource = result.output;
       } catch (error) {
         const httpError = mcpHttpError(error);
         if (httpError !== null) {
@@ -184,17 +316,18 @@ async function dispatchMcpJsonRpcRequest(
         }
         throw error;
       }
-      if (resource === null) {
-        return jsonRpcError(request.id, -32004, `Resource not found: ${params.uri}`);
-      }
       return jsonRpcResult(request.id, {
+        ...cache,
         contents: [resource],
       });
     }
     case "prompts/list": {
       const provider = input.prompts ?? createCuratedPromptProvider(input.tools);
+      const prompts = [...(await provider.list(input.principal.actor))];
+      if (modern) prompts.sort((a, b) => a.name.localeCompare(b.name, "en"));
       return jsonRpcResult(request.id, {
-        prompts: await provider.list(input.principal.actor),
+        ...cache,
+        prompts,
       });
     }
     case "prompts/get": {
@@ -237,9 +370,10 @@ async function dispatchMcpJsonRpcRequest(
  */
 function negotiateProtocolVersion(params: unknown): string {
   const requested = isRecord(params) ? params.protocolVersion : undefined;
-  return typeof requested === "string" && MCP_SUPPORTED_PROTOCOL_VERSIONS.includes(requested)
+  return typeof requested === "string" &&
+    [MCP_LEGACY_PROTOCOL_VERSION, "2025-03-26"].includes(requested)
     ? requested
-    : MCP_PROTOCOL_VERSION;
+    : MCP_LEGACY_PROTOCOL_VERSION;
 }
 
 /**
@@ -295,6 +429,7 @@ export interface McpResourceContent {
   readonly uri: string;
   readonly mimeType: string;
   readonly text: string;
+  readonly _meta?: { readonly nextUri?: string; readonly truncated?: boolean };
 }
 
 export interface McpResourceProvider {
@@ -345,9 +480,8 @@ export function createSearchMcpResourceProvider(engine: SearchEngine): McpResour
 }
 
 export function isAuthenticatedMcpPrincipal(principal: ToolInvocationPrincipal): boolean {
-  return principal.actor.id !== "anonymous" && principal.actor.type !== "system"
-    ? principal.actor.orgId !== "00000000-0000-0000-0000-000000000000"
-    : principal.actor.type === "system";
+  // The default workspace's tenant ID is also used by the anonymous fallback.
+  return principal.actor.type === "system" || principal.actor.id !== "anonymous";
 }
 
 function serializedByteLength(value: unknown): number {
@@ -382,12 +516,24 @@ async function dispatchWithDeadline(
   }
 }
 
-function parseResourceReadParams(params: unknown): { readonly uri: string } | undefined {
+function parseResourceReadParams(
+  params: unknown,
+): { readonly uri: string; readonly approvalId?: string } | undefined {
   if (typeof params !== "object" || params === null || Array.isArray(params)) {
     return undefined;
   }
   const record = params as Record<string, unknown>;
-  return typeof record.uri === "string" ? { uri: record.uri } : undefined;
+  if (
+    record.approvalId !== undefined &&
+    (typeof record.approvalId !== "string" || !/^[a-zA-Z0-9-]{1,200}$/u.test(record.approvalId))
+  )
+    return undefined;
+  return typeof record.uri === "string"
+    ? {
+        uri: record.uri,
+        ...(typeof record.approvalId === "string" ? { approvalId: record.approvalId } : {}),
+      }
+    : undefined;
 }
 
 function parsePromptGetParams(
@@ -504,7 +650,11 @@ function parseResourceUri(
   if (!isGlobalSearchType(rawType) || idParts.length === 0) {
     return null;
   }
-  return { type: rawType, id: decodeURIComponent(idParts.join("/")) };
+  try {
+    return { type: rawType, id: decodeURIComponent(idParts.join("/")) };
+  } catch {
+    return null;
+  }
 }
 
 function isGlobalSearchType(value: string | undefined): value is GlobalSearchType {

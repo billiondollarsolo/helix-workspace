@@ -1,0 +1,101 @@
+{
+  "date": "2026-10-15",
+  "environment": "development",
+  "deployment": {
+    "deployed": true,
+    "images": {
+      "helix": "helix/workspace-development:hosted-agents-r20",
+      "caddy": "helix/workspace-web-development:hosted-agents-r20"
+    },
+    "ready": true,
+    "rollbackConfig": "/srv/helix/config/development-compose.pre-hosted-agents-r20-20261015T213712Z.json"
+  },
+  "protocolVersion": "2026-07-28",
+  "hosting": {
+    "atlasEnabled": true,
+    "model": "openai/gpt-6-luna",
+    "turnsPerHour": 20,
+    "credentialAddedScopes": ["assistant.write"],
+    "localListener": "passive event monitor; no second model",
+    "ordinaryChat": "standing authorization from active conversation membership",
+    "externalMailApprovalPreserved": true
+  },
+  "realHostedTurn": {
+    "checkedAt": "2026-10-15T21:40:24.661Z",
+    "realModelTurn": true,
+    "triggerMessageId": "ffd08f03-6ddd-45ca-9e4a-9b18be2993c1",
+    "replyMessageId": "f6e6e294-8b7f-45e3-8892-88738abe14ec",
+    "contentReadVerified": true,
+    "pendingActionId": null,
+    "conversationId": "33e78240-5e71-4780-ba6a-fd05d6f71ab7",
+    "normalReplyWithoutApproval": true
+  },
+  "mcp": {
+    "checkedAt": "2026-10-15T21:40:11.933Z",
+    "mcpChatSentWithoutApproval": true,
+    "messageId": "ae5ef1d5-a5b7-4329-83cb-ebb1c7fa70b7"
+  },
+  "cli": {
+    "cliChatSentWithoutApproval": true,
+    "messageId": "b914aaf4-e401-4989-b5ed-506076a95856"
+  },
+  "publicChecks": {
+    "checkedAt": "2026-10-15T21:42:51.471Z",
+    "ready": true,
+    "latestMcp": true,
+    "agentCannotAdministerHosting": true,
+    "presenceConnected": true
+  },
+  "cleanup": {
+    "temporaryActorDisabled": true,
+    "privateTestRoomArchived": true,
+    "historyRetained": true,
+    "atlasHostingEnabled": true,
+    "failed": false,
+    "hostedTurns": 1,
+    "noPendingFixtureActions": true
+  },
+  "validation": {
+    "formatCheck": true,
+    "typecheck": true,
+    "lint": true,
+    "fullSuitePassed": true,
+    "backendUnitPassed": 3966,
+    "backendGatedSkippedInDefaultRun": 419,
+    "webUnitPassed": 1433,
+    "cliUnitPassed": 173,
+    "sdkUnitPassed": 13,
+    "build": true,
+    "dependencyBoundaries": true,
+    "focusedPolicyAndRuntimeTests": 101,
+    "hostingDatabaseTests": 3,
+    "hostingDatabaseModes": ["multi-tenant-saas", "single-tenant"],
+    "chatDatabaseGrantAndPrivacyTests": 8,
+    "browserTestsPassed": 6,
+    "hostingAccessibilityChecked": true,
+    "explicitAlwaysConfirmOverrideUnitTested": true,
+    "revokedCredentialAndInterruptedTurnTested": true,
+    "concurrentHostedAgentsTested": true
+  },
+  "backup": {
+    "archive": "pre-hosted-agents-20261015T212714Z.pgdump.age",
+    "bytes": 3294900,
+    "sha256": "4bc93a18d0307b553a6f3015f830bc1724773e53186e4e501e2e9f206126c3c3",
+    "authenticated": true,
+    "catalogVerified": true,
+    "fullRestoreTested": false
+  },
+  "limits": {
+    "productionReadyClaimed": false,
+    "productionLoadTested": false,
+    "fullRestoreTested": false,
+    "providerFailoverTested": false,
+    "liveAuthenticatedAdminBrowserTested": false,
+    "adminBrowser": "Isolated Playwright fixtures; collaborative live browser was signed out.",
+    "maximumConcurrentHostedTurns": 4,
+    "maximumTurnSeconds": 90,
+    "maximumToolRounds": 8,
+    "uncertainTurns": "Pause; explicit human review and reset required.",
+    "externalModelHost": "MCP/CLI transport verified; no separate external LLM process installed."
+  }
+}

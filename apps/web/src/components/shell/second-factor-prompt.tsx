@@ -14,6 +14,8 @@ import {
   signInWithPasskey,
   verifyRecoveryCode,
   verifyTotp,
+  sendEmailMfaCode,
+  verifyEmailMfaCode,
 } from "@/lib/auth";
 import {
   secondFactorStepUpReason,
@@ -43,13 +45,16 @@ function SecondFactorDialog({
   const errorId = useId();
   const { data: user } = useQuery(sessionUserQueryOptions());
   const passkeys = useQuery(accountPasskeysQueryOptions());
-  const [mode, setMode] = useState<"totp" | "recovery">("totp");
+  const [mode, setMode] = useState<"totp" | "recovery" | "email">("totp");
+  const [emailCodeSent, setEmailCodeSent] = useState(false);
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const hasAuthenticator = user?.twoFactorEnabled === true;
+  const hasAuthenticator = user?.twoFactorEnabled === true && user.totpEnabled !== false;
+  const hasEmail = user?.emailOtpEnabled === true;
+  const currentMode = !hasAuthenticator && hasEmail ? "email" : mode;
   const hasPasskey = (passkeys.data?.length ?? 0) > 0;
-  const noSecondStep = !hasAuthenticator && !hasPasskey && !passkeys.isPending;
+  const noSecondStep = !hasAuthenticator && !hasEmail && !hasPasskey && !passkeys.isPending;
   const mustSignIn = reason === "reauthentication" && noSecondStep;
   const cancel = () => settleSecondFactorStepUp(false);
   // Only a password can verify this session again, and that is the sign-in page.
@@ -71,14 +76,33 @@ function SecondFactorDialog({
     event.preventDefault();
     const value = code.trim();
     if (value.length === 0) {
-      setError(mode === "totp" ? "Enter the 6-digit code." : "Enter a recovery code.");
+      setError(currentMode === "recovery" ? "Enter a recovery code." : "Enter the 6-digit code.");
       return;
     }
-    verify(() => (mode === "totp" ? verifyTotp(value) : verifyRecoveryCode(value)));
+    verify(() =>
+      currentMode === "totp"
+        ? verifyTotp(value)
+        : currentMode === "email"
+          ? verifyEmailMfaCode(value)
+          : verifyRecoveryCode(value),
+    );
   };
 
+  async function sendCode() {
+    setBusy(true);
+    setError(null);
+    try {
+      await sendEmailMfaCode();
+      setEmailCodeSent(true);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Your code could not be sent.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   // Passkeys decide between verifying and setting up; wait rather than guess.
-  if ((!hasAuthenticator && passkeys.isPending) || mustSignIn) return null;
+  if ((!hasAuthenticator && !hasEmail && passkeys.isPending) || mustSignIn) return null;
   if (noSecondStep) {
     return (
       <Dialog
@@ -103,7 +127,7 @@ function SecondFactorDialog({
       >
         <p className="type-body-sm text-[var(--text-2)]">
           Administrator actions need 2-step verification on your account. Add an authenticator app
-          or a passkey in your security settings, then try again.
+          or a passkey, or verify an external email in your security settings, then try again.
         </p>
       </Dialog>
     );
@@ -118,8 +142,13 @@ function SecondFactorDialog({
           <Button type="button" variant="outline" onClick={cancel}>
             {reason === "reauthentication" ? "Sign in instead" : "Cancel"}
           </Button>
-          {hasAuthenticator ? (
-            <Button type="submit" form={formId} disabled={busy} aria-busy={busy}>
+          {hasAuthenticator || hasEmail ? (
+            <Button
+              type="submit"
+              form={formId}
+              disabled={busy || (currentMode === "email" && !emailCodeSent)}
+              aria-busy={busy}
+            >
               {busy ? "Verifying…" : "Verify"}
             </Button>
           ) : (
@@ -137,17 +166,21 @@ function SecondFactorDialog({
             : "Administrator actions need a recent 2-step verification. "}
           What you were doing continues as soon as you verify.
         </p>
-        {hasAuthenticator ? (
+        {hasAuthenticator || hasEmail ? (
           <>
             <label className="grid gap-1 type-body-sm">
               <span className="font-medium">
-                {mode === "totp" ? "Authenticator code" : "Recovery code"}
+                {currentMode === "totp"
+                  ? "Authenticator code"
+                  : currentMode === "email"
+                    ? "Email code"
+                    : "Recovery code"}
               </span>
               <input
                 className="input"
                 name="code"
                 autoComplete="one-time-code"
-                inputMode={mode === "totp" ? "numeric" : "text"}
+                inputMode={currentMode === "recovery" ? "text" : "numeric"}
                 spellCheck={false}
                 value={code}
                 onChange={(event) => setCode(event.target.value)}
@@ -156,18 +189,45 @@ function SecondFactorDialog({
               />
             </label>
             <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  setMode(mode === "totp" ? "recovery" : "totp");
-                  setCode("");
-                  setError(null);
-                }}
-              >
-                {mode === "totp" ? "Use a recovery code" : "Use an authenticator code"}
-              </Button>
+              {currentMode === "email" ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => void sendCode()}
+                >
+                  {emailCodeSent ? "Resend email code" : "Send email code"}
+                </Button>
+              ) : null}
+              {hasEmail && currentMode !== "email" ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setMode("email");
+                    setCode("");
+                    setError(null);
+                  }}
+                >
+                  Use an email code
+                </Button>
+              ) : null}
+              {hasAuthenticator ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setMode(currentMode === "totp" ? "recovery" : "totp");
+                    setCode("");
+                    setError(null);
+                  }}
+                >
+                  {currentMode === "totp" ? "Use a recovery code" : "Use an authenticator code"}
+                </Button>
+              ) : null}
               {hasPasskey ? (
                 <Button
                   type="button"
@@ -181,6 +241,11 @@ function SecondFactorDialog({
               ) : null}
             </div>
           </>
+        ) : null}
+        {currentMode === "email" && emailCodeSent ? (
+          <p role="status" className="type-body-sm">
+            A code was sent to your verified external email. It expires in 5 minutes.
+          </p>
         ) : null}
         {error === null ? null : (
           <p id={errorId} className="type-body-sm text-[var(--danger)]" role="alert">

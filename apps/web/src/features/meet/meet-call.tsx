@@ -147,7 +147,13 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
   };
 
   return (
-    <div data-theme="dark" className="flex flex-col h-dvh bg-[var(--bg)] text-[var(--text)]">
+    <main
+      id="main-content"
+      tabIndex={-1}
+      aria-label="Active meeting"
+      data-theme="dark"
+      className="workspace bg-[var(--bg)] text-[var(--text)]"
+    >
       {/* Top bar */}
       <div className="h-11 flex items-center [padding:0_16px] gap-3 shrink-0 [border-bottom:1px_solid_var(--border)]">
         <div className="flex items-center gap-2">
@@ -189,7 +195,7 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
             <div
               ref={jitsiHostRef}
               className="absolute inset-0"
-              aria-label={`Jitsi meeting: ${session.subject}`}
+              aria-label={`Meeting: ${session.subject}`}
             />
             {jitsiOptions === null ? (
               <Overlay message="Waiting for the meeting room to connect…" />
@@ -485,7 +491,7 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
             commands.hangup();
             leave();
           }}
-          className="focus-ring h-11 [padding:0_18px] [border-radius:999px] bg-[var(--label-red)] text-[var(--label-on)] flex items-center gap-1.5 font-medium [border:none] cursor-pointer"
+          className="btn danger h-11"
         >
           <PhoneIcon size={16} className="rotate-[135deg]" aria-hidden="true" /> Leave
         </button>
@@ -538,7 +544,7 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
             : "Host control was rejected."}
         </div>
       ) : null}
-    </div>
+    </main>
   );
 }
 

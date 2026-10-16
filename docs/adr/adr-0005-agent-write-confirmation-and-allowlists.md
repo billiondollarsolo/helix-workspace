@@ -1,6 +1,7 @@
 # ADR-0005: Agent write confirmation and bounded automation
 
 - **Status:** Accepted
+- **2026-10-16 amendment:** Routine collaboration follows [ADR-0031](adr-0031-scoped-workspace-collaboration.md); other tools retain this fallback policy.
 - **Date:** 2026-07-28
 - **Plan decision:** RD-5
 

@@ -257,6 +257,7 @@ export function useComposer(options: ComposerOptions) {
   }, [attachments, autosave, fields, finish, queryClient, reopen, sender.from]);
 
   return {
+    threadId,
     fields,
     update,
     sender,

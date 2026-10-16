@@ -21,8 +21,21 @@ come from the tokens in `src/styles.css`.
 | SideSheet      | `SideSheet` from `side-sheet`                                              | Right-side details and filter panels          |
 | SelectableList | `SelectableList, SelectAllCheckbox, keyRange` from `selectable-list`       | Mail threads, files, people, admin rows       |
 | Button         | `Button` from `button`                                                     | Every button                                  |
-| Dialog         | `Dialog` from `helix-dialog`; `AlertDialog…` from `alert-dialog`           | Modal forms and confirmations                 |
+| Dialog         | `Dialog` from `helix-dialog`; `AlertDialog…` from `alert-dialog`           | Confirmations and concrete review decisions   |
 | Avatar         | `Avatar` from `avatar`                                                     | People                                        |
+
+Creation and editing use `FormPanel` from `form-panel`, an inline form, or a dedicated page.
+Use labelled **+ Add** or **+ New** actions. Blocking dialogs are reserved for confirmations
+and concrete review decisions. Keep validation and request errors beside the draft; never
+reset a draft, focus or scroll because a background query updated.
+
+Management lists use `AdminTable` from `features/admin/console/table`: TanStack sorting,
+shared table styles and virtualization. Supply `sortValue` for useful columns and `searchText`
+for searchable lists. Search only indexes the explicit public fields in that callback; never
+include credentials. For paged data, use server search or label the loaded-page scope with
+`partialNote`. Forms use shared fields and controls, or the global `input` / `select` classes.
+Feature styles are for layout, not new copies of field styling. Sandboxed mail retains its
+isolated document stylesheet.
 
 ## Menu
 

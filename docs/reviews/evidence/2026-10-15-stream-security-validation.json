@@ -1,0 +1,93 @@
+{
+  "date": "2026-10-15",
+  "scope": "Stream authorization fixes, focused tenant isolation verification, deployment and development recovery",
+  "deployment": {
+    "apiImage": "helix/workspace-development:security-r12",
+    "webImage": "helix/workspace-web-development:review-fixes-r9",
+    "mode": "development",
+    "ready": true
+  },
+  "checks": {
+    "format": "passed",
+    "typecheck": "passed",
+    "lint": "passed",
+    "build": "passed",
+    "qualityBoundaries": "passed",
+    "defaultTests": {
+      "passed": 5598,
+      "skipped": 400,
+      "unchangedPackagesMayUseCache": true
+    },
+    "configuredDatabaseTests": {
+      "passed": 56,
+      "files": 15,
+      "disposableDatabaseRemoved": true
+    },
+    "browserChecks": "Not repeated: no application UI change in this pass"
+  },
+  "publicStreamChecks": {
+    "anonymousMailSse": 401,
+    "authorizedMailSse": 200,
+    "authorizedWebSocket": true,
+    "beforeRevocationEventsDelivered": true,
+    "afterRevocationEventsDelivered": false,
+    "revokedMailStreamClosed": true,
+    "revokedWebSocketCloseCode": 1008,
+    "newRevokedRequest": 401,
+    "persistentAtlasMcp": 200,
+    "fixtureCredentialRevoked": true,
+    "fixtureActorDisabled": true
+  },
+  "infrastructure": {
+    "tenantTablesWithForcedRLS": 176,
+    "tenantTablesMissingForcedRLS": 0,
+    "runtimeDatabaseRole": "helix_app",
+    "runtimeDatabaseTLS": true,
+    "databaseOnLuks": true,
+    "sshPasswordAuthentication": false
+  },
+  "backup": {
+    "lastRun": {
+      "ok": true,
+      "completedAt": "20261015T174859Z",
+      "archive": "development-daily-20261015T174859Z.tar.gz.age",
+      "bytes": 990706130,
+      "sha256": "aa21cbf2a7b448ecc2e87925c3e0e07990a37bf503221b55206646e150b8df5c",
+      "authenticatedArchive": true,
+      "offServer": true,
+      "fullApplicationRestoreTested": false,
+      "productionBackupGateSatisfied": false
+    },
+    "timerEnabled": true,
+    "schedule": "03:30 UTC daily, up to five minutes jitter; missed runs catch up when local user manager starts",
+    "destination": "Operator local machine",
+    "archiveEncryptedAndAuthenticated": true,
+    "coldSnapshotRequiresBriefDowntime": true,
+    "serverRecoveryWatchdog": true,
+    "automaticPruning": false,
+    "proactiveFailureAlerts": false
+  },
+  "reboot": {
+    "bootChanged": true,
+    "kernel": "7.0.0-38-generic",
+    "lockedBeforeRecovery": true,
+    "keyKeptOffServer": true,
+    "encryptedVolumeMounted": true,
+    "ready": true,
+    "atlasMcp": 200,
+    "sshPasswordAuthentication": false,
+    "rebootRequired": false,
+    "runningContainers": 17,
+    "apiImage": "helix/workspace-development:security-r12",
+    "fullApplicationRestoreTested": false
+  },
+  "limits": [
+    "Default suite skips 400 gated tests; focused configured database checks do not cover every skipped test.",
+    "No exhaustive owner/editor/viewer/outsider and cross-tenant matrix across every HTTP/MCP/CLI/DAV/S3 surface.",
+    "Stream revocation closes on next relevant delivery or incoming frame, not an immediate push to idle sockets.",
+    "No fresh container/host CVE scan or independent penetration test.",
+    "Newest encrypted archive authenticated and inspected, not restored as a complete replacement application.",
+    "Backups and post-reboot storage unlock depend on operator machine and off-server keys.",
+    "Development mode remains enabled; production acceptance is not certified."
+  ]
+}

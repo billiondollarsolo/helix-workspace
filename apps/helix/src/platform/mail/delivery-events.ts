@@ -136,6 +136,7 @@ export class PostgresMailDeliveryEventStore
       providerId: input.providerId,
       providerEventId: input.event.providerEventId,
       providerMessageId: input.event.providerMessageId,
+      ...(input.event.handoffKey === undefined ? {} : { handoffKey: input.event.handoffKey }),
       source: "provider",
       kind,
       retryClass: kind === "delivered" ? "none" : kind === "deferred" ? "transient" : "permanent",

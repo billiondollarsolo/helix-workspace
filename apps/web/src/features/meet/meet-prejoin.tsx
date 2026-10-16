@@ -174,11 +174,13 @@ export function MeetPreJoin({ target, onJoined, onCancel }: MeetPreJoinProps) {
               />
               <div>
                 <label htmlFor={consentId} className="type-body-sm font-medium">
-                  I consent to this meeting being recorded
+                  I consent to recording and transcription
                 </label>
                 <p id={`${consentId}-notice`} className="m-0 mt-1 type-meta text-muted-foreground">
-                  Audio, video, and shared content may be recorded under Helix&apos;s all-parties
-                  recording policy. Everyone sees and hears an alert when recording starts.
+                  Hosts may record audio, video and shared content, or transcribe speech using the
+                  workspace AI provider. Recordings and transcripts are saved in the owner’s Drive;
+                  attendees receive private links. AI recaps may also be generated. Capture is shown
+                  during the meeting.
                 </p>
               </div>
             </div>

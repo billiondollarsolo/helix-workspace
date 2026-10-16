@@ -75,6 +75,8 @@ export interface AgentCredentialRecord {
   readonly id: string;
   readonly credentialType: AgentCredentialType;
   readonly actorId: string;
+  readonly actorDisplayName?: string;
+  readonly actorEmail?: string;
   readonly orgId: string;
   readonly scopes: readonly string[];
   readonly roleBindings?: readonly ActorRoleBinding[];

@@ -744,7 +744,7 @@ describe("runCli tool discovery commands", () => {
         redirect: "error",
         signal: expect.any(AbortSignal),
         method: "POST",
-        body: '{"jsonrpc":"2.0","id":"helix-tool-list","method":"tools/list"}',
+        body: '{"jsonrpc":"2.0","id":"helix-tool-list","method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"helix-cli","version":"1.0.0"},"io.modelcontextprotocol/clientCapabilities":{}}}}',
       },
     });
     expect(JSON.parse(stdout.output)).toEqual({
@@ -804,7 +804,7 @@ describe("runCli tool discovery commands", () => {
     ).resolves.toBe(0);
 
     expect(requests[0]?.init.body).toBe(
-      '{"jsonrpc":"2.0","id":"helix-tool-call","method":"tools/call","params":{"name":"platform.ping","arguments":{"echo":true},"_meta":{"idempotencyKey":"mcp-key-1"}}}',
+      '{"jsonrpc":"2.0","id":"helix-tool-call","method":"tools/call","params":{"name":"platform.ping","arguments":{"echo":true},"_meta":{"idempotencyKey":"mcp-key-1","io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"helix-cli","version":"1.0.0"},"io.modelcontextprotocol/clientCapabilities":{}}}}',
     );
     expect(stdout.output).toBe('{\n  "ok": true\n}\n');
     expect(stderr.output).toBe("");
@@ -875,8 +875,8 @@ describe("runCli tool discovery commands", () => {
     ).resolves.toBe(0);
 
     expect(requests.map((request) => request.init.body)).toEqual([
-      '{"jsonrpc":"2.0","id":"helix-resource-list","method":"resources/list"}',
-      '{"jsonrpc":"2.0","id":"helix-resource-read","method":"resources/read","params":{"uri":"helix://chat/room/room-1"}}',
+      '{"jsonrpc":"2.0","id":"helix-resource-list","method":"resources/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"helix-cli","version":"1.0.0"},"io.modelcontextprotocol/clientCapabilities":{}}}}',
+      '{"jsonrpc":"2.0","id":"helix-resource-read","method":"resources/read","params":{"uri":"helix://chat/room/room-1","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"helix-cli","version":"1.0.0"},"io.modelcontextprotocol/clientCapabilities":{}}}}',
     ]);
     expect(stdout.output).toContain('"resources"');
     expect(stdout.output).toContain('"contents"');

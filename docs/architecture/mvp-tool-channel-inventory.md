@@ -12,6 +12,13 @@
 
 ## Policy summary (agents)
 
+**2026-10-16 update:** The tables below describe the fallback firewall outcome
+without a standing authorization. Routine collaboration now has bounded
+scope-based standing authorizations in the actual registry. See the
+[current collaboration contract](../plans/2026-10-15-helix-bot-workspace-handoff.md#routine-collaboration-2026-10-16).
+Resource ACLs, explicit always-confirm settings, DLP and emergency controls
+still apply; external mail and public links keep their approval boundaries.
+
 | Actor | `sideEffects`                                      | Default outcome (`evaluateToolPolicyFirewall`)                        | Notes                                                                        |
 | ----- | -------------------------------------------------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
 | agent | `read`                                             | `allow-read`                                                          | Still subject to scopes / AuthZ / clean-read gates at the handler.           |
@@ -142,6 +149,7 @@ Agent clean-read note: the Drive tool surface deliberately omits raw content/dow
 | Tool id                       | Permission    | sideEffects | Tool `confirmationRequired` | Agent confirmation expectation                                                                    |
 | ----------------------------- | ------------- | ----------- | --------------------------- | ------------------------------------------------------------------------------------------------- |
 | `chat.create_room`            | `chat.create` | write       | unset                       | **queue-confirmation**                                                                            |
+| `chat.dm.open`                | `chat.post`   | write       | unset                       | Standing authorization for scoped internal direct conversations; otherwise **queue-confirmation** |
 | `chat.delete`                 | `chat.post`   | destructive | unset                       | **queue-confirmation**                                                                            |
 | `chat.edit`                   | `chat.post`   | write       | unset                       | **queue-confirmation**                                                                            |
 | `chat.export`                 | `chat.read`   | read        | unset                       | allow-read                                                                                        |

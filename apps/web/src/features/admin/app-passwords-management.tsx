@@ -1,19 +1,12 @@
+import { FormPanel } from "@/components/ui/form-panel";
 import { ScopeChips } from "@/features/admin/console/widgets";
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from "@tanstack/react-table";
-import { Check, KeyRound, Plus, RotateCcw, Trash2 } from "lucide-react";
+import { AdminTable, type AdminColumn } from "./console/table";
+import { Check, Plus, RotateCcw, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import type { AdminUser } from "@/features/admin/admin-users";
 import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
 import {
@@ -94,6 +87,7 @@ interface ActorNotice {
 
 export function AppPasswordsManagement() {
   const queryClient = useQueryClient();
+  const [creating, setCreating] = useState(false);
   const [includeRevoked, setIncludeRevoked] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [createdPassword, setCreatedPassword] = useState<AppPasswordCreateResult | null>(null);
@@ -149,25 +143,26 @@ export function AppPasswordsManagement() {
      past the first page — stays an id here rather than being guessed at. */
   const revokeActorLabel =
     passwordToRevoke === null ? null : (actorLabels.get(passwordToRevoke.actorId) ?? null);
-  const tableData = useMemo(() => [...passwords], [passwords]);
-  const columns = useMemo<ColumnDef<AppPassword>[]>(
+  const columns = useMemo<AdminColumn<AppPassword>[]>(
     () => [
       {
-        accessorKey: "label",
+        id: "label",
         header: "Label",
-        cell: ({ row }) => <span className="font-medium">{row.original.label}</span>,
+        sortValue: (row) => row.label,
+        cell: (row) => <span className="font-medium">{row.label}</span>,
       },
       {
-        accessorKey: "actorId",
+        id: "actorId",
         header: "Actor",
+        sortValue: (row) => actorLabels.get(row.actorId) ?? row.actorId,
         /* The list endpoint returns actor ids only. A name exists for the actors
            the picker loaded; for anything else — a disabled actor, or one past
            the first page — the id is genuinely all we know. */
-        cell: ({ row }) => {
-          const label = actorLabels.get(row.original.actorId);
+        cell: (row) => {
+          const label = actorLabels.get(row.actorId);
           return label === undefined ? (
             <code className="block max-w-[18rem] truncate type-caption text-muted-foreground">
-              {row.original.actorId}
+              {row.actorId}
             </code>
           ) : (
             <span className="block max-w-[18rem] truncate">{label}</span>
@@ -175,30 +170,32 @@ export function AppPasswordsManagement() {
         },
       },
       {
-        accessorKey: "scopes",
+        id: "scopes",
         header: "Scopes",
-        cell: ({ row }) => <ScopeChips scopes={row.original.scopes} />,
+        sortValue: (row) => row.scopes.join(" "),
+        cell: (row) => <ScopeChips scopes={row.scopes} />,
       },
       {
         id: "lastUsed",
         header: "Last used",
-        cell: ({ row }) => formatDateTime(row.original.lastUsedAt) ?? "Never",
+        sortValue: (row) => (row.lastUsedAt === null ? null : new Date(row.lastUsedAt).getTime()),
+        cell: (row) => formatDateTime(row.lastUsedAt) ?? "Never",
       },
       {
         id: "expires",
         header: "Expires",
-        cell: ({ row }) => formatDateTime(row.original.expiresAt) ?? "Never",
+        sortValue: (row) => (row.expiresAt === null ? null : new Date(row.expiresAt).getTime()),
+        cell: (row) => formatDateTime(row.expiresAt) ?? "Never",
       },
       {
         id: "status",
         header: "Status",
-        cell: ({ row }) =>
-          row.original.revokedAt === null ? (
+        sortValue: (row) => (row.revokedAt === null ? "Active" : "Revoked"),
+        cell: (row) =>
+          row.revokedAt === null ? (
             <StatusChip tone="success" label="Active" />
           ) : (
-            <span className="text-muted-foreground">
-              Revoked {formatDateTime(row.original.revokedAt)}
-            </span>
+            <span className="text-muted-foreground">Revoked {formatDateTime(row.revokedAt)}</span>
           ),
       },
       {
@@ -206,12 +203,13 @@ export function AppPasswordsManagement() {
         /* Not `""`: an empty <th> gives screen readers an unnamed column.
            Visually hidden text names it without adding a visible caption to a
            column of icon buttons. */
-        header: () => <span className="sr-only">App password actions</span>,
-        cell: ({ row }) => (
+        header: "App password actions",
+        headerHidden: true,
+        cell: (row) => (
           <Button
-            aria-label={`Revoke app password ${row.original.label}`}
-            disabled={row.original.revokedAt !== null || revokeMutation.isPending}
-            onClick={() => setPasswordToRevoke(row.original)}
+            aria-label={`Revoke app password ${row.label}`}
+            disabled={row.revokedAt !== null || revokeMutation.isPending}
+            onClick={() => setPasswordToRevoke(row)}
             size="sm"
             type="button"
             variant="destructive"
@@ -224,11 +222,6 @@ export function AppPasswordsManagement() {
     ],
     [actorLabels, revokeMutation.isPending],
   );
-  const table = useReactTable({
-    data: tableData,
-    columns,
-    getCoreRowModel: getCoreRowModel(),
-  });
 
   const passwordForm = useForm({
     defaultValues: defaultFormValues,
@@ -256,165 +249,173 @@ export function AppPasswordsManagement() {
         title="App passwords"
         subtitle="Passwords for mail, calendar, and file apps that can't use standard sign-in."
         actions={
-          <label className="inline-flex items-center gap-2 text-xs text-muted-foreground">
-            <input
-              checked={includeRevoked}
-              className="size-3.5"
-              onChange={(event) => setIncludeRevoked(event.target.checked)}
-              type="checkbox"
-            />
-            Include revoked
-          </label>
+          <>
+            <Button type="button" onClick={() => setCreating(true)}>
+              <Plus aria-hidden="true" /> Add app password
+            </Button>
+            <label className="inline-flex items-center gap-2 text-xs text-muted-foreground">
+              <input
+                checked={includeRevoked}
+                className="size-3.5"
+                onChange={(event) => setIncludeRevoked(event.target.checked)}
+                type="checkbox"
+              />
+              Include revoked
+            </label>
+          </>
         }
       />
 
-      {/* `items-start` / `content-start`: a grid track is stretch-aligned by
-          default, so the short panel used to inherit the tall form's height and
-          spread its two rows apart — several hundred pixels of blank card above
-          the panel heading. */}
-      <div className="grid items-start gap-4 lg:grid-cols-[minmax(20rem,0.75fr)_minmax(0,1.25fr)]">
-        <form
-          className="grid content-start gap-4 rounded-lg border border-border bg-card p-4"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void passwordForm.handleSubmit();
-          }}
-        >
-          <div className="flex items-center gap-2">
-            <KeyRound className="size-4 text-muted-foreground" />
-            <h2 className="text-sm font-medium">Create app password</h2>
-          </div>
+      <div className="grid items-start gap-4">
+        {creating ? (
+          <FormPanel
+            title="Create app password"
+            onClose={() => {
+              if (!createMutation.isPending) {
+                setCreating(false);
+                setCreatedPassword(null);
+              }
+            }}
+          >
+            <form
+              className="grid content-start gap-4"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void passwordForm.handleSubmit();
+              }}
+            >
+              <passwordForm.Field name="label">
+                {(field) => (
+                  <label className="grid gap-1.5 text-xs font-medium" htmlFor="app-password-label">
+                    Label
+                    <Input
+                      id="app-password-label"
+                      onBlur={field.handleBlur}
+                      onChange={(event) => field.handleChange(event.target.value)}
+                      placeholder="Calendar sync"
+                      required
+                      value={field.state.value}
+                    />
+                  </label>
+                )}
+              </passwordForm.Field>
 
-          <passwordForm.Field name="label">
-            {(field) => (
-              <label className="grid gap-1.5 text-xs font-medium" htmlFor="app-password-label">
-                Label
-                <Input
-                  id="app-password-label"
-                  onBlur={field.handleBlur}
-                  onChange={(event) => field.handleChange(event.target.value)}
-                  placeholder="Calendar sync"
-                  required
-                  value={field.state.value}
-                />
-              </label>
-            )}
-          </passwordForm.Field>
+              <passwordForm.Field name="actorId">
+                {(field) => (
+                  <div className="grid gap-2">
+                    <ActorSearchField
+                      id="app-password-actor-search"
+                      value={actorSearchDraft}
+                      onChange={onSearchChange}
+                    />
+                    <ActorSelectField
+                      id="app-password-actor-id"
+                      describedBy={actorNotice === null ? undefined : ACTOR_STATUS_ID}
+                      disabled={!canPickActor}
+                      placeholder={actorPlaceholders[actorStatus]}
+                      value={field.state.value}
+                      onBlur={field.handleBlur}
+                      onChange={(value) => field.handleChange(value)}
+                    >
+                      {actors.map((actor) => (
+                        <option key={actor.id} value={actor.id}>
+                          {actorLabel(actor)}
+                        </option>
+                      ))}
+                    </ActorSelectField>
+                    {actorNotice === null ? null : (
+                      <ActorNoticeBanner
+                        id={ACTOR_STATUS_ID}
+                        kind={actorNotice.kind}
+                        message={actorNotice.message}
+                        retryable={actorNotice.retryable}
+                        onRetry={() => void invalidateAdminUserLists(queryClient)}
+                      />
+                    )}
+                  </div>
+                )}
+              </passwordForm.Field>
 
-          <passwordForm.Field name="actorId">
-            {(field) => (
-              <div className="grid gap-2">
-                <ActorSearchField
-                  id="app-password-actor-search"
-                  value={actorSearchDraft}
-                  onChange={onSearchChange}
-                />
-                <ActorSelectField
-                  id="app-password-actor-id"
-                  describedBy={actorNotice === null ? undefined : ACTOR_STATUS_ID}
-                  disabled={!canPickActor}
-                  placeholder={actorPlaceholders[actorStatus]}
-                  value={field.state.value}
-                  onBlur={field.handleBlur}
-                  onChange={(value) => field.handleChange(value)}
-                >
-                  {actors.map((actor) => (
-                    <option key={actor.id} value={actor.id}>
-                      {actorLabel(actor)}
-                    </option>
-                  ))}
-                </ActorSelectField>
-                {actorNotice === null ? null : (
-                  <ActorNoticeBanner
-                    id={ACTOR_STATUS_ID}
-                    kind={actorNotice.kind}
-                    message={actorNotice.message}
-                    retryable={actorNotice.retryable}
-                    onRetry={() => void invalidateAdminUserLists(queryClient)}
+              <passwordForm.Field name="scopes">
+                {(field) => (
+                  <div className="grid gap-2">
+                    <ScopesField
+                      id="app-password-scopes"
+                      scopes={commonScopes}
+                      scopesLabel="Common app password scopes"
+                      value={field.state.value}
+                      onBlur={field.handleBlur}
+                      onChange={(value) => field.handleChange(value)}
+                    />
+                    <div className="flex flex-wrap items-center gap-2" aria-label="Scope presets">
+                      <Button
+                        aria-describedby={DESKTOP_SYNC_HINT_ID}
+                        onClick={() => field.handleChange(desktopSyncScopes.join(" "))}
+                        size="xs"
+                        type="button"
+                        variant="outline"
+                      >
+                        Desktop sync (WebDAV)
+                      </Button>
+                      <span className="text-xs text-muted-foreground" id={DESKTOP_SYNC_HINT_ID}>
+                        Sets {desktopSyncScopes.join(", ")} so the desktop sync can read, upload,
+                        and delete Drive files.
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </passwordForm.Field>
+
+              <passwordForm.Field name="expiresAt">
+                {(field) => (
+                  <ExpiresAtField
+                    id="app-password-expires-at"
+                    value={field.state.value}
+                    onBlur={field.handleBlur}
+                    onChange={(value) => field.handleChange(value)}
                   />
                 )}
-              </div>
-            )}
-          </passwordForm.Field>
+              </passwordForm.Field>
 
-          <passwordForm.Field name="scopes">
-            {(field) => (
-              <div className="grid gap-2">
-                <ScopesField
-                  id="app-password-scopes"
-                  scopes={commonScopes}
-                  scopesLabel="Common app password scopes"
-                  value={field.state.value}
-                  onBlur={field.handleBlur}
-                  onChange={(value) => field.handleChange(value)}
-                />
-                <div className="flex flex-wrap items-center gap-2" aria-label="Scope presets">
-                  <Button
-                    aria-describedby={DESKTOP_SYNC_HINT_ID}
-                    onClick={() => field.handleChange(desktopSyncScopes.join(" "))}
-                    size="xs"
-                    type="button"
-                    variant="outline"
-                  >
-                    Desktop sync (WebDAV)
-                  </Button>
-                  <span className="text-xs text-muted-foreground" id={DESKTOP_SYNC_HINT_ID}>
-                    Sets {desktopSyncScopes.join(", ")} so the desktop sync can read, upload, and
-                    delete Drive files.
-                  </span>
-                </div>
-              </div>
-            )}
-          </passwordForm.Field>
+              {formError !== null ? <ErrorNotice>{formError}</ErrorNotice> : null}
+              {createMutation.isError ? (
+                <ErrorNotice>
+                  {errorMessage(createMutation.error, "Could not create the app password.")}
+                </ErrorNotice>
+              ) : null}
 
-          <passwordForm.Field name="expiresAt">
-            {(field) => (
-              <ExpiresAtField
-                id="app-password-expires-at"
-                value={field.state.value}
-                onBlur={field.handleBlur}
-                onChange={(value) => field.handleChange(value)}
-              />
-            )}
-          </passwordForm.Field>
+              <Button
+                aria-describedby={canPickActor ? undefined : ACTOR_STATUS_ID}
+                disabled={createMutation.isPending || !canPickActor}
+                type="submit"
+                variant="default"
+              >
+                <Plus />
+                {createMutation.isPending ? "Creating" : "Create app password"}
+              </Button>
 
-          {formError !== null ? <ErrorNotice>{formError}</ErrorNotice> : null}
-          {createMutation.isError ? (
-            <ErrorNotice>
-              {errorMessage(createMutation.error, "Could not create the app password.")}
-            </ErrorNotice>
-          ) : null}
-
-          <Button
-            aria-describedby={canPickActor ? undefined : ACTOR_STATUS_ID}
-            disabled={createMutation.isPending || !canPickActor}
-            type="submit"
-            variant="default"
-          >
-            <Plus />
-            {createMutation.isPending ? "Creating" : "Create app password"}
-          </Button>
-
-          {createdPassword !== null ? (
-            <section
-              aria-label="Created app password"
-              className="grid gap-2 rounded-md border border-[var(--success)] p-3 text-xs"
-            >
-              <div className="flex items-center gap-2 font-medium text-[var(--success)]">
-                <Check className="size-3.5" />
-                Created
-              </div>
-              <label className="grid gap-1 font-medium" htmlFor="generated-app-password">
-                Password
-                <Input id="generated-app-password" readOnly value={createdPassword.password} />
-              </label>
-              <p className="text-muted-foreground">Shown once.</p>
-              <p className="text-muted-foreground">
-                Label: <code>{createdPassword.appPassword.label}</code>
-              </p>
-            </section>
-          ) : null}
-        </form>
+              {createdPassword !== null ? (
+                <section
+                  aria-label="Created app password"
+                  className="grid gap-2 rounded-md border border-[var(--success)] p-3 text-xs"
+                >
+                  <div className="flex items-center gap-2 font-medium text-[var(--success)]">
+                    <Check className="size-3.5" />
+                    Created
+                  </div>
+                  <label className="grid gap-1 font-medium" htmlFor="generated-app-password">
+                    Password
+                    <Input id="generated-app-password" readOnly value={createdPassword.password} />
+                  </label>
+                  <p className="text-muted-foreground">Shown once.</p>
+                  <p className="text-muted-foreground">
+                    Label: <code>{createdPassword.appPassword.label}</code>
+                  </p>
+                </section>
+              ) : null}
+            </form>
+          </FormPanel>
+        ) : null}
 
         <section className="grid min-w-0 content-start gap-3 rounded-lg border border-border bg-card p-4">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -447,40 +448,17 @@ export function AppPasswordsManagement() {
             </ErrorNotice>
           ) : null}
 
-          <Table aria-label="App passwords">
-            <TableHeader>
-              {table.getHeaderGroups().map((headerGroup) => (
-                <TableRow key={headerGroup.id}>
-                  {headerGroup.headers.map((header) => (
-                    <TableHead key={header.id}>
-                      {header.isPlaceholder
-                        ? null
-                        : flexRender(header.column.columnDef.header, header.getContext())}
-                    </TableHead>
-                  ))}
-                </TableRow>
-              ))}
-            </TableHeader>
-            <TableBody>
-              {passwordsQuery.isLoading || table.getRowModel().rows.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={columns.length}>
-                    <EmptyRow>{passwordListMessage(passwordsQuery, includeRevoked)}</EmptyRow>
-                  </TableCell>
-                </TableRow>
-              ) : (
-                table.getRowModel().rows.map((row) => (
-                  <TableRow key={row.id}>
-                    {row.getVisibleCells().map((cell) => (
-                      <TableCell key={cell.id}>
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
+          <AdminTable
+            label="App passwords"
+            columns={columns}
+            rows={passwordsQuery.isLoading ? [] : passwords}
+            rowKey={(row) => row.id}
+            searchText={(row) =>
+              [row.label, row.actorId, actorLabels.get(row.actorId), row.scopes.join(" ")].join(" ")
+            }
+            partialNote="Search and sorting apply to the returned app passwords."
+            empty={<EmptyRow>{passwordListMessage(passwordsQuery, includeRevoked)}</EmptyRow>}
+          />
         </section>
       </div>
 

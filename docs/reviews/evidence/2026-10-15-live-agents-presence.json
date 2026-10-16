@@ -1,0 +1,96 @@
+{
+  "date": "2026-10-15",
+  "environment": "development",
+  "protocolVersion": "2026-07-28",
+  "legacyVersions": ["2025-06-18", "2025-03-26"],
+  "deployment": {
+    "checkedAt": "2026-10-15T20:48:47.278Z",
+    "apiImage": "helix/workspace-development:live-agents-r19",
+    "publicReadiness": true,
+    "latestMcpDiscovery": true,
+    "persistentListenerReconnectedAfterApiReplacement": true,
+    "eventsToolRead": true,
+    "credentialStatusBypassDenied": true,
+    "anonymousDenied": true
+  },
+  "mcpPublicProof": {
+    "checkedAt": "2026-10-15T20:44:54.320Z",
+    "discovery": true,
+    "headerMismatch": true,
+    "toolDiscovery": true,
+    "acknowledged": true,
+    "connectedPresence": true,
+    "liveWakeup": true,
+    "privateChatAndCancelledApproval": true,
+    "mcpResourceReplay": true,
+    "stableReplay": true,
+    "legacy": true,
+    "fixture": {
+      "messageId": "170f8af0-8ec9-4161-a22f-28509e0e3809",
+      "actionId": "fbdac2ef-a78e-40c5-9152-a041af99c733",
+      "privateRoom": true,
+      "approvalExecuted": false
+    },
+    "disconnectedPresence": true
+  },
+  "cliListenerProof": {
+    "checkedAt": "2026-10-15T20:46:15.668Z",
+    "anonymousRejected": true,
+    "listenerRestartCatchup": true,
+    "checkpointBefore": 3,
+    "checkpointAfter": 6,
+    "eventsLogged": 6,
+    "noDuplicateAfterCleanRestart": true,
+    "presenceConnected": true,
+    "mcpToolRead": true,
+    "noAutomaticModelExecution": true
+  },
+  "fixtureCleanup": {
+    "temporaryActorDisabled": true,
+    "privateFixtureRoomArchived": true,
+    "atlasPreserved": true,
+    "historyRetained": true
+  },
+  "validation": {
+    "fullSuitePassed": true,
+    "backendUnitPassed": 3942,
+    "backendGatedSkippedInDefaultRun": 416,
+    "webUnitPassed": 1433,
+    "cliUnitPassed": 173,
+    "sdkUnitPassed": 13,
+    "focusedLiveDatabaseTests": 9,
+    "databaseModes": ["multi-tenant-saas", "single-tenant"],
+    "accountBrowserTests": 12,
+    "chatBrowserTests": 7,
+    "statusAccessibilityChecked": true,
+    "typecheckPassed": true,
+    "lintPassed": true,
+    "buildPassed": true,
+    "note": "Full suite rerun passed after the final status-write guard. Live database checks ran separately in both tenancy modes.",
+    "formatPassed": true,
+    "dependencyBoundariesPassed": true
+  },
+  "backup": {
+    "encryptedOffServer": true,
+    "archive": "development-daily-20261015T203126Z.tar.gz.age",
+    "bytes": 2173654820,
+    "sha256": "527aa6183852ef27468326efe8fa066cb12878393abc76317e14af0ab3a5a2e2",
+    "fullRestoreTested": false
+  },
+  "listener": {
+    "name": "Atlas",
+    "location": "Mike local machine, systemd user service",
+    "unit": "helix-atlas-listener.service",
+    "credentialExpiresAt": "2026-11-13T16:56:52Z",
+    "onlyAddedScope": "notifications.read",
+    "automaticModelHandlerConfigured": false,
+    "approvalExecutionDuringProof": false
+  },
+  "limits": [
+    "Development only; production encryption and restore gates remain.",
+    "Long-duration multi-host load and adversarial slow-consumer testing not performed.",
+    "64 streams per tenant per API process, 8 connection leases per actor.",
+    "External model host must schedule turns from events; idle listener makes no model calls.",
+    "Formal third-party MCP conformance suite not run."
+  ]
+}

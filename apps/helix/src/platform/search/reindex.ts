@@ -1,3 +1,4 @@
+import type { TenantStorageResolver } from "../storage/tenant-resolver.js";
 import type postgres from "postgres";
 import { calendarRecordToIndexDocument } from "../calendar/search/indexer.js";
 import { PostgresCalendarStore } from "../calendar/index.js";
@@ -231,13 +232,14 @@ export class SearchReindexService implements SearchReindexRunner {
   }
 }
 export interface PostgresSearchReindexSourcesOptions {
+  readonly storageResolver?: TenantStorageResolver | undefined;
   readonly pageSize?: number | undefined;
 }
 export function createPostgresSearchReindexSources(
   sql: postgres.Sql,
   options: PostgresSearchReindexSourcesOptions = {},
 ): readonly SearchReindexSource[] {
-  const mail = new PostgresMailStore(sql);
+  const mail = new PostgresMailStore(sql, { storageResolver: options.storageResolver });
   const chat = new PostgresChatStore(sql);
   // Metadata-only: a reindex never stores bytes, so it must not require the
   // write path's production antivirus scanner.

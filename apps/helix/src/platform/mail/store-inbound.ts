@@ -1,3 +1,4 @@
+import { stageMailBody, releaseMailBody, type StagedMailBody } from "./body-storage.js";
 import type { JsonObject, StorageObject } from "@helix/sdk-types";
 import type postgres from "postgres";
 import { MailRawSourceIntegrityError } from "./errors.js";
@@ -204,6 +205,7 @@ export class MailInboundStore {
     ].sort();
 
     const staged = await stageInlineAttachments(inbound, this.options.attachmentIngestor);
+    let body: StagedMailBody | undefined;
     try {
       const result = await this.sql.begin(async (tx) => {
         if (identityKeys.length > 0) {
@@ -232,6 +234,16 @@ export class MailInboundStore {
           }
         }
 
+        body = await stageMailBody(
+          this.sql,
+          this.options.storageResolver,
+          input.orgId,
+          {
+            text: input.bodyText,
+            ...(input.bodyHtml === undefined ? {} : { html: input.bodyHtml }),
+          },
+          input.actorId ?? undefined,
+        );
         const referencedThreadId = await findReferencedThread(tx, staged.input);
         const sourceStorage =
           input.rawSource === undefined
@@ -246,14 +258,17 @@ export class MailInboundStore {
             ? staged.input
             : { ...staged.input, threadId: referencedThreadId },
           sourceStorage,
+          body,
         );
       });
       if (!result.created) {
+        await releaseMailBody(this.sql, body);
         await this.options.attachmentIngestor?.release(staged.stages).catch(() => undefined);
       }
       const { authoritativeAttachments: _attachments, ...stored } = result;
       return stored;
     } catch (error) {
+      await releaseMailBody(this.sql, body).catch(() => undefined);
       await this.options.attachmentIngestor?.release(staged.stages).catch(() => undefined);
       throw error;
     }

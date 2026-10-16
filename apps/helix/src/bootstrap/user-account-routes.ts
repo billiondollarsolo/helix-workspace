@@ -1,4 +1,5 @@
 import { registerAccountSecurityRoutes } from "../platform/auth/account-security-routes.js";
+import { registerExternalEmailMfaRoutes } from "../platform/auth/external-email-mfa-routes.js";
 import {
   PostgresAdminUserInviteStore,
   registerAdminUserInviteRoutes,
@@ -9,6 +10,10 @@ import { PostgresProfileStore, registerProfileRoutes } from "../platform/auth/pr
 import { registerUserAddressRoutes } from "../platform/auth/user-address-routes.js";
 import { PostgresUserAddressStore } from "../platform/auth/user-addresses.js";
 import type { installTools } from "./tools.js";
+import { registerPasswordVaultRoutes } from "../platform/passwords/routes.js";
+import { PostgresPasswordVaultStore } from "../platform/passwords/vault.js";
+import { PASSWORDS_APP_FLAG } from "../platform/passwords/status.js";
+import { loadEffectiveTenantConfig } from "../platform/tenancy/index.js";
 
 export async function registerUserAccountRoutes(context: Awaited<ReturnType<typeof installTools>>) {
   const {
@@ -19,6 +24,8 @@ export async function registerUserAccountRoutes(context: Awaited<ReturnType<type
     sessionActorResolver,
     auditStore,
     betterAuthRuntime,
+    externalEmailMfa,
+    recoveryCodes,
     bootEnv,
     orgStore,
     outboxStore,
@@ -45,6 +52,14 @@ export async function registerUserAccountRoutes(context: Awaited<ReturnType<type
     actorFromRequest: actorFromAuthenticatedRequest,
     auditSink: auditStore,
   });
+  registerPasswordVaultRoutes(app, {
+    store: new PostgresPasswordVaultStore(sql),
+    sessionActorResolver,
+    audit: auditStore,
+    enabled: async (orgId) =>
+      (await loadEffectiveTenantConfig({ orgs: orgStore }, orgId))?.features[PASSWORDS_APP_FLAG] ===
+      true,
+  });
   if (betterAuthRuntime !== undefined) {
     registerAccountSecurityRoutes(app, {
       auth: betterAuthRuntime.auth,
@@ -52,6 +67,15 @@ export async function registerUserAccountRoutes(context: Awaited<ReturnType<type
       sessionActorResolver,
       auditSink: auditStore,
     });
+    if (externalEmailMfa !== undefined)
+      registerExternalEmailMfaRoutes(app, {
+        auth: betterAuthRuntime.auth,
+        verifier: betterAuthRuntime.sessionVerifier,
+        actors: sessionActorResolver,
+        factors: externalEmailMfa,
+        recoveryCodes,
+        audit: auditStore,
+      });
   }
   registerUserAddressRoutes(app, {
     store: new PostgresUserAddressStore(sql),

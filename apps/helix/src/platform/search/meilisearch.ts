@@ -48,6 +48,7 @@ export interface MeilisearchIndexLike {
 export interface MeilisearchIndexSettings {
   readonly filterableAttributes?: readonly string[];
   readonly searchableAttributes?: readonly string[];
+  readonly pagination?: { readonly maxTotalHits: number };
 }
 
 export interface MeilisearchSearchOptions {
@@ -103,8 +104,14 @@ export class MeilisearchSearchEngine implements SearchEngine {
     }
     await this.wait(
       await this.indexHandle.updateSettings?.({
-        filterableAttributes: ["type", "attributes.orgId", "attributes.allowedActorIds"],
+        filterableAttributes: [
+          "type",
+          "attributes.orgId",
+          "attributes.allowedActorIds",
+          "attributes.ragOwnerActorId",
+        ],
         searchableAttributes: ["title", "body"],
+        pagination: { maxTotalHits: 10_001 },
       }),
     );
   }

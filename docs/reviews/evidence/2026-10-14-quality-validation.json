@@ -1,0 +1,139 @@
+{
+  "schemaVersion": 1,
+  "reviewDate": "2026-10-14",
+  "sourceScope": "current development working tree; reviewed defects remain separately recorded",
+  "accessibility": {
+    "status": "passed",
+    "generatedAt": "2026-10-14T08:45:41.562Z",
+    "routeCount": 51,
+    "configurations": 306,
+    "themes": ["dark", "light"],
+    "viewports": ["desktop", "mobile", "tablet"],
+    "violations": 0,
+    "visualFindings": 0,
+    "executionErrors": 0,
+    "backend": "isolated browser fixtures"
+  },
+  "browser": {
+    "fullDefault": {
+      "passed": 193,
+      "skipped": 1,
+      "limitation": "live SMTP requires separate live-backend mode"
+    },
+    "focusedMailAndSecurityAfterRealtimeChange": {
+      "passed": 14,
+      "includes": [
+        "new mail updates without document reload",
+        "reconnect catch-up without a new activity frame",
+        "production CSP isolated email renderer",
+        "active compose subject, keyboard focus and text selection retained during both updates"
+      ]
+    }
+  },
+  "threading": {
+    "postgresIntegration": {
+      "passed": 5,
+      "runtimeRole": "helix_app",
+      "covers": [
+        "rewritten provider ID with inherited local reference",
+        "nearest shared recipient-safe reference",
+        "idempotent recipient delivery",
+        "explicit thread tenant/kind checks",
+        "repaired-link actor and tenant isolation"
+      ]
+    },
+    "liveOwnerRepair": {
+      "originalPresent": true,
+      "replyPresent": true,
+      "messageCount": 2,
+      "currentLinkPreserved": true,
+      "previousLinkResolves": true,
+      "auditRecorded": true,
+      "canonicalFieldsFingerprintUnchanged": true,
+      "triggerRestoredBeforeCommit": true,
+      "rollbackSnapshotProtected": true
+    },
+    "freshExternalRoundTripAfterChange": false
+  },
+  "deployment": {
+    "environment": "development",
+    "apiImage": "helix/workspace-development:mail-threading-final",
+    "webImage": "helix/workspace-web-development:mail-realtime-final",
+    "publicAgentGuideBrowserChecked": true,
+    "readinessAfterBackup": {
+      "status": 200,
+      "ready": true
+    }
+  },
+  "productionAcceptance": false,
+  "recoveryCopy": {
+    "type": "development_cold_recovery_copy",
+    "encrypted": true,
+    "offServer": true,
+    "archive": "development-final-20261014T091857Z.tar.gz.age",
+    "bytes": 141168997,
+    "sha256": "3093d386fe3f1813111c68a4ac77b93909e5dbcb9d7f9b21bde175f10acaeb67",
+    "entries": 6690,
+    "applicationAndMailEdgeStopped": true,
+    "ageAuthenticationPassed": true,
+    "archiveInspectionPassed": true,
+    "latestArchiveRestoreDrillPerformed": false,
+    "businessBackupGateSatisfied": false
+  },
+  "workspaceChecks": {
+    "format:check": "passed",
+    "typecheck": "passed",
+    "lint": "passed",
+    "test": {
+      "passed": 5479,
+      "skipped": 389,
+      "packageResults": [
+        {
+          "package": "@helix/config",
+          "passed": 10,
+          "skipped": 0
+        },
+        {
+          "package": "@helix/sdk-web",
+          "passed": 3,
+          "skipped": 0
+        },
+        {
+          "package": "@helix/contracts",
+          "passed": 47,
+          "skipped": 0
+        },
+        {
+          "package": "@helix/cli",
+          "passed": 167,
+          "skipped": 0
+        },
+        {
+          "package": "@helix/sdk-types",
+          "passed": 5,
+          "skipped": 0
+        },
+        {
+          "package": "@helix/sdk",
+          "passed": 10,
+          "skipped": 0
+        },
+        {
+          "package": "@helix/app",
+          "passed": 3822,
+          "skipped": 389
+        },
+        {
+          "package": "@helix/web",
+          "passed": 1415,
+          "skipped": 0
+        }
+      ],
+      "unchangedPackagesMayUseTurboCache": true
+    },
+    "build": "passed",
+    "quality:boundaries": "passed",
+    "e2eTypecheck": "passed",
+    "changedE2eLint": "passed"
+  }
+}

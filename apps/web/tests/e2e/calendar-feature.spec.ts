@@ -285,7 +285,7 @@ test.describe("/calendar feature flow", () => {
       await expect(page.getByRole("region", { name: "Schedule" })).toContainText(
         "Backend planning",
       );
-      await expect(page.getByRole("button", { name: "Create event" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "New event" })).toBeVisible();
     });
 
     for (const colorScheme of ["light", "dark"] as const) {

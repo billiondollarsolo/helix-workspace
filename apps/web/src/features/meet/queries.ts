@@ -41,6 +41,7 @@ export function meetMeetingsQueryOptions(input: MeetRoomsQueryInput = defaultMee
   return queryOptions({
     queryKey: meetQueryKeys.meetings(input),
     queryFn: () => listMeetMeetings(input),
+    refetchInterval: 15_000,
     throwOnError: false,
   });
 }

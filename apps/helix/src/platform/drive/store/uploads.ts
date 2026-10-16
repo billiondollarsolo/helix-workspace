@@ -377,13 +377,25 @@ export async function finalizeUploadForScan(
             }),
       });
     }
-    const dlpDecision = await context.options.dlp?.evaluate({
-      orgId: input.orgId,
-      actorId: input.actorId,
-      boundary: "drive_upload",
-      ...(bufferedBytes === undefined ? { scanIncomplete: true } : { content: bufferedBytes }),
-      resources: [{ resourceType: "drive.file", resourceId: input.objectId }],
-    });
+    const dlp = context.options.dlp;
+    // Commit classification before the next independent upload phase takes object locks.
+    const dlpDecision =
+      dlp === undefined
+        ? undefined
+        : await withTenantPostgresContext(
+            context.sql,
+            { orgId: input.orgId, actorId: input.actorId },
+            () =>
+              dlp.evaluate({
+                orgId: input.orgId,
+                actorId: input.actorId,
+                boundary: "drive_upload",
+                ...(bufferedBytes === undefined
+                  ? { scanIncomplete: true }
+                  : { content: bufferedBytes }),
+                resources: [{ resourceType: "drive.file", resourceId: input.objectId }],
+              }),
+          );
     if (dlpDecision?.action === "block") throw dlpDecisionError(dlpDecision);
     const dlpQuarantine = dlpDecision?.action === "quarantine";
     if (!scan.clean || dlpQuarantine) {

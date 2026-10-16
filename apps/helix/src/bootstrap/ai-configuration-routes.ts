@@ -14,6 +14,7 @@ export async function registerAiConfigurationRoutes(
     runtimeConfiguration,
     semanticSearchRuntime,
     searchReindexJobService,
+    assertRuntimeResidency,
   } = context;
   await registerPlatformConfigAdminRoutes(app, {
     service: platformConfig,
@@ -24,6 +25,13 @@ export async function registerAiConfigurationRoutes(
       } catch {
         throw new BadRequestError(
           "Invalid workspace retrieval configuration. Check the backend, embedding model, dimensions, endpoints, and security policy.",
+        );
+      }
+      try {
+        assertRuntimeResidency(config);
+      } catch {
+        throw new BadRequestError(
+          "This provider configuration violates deployment residency. Production AI providers must declare processing in the workspace's region; configure a matching regional endpoint and processing region.",
         );
       }
     },

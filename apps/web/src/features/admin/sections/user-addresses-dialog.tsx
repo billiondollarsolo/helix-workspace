@@ -71,6 +71,7 @@ export function AdminUserAddressesDialog({
   }
   return (
     <Dialog
+      modal={false}
       title={`Mail addresses for ${name}`}
       onClose={() => {
         if (!pending) onClose();

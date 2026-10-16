@@ -1,3 +1,4 @@
+import { StatusEditor } from "@/features/presence/status-editor";
 /* Profile (the account home) and Personal info. */
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -85,6 +86,7 @@ export function ProfileHomeSection({ onNavigate }: SettingsSectionProps) {
         <h1 className="m-0 type-h1 font-semibold">Welcome, {profile.displayName}</h1>
         <p className="m-0 type-body-sm text-muted-foreground">{profile.email}</p>
       </div>
+      <StatusEditor />
       <div className="grid gap-3 @container sm:grid-cols-2">
         <HomeCard
           icon={<IdCard size={20} aria-hidden="true" />}

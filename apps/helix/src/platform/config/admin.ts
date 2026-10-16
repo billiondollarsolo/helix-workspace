@@ -36,7 +36,12 @@ import {
   redactAiSecretsForAdmin,
   validateAiSettings,
 } from "./ai-settings.js";
-export { mergeAiProvidersPreservingSecrets, redactAiSecretsForAdmin } from "./ai-settings.js";
+export {
+  mergeAiProvidersPreservingSecrets,
+  redactAiSecretsForAdmin,
+  resolveFeatureProviderCredentials,
+  operatorAiEnvFromConfig,
+} from "./ai-settings.js";
 
 const platformConfigKeys = [
   "security",
@@ -941,117 +946,6 @@ function normalizeAiConfig(value: unknown, label: string): NonNullable<PartialHe
     })
     .parse(normalizeJsonObject(value, label));
   return jsonObjectFromDefined(parsed);
-}
-
-function providerCredentialFields(provider: {
-  readonly config?: Readonly<Record<string, unknown>> | undefined;
-}): {
-  readonly apiKey?: string;
-  readonly baseUrl?: string;
-  readonly model?: string;
-} {
-  const cfg = provider.config ?? {};
-  const apiKey =
-    typeof cfg.apiKey === "string" && cfg.apiKey.trim().length > 0 ? cfg.apiKey : undefined;
-  const baseUrl =
-    typeof cfg.baseUrl === "string" && cfg.baseUrl.trim().length > 0 ? cfg.baseUrl : undefined;
-  const model =
-    (typeof cfg.defaultModel === "string" && cfg.defaultModel.trim().length > 0
-      ? cfg.defaultModel
-      : undefined) ??
-    (typeof cfg.model === "string" && cfg.model.trim().length > 0 ? cfg.model : undefined);
-  return {
-    ...(apiKey === undefined ? {} : { apiKey }),
-    ...(baseUrl === undefined ? {} : { baseUrl }),
-    ...(model === undefined ? {} : { model }),
-  };
-}
-
-/** Resolve provider credentials for a routing feature (primary rule). */
-export function resolveFeatureProviderCredentials(
-  config: HelixConfig,
-  feature: string,
-): {
-  readonly apiKey?: string;
-  readonly baseUrl?: string;
-  readonly model?: string;
-  readonly providerId?: string;
-} {
-  const rule = config.ai?.routing?.rules?.find((entry) => entry.feature === feature);
-  if (rule === undefined) {
-    return {};
-  }
-  const provider = config.ai?.providers?.find((entry) => entry.id === rule.primary.providerId);
-  if (provider === undefined || provider.enabled === false) {
-    return { providerId: rule.primary.providerId };
-  }
-  const creds = providerCredentialFields(provider);
-  const model = rule.primary.model ?? creds.model;
-  return {
-    providerId: provider.id,
-    ...(creds.apiKey === undefined ? {} : { apiKey: creds.apiKey }),
-    ...(creds.baseUrl === undefined ? {} : { baseUrl: creds.baseUrl }),
-    ...(model === undefined ? {} : { model }),
-  };
-}
-
-/** Merge operator LLM + feature routing + mail spam AI into env-style overlay. */
-export function operatorAiEnvFromConfig(
-  config: HelixConfig,
-): Readonly<Record<string, string | undefined>> {
-  const op = config.ai?.operatorLlm;
-  const spam = config.ai?.mailSpamAi;
-  const assistant = resolveFeatureProviderCredentials(config, "assistant.chat");
-  const spamRoute = resolveFeatureProviderCredentials(config, "mail.spam-ai");
-  const mailAssist = resolveFeatureProviderCredentials(config, "mail.compose-help");
-
-  // Precedence for shared OPENAI_*: feature route for assistant.chat, then operatorLlm.
-  const openAiKey = assistant.apiKey ?? op?.apiKey;
-  const openAiBase = assistant.baseUrl ?? op?.baseUrl;
-  const openAiModel = assistant.model ?? op?.model;
-
-  const spamKey = spamRoute.apiKey ?? openAiKey;
-  const spamBase = spamRoute.baseUrl ?? openAiBase;
-  const spamModel = spamRoute.model ?? openAiModel;
-
-  const mailKey = mailAssist.apiKey ?? openAiKey;
-  const mailBase = mailAssist.baseUrl ?? openAiBase;
-  const mailModel = mailAssist.model ?? openAiModel;
-
-  return {
-    ...(typeof openAiKey === "string" && openAiKey.trim().length > 0
-      ? { OPENAI_API_KEY: openAiKey }
-      : {}),
-    ...(typeof openAiBase === "string" && openAiBase.trim().length > 0
-      ? { OPENAI_BASE_URL: openAiBase }
-      : {}),
-    ...(typeof openAiModel === "string" && openAiModel.trim().length > 0
-      ? { OPENAI_MODEL: openAiModel }
-      : {}),
-    ...(typeof spamKey === "string" && spamKey.trim().length > 0
-      ? { MAIL_SPAM_AI_API_KEY: spamKey }
-      : {}),
-    ...(typeof spamBase === "string" && spamBase.trim().length > 0
-      ? { MAIL_SPAM_AI_BASE_URL: spamBase }
-      : {}),
-    ...(typeof spamModel === "string" && spamModel.trim().length > 0
-      ? { MAIL_SPAM_AI_MODEL: spamModel }
-      : {}),
-    ...(typeof mailKey === "string" && mailKey.trim().length > 0
-      ? { MAIL_ASSIST_AI_API_KEY: mailKey }
-      : {}),
-    ...(typeof mailBase === "string" && mailBase.trim().length > 0
-      ? { MAIL_ASSIST_AI_BASE_URL: mailBase }
-      : {}),
-    ...(typeof mailModel === "string" && mailModel.trim().length > 0
-      ? { MAIL_ASSIST_AI_MODEL: mailModel }
-      : {}),
-    ...(spam?.betaEnabled === true
-      ? { MAIL_SPAM_AI_BETA_ENABLED: "true" }
-      : spam?.betaEnabled === false
-        ? { MAIL_SPAM_AI_BETA_ENABLED: "false" }
-        : {}),
-  };
 }
 
 function normalizeObservabilityConfig(

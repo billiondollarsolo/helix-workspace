@@ -1,4 +1,5 @@
 import { runtimeEnvironment } from "../config/env.js";
+import type { HelixConfig } from "@helix/sdk-types";
 import { type FastifyRequest } from "fastify";
 import {
   toolInvocationPrincipalFromRequest,
@@ -116,27 +117,30 @@ export async function installApps(context: Awaited<ReturnType<typeof installAuth
   // see config changes without a restart.
   const runtimeConfiguration = { current: await loadHelixConfig(configSources) };
 
-  assertDeploymentResidency({
-    region: bootEnv.HELIX_REGION,
-    storageRegion: bootEnv.RUSTFS_REGION,
-    production: bootEnv.NODE_ENV === "production",
-    storageKmsKeyId: bootEnv.RUSTFS_SSE_KMS_KEY_ID,
-    mailKmsKeyId: bootEnv.MAIL_DKIM_KMS_KEY_ID,
-    mailKmsRegion: bootEnv.MAIL_DKIM_KMS_REGION,
-    searchIndexUid: bootEnv.MEILI_INDEX_UID ?? bootEnv.MEILISEARCH_INDEX_UID,
-    ollamaUrl: bootEnv.OLLAMA_BASE_URL,
-    openAiApiKey: bootEnv.OPENAI_API_KEY,
-    telemetryEnabled: runtimeConfiguration.current.observability?.enabled === true,
-    telemetryRegion: bootEnv.HELIX_OTEL_REGION,
-    auditRegion: envFlag("AUDIT_IMMUTABLE_S3_ENABLED", false)
-      ? (bootEnv.AUDIT_IMMUTABLE_S3_REGION ?? "us-east-1")
-      : undefined,
-    siemEnabled: envFlag("AUDIT_SIEM_SYSLOG_ENABLED", false),
-    siemRegion: bootEnv.HELIX_SIEM_REGION,
-    meetConfigured: meetDeploymentConfigured(bootEnv),
-    meetRegion: bootEnv.MEET_JITSI_REGION,
-    ai: runtimeConfiguration.current.ai,
-  });
+  const assertRuntimeResidency = (config: HelixConfig) => {
+    assertDeploymentResidency({
+      region: bootEnv.HELIX_REGION,
+      storageRegion: bootEnv.RUSTFS_REGION,
+      production: bootEnv.NODE_ENV === "production",
+      storageKmsKeyId: bootEnv.RUSTFS_SSE_KMS_KEY_ID,
+      mailKmsKeyId: bootEnv.MAIL_DKIM_KMS_KEY_ID,
+      mailKmsRegion: bootEnv.MAIL_DKIM_KMS_REGION,
+      searchIndexUid: bootEnv.MEILI_INDEX_UID ?? bootEnv.MEILISEARCH_INDEX_UID,
+      ollamaUrl: bootEnv.OLLAMA_BASE_URL,
+      openAiApiKey: bootEnv.OPENAI_API_KEY,
+      telemetryEnabled: config.observability?.enabled === true,
+      telemetryRegion: bootEnv.HELIX_OTEL_REGION,
+      auditRegion: envFlag("AUDIT_IMMUTABLE_S3_ENABLED", false)
+        ? (bootEnv.AUDIT_IMMUTABLE_S3_REGION ?? "us-east-1")
+        : undefined,
+      siemEnabled: envFlag("AUDIT_SIEM_SYSLOG_ENABLED", false),
+      siemRegion: bootEnv.HELIX_SIEM_REGION,
+      meetConfigured: meetDeploymentConfigured(bootEnv),
+      meetRegion: bootEnv.MEET_JITSI_REGION,
+      ai: config.ai,
+    });
+  };
+  assertRuntimeResidency(runtimeConfiguration.current);
 
   if (bootEnv.HELIX_REGION !== "default") {
     await assertRegionalDatabase(sql, bootEnv.HELIX_REGION);
@@ -387,6 +391,7 @@ export async function installApps(context: Awaited<ReturnType<typeof installAuth
   const assistantAi = createAssistantAIRouter(aiProvenance, {
     getAiConfig: () => runtimeConfiguration.current.ai,
     costLimiter: aiCostLimiter,
+    costLimitStore: aiCostLimitStore,
     metering: meteringClient,
     metrics,
     securityTier,
@@ -423,6 +428,7 @@ export async function installApps(context: Awaited<ReturnType<typeof installAuth
     platformConfig,
     configSources,
     runtimeConfiguration,
+    assertRuntimeResidency,
     applyOperatorAiFromHelixConfig,
     sessionActorResolver,
     principalFromAuthenticatedRequest,

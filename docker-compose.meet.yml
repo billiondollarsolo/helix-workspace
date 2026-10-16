@@ -117,6 +117,7 @@ services:
       JICOFO_COMPONENT_SECRET: !reset null
       JVB_AUTH_PASSWORD: !reset null
       JWT_APP_SECRET: !reset null
+      HELIX_JITSI_WEBHOOK_SECRET: !reset null
       JIBRI_XMPP_USER: !reset null
       JIBRI_XMPP_PASSWORD: !reset null
       JIBRI_RECORDER_USER: !reset null
@@ -132,6 +133,8 @@ services:
         target: /run/helix-jitsi-env/JVB_AUTH_PASSWORD
       - source: meet_jwt_secret
         target: /run/helix-jitsi-env/JWT_APP_SECRET
+      - source: meet_webhook_secret
+        target: /run/helix-jitsi-env/HELIX_JITSI_WEBHOOK_SECRET
     ports: !override []
     networks: !override
       - meet-control

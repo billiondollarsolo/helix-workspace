@@ -7,17 +7,20 @@ describe("resolvePasswordsStatus", () => {
       installed: true,
       enabled: true,
       url: "https://vault.example.test",
+      native: true,
     });
     expect(resolvePasswordsStatus("https://vault.example.test", false)).toEqual({
       installed: true,
       enabled: false,
       url: null,
+      native: true,
     });
-    // Turned on, but this deployment does not run one.
+    // Native vaults need no external password-manager service.
     expect(resolvePasswordsStatus(undefined, true)).toEqual({
-      installed: false,
+      installed: true,
       enabled: true,
       url: null,
+      native: true,
     });
   });
 });

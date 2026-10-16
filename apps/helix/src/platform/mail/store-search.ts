@@ -1,3 +1,7 @@
+import { mailBodyMatches } from "./body-search.js";
+import type { SearchEngine } from "../search/types.js";
+import { readMailBody } from "./body-storage.js";
+import type { TenantStorageResolver } from "../storage/tenant-resolver.js";
 import type { JsonObject } from "@helix/sdk-types";
 import type postgres from "postgres";
 import { sensitivityClassificationFromMetadata } from "../ai/classification/index.js";
@@ -63,6 +67,7 @@ function mapSearchHit(row: MailSearchRow): MailSearchHit {
       body: row.body,
       bodyFormat: row.body_format,
       plainBody: row.metadata.plainBody,
+      preview: row.metadata.preview,
     }),
     sentAt: row.sent_at,
     labels: row.labels ?? [],
@@ -112,7 +117,17 @@ function mailClassification(value: unknown): MailSearchRecord["classification"] 
     : undefined;
 }
 export class MailSearchStore {
-  constructor(private readonly sql: postgres.Sql) {}
+  constructor(
+    private readonly sql: postgres.Sql,
+    private readonly storageResolver?: TenantStorageResolver,
+    private readonly searchEngine?: SearchEngine,
+  ) {}
+
+  private async hydrate(row: MailSearchRecordRow): Promise<MailSearchRecord> {
+    if (row.metadata.bodyStorage !== "object-v1") return mapMailSearchRecord(row);
+    const content = await readMailBody(this.sql, this.storageResolver, row.org_id, row.message_id);
+    return mapMailSearchRecord({ ...row, body: content.text || content.html || "" });
+  }
 
   /**
    * Message hits for Gmail-style queries across every folder except Spam and
@@ -127,6 +142,12 @@ export class MailSearchStore {
       ],
     };
     const mailbox = { orgId: input.orgId, actorId: input.actorId };
+    const bodyMatches = await mailBodyMatches(
+      this.searchEngine,
+      input,
+      query.terms,
+      this.storageResolver !== undefined,
+    );
     const scope = query.scope ?? "all";
     const rows = await this.sql<MailSearchRow[]>`
       select
@@ -177,7 +198,7 @@ export class MailSearchStore {
             )
           else /* all */ mts.deleted_at is null and mts.spam_at is null
         end
-        and ${mailMessageMatchSql(this.sql, query, mailbox)}
+        and ${mailMessageMatchSql(this.sql, query, mailbox, bodyMatches)}
         and ${mailThreadStateMatchSql(this.sql, query, mailbox, {
           labels: this.sql`mts.labels`,
           readAt: this.sql`mts.read_at`,
@@ -191,11 +212,14 @@ export class MailSearchStore {
     return rows.map(mapSearchHit);
   }
 
-  async getMailSearchRecord(input: {
-    readonly orgId: string;
-    readonly actorId: string;
-    readonly messageId: string;
-  }): Promise<MailSearchRecord | null> {
+  async getMailSearchRecord(
+    input: {
+      readonly orgId: string;
+      readonly actorId: string;
+      readonly messageId: string;
+    },
+    includeTrash = false,
+  ): Promise<MailSearchRecord | null> {
     const rows = await this.sql<MailSearchRecordRow[]>`
       select
         m.org_id,
@@ -219,10 +243,10 @@ export class MailSearchStore {
         and m.kind = 'mail'
         and (m.actor_id = ${input.actorId} or exists (select 1 from mail_message_deliveries visible where visible.org_id = ${input.orgId} and visible.message_id = m.id and visible.actor_id = ${input.actorId}))
         and m.deleted_at is null
-        and mailbox.deleted_at is null
+        and (${includeTrash} or mailbox.deleted_at is null)
       limit 1
     `;
-    return rows[0] === undefined ? null : mapMailSearchRecord(rows[0]);
+    return rows[0] === undefined ? null : this.hydrate(rows[0]);
   }
 
   /** Trusted reindex path: project the canonical message once for every owning mailbox. */
@@ -252,10 +276,11 @@ export class MailSearchStore {
         and m.kind = 'mail'
         and (m.actor_id = mailbox.actor_id or exists (select 1 from mail_message_deliveries visible where visible.org_id = m.org_id and visible.message_id = m.id and visible.actor_id = mailbox.actor_id))
         and m.deleted_at is null
-        and mailbox.deleted_at is null
       order by mailbox.actor_id
     `;
-    return rows.map(mapMailSearchRecord);
+    const records: MailSearchRecord[] = [];
+    for (const row of rows) records.push(await this.hydrate(row));
+    return records;
   }
 
   getMailEnrichmentRecord(input: {

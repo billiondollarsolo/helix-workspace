@@ -1,3 +1,4 @@
+import { pendingActionLinks } from "./pending-action-links.js";
 import { redactToolInvokeResult } from "../platform/tools/sensitive-output.js";
 import type {
   Actor,
@@ -15,6 +16,9 @@ import type { RuntimeToolRegistry, ToolInvokeResult } from "../platform/tool-reg
 import { errorCodeForStatus } from "./error-envelope.js";
 import {
   DEFAULT_IDEMPOTENCY_TTL_MS,
+  authorizeIdempotentReplay,
+  idempotencyPrincipalFingerprint,
+  isPersistableIdempotentResult,
   InMemoryIdempotencyStore,
   fingerprintRequestPayload,
   idempotencyStorageKey,
@@ -28,7 +32,6 @@ import {
   type JsonRpcRequest,
   type JsonRpcResponse,
 } from "./mcp-jsonrpc.js";
-import { versionedApiPath } from "./version.js";
 
 const MCP_MAX_IDENTIFIER_LENGTH = 256;
 /**
@@ -42,6 +45,7 @@ export interface McpToolCallContext {
   readonly principal: ToolInvocationPrincipal;
   readonly request?: RequestContext;
   readonly idempotencyStore?: IdempotencyStore;
+  readonly finishTransaction?: (commit: boolean) => Promise<void>;
   /** `Mcp-Session-Id` the client echoed, when it did. */
   readonly sessionId?: string;
   /** Public origin (e.g. `https://helix.example.com`) used for approval links. */
@@ -52,11 +56,6 @@ type ToolResult = Awaited<ReturnType<RuntimeToolRegistry["invoke"]>>;
 type ToolFailure = Extract<ToolResult, { readonly ok: false }>;
 
 const defaultIdempotencyStores = new WeakMap<RuntimeToolRegistry, IdempotencyStore>();
-const inFlightMutations = new Map<
-  string,
-  { readonly requestHash: string; readonly result: Promise<ToolResult> }
->();
-
 /** Projects a registry tool into the MCP `Tool` shape (MC8). */
 export function projectMcpTool(tool: ToolDefinition, actor: Actor): JsonObject {
   return {
@@ -69,6 +68,9 @@ export function projectMcpTool(tool: ToolDefinition, actor: Actor): JsonObject {
       "helix/permission": tool.permission,
       "helix/sideEffects": tool.sideEffects,
       "helix/confirmationRequired": tool.confirmationRequired ?? false,
+      ...(tool.standingAuthorization === undefined
+        ? {}
+        : { "helix/standingAuthorizationAvailable": true }),
       ...(tool.estimatedCostUsdMicros === undefined
         ? {}
         : { "helix/estimatedCostUsdMicros": tool.estimatedCostUsdMicros }),
@@ -95,6 +97,9 @@ function toolTitle(id: string): string {
 }
 
 function toolDescription(tool: ToolDefinition, actor: Actor): string {
+  if (actor.type === "agent" && tool.standingAuthorization !== undefined) {
+    return `${tool.description} Routine calls within approved scopes and resource permissions can run without confirmation. Explicit credential confirmation, DLP, and other policy checks still apply; poll any pending actions with actions.get.`;
+  }
   if (tool.confirmationRequired === true) {
     return `${tool.description} Requires human approval in Helix before it runs; the call returns a pending action to poll with actions.get.`;
   }
@@ -283,13 +288,9 @@ async function invokeIdempotently(
     );
   }
   if (claim.kind === "replay") {
-    return claim.record.result;
+    return authorizeIdempotentReplay(context.tools, context.principal, toolId, args, claim.record);
   }
   if (claim.kind === "in_progress") {
-    const local = inFlightMutations.get(storageKey);
-    if (local !== undefined && local.requestHash === requestHash) {
-      return local.result;
-    }
     return failure(
       409,
       "A call with this idempotency key is still running. Wait a few seconds and retry the same request.",
@@ -297,12 +298,24 @@ async function invokeIdempotently(
     );
   }
 
-  const result = invoke();
-  inFlightMutations.set(storageKey, { requestHash, result });
+  let completed: ToolResult;
   try {
-    const completed = await result;
+    completed = await invoke();
+  } catch (error) {
+    await context.finishTransaction?.(false);
+    await store.release(storageKey, claim.claimToken);
+    throw error;
+  }
+  // Keep the claim if commit fails: an uncertain write must never be retried automatically.
+  await context.finishTransaction?.(completed.ok || completed.statusCode < 500);
+  if (!isPersistableIdempotentResult(completed)) {
+    await store.release(storageKey, claim.claimToken);
+    return completed;
+  }
+  try {
     await store.complete(storageKey, claim.claimToken, {
       result: redactToolInvokeResult(context.tools.get(toolId), completed),
+      principalFingerprint: idempotencyPrincipalFingerprint(context.principal),
       statusCode: completed.ok
         ? completed.status === "pending_confirmation"
           ? 202
@@ -311,13 +324,10 @@ async function invokeIdempotently(
       requestHash,
       expiresAt: Date.now() + idempotency.ttlMs,
     });
-    return completed;
-  } catch (error) {
-    await store.release(storageKey, claim.claimToken);
-    throw error;
-  } finally {
-    inFlightMutations.delete(storageKey);
+  } catch {
+    // The operation committed. Keep the claim rather than inviting duplicate execution.
   }
+  return completed;
 }
 
 function failure(statusCode: number, error: string, retryAfterSeconds?: number): ToolFailure {
@@ -453,7 +463,11 @@ function pendingActionResult(
   const text = [
     `Helix queued "${pending.toolId}" as pending action ${pending.id}; it has NOT run yet.`,
     `Ask the user to approve it in Helix${
-      links.approvalUrl === undefined ? "" : ` (approval endpoint: POST ${links.approvalUrl})`
+      links.reviewUrl !== undefined
+        ? ` at ${links.reviewUrl}`
+        : links.approvalUrl === undefined
+          ? ""
+          : ` (approval endpoint: POST ${links.approvalUrl})`
     } before ${pending.expiresAt}.`,
     `Then poll the actions.get tool with {"id":"${pending.id}"} until status is executed, failed, cancelled, or expired.`,
     "Do not repeat the original call; that would queue a duplicate action.",
@@ -467,18 +481,5 @@ function pendingActionResult(
       ...links,
       pollTool: "actions.get",
     },
-  };
-}
-
-function pendingActionLinks(
-  pendingId: string,
-  publicBaseUrl: string | undefined,
-): { readonly approvalUrl?: string; readonly statusUrl?: string } {
-  if (publicBaseUrl === undefined || publicBaseUrl.length === 0) return {};
-  const base = publicBaseUrl.replace(/\/+$/u, "");
-  const id = encodeURIComponent(pendingId);
-  return {
-    approvalUrl: `${base}${versionedApiPath(`/api/tools/pending/${id}/approve`)}`,
-    statusUrl: `${base}${versionedApiPath(`/actions/${id}`)}`,
   };
 }

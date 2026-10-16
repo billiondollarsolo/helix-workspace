@@ -240,6 +240,7 @@ export class PostgresSessionMfaAssurance implements MfaVerificationResolver, Mfa
 
 const MFA_VERIFICATION_PATHS = new Set([
   "/api/auth/two-factor/verify-totp",
+  "/api/auth/two-factor/verify-otp",
   "/api/auth/two-factor/verify-backup-code",
   "/api/auth/passkey/verify-authentication",
 ]);

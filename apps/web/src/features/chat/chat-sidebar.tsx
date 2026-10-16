@@ -190,7 +190,12 @@ export function ConversationAvatar({
 }) {
   if (conversation.peer !== null) {
     return (
-      <span className="chat-avatar-wrap" aria-hidden="true">
+      <span
+        className="chat-avatar-wrap"
+        role="img"
+        aria-label={conversation.presenceLabel ?? (conversation.active ? "Available" : "Offline")}
+        title={conversation.presenceLabel}
+      >
         <Avatar name={conversation.name} size={size} />
         <span
           className="chat-presence-dot"

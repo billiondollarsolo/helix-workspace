@@ -63,7 +63,8 @@ export function registerTaskTools(registry: RuntimeToolRegistry): void {
   registry.register(
     defineTool({
       id: "tasks.list",
-      description: "List the checklist for the current Assistant conversation.",
+      description:
+        "List the current conversation's checklist inside an Assistant turn only. External MCP or CLI clients should use assistant.conversation.get and read metadata.tasks instead.",
       permission: "assistant.read",
       sideEffects: "read",
       inputSchema: zodToolSchema(z.object({}).strict(), {
@@ -80,7 +81,7 @@ export function registerTaskTools(registry: RuntimeToolRegistry): void {
     defineTool({
       id: "tasks.create",
       description:
-        "Create a checklist of steps for this conversation. Call once at the start of multi-step work.",
+        "Create a checklist of steps inside an Assistant turn only. Call once at the start of multi-step work. Direct MCP or CLI invocation is unavailable.",
       permission: "assistant.write",
       sideEffects: "write",
       inputSchema: zodToolSchema(
@@ -101,7 +102,8 @@ export function registerTaskTools(registry: RuntimeToolRegistry): void {
   registry.register(
     defineTool({
       id: "tasks.update",
-      description: "Update one checklist item by id (pending, in_progress, completed, cancelled).",
+      description:
+        "Update one checklist item inside an Assistant turn only (pending, in_progress, completed, cancelled). Direct MCP or CLI invocation is unavailable.",
       permission: "assistant.write",
       sideEffects: "write",
       inputSchema: zodToolSchema(

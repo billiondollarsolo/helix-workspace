@@ -80,6 +80,7 @@ export const mailThreadParticipantSchema = z.object({
 export type MailThreadParticipant = z.infer<typeof mailThreadParticipantSchema>;
 
 export const mailThreadRowSchema = z.object({
+  followUp: z.enum(["needs_reply", "waiting_on", "done"]).optional(),
   threadId: z.string(),
   messageId: z.string(),
   subject: z.string(),
@@ -537,3 +538,24 @@ export const mailOkThreadResultSchema = z.object({
   ok: z.literal(true),
   threadId: z.string(),
 });
+
+/** Mail assistance produces reviewable text; it never sends or saves a message. */
+export const mailAiSuggestionInputSchema = z
+  .object({
+    action: z.enum(["compose", "rewrite", "reply", "summarize"]),
+    threadId: z.string().uuid().optional(),
+    subject: z.string().max(998).default(""),
+    body: z.string().max(24000).default(""),
+    instructions: z.string().trim().max(2000).default(""),
+  })
+  .strict()
+  .superRefine((input, ctx) => {
+    if ((input.action === "reply" || input.action === "summarize") && input.threadId === undefined)
+      ctx.addIssue({ code: "custom", path: ["threadId"], message: "Choose a conversation first." });
+  });
+export const mailAiSuggestionResultSchema = z.object({
+  text: z.string().min(1).max(24000),
+  classification: z.enum(["public", "standard", "confidential", "restricted"]),
+});
+export type MailAiSuggestionInput = z.input<typeof mailAiSuggestionInputSchema>;
+export type MailAiSuggestionResult = z.output<typeof mailAiSuggestionResultSchema>;

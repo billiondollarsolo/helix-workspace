@@ -1,3 +1,4 @@
+import { useWorkspacePresence } from "@/features/presence/presence";
 /* AppShell — the `_shell` route layout.
    Renders the offline banner, the desktop Rail or phone BottomNav, the surface
    `<Outlet/>`, and the cross-app overlays (launcher, notifications, ⌘K
@@ -23,6 +24,10 @@ import { SettingsPage } from "@/components/shell/settings-page";
 import { NetworkStatus } from "@/components/shell/network-status";
 import { GlobalShortcuts, openShortcutsHelp } from "@/lib/shortcuts/global-shortcuts";
 import { MailDialogsHost } from "@/features/mail/settings";
+import { useEnabledApps } from "@/features/apps/use-enabled-apps";
+import { chatUnreadQueryOptions } from "@/features/chat/queries";
+import { mailFoldersQueryOptions } from "@/features/mail/queries";
+import { useMailRealtime } from "@/features/mail/use-mail-realtime";
 import {
   ShellOverlayContext,
   isSettingsSectionId,
@@ -33,6 +38,23 @@ import {
 export function AppShell() {
   const location = useLocation();
   const session = useQuery(sessionUserQueryOptions());
+  const enabled = useEnabledApps();
+  const signedIn = session.data != null;
+  useWorkspacePresence(signedIn);
+  const mail = useQuery({
+    ...mailFoldersQueryOptions(),
+    enabled: signedIn && enabled.isEnabled("mail"),
+    refetchInterval: 30_000,
+  });
+  const chat = useQuery({
+    ...chatUnreadQueryOptions(),
+    enabled: signedIn && enabled.isEnabled("chat"),
+  });
+  useMailRealtime(signedIn && enabled.isEnabled("mail"));
+  const unread = {
+    mail: mail.data?.find((folder) => folder.id === "inbox")?.unread ?? 0,
+    chat: chat.data?.totalUnread ?? 0,
+  };
   useEffect(() => {
     if (session.data === null) redirectToLogin();
   }, [session.data]);
@@ -108,13 +130,17 @@ export function AppShell() {
           onTogglePalette={() => setPaletteOpen((open) => !open)}
           onOpenShortcutSettings={() => overlays.openSettings("shortcuts")}
         />
-        <Rail launcherOpen={launcherOpen} onOpenLauncher={() => setLauncherOpen((open) => !open)}>
+        <Rail
+          launcherOpen={launcherOpen}
+          onOpenLauncher={() => setLauncherOpen((open) => !open)}
+          unread={unread}
+        >
           <AppLauncher open={launcherOpen} onClose={closeLauncher} />
         </Rail>
 
         <Outlet />
 
-        <BottomNav />
+        <BottomNav unread={unread} />
 
         <NotificationsPanel open={notifOpen} onClose={() => setNotifOpen(false)} />
         <CommandPalette

@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { cleanupTestTenants } from "../test-support/cleanup-tenants.js";
 import { skipUnlessLiveDatabase } from "../test-support/live-suite.js";
 import { ensureAdminDomain } from "../platform/admin/domain-identity.js";
-import { LocalMailTransport } from "../platform/mail/local-delivery.js";
+import { areLocalMailRecipients, LocalMailTransport } from "../platform/mail/local-delivery.js";
 import {
   MailSendService,
   OutboundMailDispatcher,
@@ -302,6 +302,53 @@ describe.skipIf(skipUnlessLiveDatabase("local Mail delivery"))(
         await admin`select status from mail_outbound_messages where id in ${admin([queued.id, second.id])}`;
       expect(rows.map((row) => row.status)).toEqual(["accepted", "accepted"]);
       expect(await store.claimDueOutbound({ owner: "still-unscoped", leaseMs: 60_000 })).toBeNull();
+    });
+    it("pins internal authorization to local delivery even if routing changes while queued", async () => {
+      expect(await tenant(() => areLocalMailRecipients(app, orgId, [address(bob).address]))).toBe(
+        true,
+      );
+      expect(
+        await tenant(() =>
+          areLocalMailRecipients(app, orgId, [address(bob).address, "outside@example.com"]),
+        ),
+      ).toBe(false);
+      expect(await areLocalMailRecipients(app, otherOrgId, [address(bob).address])).toBe(false);
+      const outbound = await tenant(() =>
+        new MailSendService({ store, undoWindowMs: 0 }).queue({
+          orgId,
+          actorId: alice,
+          envelope: {
+            from: address(alice),
+            to: [address(bob)],
+            cc: [],
+            bcc: [],
+            subject: "Pinned local delivery",
+            text: "Local only",
+            attachments: [],
+            localOnly: true,
+          },
+        }),
+      );
+      const claimed = await tenant(() =>
+        store.claimDueOutbound({ owner: "local-only-test", leaseMs: 60_000 }),
+      );
+      if (!claimed) throw new Error("Missing outbound claim");
+      expect(claimed.id).toBe(outbound.id);
+      expect(claimed.envelope.localOnly).toBe(true);
+      const remote = vi.fn(async () => {
+        throw new Error("Must not resolve an external provider");
+      });
+      await admin`update actors set disabled_at=now() where id=${bob}`;
+      try {
+        await expect(
+          new LocalMailTransport(app, claimed, remote).send(claimed.envelope, {
+            idempotencyKey: claimed.handoffKey,
+          }),
+        ).rejects.toThrow("no longer resolves to a local mailbox");
+        expect(remote).not.toHaveBeenCalled();
+      } finally {
+        await admin`update actors set disabled_at=null where id=${bob}`;
+      }
     });
   },
 );

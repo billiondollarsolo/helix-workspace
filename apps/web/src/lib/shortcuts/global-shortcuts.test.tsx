@@ -65,17 +65,18 @@ describe("GlobalShortcuts", () => {
 
   const helpDialog = () => document.querySelector<HTMLElement>('[role="dialog"]');
 
-  it("opens a labelled, focus-trapped help dialog generated from the catalog on ?", async () => {
+  it("opens a labelled, nonblocking help panel generated from the catalog on ?", async () => {
     keydown({ key: "?", shiftKey: true });
     await flushMicrotasks();
 
     const dialog = helpDialog();
     expect(dialog).not.toBeNull();
-    expect(dialog?.getAttribute("aria-modal")).toBe("true");
+    expect(dialog?.getAttribute("aria-modal")).not.toBe("true");
     const labelId = dialog?.getAttribute("aria-labelledby") ?? "";
     expect(document.getElementById(labelId)?.textContent).toBe("Keyboard shortcuts");
     const headings = [...(dialog?.querySelectorAll("h2") ?? [])].map((h) => h.textContent);
     expect(headings).toEqual([
+      "Keyboard shortcuts",
       "Anywhere",
       "Mail",
       "Open conversation",
@@ -90,10 +91,9 @@ describe("GlobalShortcuts", () => {
 
     const list = dialog?.querySelector('[role="region"]');
     expect(list?.getAttribute("aria-label")).toBe("Shortcut list");
-    expect(document.activeElement).toBe(list);
-    [...(dialog?.querySelectorAll("button") ?? [])].at(-1)?.focus();
-    keydown({ key: "Tab" });
-    expect(document.activeElement).toBe(list);
+    expect(dialog?.getAttribute("aria-modal")).not.toBe("true");
+    expect(document.activeElement).toBe(dialog?.querySelector('button[aria-label="Close"]'));
+    expect(document.body.style.overflow).not.toBe("hidden");
 
     keydown({ key: "Escape" });
     expect(helpDialog()).toBeNull();

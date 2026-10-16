@@ -19,6 +19,8 @@ export interface PendingActionExpiryWorkerOptions {
   readonly onResult?: (result: PendingActionExpiryRunResult) => void;
   readonly onError?: (error: unknown) => void;
   readonly now?: () => Date;
+  readonly listOrgIds?: () => Promise<readonly string[]>;
+  readonly runForOrg?: (orgId: string, work: () => Promise<void>) => Promise<void>;
 }
 
 const defaultIntervalMs = 60_000;
@@ -40,6 +42,8 @@ export class PendingActionExpiryWorker {
   private readonly onResult: ((result: PendingActionExpiryRunResult) => void) | undefined;
   private readonly onError: ((error: unknown) => void) | undefined;
   private readonly now: () => Date;
+  private readonly listOrgIds: PendingActionExpiryWorkerOptions["listOrgIds"];
+  private readonly runForOrg: PendingActionExpiryWorkerOptions["runForOrg"];
   private timer: NodeJS.Timeout | undefined;
   private activeRun: Promise<PendingActionExpiryRunResult> | undefined;
 
@@ -50,6 +54,13 @@ export class PendingActionExpiryWorker {
     this.onResult = options.onResult;
     this.onError = options.onError;
     this.now = options.now ?? (() => new Date());
+    this.listOrgIds = options.listOrgIds;
+    this.runForOrg = options.runForOrg;
+    if ((this.listOrgIds === undefined) !== (this.runForOrg === undefined)) {
+      throw new Error(
+        "Pending action expiry requires both tenant enumeration and scoped execution.",
+      );
+    }
   }
 
   start(): void {
@@ -77,14 +88,30 @@ export class PendingActionExpiryWorker {
     // P2-6: synthesize a `job.pending-action-expiry` span for each sweep.
     return withJobSpan("pending-action-expiry", async () => {
       const startedAt = this.now();
-      const expired = await this.store.expireStale({
-        now: startedAt,
-        limit: this.batchSize,
-      });
-      const recoveredUnknown = await this.store.recoverStaleExecutions({
-        now: startedAt,
-        limit: this.batchSize,
-      });
+      const expired: PendingActionRecord[] = [];
+      const recoveredUnknown: PendingActionRecord[] = [];
+      const sweep = async () => {
+        expired.push(
+          ...(await this.store.expireStale({
+            now: startedAt,
+            limit: this.batchSize - expired.length,
+          })),
+        );
+        recoveredUnknown.push(
+          ...(await this.store.recoverStaleExecutions({
+            now: startedAt,
+            limit: this.batchSize - recoveredUnknown.length,
+          })),
+        );
+      };
+      if (this.listOrgIds !== undefined && this.runForOrg !== undefined) {
+        for (const orgId of await this.listOrgIds()) {
+          await this.runForOrg(orgId, sweep);
+          if (expired.length >= this.batchSize && recoveredUnknown.length >= this.batchSize) break;
+        }
+      } else {
+        await sweep();
+      }
       return {
         startedAt: startedAt.toISOString(),
         completedAt: this.now().toISOString(),

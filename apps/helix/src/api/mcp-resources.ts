@@ -8,6 +8,7 @@ import type {
 } from "../platform/drive/store.js";
 import type { DriveEntryRecord, DriveSearchHit } from "../platform/drive/types.js";
 import type { MailSearchHit, MailThreadDetail, MailThreadMessage } from "../platform/mail/types.js";
+import { htmlPreviewText } from "../platform/mail/store-thread-projection.js";
 import type { McpResource, McpResourceContent, McpResourceProvider } from "./mcp.js";
 export interface StoreBackedMcpResourceProviderOptions {
   readonly chat?: {
@@ -54,6 +55,7 @@ export interface StoreBackedMcpResourceProviderOptions {
       readonly orgId: string;
       readonly actorId: string;
       readonly threadId: string;
+      readonly resourcePage?: { readonly limit: number; readonly after?: string };
     }): Promise<MailThreadDetail | null>;
   };
   readonly drive?: {
@@ -126,14 +128,12 @@ export function createStoreBackedMcpResourceProvider(
           orgId: actor.orgId,
           actorId: actor.id,
           threadId: parsed.id,
+          resourcePage: {
+            limit: 20,
+            ...(parsed.after === undefined ? {} : { after: parsed.after }),
+          },
         });
-        return thread === null
-          ? null
-          : {
-              uri,
-              mimeType: "text/markdown",
-              text: mailThreadToMarkdown(thread),
-            };
+        return thread === null ? null : mailThreadToContent(uri, thread);
       }
       if (parsed.kind === "drive") {
         if (options.drive === undefined || !canRead(actor, "drive.read")) {
@@ -206,12 +206,13 @@ type ParsedStoreResourceUri =
   | {
       readonly kind: "mail";
       readonly id: string;
+      readonly after?: string;
     }
   | {
       readonly kind: "drive";
       readonly id: string;
     };
-function parseStoreResourceUri(uri: string): ParsedStoreResourceUri | null {
+export function parseStoreResourceUri(uri: string): ParsedStoreResourceUri | null {
   let parsed: URL;
   try {
     parsed = new URL(uri);
@@ -225,7 +226,12 @@ function parseStoreResourceUri(uri: string): ParsedStoreResourceUri | null {
   if (resourceType === undefined || idParts.length === 0) {
     return null;
   }
-  const id = decodeURIComponent(idParts.join("/"));
+  let id: string;
+  try {
+    id = decodeURIComponent(idParts.join("/"));
+  } catch {
+    return null;
+  }
   if (parsed.hostname === "chat" && resourceType === "room") {
     return { kind: "chat", id };
   }
@@ -233,7 +239,13 @@ function parseStoreResourceUri(uri: string): ParsedStoreResourceUri | null {
     return { kind: "calendar", id };
   }
   if (parsed.hostname === "mail" && resourceType === "thread") {
-    return { kind: "mail", id };
+    const after = parsed.searchParams.get("after");
+    if (
+      after !== null &&
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(after)
+    )
+      return null;
+    return { kind: "mail", id, ...(after === null ? {} : { after }) };
   }
   if (parsed.hostname === "drive" && resourceType === "file") {
     return { kind: "drive", id };
@@ -332,36 +344,79 @@ function calendarEventToMarkdown(event: CalendarEventRecord): string {
     .join("\n")
     .trimEnd();
 }
-function mailThreadToMarkdown(thread: MailThreadDetail): string {
+function mailThreadToContent(uri: string, thread: MailThreadDetail): McpResourceContent {
   const lines = [
-    `# ${thread.subject}`,
+    `# ${boundedMailText(thread.subject, 1024)}`,
     "",
     `Type: mail thread`,
     `Thread ID: ${thread.id}`,
-    `Last activity: ${thread.lastActivity.toISOString()}`,
-    ...(thread.labels.length === 0 ? [] : [`Labels: ${thread.labels.join(", ")}`]),
+    `Page last message: ${thread.lastActivity.toISOString()}`,
+    ...(thread.labels.length === 0
+      ? []
+      : [
+          `Labels: ${thread.labels
+            .slice(0, 50)
+            .map((label) => boundedMailText(label, 128))
+            .join(", ")}`,
+        ]),
     "",
   ];
-  for (const message of thread.messages) {
-    lines.push(...mailMessageToMarkdown(message), "");
+  let count = 0;
+  for (const message of thread.messages.slice(0, 20)) {
+    const section = [...mailMessageToMarkdown(message), ""];
+    if (
+      Buffer.byteLength(JSON.stringify({ uri, text: [...lines, ...section].join("\n") })) >
+      1024 * 1024 - 32 * 1024
+    )
+      break;
+    lines.push(...section);
+    count += 1;
   }
-  return lines.join("\n").trimEnd();
+  const nextCursor =
+    thread.messages.length > count ? thread.messages[count - 1]?.id : thread.nextCursor;
+  const next = new URL(uri);
+  if (nextCursor !== undefined) next.searchParams.set("after", nextCursor);
+  const truncated =
+    count < thread.messages.length ||
+    thread.bodyTruncated === true ||
+    thread.messages.some(
+      (message) => message.body.length > 4096 || message.to.length > 20 || message.cc.length > 20,
+    );
+  if (truncated)
+    lines.push("[Message bodies are limited to 4096 characters and address lists to 20 entries.]");
+  if (nextCursor !== undefined) lines.push(`Next page: ${next.href}`);
+  // Reserve space for continuation metadata and JSON escaping in the 1 MiB cap.
+  return {
+    uri,
+    mimeType: "text/markdown",
+    text: lines.join("\n").trimEnd(),
+    _meta: { truncated, ...(nextCursor === undefined ? {} : { nextUri: next.href }) },
+  };
 }
 function mailMessageToMarkdown(message: MailThreadMessage): readonly string[] {
   return [
     `## ${formatMailAddress(message.from) || "Message"} - ${message.sentAt.toISOString()}`,
-    ...(message.to.length === 0 ? [] : [`To: ${message.to.map(formatMailAddress).join(", ")}`]),
-    ...(message.cc.length === 0 ? [] : [`Cc: ${message.cc.map(formatMailAddress).join(", ")}`]),
+    ...(message.to.length === 0
+      ? []
+      : [`To: ${message.to.slice(0, 20).map(formatMailAddress).join(", ")}`]),
+    ...(message.cc.length === 0
+      ? []
+      : [`Cc: ${message.cc.slice(0, 20).map(formatMailAddress).join(", ")}`]),
     "",
-    message.body,
+    message.bodyFormat === "html"
+      ? htmlPreviewText(boundedMailText(message.body, 4096))
+      : boundedMailText(message.body, 4096),
   ];
+}
+function boundedMailText(value: string, limit: number): string {
+  return value.slice(0, limit).replace(/[\uD800-\uDBFF]$/u, "");
 }
 function formatMailAddress(address: MailThreadMessage["from"]): string {
   if (address === undefined) {
     return "";
   }
-  const email = address.email ?? address.address;
-  return address.name === undefined ? email : `${address.name} <${email}>`;
+  const email = boundedMailText(address.email ?? address.address, 320);
+  return address.name === undefined ? email : `${boundedMailText(address.name, 128)} <${email}>`;
 }
 function driveFileToContent(uri: string, file: DriveFileReadResult): McpResourceContent {
   if (file.content !== null && isTextLikeMimeType(file.entry.mimeType)) {

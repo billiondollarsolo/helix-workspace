@@ -1,3 +1,10 @@
+import {
+  pendingPrincipalStillAuthorized,
+  type PendingExecutionPrincipal,
+  readPendingAction,
+  type PendingActionReadOptions,
+  type PendingActionReadResult,
+} from "./tools/pending-review.js";
 import type { FeatureFlagProvider } from "@helix/sdk";
 import type { ErrorCode } from "@helix/contracts";
 import type {
@@ -42,6 +49,12 @@ import {
 import type { ConfirmationGate, PendingActionRecord } from "./tools/registry.js";
 import { toolInputFailure, type ToolInvokeErrorDetails } from "./tool-input-issues.js";
 import { domainErrorCode, toolHttpError } from "./tools/tool-http-error.js";
+import { resourceReadTools } from "./tools/resource-reads.js";
+import {
+  isExternalAgentRequest,
+  recordAgentReadSources,
+  type AgentSourceStore,
+} from "./tools/agent-sources.js";
 
 export type ToolInvokeResult<Output = unknown> =
   | { readonly ok: true; readonly status?: "executed"; readonly output: Output }
@@ -181,13 +194,6 @@ interface PendingToolActionOptions {
   readonly idempotencyFingerprint?: string;
 }
 
-interface PendingExecutionPrincipal {
-  readonly actor: Actor;
-  readonly credentialId?: string;
-  readonly credentialOwnerActorId?: string;
-  readonly credentialPolicy?: AgentCredentialPolicy;
-}
-
 type ToolMetricStatus = "executed" | "pending_confirmation" | "error";
 
 interface ToolInvocationMetrics {
@@ -258,11 +264,8 @@ export interface RuntimeToolRegistry {
   ): Promise<ToolInvokeResult<Output>>;
   getPendingAction(
     pendingId: string,
-    options: { readonly actor: Actor },
-  ): Promise<
-    | { readonly ok: true; readonly pending: PendingToolInvocation }
-    | { readonly ok: false; readonly statusCode: number; readonly error: string }
-  >;
+    options: PendingActionReadOptions,
+  ): Promise<PendingActionReadResult>;
   cancelPending(
     pendingId: string,
     options: PendingToolActionOptions,
@@ -295,6 +298,8 @@ const systemContext: ToolContext = {
 };
 
 export interface ToolRegistryOptions {
+  readonly resourceReader?: (actor: Actor, uri: string) => Promise<unknown>;
+  readonly agentSources?: AgentSourceStore;
   readonly dlp?: DlpGuard;
   readonly accessPolicy?: ToolAccessPolicy;
   readonly confirmationGate?: ConfirmationGate;
@@ -338,6 +343,7 @@ export interface ToolRegistryOptions {
 
 export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeToolRegistry {
   const tools = new Map<string, ToolDefinition>();
+  const resourceTools = resourceReadTools(options.resourceReader);
   const accessPolicy = options.accessPolicy ?? new ScopeToolAccessPolicy();
   const confirmationDefaults = options.confirmationDefaults ?? tierDefaults.personal;
   const agentLimitTier = options.agentLimitTier ?? confirmationDefaults.tier;
@@ -352,7 +358,7 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
       tools.delete(toolId);
     },
     get(toolId) {
-      return tools.get(toolId);
+      return tools.get(toolId) ?? resourceTools.get(toolId);
     },
     list() {
       return [...tools.values()].sort((left, right) => left.id.localeCompare(right.id));
@@ -363,15 +369,19 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
     },
     async explainPolicy(toolId, rawInput, explainOptions) {
       const actor = explainOptions.actor ?? unauthenticatedActor;
-      const tool = tools.get(toolId);
+      const tool = registry.get(toolId);
       const effectiveClassification =
         explainOptions.policyContext?.effectiveClassification ?? "standard";
       const requestChannel = explainOptions.policyContext?.requestChannel ?? "internal";
-      const sourceIds = explainOptions.policyContext?.sourceIds ?? [];
+      const externalAgent = isExternalAgentRequest(actor, requestChannel);
+      const sourceIds = externalAgent
+        ? ((await options.agentSources?.get(actor.orgId, actor.id)) ?? [])
+        : (explainOptions.policyContext?.sourceIds ?? []);
       const tenantId = explainOptions.policyContext?.tenantId ?? actor.orgId;
       const sourceProvenance = {
         sourceIds,
-        containsUntrustedContext: explainOptions.policyContext?.containsUntrustedContext ?? false,
+        containsUntrustedContext:
+          externalAgent || (explainOptions.policyContext?.containsUntrustedContext ?? false),
       };
       if (tool === undefined) {
         return {
@@ -452,8 +462,12 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
       rawInput: unknown,
       invokeOptions?: ToolInvokeOptions,
     ): Promise<ToolInvokeResult<Output>> {
-      const tool = tools.get(toolId);
+      const tool = registry.get(toolId);
       const actor = invokeOptions?.actor ?? unauthenticatedActor;
+      const externalAgent = isExternalAgentRequest(
+        actor,
+        invokeOptions?.policyContext?.requestChannel ?? "internal",
+      );
       const start = process.hrtime.bigint();
       const span = trace.getTracer("helix.tools").startSpan(`tool.${toolId}`, {
         attributes: {
@@ -563,6 +577,17 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
           ...(invokeOptions ?? {}),
           actor,
         });
+        if (externalAgent)
+          invokeOptions = {
+            ...invokeOptions,
+            policyContext: {
+              ...invokeOptions?.policyContext,
+              effectiveClassification: policyExplanation.effectiveClassification,
+              sourceIds: policyExplanation.sourceIds,
+              containsUntrustedContext: true,
+              requestChannel: policyExplanation.requestChannel,
+            },
+          };
         if (policyExplanation.decision.outcome === "deny") {
           invocationMetrics?.recordToolPolicyDenial?.({
             toolId,
@@ -624,6 +649,7 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
           tool,
           options.auditSink,
           invokeOptions?.executionIdempotencyKey,
+          automationDecision?.allowed === true && automationDecision.internalCommunicationOnly,
         );
         const confirmationGate = options.confirmationGate;
         const queueRequired =
@@ -659,6 +685,7 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
               ? {}
               : { credentialPolicy: invokeOptions.credentialPolicy as AgentCredentialPolicy }),
             input: toJsonValue(input),
+            sourceIds: invokeOptions?.policyContext?.sourceIds ?? [],
             ...(invokeOptions?.request === undefined ? {} : { request: invokeOptions.request }),
             ...(invokeOptions?.request?.traceId === undefined
               ? {}
@@ -713,6 +740,15 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
               throw dlpDecisionError(decision);
             if (decision.action === "warn" && !dlpAcknowledged) return await queueConfirmation();
           }
+          if (externalAgent && tool.sideEffects === "read")
+            invokeOptions = await recordAgentReadSources(
+              options.agentSources,
+              actor,
+              tool,
+              input,
+              parsedOutput,
+              invokeOptions,
+            );
           await recordAgentCost(
             actor,
             estimatedCostUsdMicros,
@@ -895,8 +931,14 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
           pendingActionId: pendingId,
           policyContext: {
             effectiveClassification: "restricted",
-            sourceIds: [],
-            containsUntrustedContext: false,
+            sourceIds: Array.isArray(claim.record.policySnapshot.sourceIds)
+              ? claim.record.policySnapshot.sourceIds.filter(
+                  (value): value is string => typeof value === "string",
+                )
+              : [],
+            containsUntrustedContext:
+              requestingPrincipal.actor.type === "agent" ||
+              requestingPrincipal.actor.type === "service_account",
             requestChannel: "pending_execution",
             tenantId: claim.record.orgId,
           },
@@ -915,23 +957,8 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
       });
       return result;
     },
-    async getPendingAction(pendingId: string, statusOptions: { readonly actor: Actor }) {
-      const gate = options.confirmationGate;
-      if (gate === undefined) {
-        return { ok: false, statusCode: 400, error: "Confirmation gate is not configured." };
-      }
-      const pending = await gate.get({
-        id: pendingId,
-        actor: statusOptions.actor,
-      });
-      if (pending === null) {
-        return {
-          ok: false,
-          statusCode: 404,
-          error: `Pending tool action was not found: ${pendingId}`,
-        };
-      }
-      return { ok: true, pending };
+    async getPendingAction(pendingId, statusOptions) {
+      return readPendingAction(options.confirmationGate, pendingId, statusOptions);
     },
     async cancelPending(pendingId: string, cancelOptions: PendingToolActionOptions) {
       const gate = options.confirmationGate;
@@ -1293,6 +1320,7 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
 }
 
 export function featureFlagForTool(tool: Pick<ToolDefinition, "id">): string | undefined {
+  if (tool.id === "mail.ai.suggest") return "mail_ai_assistance";
   if (tool.id === "mail.send" || tool.id === "mail.reply" || tool.id === "mail.forward") {
     return "mail_outbound";
   }
@@ -1364,11 +1392,13 @@ function createToolContext(
   tool: ToolDefinition,
   auditSink: ToolAuditSink | undefined,
   executionIdempotencyKey: string | undefined,
+  internalCommunicationOnly: boolean | undefined,
 ): ToolContext {
   const defaultResource = toolResource(tool);
   return {
     ...systemContext,
     actor,
+    ...(internalCommunicationOnly ? { internalCommunicationOnly: true as const } : {}),
     ...(request === undefined ? {} : { request }),
     ...(request?.traceId === undefined ? {} : { traceId: request.traceId }),
     ...(executionIdempotencyKey === undefined ? {} : { idempotencyKey: executionIdempotencyKey }),
@@ -1577,40 +1607,6 @@ function strictestLimit(current: number | null | undefined, policy: number): num
  * same credential, same policy version, and either self-owned or approved by an
  * org admin. Any drift fails closed.
  */
-function pendingPrincipalStillAuthorized(
-  principal: PendingExecutionPrincipal,
-  record: PendingActionRecord,
-  approver: Actor,
-): boolean {
-  if (
-    principal.actor.id !== record.requesterActorId ||
-    principal.actor.orgId !== record.orgId ||
-    (principal.credentialPolicy?.version ?? "actor-session") !== record.policyVersion
-  ) {
-    return false;
-  }
-  if (record.requesterCredentialId === null) {
-    return true;
-  }
-  return (
-    principal.credentialId === record.requesterCredentialId &&
-    (principal.credentialOwnerActorId === approver.id || actorIsOrgAdmin(approver))
-  );
-}
-
-function actorIsOrgAdmin(actor: Actor): boolean {
-  return (
-    actor.type === "user" &&
-    (actor.scopes ?? []).some(
-      (scope) =>
-        scope === "*" ||
-        scope === "admin.*" ||
-        scope === "admin.agents" ||
-        scope === "admin.console.write",
-    )
-  );
-}
-
 function shouldLimitActor(actor: Actor): boolean {
   return actor.type === "agent" || actor.type === "service_account";
 }

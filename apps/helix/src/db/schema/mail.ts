@@ -183,6 +183,28 @@ export const mailRawSources = pgTable("mail_raw_sources", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
+export const mailMessageBodies = pgTable(
+  "mail_message_bodies",
+  {
+    messageId: uuid("message_id").primaryKey(),
+    orgId: uuid("org_id").notNull(),
+    storageId: uuid("storage_id").notNull().unique(),
+    storageKey: text("storage_key").notNull(),
+    sha256: text("sha256").notNull(),
+    byteSize: bigint("byte_size", { mode: "number" }).notNull(),
+    logicalSize: bigint("logical_size", { mode: "number" }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    orgKey: uniqueIndex("mail_message_bodies_org_key_idx").on(table.orgId, table.storageKey),
+    messageFk: foreignKey({
+      columns: [table.orgId, table.messageId],
+      foreignColumns: [messages.orgId, messages.id],
+      name: "mail_message_bodies_message_fk",
+    }).onDelete("cascade"),
+  }),
+);
+
 export const mailMessageIdentities = pgTable(
   "mail_message_identities",
   {

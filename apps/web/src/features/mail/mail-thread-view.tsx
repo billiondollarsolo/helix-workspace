@@ -1,8 +1,10 @@
+import { FollowUpControl } from "./productivity/thread-controls";
 /* An open conversation: toolbar, subject with label chips, then the
    messages. Read messages are collapsed to one line and the last one is
    open; with more than four, the middle folds into "N older messages".
    Reply, Reply all and Forward open the inline reply panel. */
 
+import { MailAiAssistance } from "./mail-ai-assistance";
 import { Button } from "@/components/ui/button";
 import { InlineError } from "@/components/ui/inline-error";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -166,6 +168,13 @@ export function ThreadView({
               </span>
             ))}
           </div>
+          {folder !== "scheduled" && folder !== "drafts" ? (
+            <FollowUpControl
+              threadId={row.threadId}
+              messageId={messages.at(-1)?.id ?? row.messageId}
+            />
+          ) : null}
+          <MailAiAssistance key={row.threadId} threadId={row.threadId} />
           {folder === "scheduled" ? <MailScheduledBanner threadId={row.threadId} /> : null}
           <MailSpamEvidence row={row} detail={detail} folder={folder} onAction={onAction} />
           {error === null ? null : (

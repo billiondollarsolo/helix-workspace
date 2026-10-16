@@ -1,19 +1,12 @@
+import { FormPanel } from "@/components/ui/form-panel";
 import { RelativeTime } from "@/features/admin/console/widgets";
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from "@tanstack/react-table";
-import { BadgeDollarSign, Save, Trash2 } from "lucide-react";
+import { AdminTable, type AdminColumn } from "./console/table";
+import { BadgeDollarSign, Plus, Save, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { PageHeading, ErrorNotice, LoadingState } from "@/features/admin/console/primitives";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PeoplePicker } from "@/components/people/people-picker";
@@ -63,6 +56,7 @@ const DIRECTORY_LOOKUP_INPUT = {
  */
 export function AICostLimitsManagement() {
   const queryClient = useQueryClient();
+  const [editing, setEditing] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [person, setPerson] = useState<PersonRef | null>(null);
   const limitsQuery = useQuery(aiCostLimitsQueryOptions());
@@ -94,15 +88,15 @@ export function AICostLimitsManagement() {
 
   const limits = limitsQuery.data?.limits ?? [];
   const tierDefault = limitsQuery.data?.tierDefault;
-  const tableData = useMemo(() => [...limits], [limits]);
 
-  const columns = useMemo<ColumnDef<AICostLimit>[]>(
+  const columns = useMemo<AdminColumn<AICostLimit>[]>(
     () => [
       {
-        accessorKey: "actorId",
+        id: "actorId",
         header: "Person",
-        cell: ({ row }) => {
-          const user = directory.get(row.original.actorId);
+        sortValue: (row) => personName(directory.get(row.actorId)),
+        cell: (row) => {
+          const user = directory.get(row.actorId);
           return (
             <span className="block max-w-[18rem] truncate">
               {personName(user)}
@@ -114,29 +108,33 @@ export function AICostLimitsManagement() {
       {
         id: "actorDaily",
         header: "Daily budget",
-        cell: ({ row }) => formatUsd(row.original.actorDailyUsd),
+        sortValue: (row) => row.actorDailyUsd,
+        cell: (row) => formatUsd(row.actorDailyUsd),
       },
       {
         id: "featureDaily",
         header: "Daily budget per feature",
-        cell: ({ row }) => formatUsd(row.original.featureDailyUsd),
+        sortValue: (row) => row.featureDailyUsd,
+        cell: (row) => formatUsd(row.featureDailyUsd),
       },
       {
-        accessorKey: "updatedAt",
+        id: "updatedAt",
         header: "Updated",
-        cell: ({ row }) => <RelativeTime value={row.original.updatedAt} />,
+        sortValue: (row) => new Date(row.updatedAt).getTime(),
+        cell: (row) => <RelativeTime value={row.updatedAt} />,
       },
       {
         id: "actions",
-        header: "",
-        cell: ({ row }) => (
+        header: "Actions",
+        headerHidden: true,
+        cell: (row) => (
           // Outline, not destructive: clearing an override restores the tier
           // default rather than deleting anything, and a filled button per row
           // would out-shout the panel's own Save action.
           <Button
-            aria-label={`Clear AI cost limit for ${personName(directory.get(row.original.actorId))}`}
+            aria-label={`Clear AI cost limit for ${personName(directory.get(row.actorId))}`}
             disabled={clearMutation.isPending}
-            onClick={() => clearMutation.mutate(row.original.actorId)}
+            onClick={() => clearMutation.mutate(row.actorId)}
             size="sm"
             type="button"
             variant="outline"
@@ -150,13 +148,6 @@ export function AICostLimitsManagement() {
     [clearMutation, directory],
   );
 
-  const table = useReactTable({
-    data: tableData,
-    columns,
-    getCoreRowModel: getCoreRowModel(),
-    getRowId: (row) => row.actorId,
-  });
-
   const limitForm = useForm({
     defaultValues: defaultFormValues,
     onSubmit: async ({ value }) => {
@@ -169,6 +160,7 @@ export function AICostLimitsManagement() {
       await upsertMutation.mutateAsync(normalized);
       limitForm.reset();
       setPerson(null);
+      setEditing(false);
     },
   });
 
@@ -180,86 +172,94 @@ export function AICostLimitsManagement() {
     // `ai-costs` is registered through `withPageScroll` in admin-console.tsx,
     // so the scroll container, page padding, and 1280px cap already wrap this.
     <section className="grid gap-4">
-      <PageHeading title="AI costs" subtitle={tierDefaultSubtitle(tierDefault)} />
+      <PageHeading
+        title="AI costs"
+        subtitle={tierDefaultSubtitle(tierDefault)}
+        actions={
+          <Button type="button" onClick={() => setEditing(true)}>
+            <Plus aria-hidden="true" /> Add limit
+          </Button>
+        }
+      />
 
-      <section
-        aria-labelledby="ai-cost-limits-form-heading"
-        className="grid gap-3 rounded-lg border border-border bg-card p-4 text-card-foreground"
-      >
-        <h2
-          className="flex items-center gap-2 text-sm font-semibold"
-          id="ai-cost-limits-form-heading"
-        >
-          <BadgeDollarSign aria-hidden="true" size={16} />
-          Give one person a different budget
-        </h2>
-
-        <form
-          className="grid gap-3 sm:grid-cols-[2fr_1fr_1fr_auto] sm:items-end"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void limitForm.handleSubmit();
+      {editing ? (
+        <FormPanel
+          title="Set a person's AI budget"
+          onClose={() => {
+            if (!upsertMutation.isPending) setEditing(false);
           }}
         >
-          <limitForm.Field name="actorId">
-            {(field) => (
-              <PeoplePicker
-                label="Person"
-                max={1}
-                placeholder="Search by name or email"
-                stacked
-                value={person === null ? [] : [person]}
-                onChange={(next) => {
-                  const chosen = next[0] ?? null;
-                  setPerson(chosen);
-                  field.handleChange(chosen?.actorId ?? "");
-                }}
-              />
-            )}
-          </limitForm.Field>
-          <limitForm.Field name="actorDailyUsd">
-            {(field) => (
-              <label className="grid gap-1 text-xs">
-                <span className="font-medium">Daily budget (USD)</span>
-                <Input
-                  aria-label="Daily budget for this person in USD"
-                  inputMode="decimal"
-                  onChange={(event) => field.handleChange(event.target.value)}
-                  placeholder="tier default"
-                  value={field.state.value}
+          <p className="type-body-sm text-muted-foreground">
+            Leave a budget empty to use the organization default. Saving replaces this person's
+            existing override.
+          </p>
+          <form
+            className="grid gap-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void limitForm.handleSubmit();
+            }}
+          >
+            <limitForm.Field name="actorId">
+              {(field) => (
+                <PeoplePicker
+                  label="Person"
+                  max={1}
+                  placeholder="Search by name or email"
+                  stacked
+                  value={person === null ? [] : [person]}
+                  onChange={(next) => {
+                    const chosen = next[0] ?? null;
+                    setPerson(chosen);
+                    field.handleChange(chosen?.actorId ?? "");
+                  }}
                 />
-              </label>
-            )}
-          </limitForm.Field>
-          <limitForm.Field name="featureDailyUsd">
-            {(field) => (
-              <label className="grid gap-1 text-xs">
-                <span className="font-medium">Per feature, daily (USD)</span>
-                <Input
-                  aria-label="Daily budget per feature in USD"
-                  inputMode="decimal"
-                  onChange={(event) => field.handleChange(event.target.value)}
-                  placeholder="tier default"
-                  value={field.state.value}
-                />
-              </label>
-            )}
-          </limitForm.Field>
-          <Button disabled={upsertMutation.isPending} size="sm" type="submit">
-            <Save />
-            Save limit
-          </Button>
-        </form>
+              )}
+            </limitForm.Field>
+            <limitForm.Field name="actorDailyUsd">
+              {(field) => (
+                <label className="grid gap-1 text-xs">
+                  <span className="font-medium">Daily budget (USD)</span>
+                  <Input
+                    aria-label="Daily budget for this person in USD"
+                    inputMode="decimal"
+                    onChange={(event) => field.handleChange(event.target.value)}
+                    placeholder="tier default"
+                    value={field.state.value}
+                  />
+                </label>
+              )}
+            </limitForm.Field>
+            <limitForm.Field name="featureDailyUsd">
+              {(field) => (
+                <label className="grid gap-1 text-xs">
+                  <span className="font-medium">Per feature, daily (USD)</span>
+                  <Input
+                    aria-label="Daily budget per feature in USD"
+                    inputMode="decimal"
+                    onChange={(event) => field.handleChange(event.target.value)}
+                    placeholder="tier default"
+                    value={field.state.value}
+                  />
+                </label>
+              )}
+            </limitForm.Field>
+            <Button disabled={upsertMutation.isPending} size="sm" type="submit">
+              <Save />
+              Save limit
+            </Button>
+          </form>
 
-        {formError === null ? null : <ErrorNotice>{formError}</ErrorNotice>}
-        {upsertMutation.isError ? (
-          <ErrorNotice>
-            {upsertMutation.error instanceof Error
-              ? upsertMutation.error.message
-              : "Failed to save AI cost limit."}
-          </ErrorNotice>
-        ) : null}
-      </section>
+          {formError === null ? null : <ErrorNotice>{formError}</ErrorNotice>}
+          {upsertMutation.isError ? (
+            <ErrorNotice>
+              {upsertMutation.error instanceof Error
+                ? upsertMutation.error.message
+                : "Failed to save AI cost limit."}
+            </ErrorNotice>
+          ) : null}
+        </FormPanel>
+      ) : null}
 
       <section aria-labelledby="ai-cost-limits-overrides-heading" className="grid gap-2">
         <h2 className="text-sm font-semibold" id="ai-cost-limits-overrides-heading">
@@ -288,40 +288,27 @@ export function AICostLimitsManagement() {
             body={
               <>
                 Every user is billed against the{" "}
-                {tierDefault === undefined ? "tier" : tierDefault.tier} tier default. Save an
-                override above to give one user a different daily AI budget.
+                {tierDefault === undefined ? "tier" : tierDefault.tier} tier default. Add an
+                override to give one user a different daily AI budget.
               </>
             }
           />
         ) : null}
 
         {hasOverrides ? (
-          <Table aria-label="Per-user AI cost limits" role="table">
-            <TableHeader>
-              {table.getHeaderGroups().map((headerGroup) => (
-                <TableRow key={headerGroup.id} role="row">
-                  {headerGroup.headers.map((header) => (
-                    <TableHead key={header.id} role="columnheader">
-                      {header.isPlaceholder
-                        ? null
-                        : flexRender(header.column.columnDef.header, header.getContext())}
-                    </TableHead>
-                  ))}
-                </TableRow>
-              ))}
-            </TableHeader>
-            <TableBody>
-              {table.getRowModel().rows.map((row) => (
-                <TableRow key={row.id} role="row">
-                  {row.getVisibleCells().map((cell) => (
-                    <TableCell key={cell.id} role="cell">
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          <AdminTable
+            label="Per-user AI cost limits"
+            columns={columns}
+            rows={limits}
+            rowKey={(row) => row.actorId}
+            searchText={(row) =>
+              [
+                row.actorId,
+                personName(directory.get(row.actorId)),
+                directory.get(row.actorId)?.email,
+              ].join(" ")
+            }
+          />
         ) : null}
       </section>
     </section>

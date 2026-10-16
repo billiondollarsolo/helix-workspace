@@ -19,6 +19,39 @@ const actor: Actor = {
 };
 
 describe("Assistant A1-A3 policy integration", () => {
+  it("rechecks a hosted runtime before a model-selected tool executes", async () => {
+    const handler = vi.fn(async () => ({ ok: true }));
+    const tools = createToolRegistry({ accessPolicy: new AllowAllToolAccessPolicy() });
+    tools.register(
+      tool({ id: "chat.message.list", permission: "chat.read", sideEffects: "read", handler }),
+    );
+    const assistant = new AssistantOrchestrator({
+      store: new InMemoryAssistantStore(),
+      tools,
+      ai: {
+        chat: async () => ({
+          message: "Reading",
+          model: "test",
+          providerId: "test",
+          toolCalls: [{ id: "chat.message.list", input: {} }],
+        }),
+      },
+    });
+    const beforeStep = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("Credential revoked"));
+    await expect(
+      assistant.sendMessage({
+        actor: { ...actor, scopes: ["chat.read"] },
+        content: "Read this chat message",
+        beforeStep,
+        maxToolRounds: 2,
+      }),
+    ).rejects.toThrow("Credential revoked");
+    expect(handler).not.toHaveBeenCalled();
+  });
+
   it.each([false, true])(
     "propagates context restrictions before retrieval (memory: %s)",
     async (withMemory) => {

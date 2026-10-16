@@ -5,6 +5,7 @@ const workspaceLines = (scope: string) =>
 
 /** Full CLI help text, printed by `helix --help` and after usage errors. */
 export const usage = `Usage:
+  helix events watch --cursor-file <path> [--handler <executable>] [--all] [--after <cursor>]
   helix --version
   helix tool list [--source <api|openapi|mcp>]
   helix tool describe <id>
@@ -34,6 +35,7 @@ ${workspaceLines("mail")}
   helix chat edit [--json [JSON]]
   helix chat delete [--json [JSON]]
   helix chat create-room [--name <name>] [--subject <text>] [--description <text>] [--topic <text>] [--member <actor-id>] [--kind <chat_room|chat_dm>] [--privacy <discoverable|restricted|private>] [--json [JSON]]
+  helix chat dm --json '{"memberActorIds":["<actor-id>"]}'
   helix chat invite [--json [JSON]]
   helix chat search [--query <text>] [--room-id <id>] [--limit <number>] [--json [JSON]]
   helix chat messages [--room-id <id>] [--before <iso>] [--limit <number>] [--json [JSON]]

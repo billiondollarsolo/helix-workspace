@@ -43,10 +43,11 @@ test.describe("keyboard shortcuts", () => {
     await expect(dialog).toBeVisible();
     await expect(dialog.getByRole("heading", { name: "Mail" })).toBeVisible();
     await expect(dialog.getByText("Go to Mail inbox")).toBeVisible();
-    await expect(dialog.getByRole("region", { name: "Shortcut list" })).toBeFocused();
+    await expect(dialog.getByRole("button", { name: "Close", exact: true })).toBeFocused();
     expect(await axeViolations(page, '[role="dialog"]')).toEqual([]);
 
-    // Focus stays trapped inside the dialog.
+    // Reference panels keep the workspace available.
+    await expect(dialog).not.toHaveAttribute("aria-modal", "true");
     await dialog.getByRole("button", { name: "Close" }).focus();
     await page.keyboard.press("Tab");
     await expect(dialog.getByRole("region", { name: "Shortcut list" })).toBeFocused();

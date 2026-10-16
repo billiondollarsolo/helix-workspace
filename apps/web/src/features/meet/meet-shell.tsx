@@ -4,7 +4,7 @@
 
 import { SurfaceFrame } from "@/components/shell";
 import { EmptyState } from "@/components/ui/empty-state";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { VideoOff, Video as VideoIcon } from "lucide-react";
 import { useState } from "react";
 import type { MeetControlState } from "./api";
@@ -16,6 +16,7 @@ import { MeetPreJoin } from "./meet-prejoin";
 import { conferenceFromMetadata } from "@/features/calendar/conference";
 import {
   meetMeetingsQueryOptions,
+  meetQueryKeys,
   meetStatusQueryOptions,
   meetTodayEventsQueryOptions,
 } from "./queries";
@@ -56,6 +57,7 @@ export interface MeetShellProps {
 }
 
 export function MeetShell({ code, onCodeChange, onScheduleInCalendar }: MeetShellProps) {
+  const queryClient = useQueryClient();
   const [session, setSession] = useState<MeetCallSession | null>(null);
   const [starting, setStarting] = useState(false);
   const status = useQuery(meetStatusQueryOptions()).data;
@@ -65,6 +67,7 @@ export function MeetShell({ code, onCodeChange, onScheduleInCalendar }: MeetShel
   const backToHub = () => {
     setSession(null);
     setStarting(false);
+    void queryClient.invalidateQueries({ queryKey: meetQueryKeys.all });
     if (code !== undefined) onCodeChange(undefined);
   };
 
@@ -110,7 +113,11 @@ export function MeetShell({ code, onCodeChange, onScheduleInCalendar }: MeetShel
         <MeetPreJoin
           key={target.kind === "code" ? target.code : target.kind}
           target={target}
-          onJoined={setSession}
+          onJoined={(joined) => {
+            setSession(joined);
+            setStarting(false);
+            if (code !== joined.code) onCodeChange(joined.code);
+          }}
           onCancel={backToHub}
         />
       ) : (

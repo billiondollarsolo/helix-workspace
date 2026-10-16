@@ -39,6 +39,18 @@ test.describe("/admin dashboard", () => {
       ]);
     await page.goto("/admin");
 
+    const guides = page.getByRole("region", { name: "Setup guides" });
+    await expect(guides.getByRole("link", { name: "admin checklist" })).toHaveAttribute(
+      "href",
+      /\/admin-setup\.md$/u,
+    );
+    await expect(guides.getByRole("link", { name: "AI agent instructions" })).toHaveAttribute(
+      "href",
+      /\/agent-setup\.md$/u,
+    );
+    expect((await page.request.get("/agent-setup.md")).status()).toBe(200);
+    expect(await (await page.request.get("/llms.txt")).text()).toContain("agent-setup.md");
+
     await adminNav(page).getByRole("link", { name: "Audit log", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Audit log", level: 1 })).toBeVisible();
     const auditTable = page.getByRole("table", { name: "Audit log" });

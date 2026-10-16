@@ -153,7 +153,7 @@ export function CalendarSettingsSheet({
                   <>
                     <select
                       aria-label={`Permission for ${name}`}
-                      className="cal-field type-body-sm"
+                      className="input type-body-sm"
                       value={member.role}
                       disabled={changeRole.isPending}
                       onChange={(event) => {
@@ -193,7 +193,7 @@ export function CalendarSettingsSheet({
           <label className="flex flex-col gap-1 type-body-sm">
             Permission
             <select
-              className="cal-field type-body-sm"
+              className="input type-body-sm"
               value={role}
               onChange={(event) => {
                 const next = ROLES.find((candidate) => candidate === event.target.value);

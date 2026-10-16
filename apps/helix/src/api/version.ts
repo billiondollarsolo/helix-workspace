@@ -57,8 +57,6 @@ export function internalApiUrl(rawUrl: string): string {
 /** Value emitted in the `api-version` response header. */
 export const HELIX_API_VERSION_HEADER_VALUE = `v${String(HELIX_API_MAJOR_VERSION)}`;
 
-/**
- * MCP protocol revision Helix pins. Bumped from the legacy `2024-11-05` draft
- * to the current spec revision (PRD §9.5).
- */
-export const MCP_PROTOCOL_VERSION = "2025-06-18";
+/** Latest stable MCP revision; legacy initialize negotiates separately. */
+export const MCP_PROTOCOL_VERSION = "2026-07-28";
+export const MCP_LEGACY_PROTOCOL_VERSION = "2025-06-18";

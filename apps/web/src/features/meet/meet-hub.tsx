@@ -327,6 +327,7 @@ function MeetingLinkDialog({
   const link = meetJoinLink(code);
   return (
     <Dialog
+      modal={false}
       title="Your meeting is ready"
       onClose={onClose}
       footer={

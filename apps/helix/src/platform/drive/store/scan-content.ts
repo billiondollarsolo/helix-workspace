@@ -1,5 +1,6 @@
 import type { StorageObject } from "@helix/sdk-types";
 import { createHash } from "node:crypto";
+import { MAX_DLP_SCAN_BYTES } from "../../dlp.js";
 import { DriveConflictError } from "../errors.js";
 import {
   resolveEffectiveMime,
@@ -62,7 +63,7 @@ export async function inspectAndScanUpload(input: {
     });
   }
   const mimeType = resolveEffectiveMime(input.declaredMimeType, sniffMimeType(inspected.head));
-  let bufferedBytes = first instanceof Uint8Array ? first : undefined;
+  let bufferedBytes = first instanceof Uint8Array ? first : inspected.bufferedBytes;
   let scan: VirusScanResult | Error;
   try {
     const archive = mimeType === "application/zip" || isGzipHead(inspected.head);
@@ -100,22 +101,31 @@ async function hashStorageBody(body: StorageObject["body"]): Promise<{
   readonly byteSize: number;
   readonly sha256: string;
   readonly head: Uint8Array;
+  readonly bufferedBytes?: Uint8Array;
 }> {
   const hash = createHash("sha256");
   let byteSize = 0;
   const head = new Uint8Array(512);
   let headSize = 0;
+  const chunks: Uint8Array[] = [];
   for await (const chunk of asAsyncIterable(body)) {
     byteSize += chunk.byteLength;
     if (!Number.isSafeInteger(byteSize)) throw new Error("Drive object exceeds safe size limits.");
     hash.update(chunk);
+    if (byteSize <= MAX_DLP_SCAN_BYTES) chunks.push(Uint8Array.from(chunk));
+    else chunks.length = 0;
     if (headSize < head.byteLength) {
       const copied = Math.min(chunk.byteLength, head.byteLength - headSize);
       head.set(chunk.subarray(0, copied), headSize);
       headSize += copied;
     }
   }
-  return { byteSize, sha256: hash.digest("hex"), head: head.subarray(0, headSize) };
+  return {
+    byteSize,
+    sha256: hash.digest("hex"),
+    head: head.subarray(0, headSize),
+    ...(byteSize <= MAX_DLP_SCAN_BYTES ? { bufferedBytes: Buffer.concat(chunks) } : {}),
+  };
 }
 
 async function* asAsyncIterable(body: StorageObject["body"]): AsyncIterable<Uint8Array> {

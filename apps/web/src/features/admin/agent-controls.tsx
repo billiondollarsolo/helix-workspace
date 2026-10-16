@@ -40,7 +40,7 @@ function PostureCard({
           {chip}
         </span>
       </dd>
-      <p className={NOTE_CLASS}>{note}</p>
+      <dd className={NOTE_CLASS}>{note}</dd>
     </div>
   );
 }
@@ -124,15 +124,17 @@ export function AgentControlsManagement() {
                 {disabledOrgs.length === 0 ? "None" : String(disabledOrgs.length)}
               </dd>
               {disabledOrgs.length === 0 ? (
-                <p className={NOTE_CLASS}>No per-org overrides.</p>
+                <dd className={NOTE_CLASS}>No per-org overrides.</dd>
               ) : (
-                <ul className="m-0 list-none space-y-1 p-0 type-caption text-muted-foreground">
-                  {disabledOrgs.map((id) => (
-                    <li key={id}>
-                      <code className="break-all">{id}</code>
-                    </li>
-                  ))}
-                </ul>
+                <dd className="m-0">
+                  <ul className="m-0 list-none space-y-1 p-0 type-caption text-muted-foreground">
+                    {disabledOrgs.map((id) => (
+                      <li key={id}>
+                        <code className="break-all">{id}</code>
+                      </li>
+                    ))}
+                  </ul>
+                </dd>
               )}
             </div>
           </dl>

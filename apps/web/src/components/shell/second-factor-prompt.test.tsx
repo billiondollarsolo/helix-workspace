@@ -12,11 +12,20 @@ import { sessionQueryKeys, type SessionUser } from "@/lib/auth";
 import { requestSecondFactorStepUp, type StepUpReason } from "@/lib/second-factor-step-up";
 import { SecondFactorPrompt } from "./second-factor-prompt";
 
-const { listPasskeys, signInWithPasskey, verifyRecoveryCode, verifyTotp } = vi.hoisted(() => ({
+const {
+  listPasskeys,
+  signInWithPasskey,
+  verifyRecoveryCode,
+  verifyTotp,
+  sendEmailMfaCode,
+  verifyEmailMfaCode,
+} = vi.hoisted(() => ({
   listPasskeys: vi.fn(),
   signInWithPasskey: vi.fn(),
   verifyRecoveryCode: vi.fn(),
   verifyTotp: vi.fn(),
+  sendEmailMfaCode: vi.fn(),
+  verifyEmailMfaCode: vi.fn(),
 }));
 vi.mock("@/lib/auth", async (original) => ({
   ...(await original<object>()),
@@ -24,6 +33,8 @@ vi.mock("@/lib/auth", async (original) => ({
   signInWithPasskey,
   verifyRecoveryCode,
   verifyTotp,
+  sendEmailMfaCode,
+  verifyEmailMfaCode,
 }));
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
@@ -48,7 +59,14 @@ beforeEach(() => {
   root = createRoot(container);
   client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   onOpenSecuritySettings = vi.fn<() => void>();
-  for (const mock of [listPasskeys, signInWithPasskey, verifyRecoveryCode, verifyTotp]) {
+  for (const mock of [
+    listPasskeys,
+    signInWithPasskey,
+    verifyRecoveryCode,
+    verifyTotp,
+    sendEmailMfaCode,
+    verifyEmailMfaCode,
+  ]) {
     mock.mockReset();
   }
   listPasskeys.mockResolvedValue([]);
@@ -110,6 +128,18 @@ async function typeCode(value: string): Promise<void> {
 }
 
 describe("SecondFactorPrompt", () => {
+  it("sends and verifies an external email code for an email-only factor", async () => {
+    sendEmailMfaCode.mockResolvedValue(undefined);
+    verifyEmailMfaCode.mockResolvedValue(admin);
+    await render({ ...admin, totpEnabled: false, emailOtpEnabled: true });
+    const { waiting } = await refuseRequest();
+    await click("Send email code");
+    await typeCode("123456");
+    await click("Verify");
+    expect(sendEmailMfaCode).toHaveBeenCalledOnce();
+    expect(verifyEmailMfaCode).toHaveBeenCalledWith("123456");
+    await expect(waiting).resolves.toBe(true);
+  });
   it("stays out of the way until a request is refused", async () => {
     await render(admin);
     expect(document.querySelector('[role="dialog"]')).toBeNull();

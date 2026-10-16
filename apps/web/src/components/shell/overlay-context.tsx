@@ -14,6 +14,7 @@ const SETTINGS_SECTION_IDS = [
   "appearance",
   "shortcuts",
   "mail",
+  "bots",
 ] as const;
 
 export type SettingsSectionBaseId = (typeof SETTINGS_SECTION_IDS)[number];

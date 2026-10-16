@@ -15,13 +15,15 @@ it("exposes communication and storage without editors", () => {
   ]);
 });
 
-it("pins the everyday communication apps and keeps the rest in the launcher", () => {
+it("pins the everyday workspace apps and keeps the rest in the launcher", () => {
   expect(APPS.filter((app) => app.pinned).map((app) => app.id)).toEqual([
     "mail",
     "calendar",
     "drive",
     "chat",
     "meet",
+    "passwords",
+    "assistant",
   ]);
 });
 

@@ -1,9 +1,10 @@
 /* Admin › Apps › Meet. Meetings run on the configured Jitsi deployment; this
  * page shows whether that connection is configured, from the services catalog. */
 
+import { Link } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { adminServicesQueryKey, adminServicesQueryOptions } from "@/features/admin/admin-services";
-import { AppStatusPanel } from "@/features/admin/console/app-settings";
+import { AppStatusPanel, WorkspaceFlagsPanel } from "@/features/admin/console/app-settings";
 import {
   LoadingState,
   PageHeading,
@@ -68,6 +69,37 @@ export function MeetAdminSection() {
       <div className="admin-stack">
         <AppStatusPanel appId="meet" />
         <MeetingServerPanel />
+        <WorkspaceFlagsPanel
+          title="Capture and AI"
+          flags={[
+            {
+              key: "meet_transcription",
+              label: "Speech transcription",
+              description:
+                "Allow hosts to transcribe meetings after participant consent. Requires the native transcription service and a meet.transcribe AI route. Transcripts are saved in the owner’s Drive and private links are emailed to attendees.",
+            },
+            {
+              key: "meet_ai_recaps",
+              label: "AI meeting recaps",
+              description:
+                "Generate a recap with decisions and action items from saved transcripts, using the meet.summarize AI route and workspace cost limits. Recaps require review for accuracy.",
+            },
+          ]}
+        />
+        <Link
+          className="btn secondary"
+          to="/admin/$section"
+          params={{ section: "assistant" }}
+          search={{ tab: "models" }}
+        >
+          Choose meeting providers and models
+        </Link>
+        <p className="admin-muted">
+          Configure transcription and recap providers in AI settings. Speech transcription supports
+          endpoints implementing the OpenAI realtime transcription protocol, including compatible
+          self-hosted services on the deployment allowlist. Summaries can use any configured text
+          provider. Both are off by default; selecting a model does not enable capture.
+        </p>
       </div>
     </>
   );

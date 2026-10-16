@@ -2,6 +2,7 @@ import type { ToolContext, ToolDefinition } from "@helix/sdk-types";
 import { z } from "zod";
 import { BadRequestError, ForbiddenError, NotFoundError } from "../../api/api-error.js";
 import { defineTool } from "../tools/define-tool.js";
+import { collaborationAuthorization } from "../tools/collaboration-authorization.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import { hasHeaderBreakingCharacter } from "./outbound-format.js";
 import { MAIL_MAX_OUTBOUND_ATTACHMENT_BYTES, MailSendService } from "./outbound.js";
@@ -129,6 +130,22 @@ type Actor = ToolContext["actor"];
 export function createMailComposeToolDefinitions(
   options: CreateMailToolDefinitionsOptions,
 ): readonly ToolDefinition[] {
+  const internalMailAuthorization = async (
+    input: {
+      to: readonly { address: string }[];
+      cc: readonly { address: string }[];
+      bcc: readonly { address: string }[];
+      replyAll?: boolean;
+    },
+    actor: ToolContext["actor"],
+  ) => {
+    const authorization = await collaborationAuthorization("mail.send")(input, actor);
+    if (!authorization || input.replyAll || input.to.length === 0) return null;
+    const recipients = [...input.to, ...input.cc, ...input.bcc].map((entry) => entry.address);
+    return (await options.areLocalRecipients?.(actor.orgId, recipients)) === true
+      ? { ...authorization, internalCommunicationOnly: true as const }
+      : null;
+  };
   const internalDomains = new Set(
     (
       options.internalDomains ??
@@ -177,6 +194,7 @@ export function createMailComposeToolDefinitions(
       orgId: ctx.actor.orgId,
       actorId: ctx.actor.id,
       ...rest,
+      ...(ctx.internalCommunicationOnly ? { envelope: { ...rest.envelope, localOnly: true } } : {}),
       ...(input.draft === undefined ? {} : { draft: input.draft }),
       ...(input.sendAt === undefined ? {} : { sendAt: new Date(input.sendAt) }),
       source: ctx.actor.type === "agent" ? "agent" : "interactive",
@@ -211,6 +229,7 @@ export function createMailComposeToolDefinitions(
       description: "Send now after the undo delay, or schedule delivery for a future time.",
       permission: "mail.send",
       sideEffects: "external_communication",
+      standingAuthorization: internalMailAuthorization,
       confirmationRequired: true,
       scopeComposition: { conditionalScopes: [externalRecipientScope] },
       inputSchema: zodToolSchema(sendSchema, genericObjectJsonSchema),
@@ -232,6 +251,7 @@ export function createMailComposeToolDefinitions(
         "Reply (or reply all) in a thread after the undo delay. Recipients, In-Reply-To, and References come from the parent message unless `to` is given.",
       permission: "mail.send",
       sideEffects: "external_communication",
+      standingAuthorization: internalMailAuthorization,
       confirmationRequired: true,
       scopeComposition: { conditionalScopes: [externalRecipientScope] },
       inputSchema: zodToolSchema(replySchema, genericObjectJsonSchema),
@@ -286,6 +306,7 @@ export function createMailComposeToolDefinitions(
         "Forward a message as a new thread with the quoted original and its attachments, after the undo delay.",
       permission: "mail.send",
       sideEffects: "external_communication",
+      standingAuthorization: internalMailAuthorization,
       confirmationRequired: true,
       scopeComposition: { conditionalScopes: [externalRecipientScope] },
       inputSchema: zodToolSchema(forwardSchema, genericObjectJsonSchema),

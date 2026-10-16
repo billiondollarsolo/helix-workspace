@@ -120,6 +120,7 @@ const OVER_BUDGET_ALLOWLIST: Partial<Record<AdminSectionId, number>> = {};
  *  rejects it settles into its error state instead, which still records the
  *  request it made — and the request is the thing being counted. */
 const emptyPayload: Record<string, unknown> = {
+  requests: [],
   items: [],
   users: [],
   groups: [],
@@ -341,10 +342,11 @@ describe("admin console request budget", () => {
           ],
         },
         "agent-credentials": {
-          "requestCount": 2,
+          "requestCount": 3,
           "settled": true,
           "urls": [
             "/v1/api/admin/agents",
+            "/v1/api/tools/agent.account.requests.list",
             "/v1/api/tools/agent.credentials.list",
           ],
         },
@@ -466,11 +468,12 @@ describe("admin console request budget", () => {
           ],
         },
         "meet": {
-          "requestCount": 2,
+          "requestCount": 3,
           "settled": true,
           "urls": [
             "/v1/api/admin/core-apps",
             "/v1/api/admin/services",
+            "/v1/api/admin/tenant-config",
           ],
         },
         "oauth-apps": {

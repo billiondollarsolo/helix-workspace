@@ -172,6 +172,9 @@ export async function registerMeetRoutes(
       now: at,
       user: {
         id: participantSubject,
+        helixOrgId: resolved.room.orgId,
+        helixRoomId: resolved.room.id,
+        helixCaptureConsent: MEET_RECORDING_NOTICE_VERSION,
         name: input.name,
         email: input.email,
         moderator: false,
@@ -784,7 +787,6 @@ function normalizedMimeType(mimeType: string): string {
 function validateMediaSignature(bytes: Buffer, mimeType: string): string | null {
   const mismatch = "Prepared Meet recording object bytes do not match the declared media type.";
   switch (normalizedMimeType(mimeType)) {
-    // EBML header magic.
     case "video/webm":
       return bytes.byteLength >= 4 &&
         bytes[0] === 0x1a &&
@@ -793,12 +795,10 @@ function validateMediaSignature(bytes: Buffer, mimeType: string): string | null 
         bytes[3] === 0xa3
         ? null
         : mismatch;
-    // ISO base media file format box type at offset 4.
     case "video/mp4":
       return bytes.byteLength >= 8 && bytes.subarray(4, 8).toString("ascii") === "ftyp"
         ? null
         : mismatch;
-    // Unknown media types are not signature-checked here; the mime allowlist above already ran.
     default:
       return null;
   }

@@ -2,7 +2,7 @@ name: helix-mail-edge
 
 services:
   inbound:
-    image: ghcr.io/docker-mailserver/docker-mailserver:15.1.0@sha256:af51b15dd3fc72153c0e90eb7692bb5e3a463212d87959a80fa7aa89b617d44a
+    image: ghcr.io/docker-mailserver/docker-mailserver:16.0.1@sha256:d0fe7668defe157aad57ea31b1707ad1e2fb57d7a91bdf17cbdf876549946c86
     hostname: ${HELIX_MAIL_EDGE_HOSTNAME:?set HELIX_MAIL_EDGE_HOSTNAME}
     environment:
       OVERRIDE_HOSTNAME: ${HELIX_MAIL_EDGE_HOSTNAME}
@@ -14,6 +14,7 @@ services:
       SSL_KEY_PATH: /run/tls/tls.key
       TLS_LEVEL: modern
       PERMIT_DOCKER: none
+      SMTP_ONLY: "1"
       POSTFIX_INET_PROTOCOLS: all
       POSTFIX_MESSAGE_SIZE_LIMIT: ${HELIX_MAIL_MAX_MESSAGE_BYTES:-52428800}
       ENABLE_DNSBL: "1"
@@ -58,7 +59,7 @@ services:
     restart: unless-stopped
     stop_grace_period: 1m
     healthcheck:
-      test: ["CMD-SHELL", "ss -ltn | grep -q ':25 '"]
+      test: ["CMD-SHELL", "dms-healthcheck && ss -ltn | grep -q ':25 '"]
       interval: 15s
       timeout: 5s
       retries: 8

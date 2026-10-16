@@ -120,12 +120,12 @@ describe("Filters", () => {
       () => (document.body.textContent?.includes("No filters yet") ? true : null),
       "empty",
     );
-    expect(buttonNamed("Create a new filter")).not.toBeNull();
+    expect(buttonNamed("Add filter")).not.toBeNull();
   });
 
   it("creates a filter in two steps: criteria, preview, then actions", async () => {
     renderFilters();
-    click(await waitFor(() => buttonNamed("Create a new filter"), "create button"));
+    click(await waitFor(() => buttonNamed("Add filter"), "create button"));
     let dialog = await filterDialog();
     expect(await axeViolations()).toEqual([]);
 

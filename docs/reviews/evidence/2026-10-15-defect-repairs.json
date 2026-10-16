@@ -1,0 +1,429 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-15",
+  "environment": "development",
+  "productionAcceptance": false,
+  "source": {
+    "commit": "aa4d2da67c37a851a3ce1a89c24fd307073f5be1",
+    "workingTreeChangesIncluded": true,
+    "unrelatedWorkPreserved": true
+  },
+  "deployment": {
+    "deployed": true,
+    "apiImage": "helix/workspace-development:defects-r6",
+    "webImage": "helix/workspace-web-development:defects-r6",
+    "imageIds": {
+      "helix": "sha256:841c98ff1dae0cdef5c47e269f1fbd0f07e249892309a1489340f3ac327e12c5",
+      "caddy": "sha256:351f68bf7801bddcd6ba7f1709879ee6773d4e8ba0fdd11cf01fef742bab77de"
+    },
+    "previousImages": {
+      "helix": "helix/workspace-development:validation-r5-openapi",
+      "helix-migrate": "helix/workspace-development:native-keepass-r4-bind",
+      "caddy": "helix/workspace-web-development:validation-r5-accessibility"
+    },
+    "ready": true,
+    "rollbackConfig": "/srv/helix/config/development-compose.pre-defects-r6-20261015T125953Z.json"
+  },
+  "health": [
+    {
+      "service": "caddy",
+      "image": "helix/workspace-web-development:defects-r6",
+      "health": "healthy",
+      "state": "running"
+    },
+    {
+      "service": "helix",
+      "image": "helix/workspace-development:defects-r6",
+      "health": "healthy",
+      "state": "running"
+    }
+  ],
+  "migration": {
+    "file": "0230_agent_source_context.sql",
+    "applied": true,
+    "migrationRunner": "Applied 1 migrations, skipped 230 migrations.",
+    "additive": true
+  },
+  "workspaceChecks": {
+    "format": {
+      "command": "pnpm format:check",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "command": "pnpm typecheck",
+      "exitCode": 0
+    },
+    "lint": {
+      "command": "pnpm lint",
+      "exitCode": 0
+    },
+    "test": {
+      "command": "pnpm test",
+      "exitCode": 0
+    },
+    "build": {
+      "command": "pnpm build",
+      "exitCode": 0
+    },
+    "boundaries": {
+      "command": "pnpm quality:boundaries",
+      "exitCode": 0
+    },
+    "dependencies": {
+      "command": "pnpm quality:dependencies",
+      "exitCode": 0
+    },
+    "productionAudit": {
+      "command": "pnpm audit:prod",
+      "exitCode": 0
+    },
+    "launchDocs": {
+      "command": "pnpm quality:launch-docs",
+      "exitCode": 0
+    },
+    "e2eTypes": {
+      "command": "pnpm --filter @helix/web typecheck:e2e",
+      "exitCode": 0
+    },
+    "e2eLint": {
+      "command": "pnpm --filter @helix/web lint:e2e",
+      "exitCode": 0
+    },
+    "contractBudget": {
+      "command": "pnpm quality:contracts",
+      "exitCode": 0
+    }
+  },
+  "defaultTests": {
+    "passed": 5544,
+    "skipped": 397,
+    "packagePassed": {
+      "config": 10,
+      "contracts": 49,
+      "sdkWeb": 3,
+      "cli": 167,
+      "sdkTypes": 5,
+      "sdk": 10,
+      "app": 3874,
+      "web": 1426
+    },
+    "unchangedPackageResultsMayUseTurboCache": true
+  },
+  "postgresRegressionRun": {
+    "passed": 16,
+    "skipped": 0,
+    "coverage": [
+      "mail paging, Unicode and actor RLS",
+      "durable source ledger and actor isolation",
+      "SES feedback correlation, deduplication and suppression",
+      "maintained OTP delivery, cross-connection resend serialization and failed-send rollback",
+      "pending-action expiry under runtime RLS role"
+    ]
+  },
+  "additionalFocusedRuns": {
+    "pendingMcpRestSmtpSes": 84,
+    "maintainedMfaAndFactor": 16,
+    "signedSesAndPostgresFeedback": 8,
+    "panelProviderAssistantCorrections": 39
+  },
+  "browser": {
+    "passed": 212,
+    "skipped": 1,
+    "mode": "mocked API with real web app and Chromium",
+    "skippedReason": "SMTP/Mailpit case requires configured live-backend mode",
+    "initialRun": {
+      "passed": 197,
+      "failed": 15,
+      "corrections": [
+        "Shared nonmodal panel header/footer used page landmarks; switched to structural groups and added workspace-header regression.",
+        "Panel focuses the first editable field instead of its Close button.",
+        "Four vault creation assertions timed out during the heavily concurrent run; all five vault cases pass separately and in the final full suite without a vault code change."
+      ]
+    },
+    "nativeCollaborativePreview": {
+      "statusAvailable": true,
+      "automationCallsFailed": true,
+      "manualVisualCertification": false
+    }
+  },
+  "accessibility": {
+    "status": "passed",
+    "cases": 60,
+    "themes": ["light", "dark"],
+    "viewports": ["mobile", "tablet", "desktop"],
+    "violations": 0,
+    "visualFindings": 0,
+    "routes": [
+      "/admin/mail",
+      "/admin/users",
+      "/assistant",
+      "/assistant?settings=profile",
+      "/assistant?settings=security",
+      "/calendar",
+      "/chat",
+      "/contacts",
+      "/drive",
+      "/mail"
+    ]
+  },
+  "dependencyAudit": {
+    "critical": 0,
+    "high": 0,
+    "moderate": 0,
+    "low": 0,
+    "patchedRuntime": {
+      "fastify": "5.12.5",
+      "nodemailer": "10.0.9"
+    },
+    "policyExceptionsAdded": false
+  },
+  "live": {
+    "checks": [
+      {
+        "name": "live MCP initialize",
+        "passed": true
+      },
+      {
+        "name": "tools/list",
+        "passed": true,
+        "count": 135
+      },
+      {
+        "name": "resources/list",
+        "passed": true,
+        "count": 5
+      },
+      {
+        "name": "prompts/list",
+        "passed": true,
+        "count": 3
+      },
+      {
+        "name": "MCP platform.ping",
+        "passed": true,
+        "status": 200,
+        "error": null
+      },
+      {
+        "name": "drive content resource through shared policy",
+        "passed": true
+      },
+      {
+        "name": "encrypted file exact readback",
+        "passed": true
+      },
+      {
+        "name": "chat content resource through shared policy",
+        "passed": true
+      },
+      {
+        "name": "owner mail content isolated",
+        "passed": true
+      },
+      {
+        "name": "quarantined resource blocked",
+        "passed": true
+      },
+      {
+        "name": "anonymous/invalid credential denied",
+        "passed": true,
+        "status": 401
+      },
+      {
+        "name": "anonymous/invalid credential denied",
+        "passed": true,
+        "status": 401
+      },
+      {
+        "name": "agent admin access denied with canonical error",
+        "passed": true,
+        "status": 403
+      },
+      {
+        "name": "malformed REST error is canonical",
+        "passed": true
+      },
+      {
+        "name": "MCP mail.send",
+        "passed": true,
+        "status": 200,
+        "error": null
+      },
+      {
+        "name": "external mail always requires human approval",
+        "passed": true
+      },
+      {
+        "name": "browser review link returned",
+        "passed": true
+      },
+      {
+        "name": "MCP mail.send",
+        "passed": true,
+        "status": 200,
+        "error": null
+      },
+      {
+        "name": "idempotent retry preserves one pending action",
+        "passed": true
+      },
+      {
+        "name": "agent self approval denied",
+        "passed": true,
+        "status": 404
+      },
+      {
+        "name": "self approval leaves action pending",
+        "passed": true
+      },
+      {
+        "name": "human review requires person",
+        "passed": true,
+        "status": 403
+      },
+      {
+        "name": "CLI mcp discovery",
+        "passed": true,
+        "exitCode": 0
+      },
+      {
+        "name": "CLI api discovery",
+        "passed": true,
+        "exitCode": 0
+      },
+      {
+        "name": "CLI openapi discovery",
+        "passed": true,
+        "exitCode": 0
+      },
+      {
+        "name": "request cancelled without sending",
+        "passed": true,
+        "status": 200
+      }
+    ],
+    "pendingId": "1133b518-557e-4993-ae56-8f7a615f93c0",
+    "externalMessageSent": false,
+    "atlasPreserved": true
+  },
+  "liveDatabase": {
+    "durableSources": true,
+    "sourceCount": 5,
+    "resourceAudits": 8,
+    "resourceAuditCredentialCorrelation": true,
+    "pendingSourceSnapshot": true,
+    "pendingStatus": "cancelled",
+    "atlasPreserved": true
+  },
+  "liveOwnMailResource": {
+    "availableMailResources": 1,
+    "checks": [
+      {
+        "ownMailPageReadable": true,
+        "boundedSerializedBytes": true
+      }
+    ]
+  },
+  "smtpProtocol": {
+    "plaintextLoopbackFixture": true,
+    "physicalPeer": "127.0.0.1",
+    "identities": [
+      {
+        "remoteAddress": "203.0.113.77",
+        "helo": "audit.example.test"
+      },
+      {
+        "remoteAddress": "127.0.0.1",
+        "helo": "audit.example.test"
+      },
+      {
+        "remoteAddress": "127.0.0.1"
+      }
+    ],
+    "staleIdentityOnUnavailable": false,
+    "inheritedIdentityWithoutForwarding": false
+  },
+  "deployedApiSourceBinding": {
+    "exactBuildMatch": true,
+    "files": {
+      "platform/tools/agent-sources.js": "8e93686f2425675baf1e11bf22c50c5cd8795d0dae5f6ad893529ddf1b32f139",
+      "platform/tools/resource-reads.js": "21a366babd3bf95a9a06c4c33d4587f6dda27246faa6b5e2491e248b789cb298",
+      "platform/tools/pending-review.js": "2829a6658badae6b1f41a9b9eeeb1fa8eeed4d4c7156283ebbf9a44dcd3131f9",
+      "platform/auth/external-email-mfa.js": "e577194f2ed66a8bc97c4dfa8a5feca652bbc3479c65cbd44f25ba996c1ebeb8",
+      "platform/mail/ses-feedback.js": "0e00e8ef9aea26fca869070c950179b21fa7d7ea6895346811e245e2d465d922",
+      "platform/mail/smtp-transport-security.js": "95da9e89d6ac041ffe057c830a05200de8d36ed57b86d607ea40974b5c621f3f",
+      "platform/mail/store-threads.js": "1cb631f43b48faf52b1efd5fb7b1c0046b2fba21917e79c49efdfddeaefd6bdd",
+      "bootstrap/http.js": "150380c0a619a6a856fd6c15610a3b5bca01214a05762cfd0fe30f50f6bc5e9f",
+      "api/mcp.js": "81b2b71f5231cbc2f66d4fb0c1a782efe19aa83b5ba453407217542f4a6e7541",
+      "db/migrations/0230_agent_source_context.sql": "b73750435fd9d6f4254fcde47ce99d5a4b05d92976514d4033c8cdd81c9001a8"
+    }
+  },
+  "publicAssets": [
+    {
+      "asset": "index.html",
+      "currentBuildReferences": true,
+      "exactBytes": false,
+      "reason": "Cloudflare adds its analytics script, which remains blocked by CSP"
+    },
+    {
+      "asset": "agent-setup.md",
+      "matchesLocalBuild": true,
+      "sha256": "95ae6f8e90082970765413f85cad98bb26d67949f28f344b1d080ecc050c45b6"
+    },
+    {
+      "asset": "assets/shell-BXc4cjXn.js",
+      "matchesLocalBuild": true,
+      "sha256": "fb00ddfb8bd3334c035e15f629ab5d8b75de95410a6d2e1b4b71f341b6bf11c8"
+    },
+    {
+      "asset": "assets/mail-admin-COQbl1jk.js",
+      "matchesLocalBuild": true,
+      "sha256": "cde28d01d9a37808fa83667e11e78ba51ce7512ad22bcbb37a002892e143e542"
+    },
+    {
+      "asset": "assets/vault-worker-Dg7Lfv5j.js",
+      "matchesLocalBuild": true,
+      "sha256": "3b5b5c69a55d8f60800b13d85bc508c3f7543f6a7a7db0da8170a0da15654b0b"
+    }
+  ],
+  "findings": {
+    "1": "implemented and source/audit snapshots verified live",
+    "2": "implemented; tool/resource shared permission, budget, DLP and attributable audit regressions",
+    "3": "implemented; delivered code preserved on rejected/failed resend and slow delivery",
+    "4": "implemented; real HTTP failures satisfy shared envelope and unknown server errors are sanitized",
+    "5": "general browser review, safe previews, source context, REST/MCP links and notification destinations implemented; dedicated action queue and email reminders remain planned",
+    "6": "implemented; bounded actor-visible SQL pages, serialized UTF-8 bound and continuation",
+    "7": "native signed SNS adapter, correlation and provider configuration UI implemented; live AWS topic wiring remains unconfigured",
+    "8": "implemented; real reused SMTP connection cannot inherit forwarded sender identity",
+    "9": "implemented; measured quota or unsupported capacity",
+    "10": "planned feature remains incomplete; no broad desktop-sync claim",
+    "11": "source installation, SDK purpose and review links documented; public package distribution separate",
+    "12": "implemented; nonblocking current creation/editing panels retain validation, drafts and focus"
+  },
+  "notCheckedOrNotImplemented": [
+    "Live AWS SNS subscription and SES simulator bounce/complaint delivery; existing global SMTP fallback must first be configured as a tenant-managed provider with a secret handle.",
+    "Full desktop WebDAV MOVE/COPY/PROPPATCH, larger resumable streaming and real desktop/mobile interoperability.",
+    "Dedicated global action queue, persistent navigation count and approval email reminders.",
+    "New production image vulnerability scan/signing/promotion, fresh complete backup restore, host reboot recovery, load/soak and two-participant Meet/Jibri recording.",
+    "New external Gmail round trip; external regression actions were cancelled without sending.",
+    "Independent SDK/CLI publication and external hosted-agent connector certification."
+  ],
+  "logDigests": {
+    "typecheck-final-pass.log": "313f28dfa45f5407a550ecae71e6b097ff5d170c8c9b38e5703b9ffb45aeeec7",
+    "lint-final-pass.log": "43b089c7dad41b45dd10f257a22b08afe045c5f1a8f56bbb5c6aa60eefb2a3ed",
+    "test-final-pass.log": "55b169e6a182ab0621f05651d98e4589a0405d841e4f31bd889e3f68e4e7b6a2",
+    "build-final-pass.log": "51f4d3a4acedb1e22eff3b5a0d283a46e999ba3086b1a5bf294b12e220f6bc18",
+    "boundaries-final-pass.log": "744cf4cb2c890ca8c6d678677ae79b306ef057973b71fcf92306a10cad6fdbca",
+    "quality-dependencies-verified.log": "884fe842d2c52e06b1cc599c6261f5e8a0d609d895f62989ad7641d08a261bba",
+    "audit-prod-verified.log": "95181c0bab1ff2dc154ce1c28f181eda4d3a78b301d83f4543b989bdc7b854d8",
+    "playwright-final.log": "300d9eb01f94db80e0d70b378ff5deca1008d04c17d52a14ba0af3e490ea4966",
+    "postgres-verified.log": "12bf3fcd98343d1f40919ae37149277445114b49cc529eb05b47d601afbaf74e",
+    "panel-correction-tests.log": "086bf88d472aff72d98dbb729dbf806489f285b721849860ca8db66f9bb01fca",
+    "pending-final-focused.log": "51415d4d3d2a5db13db3282f17336a195ae9db24e4755b05f57c76f0d0d7e163",
+    "mfa-delayed-final.log": "b8fde8df9778b5d877e2ca2f254606ffbf060049cdb73045cb744d82ec97fa02",
+    "ses-pg.log": "a23b683e2b4ddfbc53d4708dfae24d610a3826737f1c2e81ffbf01123c3432f8",
+    "e2e-typecheck-final.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "e2e-lint.log": "186193bc26bf451bf6efda9d810839eee048e05df09f2e32491db313d852d4b6",
+    "contracts-budget.log": "07b867ac6346b4b9a477f91d27dfa92486952200d18232a7af9b55625614d105"
+  }
+}

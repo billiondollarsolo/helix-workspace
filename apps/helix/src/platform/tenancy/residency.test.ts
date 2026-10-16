@@ -14,6 +14,35 @@ const regional = {
 } as const;
 
 describe("deployment residency", () => {
+  it("allows global AI for development while retaining storage and Meet placement checks", () => {
+    const development = {
+      ...regional,
+      production: false,
+      ai: {
+        providers: [
+          {
+            id: "openai",
+            plugin: "openai-compatible",
+            config: { baseUrl: "https://api.openai.com/v1" },
+          },
+        ],
+      },
+      meetConfigured: true,
+      meetRegion: regional.region,
+    };
+    expect(() => {
+      assertDeploymentResidency(development);
+    }).not.toThrow();
+    expect(() => {
+      assertDeploymentResidency({ ...development, production: true });
+    }).toThrow(/AI plugin/u);
+    expect(() => {
+      assertDeploymentResidency({ ...development, storageRegion: "eu-central" });
+    }).toThrow(/object storage/u);
+    expect(() => {
+      assertDeploymentResidency({ ...development, meetRegion: "eu-central" });
+    }).toThrow(/Meet media/u);
+  });
   it("accepts one consistently placed regional deployment", () => {
     expect(() => {
       assertDeploymentResidency({

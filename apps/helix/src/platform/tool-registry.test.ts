@@ -1674,7 +1674,7 @@ describe("per-credential policy overrides (PRD §9.2)", () => {
     };
     const policyContext = {
       effectiveClassification: "confidential" as const,
-      sourceIds: ["mail-1"],
+      sourceIds: [],
       containsUntrustedContext: true,
       requestChannel: "mcp" as const,
     };
@@ -1689,7 +1689,7 @@ describe("per-credential policy overrides (PRD §9.2)", () => {
       toolId: "policy.explain-target",
       effectiveClassification: "confidential",
       requestChannel: "mcp",
-      sourceIds: ["mail-1"],
+      sourceIds: [],
       decision: { outcome: "allow-automation", reason: "automation_policy_match" },
     });
     await expect(

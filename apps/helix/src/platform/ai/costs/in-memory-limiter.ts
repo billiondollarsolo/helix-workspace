@@ -23,6 +23,7 @@ export class InMemoryAICostLimiter implements AICostLimiter {
   readonly #actorDailyCosts = new Map<string, number>();
   readonly #featureDailyCosts = new Map<string, number>();
   readonly #records: AICostRecord[] = [];
+  readonly #reservations = new Map<string, number>();
 
   async check(input: AICostLimitCheckInput): Promise<AICostLimitDecision> {
     const at = input.at ?? new Date();
@@ -37,7 +38,8 @@ export class InMemoryAICostLimiter implements AICostLimiter {
 
     if (
       budget.actorDailyUsdMicros !== null &&
-      actorUsed + estimatedCostUsdMicros > budget.actorDailyUsdMicros
+      (actorUsed >= budget.actorDailyUsdMicros ||
+        actorUsed + estimatedCostUsdMicros > budget.actorDailyUsdMicros)
     ) {
       return {
         allowed: false,
@@ -49,7 +51,8 @@ export class InMemoryAICostLimiter implements AICostLimiter {
 
     if (
       budget.featureDailyUsdMicros !== null &&
-      featureUsed + estimatedCostUsdMicros > budget.featureDailyUsdMicros
+      (featureUsed >= budget.featureDailyUsdMicros ||
+        featureUsed + estimatedCostUsdMicros > budget.featureDailyUsdMicros)
     ) {
       return {
         allowed: false,
@@ -59,6 +62,18 @@ export class InMemoryAICostLimiter implements AICostLimiter {
       };
     }
 
+    if (input.reservationId !== undefined) {
+      if (this.#reservations.has(input.reservationId)) throw new Error("Duplicate AI reservation");
+      this.#reservations.set(input.reservationId, estimatedCostUsdMicros);
+      this.#actorDailyCosts.set(
+        actorDailyKey(input.orgId, input.actorId, at),
+        actorUsed + estimatedCostUsdMicros,
+      );
+      this.#featureDailyCosts.set(
+        featureDailyKey(input.orgId, input.actorId, input.feature, at),
+        featureUsed + estimatedCostUsdMicros,
+      );
+    }
     return {
       allowed: true,
       usage,
@@ -72,10 +87,14 @@ export class InMemoryAICostLimiter implements AICostLimiter {
     const inputTokens = validateNonNegativeInteger("inputTokens", input.inputTokens ?? 0);
     const outputTokens = validateNonNegativeInteger("outputTokens", input.outputTokens ?? 0);
 
+    const reserved =
+      input.reservationId === undefined ? 0 : this.#reservations.get(input.reservationId);
+    if (reserved === undefined) throw new Error("AI reservation already settled or missing");
+    if (input.reservationId !== undefined) this.#reservations.delete(input.reservationId);
     const actorKey = actorDailyKey(input.orgId, input.actorId, at);
     const featureKey = featureDailyKey(input.orgId, input.actorId, input.feature, at);
-    const actorUsed = (this.#actorDailyCosts.get(actorKey) ?? 0) + costUsdMicros;
-    const featureUsed = (this.#featureDailyCosts.get(featureKey) ?? 0) + costUsdMicros;
+    const actorUsed = (this.#actorDailyCosts.get(actorKey) ?? 0) + costUsdMicros - reserved;
+    const featureUsed = (this.#featureDailyCosts.get(featureKey) ?? 0) + costUsdMicros - reserved;
     this.#actorDailyCosts.set(actorKey, actorUsed);
     this.#featureDailyCosts.set(featureKey, featureUsed);
 
@@ -161,6 +180,7 @@ export class InMemoryAICostLimiter implements AICostLimiter {
   reset(): void {
     this.#actorDailyCosts.clear();
     this.#featureDailyCosts.clear();
+    this.#reservations.clear();
     this.#records.splice(0, this.#records.length);
   }
 

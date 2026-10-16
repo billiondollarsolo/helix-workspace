@@ -139,7 +139,8 @@ export async function sendStreamWithRangeSupport(
     );
   }
   if (request.method === "HEAD") {
-    return reply.code(range === undefined ? 200 : 206).send();
+    // Fastify's automatic HEAD hook overwrites the size for undefined payloads.
+    return reply.code(range === undefined ? 200 : 206).send(Readable.from([]));
   }
   const body = await opts.open(range);
   if (body === null) return reply.code(404).send();

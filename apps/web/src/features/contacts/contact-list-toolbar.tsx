@@ -104,7 +104,7 @@ export function SelectionToolbar({
             })}
             <MenuSeparator />
             <MenuItem icon={<PlusIcon />} onSelect={onCreateLabel}>
-              Create label
+              Add label
             </MenuItem>
           </MenuContent>
         </Menu>

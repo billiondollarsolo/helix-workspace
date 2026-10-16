@@ -326,11 +326,13 @@ test("lets the organization ask for a person to confirm each request", async ({ 
   await expect(unattended).toBeChecked();
   await unattended.click();
   await expect(unattended).not.toBeChecked();
-  expect(vault.settingUpdates).toEqual([
-    {
-      features: { agent_secrets_unattended: false },
-      reason: "admin settings update: agent_secrets_unattended",
-    },
-  ]);
+  await expect
+    .poll(() => vault.settingUpdates)
+    .toEqual([
+      {
+        features: { agent_secrets_unattended: false },
+        reason: "admin settings update: agent_secrets_unattended",
+      },
+    ]);
   await audit(page);
 });

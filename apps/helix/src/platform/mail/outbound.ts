@@ -12,7 +12,12 @@ import {
   MailSendIdempotencyRequiredError,
 } from "./errors.js";
 import type { ClaimedOutboundMail, MailStore, OutboundMailQueueStore } from "./store.js";
-import { prepareOutboundEnvelope } from "./threading.js";
+import {
+  isSesSmtpHost,
+  smtpDeliveryMessageId,
+  outboundThreadReferences,
+  prepareOutboundEnvelope,
+} from "./threading.js";
 import {
   allowlistedOutboundHeaders,
   assertAllowlistedOutboundHeaders,
@@ -36,7 +41,7 @@ export interface OutboundMailConfig {
 }
 
 export interface OutboundMailTransport {
-  /** Repeated calls with the same key must represent one provider submission. */
+  /** Providers may use the key for deduplication; SMTP provides no such guarantee. */
   send(
     envelope: MailOutboundEnvelope,
     handoff: { readonly idempotencyKey: string },
@@ -137,11 +142,13 @@ export const MAIL_MAX_OUTBOUND_ATTACHMENT_BYTES = 18 * 1024 * 1024;
 
 export class NodemailerMailTransport implements OutboundMailTransport {
   private readonly transporter: Transporter<SMTPTransport.SentMessageInfo>;
+  private readonly providerRewritesMessageId: boolean;
 
   constructor(
     config: OutboundMailConfig | Transporter<SMTPTransport.SentMessageInfo>,
     private readonly resolveDkim?: DkimOptionsResolver,
   ) {
+    this.providerRewritesMessageId = !("sendMail" in config) && isSesSmtpHost(config.host);
     this.transporter =
       "sendMail" in config
         ? config
@@ -152,6 +159,9 @@ export class NodemailerMailTransport implements OutboundMailTransport {
             // `secure: false` selects explicit STARTTLS. Require the upgrade so
             // an on-path peer cannot downgrade production mail to plaintext.
             requireTLS: config.requireTls ?? config.secure !== true,
+            connectionTimeout: 10_000,
+            greetingTimeout: 10_000,
+            socketTimeout: 30_000,
             ...(config.user === undefined
               ? {}
               : {
@@ -163,40 +173,60 @@ export class NodemailerMailTransport implements OutboundMailTransport {
           });
   }
 
+  async verifyConnection(): Promise<boolean> {
+    return this.transporter.verify();
+  }
+
   async send(
     envelope: MailOutboundEnvelope,
     handoff: { readonly idempotencyKey: string },
   ): Promise<MailOutboundDeliveryResult> {
     const dkim = await this.resolveDkim?.(envelope.from.address);
-    const info = await this.transporter.sendMail({
-      from: nodemailerMailbox(envelope.from),
-      to: envelope.to.map(nodemailerMailbox),
-      cc: envelope.cc.map(nodemailerMailbox),
-      bcc: envelope.bcc.map(nodemailerMailbox),
-      ...(envelope.replyTo === undefined ? {} : { replyTo: nodemailerMailbox(envelope.replyTo) }),
-      ...(envelope.envelopeRecipients === undefined
-        ? {}
-        : { envelope: { from: envelope.from.address, to: [...envelope.envelopeRecipients] } }),
-      subject: envelope.subject,
-      messageId: envelope.messageId,
-      inReplyTo: envelope.inReplyTo,
-      references: envelope.references === undefined ? undefined : [...envelope.references],
-      headers: {
-        ...allowlistedOutboundHeaders(envelope.headers),
-        "X-Helix-Idempotency-Key": handoff.idempotencyKey,
-      },
-      text: envelope.text,
-      html: envelope.html,
-      attachments: envelope.attachments.map((attachment) => ({
-        filename: attachment.filename,
-        contentType: attachment.contentType,
-        ...(attachment.contentId === undefined ? {} : { cid: attachment.contentId }),
-        content: attachmentContent(attachment.content),
-      })),
-      ...(dkim === undefined || dkim === null ? {} : { dkim }),
-    });
+    const references = outboundThreadReferences(envelope, this.providerRewritesMessageId);
+    const info = await this.transporter
+      .sendMail({
+        from: nodemailerMailbox(envelope.from),
+        to: envelope.to.map(nodemailerMailbox),
+        cc: envelope.cc.map(nodemailerMailbox),
+        bcc: envelope.bcc.map(nodemailerMailbox),
+        ...(envelope.replyTo === undefined ? {} : { replyTo: nodemailerMailbox(envelope.replyTo) }),
+        ...(envelope.envelopeRecipients === undefined
+          ? {}
+          : { envelope: { from: envelope.from.address, to: [...envelope.envelopeRecipients] } }),
+        subject: envelope.subject,
+        messageId: envelope.messageId,
+        inReplyTo: envelope.inReplyTo,
+        references: references === undefined ? undefined : [...references],
+        headers: {
+          ...allowlistedOutboundHeaders(envelope.headers),
+          "X-Helix-Idempotency-Key": handoff.idempotencyKey,
+        },
+        text: envelope.text,
+        html: envelope.html,
+        attachments: envelope.attachments.map((attachment) => ({
+          filename: attachment.filename,
+          contentType: attachment.contentType,
+          ...(attachment.contentId === undefined ? {} : { cid: attachment.contentId }),
+          content: attachmentContent(attachment.content),
+        })),
+        ...(dkim === undefined || dkim === null ? {} : { dkim }),
+      })
+      .catch((error: unknown) => {
+        const failure = error as { code?: string; responseCode?: number };
+        if (
+          failure.responseCode === undefined &&
+          ["ETIMEDOUT", "ECONNRESET", "ESOCKET"].includes(failure.code ?? "")
+        ) {
+          throw new MailDeliveryError(
+            "SMTP delivery outcome is unknown. Check provider delivery evidence before replaying; replay may send a duplicate.",
+            false,
+            { cause: error },
+          );
+        }
+        throw error;
+      });
     return {
-      providerMessageId: info.messageId,
+      providerMessageId: smtpDeliveryMessageId(info, this.providerRewritesMessageId),
       deliveryMetadata: normalizeDeliveryMetadata(info),
     };
   }
@@ -456,6 +486,7 @@ export class OutboundMailDispatcher {
                 recordDelivery("error");
                 return await this.runForTenant(outbound.orgId, () =>
                   this.store.markOutboundDeadLettered({
+                    loadedEnvelope: outbound.envelope,
                     id: outbound.id,
                     leaseToken: outbound.leaseToken,
                     lastError: new MailProviderError(message, error).message,
@@ -473,6 +504,7 @@ export class OutboundMailDispatcher {
               recordDelivery("retry");
               return await this.runForTenant(outbound.orgId, () =>
                 this.store.markOutboundRetry({
+                  loadedEnvelope: outbound.envelope,
                   id: outbound.id,
                   leaseToken: outbound.leaseToken,
                   nextAttemptAt: new Date(this.now().getTime() + delay),
@@ -484,6 +516,7 @@ export class OutboundMailDispatcher {
             recordDelivery("success");
             return await this.runForTenant(outbound.orgId, () =>
               this.store.markOutboundSent({
+                loadedEnvelope: outbound.envelope,
                 id: outbound.id,
                 leaseToken: outbound.leaseToken,
                 providerMessageId: delivery.providerMessageId,

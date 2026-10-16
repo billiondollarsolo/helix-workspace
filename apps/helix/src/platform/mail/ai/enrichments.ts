@@ -15,6 +15,7 @@ import type {
 interface MailEntityExtractEnrichmentOptions {
   readonly store: MailEnrichmentProjectionStore;
   readonly ai: AICapability;
+  readonly enabled?: (orgId: string) => Promise<boolean>;
 }
 
 interface MailClassificationEnrichmentOptions {
@@ -26,6 +27,7 @@ interface MailClassificationEnrichmentOptions {
 export interface MailEnrichmentRegistrationOptions {
   readonly store: MailEnrichmentProjectionStore;
   readonly ai?: AICapability | undefined;
+  readonly enabled?: (orgId: string) => Promise<boolean>;
   readonly entityExtract?: boolean | undefined;
   readonly classification?: boolean | undefined;
   readonly classificationPolicy?: ClassificationPolicy | undefined;
@@ -41,7 +43,11 @@ export function registerMailEnrichments(
       throw new TypeError("mail.entity-extract enrichment requires an AI capability");
     }
     worker.register(
-      createMailEntityExtractEnrichmentHandler({ store: options.store, ai: options.ai }),
+      createMailEntityExtractEnrichmentHandler({
+        store: options.store,
+        ai: options.ai,
+        ...(options.enabled === undefined ? {} : { enabled: options.enabled }),
+      }),
     );
   }
 
@@ -69,7 +75,16 @@ function createMailEntityExtractEnrichmentHandler(
         return skipped("mail.entity-extract", event, "message not found");
       }
 
-      const classification = message.classification ?? "standard";
+      if (options.enabled !== undefined && !(await options.enabled(message.orgId)))
+        return skipped("mail.entity-extract", event, "mail AI assistance is disabled");
+      const { classification } = deriveClassification({
+        explicit: message.classification,
+        labels: message.labels,
+        path: message.folder,
+        content: `${message.subject}
+${message.body}`,
+        scanContent: true,
+      });
       const response = await options.ai.chat(
         {
           feature: "mail.entity-extract",
@@ -87,6 +102,7 @@ function createMailEntityExtractEnrichmentHandler(
           ],
         },
         {
+          actor: { id: message.ownerActorId, orgId: message.orgId, type: "user" },
           feature: "mail.entity-extract",
           classification,
         },
@@ -134,7 +150,8 @@ function createMailClassificationEnrichmentHandler(
           explicit: message.classification,
           labels: message.labels,
           path: message.folder,
-          content: message.body,
+          content: `${message.subject}
+${message.body}`,
           scanContent: options.scanContent ?? true,
         },
         options.policy,

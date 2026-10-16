@@ -1,3 +1,6 @@
+import type * as OutboundHttp from "../outbound-http.js";
+import { sign } from "node:crypto";
+import { createTestCertificateAuthority } from "../../test-support/tls-fixtures.js";
 import fastify from "fastify";
 import { Readable } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
@@ -18,7 +21,95 @@ const orgB = "22222222-2222-4222-8222-222222222222";
 const actor = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const now = new Date("2026-07-28T12:00:00.000Z");
 
+const sesFetch = vi.hoisted(() => vi.fn<typeof fetch>());
+vi.mock("../outbound-http.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof OutboundHttp>()),
+  createOutboundHttpClient: () => sesFetch,
+}));
+
 describe("managed provider webhook route", () => {
+  it("accepts native signed SES notifications without a shared webhook secret and rejects another tenant", async () => {
+    const authority = createTestCertificateAuthority();
+    const cert = authority.issue(["sns.us-east-2.amazonaws.com"]);
+    const providers = new InMemoryOutboundProviderStore();
+    const topic = "arn:aws:sns:us-east-2:123456789012:helix-feedback";
+    const provider = await providers.createProvider({
+      orgId: orgA,
+      name: "SES",
+      secretRef: null,
+      webhookSecretRef: null,
+      kind: "ses",
+      enabled: true,
+      isDefault: true,
+      config: { host: "email-smtp.us-east-2.amazonaws.com", feedbackTopicArn: topic },
+      createdBy: actor,
+    });
+    const deliveryStore = new InMemoryMailDeliveryEventStore([
+      { id: "outbound", orgId: orgA, providerId: provider.id, providerMessageId: "ses-id" },
+    ]);
+    const resolveSecret = vi.fn();
+    const app = fastify();
+    try {
+      await registerMailProviderWebhookRoutes(app, {
+        providerStore: providers,
+        deliveryStore,
+        secrets: { resolveSecret },
+      });
+      sesFetch.mockResolvedValue(new Response(cert.certificatePem));
+      const envelope = {
+        Type: "Notification",
+        Message: JSON.stringify({
+          notificationType: "Bounce",
+          mail: { messageId: "ses-id" },
+          bounce: {
+            bounceType: "Permanent",
+            timestamp: new Date().toISOString(),
+            bouncedRecipients: [{ emailAddress: "recipient@example.test" }],
+          },
+        }),
+        MessageId: "ses-notification",
+        Timestamp: new Date().toISOString(),
+        TopicArn: topic,
+        SignatureVersion: "2",
+        SigningCertURL: "https://sns.us-east-2.amazonaws.com/SimpleNotificationService-fixture.pem",
+      };
+      const fields = envelope as Record<string, string>;
+      const Signature = sign(
+        "RSA-SHA256",
+        Buffer.from(
+          ["Message", "MessageId", "Timestamp", "TopicArn", "Type"]
+            .map((key) => `${key}\n${fields[key] ?? ""}\n`)
+            .join(""),
+        ),
+        cert.privateKeyPem,
+      ).toString("base64");
+      const payload = JSON.stringify({ ...envelope, Signature });
+      const send = (org = orgA, body = payload) =>
+        app.inject({
+          method: "POST",
+          url: `/webhooks/mail/providers/${org}/${provider.id}`,
+          headers: { "content-type": "text/plain; charset=UTF-8" },
+          payload: body,
+        });
+      const response = await send();
+      expect(response.statusCode).toBe(202);
+      expect(response.json()).toMatchObject({
+        events: [{ duplicate: false, outboundMatched: true, suppressed: true }],
+      });
+      sesFetch.mockResolvedValue(new Response(cert.certificatePem));
+      expect((await send()).json()).toMatchObject({ events: [{ duplicate: true }] });
+      expect((await send(orgB)).statusCode).toBe(404);
+      expect(
+        (await send(orgA, JSON.stringify({ ...envelope, Signature, TopicArn: topic + "-wrong" })))
+          .statusCode,
+      ).toBe(401);
+      expect(resolveSecret).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+      authority.dispose();
+    }
+  });
+
   it("stops buffering as soon as the raw-body limit is exceeded", async () => {
     const payload = Readable.from([Buffer.alloc(700), Buffer.alloc(700), Buffer.alloc(700)]);
 

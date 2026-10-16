@@ -38,7 +38,14 @@ describe("Jitsi JWT TTL (MT.3)", () => {
       subject: "meet.helix.test",
       room: "launch-review",
       now,
-      user: { id: "actor-1", name: "Ada", email: "ada@example.com", moderator: true },
+      user: {
+        id: "actor-1",
+        name: "Ada",
+        email: "ada@example.com",
+        moderator: true,
+        helixOrgId: "org-1",
+        helixRoomId: "room-1",
+      },
     });
 
     expect(minted.ttlSeconds).toBe(DEFAULT_JITSI_JWT_TTL_SECONDS);
@@ -53,7 +60,11 @@ describe("Jitsi JWT TTL (MT.3)", () => {
       readonly context: { readonly user: { readonly id: string } };
     };
     expect(payload.room).toBe("launch-review");
-    expect(payload.context.user.id).toBe("actor-1");
+    expect(payload.context.user).toMatchObject({
+      id: "actor-1",
+      helixOrgId: "org-1",
+      helixRoomId: "room-1",
+    });
     expect(payload.exp - payload.iat).toBe(DEFAULT_JITSI_JWT_TTL_SECONDS);
     // Token body must not embed the secret.
     expect(minted.token).not.toContain("test-secret");

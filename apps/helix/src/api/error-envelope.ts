@@ -1,6 +1,6 @@
 import {
   errorCodeForStatus as contractErrorCodeForStatus,
-  type ErrorCode,
+  errorCodeSchema,
   type ErrorEnvelope,
 } from "@helix/contracts";
 import type {
@@ -27,13 +27,18 @@ export function buildErrorEnvelope(input: {
   readonly code?: string;
   readonly details?: Record<string, unknown>;
 }): HelixErrorEnvelope {
-  const code = (input.code ?? errorCodeForStatus(input.statusCode)) as ErrorCode;
+  const parsed = errorCodeSchema.safeParse(input.code);
+  const code = parsed.success ? parsed.data : contractErrorCodeForStatus(input.statusCode);
+  const details = {
+    ...input.details,
+    ...(!parsed.success && input.code !== undefined ? { domainCode: input.code } : {}),
+  };
   return {
     error: {
       code,
       message: input.message,
       traceId: input.traceId,
-      ...(input.details === undefined ? {} : { details: input.details }),
+      ...(Object.keys(details).length === 0 ? {} : { details }),
     },
   };
 }

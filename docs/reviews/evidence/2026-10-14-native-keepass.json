@@ -1,0 +1,155 @@
+{
+  "date": "2026-10-14",
+  "environment": "development",
+  "deployment": {
+    "deployed": true,
+    "images": {
+      "helix-migrate": "helix/workspace-development:native-keepass-r4-bind",
+      "helix": "helix/workspace-development:native-keepass-r4-bind",
+      "caddy": "helix/workspace-web-development:native-keepass-r4-final"
+    },
+    "previousImages": {
+      "helix-migrate": "helix/workspace-development:native-keepass-r4-bind",
+      "helix": "helix/workspace-development:native-keepass-r4-bind",
+      "caddy": "helix/workspace-web-development:native-keepass-r4-bind"
+    },
+    "ready": true,
+    "legacyVaultPreserved": true,
+    "apiUnchangedInFinalWebDeployment": true
+  },
+  "dependencies": {
+    "kdbxweb": "2.1.1",
+    "hash-wasm": "4.12.0",
+    "scopedOverrides": {
+      "@xmldom/xmldom": "0.8.15",
+      "fflate": "0.8.3"
+    },
+    "newDependencyAuditAdvisories": 0,
+    "existingModerateAuditAdvisories": 7,
+    "licensePolicyPassed": true
+  },
+  "format": {
+    "database": "KDBX 4",
+    "kdf": "Argon2id",
+    "memoryMiB": 32,
+    "iterations": 3,
+    "parallelism": 2,
+    "compression": "none",
+    "maxBytes": 1048576
+  },
+  "checks": {
+    "format": true,
+    "typecheck": true,
+    "lint": true,
+    "unitTestsPassed": 5514,
+    "unitTestsSkipped": 393,
+    "build": true,
+    "boundaries": true,
+    "e2eTypecheck": true,
+    "e2eLint": true,
+    "browserChecksPassed": 12,
+    "realPostgresIsolationAndCasChecks": 2,
+    "independentPyKeePassRoundTrip": true,
+    "ownerBindingChecksPassed": true,
+    "workerFailureClearsDecryptedFields": true
+  },
+  "liveBrowser": {
+    "adminProvisionedFixtureOnly": true,
+    "creation": true,
+    "loginSave": true,
+    "edit": true,
+    "secureNoteSave": true,
+    "wrongPasswordDenied": true,
+    "correctUnlock": true,
+    "unicodeRecovered": true,
+    "masterInputsCleared": true,
+    "encryptedWireOutput": true,
+    "previousRevision": true,
+    "revokedSessionDenied": true,
+    "finalOwnerBoundCreateAndSave": true,
+    "wrongOwnerGetDenied": true,
+    "wrongOwnerPutDenied": true,
+    "wrongOwnerErrorExplainsIdentity": true
+  },
+  "cleanup": {
+    "fixtureDisabled": true,
+    "sessionsRevoked": true,
+    "testVaultRemoved": true,
+    "vaultVersion": 4,
+    "encryptedAtRest": true,
+    "byteSize": 5973,
+    "ownerUntouched": true
+  },
+  "atlas": {
+    "atlasPlatformAccess": true,
+    "personalVaultDeniedToAtlas": true,
+    "vaultStatus": 401
+  },
+  "assets": {
+    "publicAssetsVerified": 213,
+    "exactBytes": true,
+    "workerPresent": true,
+    "indexHtmlExcluded": "Cloudflare inserts an analytics script; current CSP does not authorize it"
+  },
+  "indexSourceMatches": true,
+  "storage": {
+    "separateFromDrive": true,
+    "actorAndTenantRls": true,
+    "humanSessionOnly": true,
+    "conditionalWrites": true,
+    "currentAndPreviousEncryptedRevisions": true,
+    "noPlaintextAuditPayloads": true,
+    "ownerBindingHeaderRequired": "X-Helix-Vault-Owner"
+  },
+  "limits": [
+    "No sharing",
+    "No file import",
+    "No master-password change",
+    "No key files",
+    "No automatic merge",
+    "No direct external-client synchronization",
+    "No new off-server archive or restore drill",
+    "Development deployment, not production promotion"
+  ],
+  "updatedAt": "2026-10-15",
+  "initialDeployment": {
+    "deployed": true,
+    "images": {
+      "helix-migrate": "helix/workspace-development:native-keepass-r4",
+      "helix": "helix/workspace-development:native-keepass-r4",
+      "caddy": "helix/workspace-web-development:native-keepass-r4"
+    },
+    "previousImages": {
+      "helix-migrate": "ghcr.io/billiondollarsolo/helix-workspace@sha256:753736626cceab1bb12e81d5d4bf74eaa776480b604e3b45a0d362a189018533",
+      "helix": "helix/workspace-development:agent-context-docs-r3",
+      "caddy": "helix/workspace-web-development:passwords-sidebar-r3"
+    },
+    "ready": true,
+    "legacyVaultPreserved": true
+  },
+  "bindingFixtureCleanup": {
+    "fixtureDisabled": true,
+    "sessionsRevoked": true,
+    "testVaultRemoved": true,
+    "vaultVersion": 2,
+    "encryptedAtRest": true,
+    "byteSize": 4037,
+    "ownerUntouched": true
+  },
+  "bindingDeployment": {
+    "deployed": true,
+    "images": {
+      "helix-migrate": "helix/workspace-development:native-keepass-r4-bind",
+      "helix": "helix/workspace-development:native-keepass-r4-bind",
+      "caddy": "helix/workspace-web-development:native-keepass-r4-bind"
+    },
+    "previousImages": {
+      "helix-migrate": "helix/workspace-development:native-keepass-r4",
+      "helix": "helix/workspace-development:native-keepass-r4",
+      "caddy": "helix/workspace-web-development:native-keepass-r4"
+    },
+    "ready": true,
+    "legacyVaultPreserved": true
+  },
+  "finalPublicSignInRedirectChecked": true
+}

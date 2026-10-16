@@ -1013,6 +1013,14 @@
     border-radius: 999px;
   }
 
+  .app-unread-badge {
+    font-variant-numeric: tabular-nums;
+    top: 0;
+    right: 0;
+    border-color: var(--rail-bg);
+    pointer-events: none;
+  }
+
   /* Placeholders had no rule at all, so every input used the engine's default
    grey — 4.22:1 against .search's --surface-2 background in Chrome, and a
    different value in every other engine. Bound to the token instead, which is
@@ -2995,6 +3003,11 @@
    Every rule below replaces something that was written three to five times per
    section, or an exported CSSProperties object that could not be themed. ---- */
 
+  /* Draft panels must remain above the full-page settings surface. */
+  .form-panel {
+    --sheet-layer: 400;
+  }
+
   .admin-field {
     display: grid;
     gap: 4px;
@@ -3381,9 +3394,24 @@
     border-top: 1px solid var(--border);
   }
 
+  .admin-table-mobile-sort,
+  .admin-table-mobile-caption {
+    display: none;
+  }
+
   /* Tables become a list of cards on phones: one card per row, each value
    under its column caption (`data-label`), no sideways scrolling. */
   @media (max-width: 640px) {
+    .admin-page .admin-table-mobile-sort {
+      display: grid;
+      margin-block: 8px;
+    }
+    .admin-page .admin-table-mobile-caption {
+      display: inline;
+    }
+    .admin-page .admin-table-sort {
+      display: none;
+    }
     .admin-page table,
     .admin-page tbody,
     .admin-page tr,
@@ -3577,39 +3605,6 @@
   .webhooks-form-actions {
     margin-top: 4px;
   }
-  /* Tables. The wrapper scrolls so a long endpoint URL never widens the page. */
-  .webhooks-table-wrap {
-    overflow-x: auto;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-  }
-  .webhooks-table-wrap:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-  }
-  .webhooks-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: var(--text-meta);
-  }
-  .webhooks-table th,
-  .webhooks-table td {
-    padding: 8px 10px;
-    text-align: left;
-    border-bottom: 1px solid var(--border);
-    white-space: nowrap;
-  }
-  .webhooks-table th {
-    font-size: var(--text-caption);
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--text-3);
-    background: var(--surface-2);
-  }
-  .webhooks-table tbody tr:last-child td {
-    border-bottom: 0;
-  }
   /* The delivery-detail pane renders label/value pairs as span + code, not as a
    table row. Only the `td` variant below was styled, so every pair rendered as
    one run-together string — "Directionoutbound", "Errorfetch failed". */
@@ -3636,16 +3631,6 @@
     overflow-wrap: anywhere;
   }
 
-  .webhooks-detail-row td {
-    white-space: normal;
-    background: var(--surface-2);
-    color: var(--text-2);
-  }
-  .webhooks-empty-cell {
-    padding: 28px 12px;
-    text-align: center;
-    color: var(--text-3);
-  }
   .webhooks-url {
     font-family: "Geist Mono Variable", "Geist Mono", ui-monospace, monospace;
     font-size: var(--text-caption);
@@ -4586,6 +4571,7 @@
     }
 
     .bottom-nav-item {
+      position: relative;
       display: flex;
       flex: 1 1 0;
       flex-direction: column;
@@ -4601,6 +4587,12 @@
       background: none;
       border: 0;
       cursor: pointer;
+    }
+
+    .bottom-nav-item .app-unread-badge {
+      top: 2px;
+      right: calc(50% - 30px);
+      border-color: var(--surface);
     }
 
     .bottom-nav-pill {

@@ -2,9 +2,8 @@
 export const PASSWORDS_APP_FLAG = "passwords_app";
 
 /**
- * The optional password manager is a separate service with its own accounts;
- * the workspace only links to it. It is offered to people when the deployment
- * installed it (`HELIX_PASSWORDS_URL`) and their organization turned it on.
+ * Native personal vaults are bundled with Helix and enabled by organization policy.
+ * HELIX_PASSWORDS_URL preserves access to an existing external vault during migration.
  */
 export interface PasswordsStatus {
   /** The deployment runs a password manager. */
@@ -13,12 +12,12 @@ export interface PasswordsStatus {
   readonly enabled: boolean;
   /** Where to open it. Present only when installed and enabled. */
   readonly url: string | null;
+  readonly native: boolean;
 }
 
 export function resolvePasswordsStatus(
   publicUrl: string | undefined,
   enabled: boolean,
 ): PasswordsStatus {
-  const installed = publicUrl !== undefined;
-  return { installed, enabled, url: installed && enabled ? publicUrl : null };
+  return { installed: true, enabled, native: true, url: enabled ? (publicUrl ?? null) : null };
 }

@@ -285,7 +285,8 @@ describe("GET /api/admin/mail/providers", () => {
           kind: "ses",
           isDefault: true,
           enabled: true,
-          config: { apiKeyRef: "env:SES_KEY", region: "us-east-1" },
+          config: { host: "email-smtp.us-east-1.amazonaws.com", region: "us-east-1" },
+          secretRef: "ses-primary",
         },
       ],
     };

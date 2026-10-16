@@ -294,18 +294,18 @@ export function useJitsiCall({
             // We render our own bottom bar — empty toolbarButtons hides
             // the Jitsi-native toolbar entirely (modern Jitsi spelling).
             toolbarButtons: [],
-            // Chrome we never want — we render our own header.
             hideConferenceSubject: true,
             hideConferenceTimer: true,
             hideParticipantsStats: true,
             disableSelfView: false,
             disableInviteFunctions: true,
             disableRecordAudioNotification: false,
-            // Keyboard shortcuts conflict with the host page.
             disableShortcuts: true,
           },
           interfaceConfigOverwrite: {
-            // Older Jitsi versions still respect these.
+            APP_NAME: "Helix Meet",
+            PROVIDER_NAME: "Helix Workspace",
+            SHOW_POWERED_BY: false,
             TOOLBAR_BUTTONS: [],
             SHOW_JITSI_WATERMARK: false,
             SHOW_BRAND_WATERMARK: false,

@@ -1,0 +1,132 @@
+{
+  "environment": "development",
+  "productionCertification": false,
+  "agent": "Atlas",
+  "agentPreserved": true,
+  "temporaryWriteCredentialRevoked": true,
+  "checks": [
+    {
+      "name": "Full AI buffered generation through public MCP",
+      "passed": true,
+      "httpStatus": 200,
+      "responseChars": 6,
+      "safeError": null
+    },
+    {
+      "name": "Full AI streaming generation through public REST",
+      "passed": true,
+      "httpStatus": 200,
+      "eventCount": 1
+    },
+    {
+      "name": "Full AI messages persist after independent MCP read",
+      "passed": true,
+      "messageCount": 4
+    },
+    {
+      "name": "Full AI conversation appears with saved reply preview",
+      "passed": true
+    },
+    {
+      "name": "Full AI temporary credential revoked",
+      "passed": true,
+      "httpStatus": 401
+    },
+    {
+      "name": "Full persistent Atlas remains active",
+      "passed": true,
+      "httpStatus": 200
+    },
+    {
+      "name": "Full HTTPS workspace.helixapps.si",
+      "passed": true,
+      "httpStatus": 200
+    },
+    {
+      "name": "Full HTTPS meet.workspace.helixapps.si",
+      "passed": true,
+      "httpStatus": 200
+    },
+    {
+      "name": "Full HTTPS passwords.workspace.helixapps.si",
+      "passed": true,
+      "httpStatus": 200
+    },
+    {
+      "name": "Full workspace origin denied",
+      "passed": true,
+      "httpStatus": 403
+    },
+    {
+      "name": "Full workspace origin denied with spoofed forwarded header",
+      "passed": true,
+      "httpStatus": 403
+    },
+    {
+      "name": "Full Assistant runtime available",
+      "passed": true
+    },
+    {
+      "name": "Full read assistant.models.list",
+      "passed": true,
+      "httpStatus": 200
+    },
+    {
+      "name": "Full read meet.status",
+      "passed": true,
+      "httpStatus": 200
+    },
+    {
+      "name": "Full read meet.room.list",
+      "passed": true,
+      "httpStatus": 200
+    }
+  ],
+  "configuredAiGeneration": true,
+  "liveMeetTwoParticipantMedia": false,
+  "recordingInstalled": false,
+  "vaultSignupTested": false,
+  "turnChecks": [
+    {
+      "mode": "udp",
+      "unauthenticatedAllocationDenied": true,
+      "authenticatedAllocationSucceeded": true,
+      "allocationReleased": true,
+      "trustedTls": false
+    },
+    {
+      "mode": "tls",
+      "unauthenticatedAllocationDenied": true,
+      "authenticatedAllocationSucceeded": true,
+      "allocationReleased": true,
+      "trustedTls": true
+    }
+  ],
+  "publicAssets": {
+    "assets": 207,
+    "failed": [],
+    "passed": true
+  },
+  "verification": {
+    "format": true,
+    "typecheck": true,
+    "lint": true,
+    "test": true,
+    "testsPassed": 5508,
+    "testsSkipped": 391,
+    "build": true,
+    "boundaries": true,
+    "relevantPlaywrightCasesPassed": 35,
+    "accessibilityChecksIncluded": true,
+    "browserBackend": "fixture"
+  },
+  "initialDiagnosticFailuresBeforeCorrection": [
+    {
+      "name": "Full AI buffered chat succeeds through live MCP",
+      "passed": false,
+      "httpStatus": 200,
+      "error": "Agent tool invocation limit exceeded: requests_per_day"
+    }
+  ],
+  "diagnosticFailureResolution": "A temporary three-request ceiling applied to Atlas actor-wide usage. The bounded own-conversation policy was corrected; public MCP generation then passed. Counters and the standing Atlas credential were preserved."
+}

@@ -1,6 +1,7 @@
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PostgresMailStore } from "../mail/index.js";
+import { PostgresDomainsStore } from "./domains.js";
 
 const databaseUrl = process.env.HELIX_MIGRATION_DATABASE_URL ?? process.env.DATABASE_URL;
 const orgA = "da260000-0000-4000-8000-000000000001";
@@ -76,7 +77,13 @@ describe("multi-domain aggregate lifecycle", { skip: databaseUrl === undefined }
     ).rejects.toMatchObject({ code: "23505" });
 
     for (const id of [alpha, beta, alias]) {
-      await sql`select helix_record_domain_verification(${orgA}, ${id}, true, ${actorA})`;
+      const domain = await new PostgresDomainsStore(sql).recordDomainVerification({
+        orgId: orgA,
+        id,
+        verified: true,
+        actorId: actorA,
+      });
+      expect(domain?.verificationAttempts).toBe(1);
       const [verified] = await sql<
         {
           readonly identity_enabled: boolean;

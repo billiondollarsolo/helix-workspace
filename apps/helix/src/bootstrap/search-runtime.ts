@@ -1,5 +1,7 @@
+import { mailRecordToIndexDocument } from "../platform/mail/search/indexer.js";
+import type { MailIndexReference } from "../platform/search/types.js";
+import { loadEffectiveTenantConfig, withTenantPostgresContext } from "../platform/tenancy/index.js";
 import { envFlag } from "../bootstrap/env.js";
-import { createSearchEngine } from "../bootstrap/search.js";
 import { EnrichmentWorker } from "../platform/ai/index.js";
 import { SemanticSearchRuntime } from "../platform/search/semantic-runtime.js";
 import { resolveSearchSourceDocument } from "../platform/search/source-documents.js";
@@ -44,7 +46,7 @@ export async function installSearch(context: Awaited<ReturnType<typeof installSt
     mailStore,
     driveStore,
   } = context;
-  const searchEngine = await createSearchEngine(bootEnv.HELIX_REGION);
+  const searchEngine = context.searchEngine;
 
   const semanticSearchRuntime = new SemanticSearchRuntime({
     sql,
@@ -93,7 +95,9 @@ export async function installSearch(context: Awaited<ReturnType<typeof installSt
             ),
         });
 
-  const searchSources = createPostgresSearchReindexSources(sql);
+  const searchSources = createPostgresSearchReindexSources(sql, {
+    storageResolver: context.driveStorageResolver,
+  });
 
   const searchDurabilityStore =
     searchEngine === undefined ? undefined : new PostgresSearchDurabilityStore(sql);
@@ -126,12 +130,19 @@ export async function installSearch(context: Awaited<ReturnType<typeof installSt
           batchSize: bootEnv.SEARCH_REINDEX_BATCH_SIZE,
         });
 
+  const loadMail = (reference: MailIndexReference) =>
+    withTenantPostgresContext(sql, { orgId: reference.orgId }, async () => {
+      const record = await mailStore.getMailSearchRecordForIndexing(reference);
+      return record === null ? null : mailRecordToIndexDocument(record);
+    });
+
   const searchMutationWorker =
     searchDurabilityStore === undefined ||
     runtimeSearchEngine === undefined ||
     searchEngine === undefined
       ? undefined
       : new SearchMutationWorker({
+          loadMail,
           store: searchDurabilityStore,
           engine: runtimeSearchEngine,
           shadowEngine: (uid) => searchEngine.forIndex(uid),
@@ -144,6 +155,7 @@ export async function installSearch(context: Awaited<ReturnType<typeof installSt
     searchDurabilityStore === undefined || searchEngine === undefined
       ? undefined
       : new SearchShadowReindexWorker({
+          loadMail,
           store: searchDurabilityStore,
           sources: searchSources,
           shadowEngine: (uid) => {
@@ -245,6 +257,9 @@ export async function installSearch(context: Awaited<ReturnType<typeof installSt
     registerMailEnrichments(enrichmentWorker, {
       store: mailStore,
       ai: assistantAi,
+      enabled: async (orgId) =>
+        (await loadEffectiveTenantConfig({ orgs: context.orgStore }, orgId))?.features
+          .mail_ai_assistance === true,
       entityExtract: envFlag("MAIL_ENTITY_EXTRACT_ENRICHMENT", true),
       classification: envFlag("MAIL_CLASSIFICATION_ENRICHMENT", true),
     });

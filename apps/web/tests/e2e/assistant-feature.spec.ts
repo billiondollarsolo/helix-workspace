@@ -23,6 +23,11 @@ test.describe("/assistant feature flow", () => {
     await page.goto("/assistant");
 
     await expect(page.getByRole("main", { name: "Helix AI" })).toBeVisible();
+    await expect(
+      page
+        .getByRole("navigation", { name: "Apps" })
+        .getByRole("link", { name: "Helix AI", exact: true }),
+    ).toBeVisible();
 
     const composer = page.getByRole("textbox", { name: "Message Helix AI" });
     await composer.fill(prompt);
@@ -33,7 +38,7 @@ test.describe("/assistant feature flow", () => {
     await page.getByRole("button", { name: "Send message" }).click();
 
     // The user's prompt is echoed into the conversation regardless of backend.
-    // The composer keeps the draft until the send settles, so scope to the conversation.
+    // The composer clears during sending and restores the draft if the request fails.
     const conversation = page.getByTestId("assistant-conversation");
     await expect(conversation.getByText(prompt, { exact: true })).toBeVisible();
 

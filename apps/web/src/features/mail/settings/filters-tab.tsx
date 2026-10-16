@@ -31,7 +31,7 @@ function FilterList() {
   const createButton = (
     <Button type="button" size="sm" onClick={() => openFilterDialog()}>
       <Plus aria-hidden="true" />
-      Create a new filter
+      Add filter
     </Button>
   );
 

@@ -1,3 +1,4 @@
+import { presenceLabel, presenceQueryOptions } from "@/features/presence/presence";
 /* Chat surface: navigation (New chat, Home, Mentions, direct messages and
    spaces), the open view, and the search results panel. On phones the
    conversation list comes first and a conversation opens full screen. */
@@ -64,9 +65,29 @@ export function ChatShell() {
   const selfActorId = realtime.selfActorId ?? sessionUser?.actorId ?? null;
 
   const presence = useMemo(() => presenceMap(realtime.presence), [realtime.presence]);
+  const globalPresence = useQuery(
+    presenceQueryOptions(rooms.flatMap((room) => room.members.map((member) => member.actorId))),
+  );
   const conversations = useMemo(
-    () => conversationViews(rooms, selfActorId, unreadQuery.data?.rooms ?? [], presence),
-    [rooms, selfActorId, unreadQuery.data, presence],
+    () =>
+      conversationViews(rooms, selfActorId, unreadQuery.data?.rooms ?? [], presence).map(
+        (conversation) => {
+          const status = globalPresence.data?.find(
+            (item) => item.actorId === conversation.peer?.actorId,
+          );
+          return status === undefined
+            ? conversation
+            : {
+                ...conversation,
+                active:
+                  status.connected &&
+                  status.availability === "available" &&
+                  status.state !== "idle",
+                presenceLabel: presenceLabel(status),
+              };
+        },
+      ),
+    [rooms, selfActorId, unreadQuery.data, presence, globalPresence.data],
   );
   const activeRoom = rooms.find((room) => room.id === activeRoomId);
   const activeConversation = conversations.find((entry) => entry.id === activeRoomId);

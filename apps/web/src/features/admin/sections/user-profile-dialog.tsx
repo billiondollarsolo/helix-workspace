@@ -27,6 +27,7 @@ export function AdminUserProfileDialog({
 
   return (
     <Dialog
+      modal={false}
       title={`Edit profile for ${name}`}
       onClose={onClose}
       footer={

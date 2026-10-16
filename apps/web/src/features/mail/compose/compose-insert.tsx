@@ -29,6 +29,7 @@ export function InsertLinkDialog({
   };
   return createPortal(
     <Dialog
+      modal={false}
       title="Insert link"
       onClose={onClose}
       footer={

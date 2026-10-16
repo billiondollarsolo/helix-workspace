@@ -17,7 +17,13 @@ describe("MeilisearchSearchEngine", () => {
     expect(client.createdIndexes).toEqual([{ uid: "helix_search", primaryKey: "_key" }]);
     expect(client.index("helix_search").settings).toEqual([
       {
-        filterableAttributes: ["type", "attributes.orgId", "attributes.allowedActorIds"],
+        filterableAttributes: [
+          "type",
+          "attributes.orgId",
+          "attributes.allowedActorIds",
+          "attributes.ragOwnerActorId",
+        ],
+        pagination: { maxTotalHits: 10001 },
         searchableAttributes: ["title", "body"],
       },
     ]);

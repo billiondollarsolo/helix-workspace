@@ -9,6 +9,8 @@ import type {
 } from "@helix/sdk-types";
 import { isJsonValue, isJsonObject as isRecord } from "@helix/sdk-types";
 import { outboundFetch } from "../../outbound-http.js";
+import { Readable } from "node:stream";
+import { readBoundedRequestBody } from "../../../api/request-body.js";
 
 const INVALID_TOOL_ARGUMENTS =
   "The model supplied invalid tool arguments. Return one valid JSON object and try again.";
@@ -32,21 +34,59 @@ export class AIProviderRequestError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    readonly providerCode?: string,
   ) {
     super(
       status === 404
         ? "This model is unavailable for the configured provider account. Choose another model or ask an administrator to check model access."
         : status === 401 || status === 403
           ? "The AI provider rejected its credentials or access. Ask an administrator to check the provider settings."
-          : status === 429
-            ? "The AI provider is at its request limit (HTTP 429). Wait briefly or choose another provider."
-            : status === 400
-              ? "The AI provider could not accept this request. Try another model or ask an administrator to check compatibility."
-              : message,
+          : status === 429 && providerCode !== undefined && quotaErrorCodes.has(providerCode)
+            ? "The AI provider's credits or spending quota are exhausted. Ask an administrator to check the provider's billing and usage limits; waiting or retrying will not restore access."
+            : status === 429
+              ? "The AI provider is at its request limit (HTTP 429). Wait briefly or choose another provider."
+              : status === 400
+                ? "The AI provider could not accept this request. Try another model or ask an administrator to check compatibility."
+                : message,
     );
     this.name = "AIProviderRequestError";
     this.statusCode = status === 429 ? 429 : status >= 400 && status < 500 ? 422 : 503;
   }
+}
+
+const quotaErrorCodes = new Set([
+  "insufficient_quota",
+  "credit_balance_exhausted",
+  "organization_spend_limit_exceeded",
+  "project_spend_limit_exceeded",
+  "organization_usage_limit_exceeded",
+  "usage_limit_exceeded",
+]);
+
+async function providerRequestError(
+  response: Response,
+  message: string,
+): Promise<AIProviderRequestError> {
+  let providerCode: string | undefined;
+  try {
+    if (response.status === 429 && response.body !== null) {
+      const bytes = await readBoundedRequestBody(
+        Readable.from(toAsyncIterable(response.body)),
+        16_384,
+      );
+      const payload: unknown = JSON.parse(bytes.toString("utf8"));
+      if (isRecord(payload) && isRecord(payload.error)) {
+        const { code, type } = payload.error;
+        if (typeof code === "string" && quotaErrorCodes.has(code)) providerCode = code;
+        else if (type === "insufficient_quota") providerCode = "insufficient_quota";
+      }
+    }
+  } catch {
+    // Invalid or oversized provider bodies never replace the safe status-based error.
+  } finally {
+    await discardResponseBody(response);
+  }
+  return new AIProviderRequestError(message, response.status, providerCode);
 }
 
 export function normalizeFetchConfig(config: FetchProviderConfig): {
@@ -100,10 +140,9 @@ export async function postJson(
   });
 
   if (!response.ok) {
-    await discardResponseBody(response);
-    throw new AIProviderRequestError(
+    throw await providerRequestError(
+      response,
       `AI provider request failed with HTTP ${String(response.status)}`,
-      response.status,
     );
   }
 
@@ -426,10 +465,9 @@ export async function postSse(
   });
 
   if (!response.ok) {
-    await discardResponseBody(response);
-    throw new AIProviderRequestError(
+    throw await providerRequestError(
+      response,
       `AI provider stream request failed with HTTP ${String(response.status)}`,
-      response.status,
     );
   }
 

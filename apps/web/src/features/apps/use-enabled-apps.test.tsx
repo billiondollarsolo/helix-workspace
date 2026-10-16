@@ -7,11 +7,15 @@ import { useEnabledApps } from "./use-enabled-apps";
 const state = vi.hoisted(() => ({
   isAdmin: false,
   assistantAvailable: false,
+  loading: false,
   apps: [] as { id: string; registered: boolean }[],
 }));
 
 vi.mock("@tanstack/react-query", () => ({
-  useQuery: () => ({ isLoading: false, data: { apps: state.apps } }),
+  useQuery: () => ({
+    isLoading: state.loading,
+    data: state.loading ? undefined : { apps: state.apps },
+  }),
 }));
 vi.mock("@/features/admin/core-apps-api", () => ({
   coreAppsShellQueryOptions: () => ({ queryKey: ["core-apps"] }),
@@ -36,9 +40,18 @@ let container: HTMLDivElement;
 function Probe() {
   const enabled = useEnabledApps();
   return (
-    <span>{["mail", "admin", "assistant"].filter((id) => enabled.isEnabled(id)).join(",")}</span>
+    <span>
+      {["mail", "admin", "assistant", "meet"].filter((id) => enabled.isEnabled(id)).join(",")}
+    </span>
   );
 }
+
+it("keeps unconfirmed apps hidden while the shell configuration is absent", () => {
+  state.loading = true;
+  state.apps = [{ id: "meet", registered: false }];
+  state.assistantAvailable = true;
+  expect(enabledIds()).toBe("");
+});
 
 function enabledIds(): string {
   act(() => root.render(<Probe />));
@@ -47,6 +60,7 @@ function enabledIds(): string {
 
 beforeEach(() => {
   state.isAdmin = false;
+  state.loading = false;
   state.assistantAvailable = false;
   state.apps = [
     { id: "mail", registered: true },

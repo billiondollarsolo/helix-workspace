@@ -1,7 +1,6 @@
-/* Modal used by the label, filter and remove dialogs. Radix Dialog gives
-   aria-modal, focus trapping and focus return; it sits above the full-screen
-   settings overlay so the same dialog works from Mail and from Settings. */
+/* Label/filter drafts use the shared nonblocking panel; removals require confirmation. */
 
+import { FormPanel } from "@/components/ui/form-panel";
 import { X } from "lucide-react";
 import { Dialog as DialogPrimitive } from "radix-ui";
 import { useRef, type FormEvent, type ReactNode } from "react";
@@ -36,6 +35,19 @@ export function MailDialog({
     event.preventDefault();
     onSubmit?.();
   };
+  if (role !== "alertdialog") {
+    return (
+      <FormPanel title={title} onClose={onClose}>
+        <form className="grid gap-4" onSubmit={submit} noValidate>
+          {description ? (
+            <p className="m-0 type-body-sm text-muted-foreground">{description}</p>
+          ) : null}
+          {children}
+          <div className="flex flex-wrap justify-end gap-2">{footer}</div>
+        </form>
+      </FormPanel>
+    );
+  }
   return (
     <DialogPrimitive.Root
       open

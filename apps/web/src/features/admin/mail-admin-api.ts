@@ -34,8 +34,11 @@ export const mailProviderKindLabels: Record<MailProviderKind, string> = {
 };
 
 const mailProviderConfigSchema = z.object({
-  /** Env-ref pointer to the API key/secret (e.g. `env:MAIL_SES_KEY`). */
-  apiKeyRef: z.string().nullish(),
+  user: z.string().nullish(),
+  secure: z.boolean().nullish(),
+  feedbackTopicArn: z.string().nullish(),
+  messageStream: z.string().nullish(),
+  baseUrl: z.string().url().nullish(),
   region: z.string().nullish(),
   domain: z.string().nullish(),
   host: z.string().nullish(),
@@ -46,11 +49,14 @@ export type MailProviderConfig = z.infer<typeof mailProviderConfigSchema>;
 
 const mailProviderSchema = z.object({
   id: z.string(),
+  orgId: z.string().optional(),
   name: z.string(),
   kind: z.enum(MAIL_PROVIDER_KINDS),
   isDefault: z.boolean(),
   enabled: z.boolean(),
   config: mailProviderConfigSchema,
+  secretRef: z.string().nullable().optional(),
+  webhookSecretRef: z.string().nullable().optional(),
   createdAt: z.string().nullish(),
 });
 
@@ -66,6 +72,8 @@ export interface CreateMailProviderInput {
   readonly name: string;
   readonly kind: MailProviderKind;
   readonly config: MailProviderConfig;
+  readonly secretRef?: string | null;
+  readonly webhookSecretRef?: string | null;
 }
 
 export interface PatchMailProviderInput {
@@ -73,6 +81,8 @@ export interface PatchMailProviderInput {
   readonly name?: string;
   readonly enabled?: boolean;
   readonly config?: MailProviderConfig;
+  readonly secretRef?: string | null;
+  readonly webhookSecretRef?: string | null;
 }
 
 // ---------------------------------------------------------------------------

@@ -63,6 +63,9 @@ const featureFlagsSchema = z
   .object({
     assistant_retrieval: z.boolean().optional(),
     mail_outbound: z.boolean().optional(),
+    mail_ai_assistance: z.boolean().optional(),
+    meet_transcription: z.boolean().optional(),
+    meet_ai_recaps: z.boolean().optional(),
     calendar_import_invitations: z.boolean().optional(),
     drive_s3_api: z.boolean().optional(),
     chat_admin_private_rooms: z.boolean().optional(),

@@ -523,6 +523,14 @@ async function runAudit(options, config) {
             const url = routeUrl(options.baseUrl, route.path);
             await page.goto(url, { timeout: 45_000, waitUntil: "domcontentloaded" });
             await page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => {});
+            // The router can still be showing its pending shell after network
+            // idle. Audit the route's actual surface, rather than that skeleton.
+            if (routeNeedsSession(route.path)) {
+              await page
+                .locator("main, [role=main]")
+                .first()
+                .waitFor({ state: "attached", timeout: 15_000 });
+            }
 
             const rightRail = options.visualSmoke
               ? await openRightRail(page)

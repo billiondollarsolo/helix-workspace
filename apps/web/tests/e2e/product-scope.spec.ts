@@ -11,7 +11,7 @@ const PRIMARY_NAMES = [
   "Helix AI",
   "Admin",
 ] as const;
-const PINNED_NAMES = ["Mail", "Calendar", "Drive", "Chat", "Meet"] as const;
+const PINNED_NAMES = ["Mail", "Calendar", "Drive", "Chat", "Meet", "Helix AI"] as const;
 const EXCLUDED_NAMES = ["Docs", "Sheets", "Slides", "PDF"] as const;
 test.describe("workspace product scope", () => {
   test("launcher shows communication and file storage apps", async ({ page }) => {
@@ -44,7 +44,6 @@ test.describe("workspace product scope", () => {
     for (const pinned of PINNED_NAMES) {
       await expect(rail.getByRole("link", { name: pinned })).toBeVisible();
     }
-    await expect(rail.getByRole("link", { name: "Helix AI" })).toHaveCount(0);
   });
 
   test("hides Admin from members and Helix AI while no provider answers", async ({ page }) => {

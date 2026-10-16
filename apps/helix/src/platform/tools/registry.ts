@@ -110,6 +110,7 @@ export interface ConfirmationGate {
     readonly requesterCredentialId?: string;
     readonly approvalOwnerActorId?: string;
     readonly credentialPolicy?: AgentCredentialPolicy;
+    readonly sourceIds?: readonly string[];
     readonly input: JsonValue;
     readonly request?: RequestContext;
     readonly traceId?: string;
@@ -173,6 +174,7 @@ export class InMemoryConfirmationGate implements ConfirmationGate {
     readonly requesterCredentialId?: string;
     readonly approvalOwnerActorId?: string;
     readonly credentialPolicy?: AgentCredentialPolicy;
+    readonly sourceIds?: readonly string[];
     readonly input: JsonValue;
     readonly request?: RequestContext;
     readonly traceId?: string;
@@ -191,14 +193,17 @@ export class InMemoryConfirmationGate implements ConfirmationGate {
       toolId: input.tool.id,
       input: input.input,
       inputHash: hashToolInput(input.input),
-      policySnapshot: policySnapshot({
-        ...(input.credentialPolicy?.version === undefined
-          ? {}
-          : { credentialPolicyVersion: input.credentialPolicy.version }),
-        ...(input.credentialPolicy?.automationPolicy === undefined
-          ? {}
-          : { automationPolicy: input.credentialPolicy.automationPolicy }),
-      }),
+      policySnapshot: {
+        ...policySnapshot({
+          ...(input.credentialPolicy?.version === undefined
+            ? {}
+            : { credentialPolicyVersion: input.credentialPolicy.version }),
+          ...(input.credentialPolicy?.automationPolicy === undefined
+            ? {}
+            : { automationPolicy: input.credentialPolicy.automationPolicy }),
+        }),
+        sourceIds: [...(input.sourceIds ?? [])],
+      },
       policyVersion: input.credentialPolicy?.version ?? "actor-session",
       preview: buildSafeActionPreview(input.tool, input.input),
       createdAt: now,

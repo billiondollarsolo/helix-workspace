@@ -29,7 +29,7 @@ import type {
   MeetSummaryRef,
 } from "./types.js";
 
-export const MEET_RECORDING_NOTICE_VERSION = "2026-09-02";
+export const MEET_RECORDING_NOTICE_VERSION = "2026-10-15";
 const MEET_RECORDING_CONSENT_POLICY = "explicit-all-parties";
 const MEET_RECORDING_JURISDICTION = "global";
 const RECORDING_AUTHORIZATION_TTL_MS = 30_000;

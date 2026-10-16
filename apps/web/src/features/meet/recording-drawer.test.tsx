@@ -3,6 +3,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { settle } from "@/test/ui";
 import { RecordingDrawer } from "./recording-drawer";
 import type { MeetMeetingRecord } from "./api";
 
@@ -65,20 +66,20 @@ describe("RecordingDrawer", () => {
     document.body.style.overflow = "";
   });
 
-  it("uses modal drawer semantics, traps Escape, and restores page focus", async () => {
+  it("uses a nonblocking drawer, closes on Escape, and restores page focus", async () => {
     const onClose = vi.fn();
     act(() => root.render(<RecordingDrawer meeting={meeting} onClose={onClose} />));
     await act(async () => Promise.resolve());
 
-    const drawer = container.querySelector<HTMLElement>('[role="dialog"]');
-    expect(drawer?.getAttribute("aria-modal")).toBe("true");
+    const drawer = document.querySelector<HTMLElement>('[role="dialog"]');
+    expect(drawer?.getAttribute("aria-modal")).not.toBe("true");
     expect(drawer?.getAttribute("aria-labelledby")).toBeTruthy();
-    expect(document.body.style.overflow).toBe("hidden");
+    expect(document.body.style.overflow).not.toBe("hidden");
     expect(document.activeElement).toBe(
-      container.querySelector<HTMLButtonElement>('button[aria-label="Close"]'),
+      document.querySelector<HTMLButtonElement>('button[aria-label="Close"]'),
     );
-    expect(container.querySelector("video")?.getAttribute("aria-label")).toBe("Recording 1 of 1");
-    expect(container.querySelector("track")).toBeNull();
+    expect(document.querySelector("video")?.getAttribute("aria-label")).toBe("Recording 1 of 1");
+    expect(document.querySelector("track")).toBeNull();
 
     act(() => {
       document.dispatchEvent(
@@ -88,6 +89,7 @@ describe("RecordingDrawer", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
 
     act(() => root.render(null));
+    await settle();
     expect(document.body.style.overflow).toBe("");
     expect(document.activeElement).toBe(opener);
   });
@@ -103,7 +105,7 @@ describe("RecordingDrawer", () => {
     act(() => root.render(<RecordingDrawer meeting={restricted} onClose={() => undefined} />));
     await act(async () => Promise.resolve());
 
-    expect(container.textContent).toContain("Download disabled");
-    expect(container.querySelector("a[download]")).toBeNull();
+    expect(document.body.textContent).toContain("Download disabled");
+    expect(document.querySelector("a[download]")).toBeNull();
   });
 });

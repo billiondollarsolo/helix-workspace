@@ -1,8 +1,9 @@
-import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from "@tanstack/react-table";
+import { Button } from "@/components/ui/button";
+import { AdminTable, type AdminColumn } from "@/features/admin/console/table";
 import { Pencil, Play, RotateCw, Trash2 } from "lucide-react";
 import { useMemo } from "react";
 import type { InboundWebhook, OutboundWebhook, WebhookDirection } from "./types";
-import { EmptyRow, PanelTitle, RowActions, StatusPill } from "./webhook-controls";
+import { PanelTitle, RowActions, StatusPill } from "./webhook-controls";
 import { actionLabel, stringMetadata } from "./webhook-form-state";
 import { formatDate, shortId } from "./webhook-format";
 
@@ -68,7 +69,7 @@ interface WebhookTableShape<Row> {
   readonly ariaLabel: string;
   readonly detail: string;
   /** Direction-specific columns, rendered between Name and Actions. */
-  readonly detailColumns: readonly ColumnDef<Row>[];
+  readonly detailColumns: readonly AdminColumn<Row>[];
   readonly emptyText: WebhookTableEmptyText;
   readonly rotateTitle: string;
   readonly testTitle: string;
@@ -98,20 +99,22 @@ function WebhookTable<Row extends WebhookTableRow>({
   title,
   webhooks,
 }: WebhookTableProps<Row> & WebhookTableShape<Row>) {
-  const columns = useMemo<ColumnDef<Row>[]>(
+  const columns = useMemo<AdminColumn<Row>[]>(
     () => [
       {
         id: "status",
         header: "Status",
-        cell: ({ row }) => <StatusPill enabled={row.original.enabled} />,
+        sortValue: (row) => (row.enabled ? "Enabled" : "Disabled"),
+        cell: (row) => <StatusPill enabled={row.enabled} />,
       },
       {
         id: "name",
         header: "Name",
-        cell: ({ row }) => (
+        sortValue: (row) => row.name,
+        cell: (row) => (
           <>
-            <strong>{row.original.name}</strong>
-            <small>{shortId(row.original.id)}</small>
+            <strong>{row.name}</strong>
+            <small>{shortId(row.id)}</small>
           </>
         ),
       },
@@ -119,65 +122,71 @@ function WebhookTable<Row extends WebhookTableRow>({
       {
         id: "actions",
         header: "Actions",
-        cell: ({ row }) => {
-          const webhook = row.original;
+        cell: (row) => {
+          const webhook = row;
           return (
             <RowActions>
-              <button
-                className="icon-button"
+              <Button
+                variant="ghost"
+                size="icon-sm"
                 disabled={isBusy}
                 onClick={() => onEdit(webhook)}
                 title="Edit"
                 type="button"
               >
                 <Pencil aria-hidden="true" size={15} />
-              </button>
-              <button
-                className="icon-button"
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
                 disabled={isBusy}
                 onClick={() => onAction({ type: "toggle", webhook })}
                 title={webhook.enabled ? "Disable" : "Enable"}
                 type="button"
               >
                 {webhook.enabled ? "Off" : "On"}
-              </button>
-              <button
-                className="icon-button"
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
                 disabled={isBusy || !webhook.enabled}
                 onClick={() => onAction({ type: "test", webhook })}
                 title={testTitle}
                 type="button"
               >
                 <Play aria-hidden="true" size={15} />
-              </button>
-              <button
-                className="icon-button"
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
                 disabled={isBusy}
                 onClick={() => onAction({ type: "rotate", webhook })}
                 title={rotateTitle}
                 type="button"
               >
                 <RotateCw aria-hidden="true" size={15} />
-              </button>
+              </Button>
               {pendingDelete === webhook.id ? (
-                <button
-                  className="webhooks-confirm-delete"
+                <Button
+                  variant="destructive"
+                  size="sm"
                   disabled={isBusy}
                   onClick={() => onAction({ type: "delete", webhook })}
                   type="button"
                 >
                   Delete
-                </button>
+                </Button>
               ) : (
-                <button
-                  className="icon-button danger"
+                <Button
+                  variant="destructive"
+                  size="icon-sm"
                   disabled={isBusy}
                   onClick={() => setPendingDelete(webhook.id)}
                   title="Delete"
                   type="button"
                 >
                   <Trash2 aria-hidden="true" size={15} />
-                </button>
+                </Button>
               )}
             </RowActions>
           );
@@ -195,52 +204,20 @@ function WebhookTable<Row extends WebhookTableRow>({
       testTitle,
     ],
   );
-  const data = useMemo(() => [...webhooks], [webhooks]);
-  const table = useReactTable({
-    columns,
-    data,
-    getCoreRowModel: getCoreRowModel(),
-  });
-  const rows = table.getRowModel().rows;
-
   return (
     <div className="webhooks-panel">
       <PanelTitle title={title} detail={detail} />
-      <div className="webhooks-table-wrap" tabIndex={0}>
-        <table className="webhooks-table" aria-label={ariaLabel}>
-          <thead>
-            {table.getHeaderGroups().map((headerGroup) => (
-              <tr key={headerGroup.id}>
-                {headerGroup.headers.map((header) => (
-                  <th key={header.id}>
-                    {header.isPlaceholder
-                      ? null
-                      : flexRender(header.column.columnDef.header, header.getContext())}
-                  </th>
-                ))}
-              </tr>
-            ))}
-          </thead>
-          <tbody>
-            {rows.length === 0 ? (
-              <EmptyRow
-                colSpan={columns.length}
-                text={webhookTableEmptyText(emptyText, isBusy, failed)}
-              />
-            ) : (
-              rows.map((row) => (
-                <tr key={row.id}>
-                  {row.getVisibleCells().map((cell) => (
-                    <td key={cell.id}>
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </td>
-                  ))}
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+      <AdminTable
+        label={ariaLabel}
+        columns={columns}
+        rows={webhooks}
+        rowKey={(row) => row.id}
+        searchText={(row) =>
+          [row.id, ...columns.map((column) => column.sortValue?.(row))].join(" ")
+        }
+        partialNote="Search and sorting apply to the returned endpoints."
+        empty={webhookTableEmptyText(emptyText, isBusy, failed)}
+      />
     </div>
   );
 }
@@ -258,30 +235,31 @@ const inboundEmptyText: WebhookTableEmptyText = {
 };
 
 export function OutboundTable(props: WebhookTableProps<OutboundWebhook>) {
-  const detailColumns = useMemo<ColumnDef<OutboundWebhook>[]>(
+  const detailColumns = useMemo<AdminColumn<OutboundWebhook>[]>(
     () => [
       {
         id: "url",
         header: "URL",
-        cell: ({ row }) => <code className="webhooks-url">{row.original.url}</code>,
+        sortValue: (row) => row.url,
+        cell: (row) => <code className="webhooks-url">{row.url}</code>,
       },
       {
         id: "subjects",
         header: "Subjects",
-        cell: ({ row }) =>
-          row.original.eventSubjects.length > 0
-            ? row.original.eventSubjects.join(", ")
-            : "All events",
+        sortValue: (row) => row.eventSubjects.join(" "),
+        cell: (row) => (row.eventSubjects.length > 0 ? row.eventSubjects.join(", ") : "All events"),
       },
       {
         id: "format",
         header: "Format",
-        cell: ({ row }) => stringMetadata(row.original.metadata, "format") ?? "generic",
+        sortValue: (row) => stringMetadata(row.metadata, "format") ?? "generic",
+        cell: (row) => stringMetadata(row.metadata, "format") ?? "generic",
       },
       {
         id: "updated",
         header: "Updated",
-        cell: ({ row }) => formatDate(row.original.updatedAt),
+        sortValue: (row) => new Date(row.updatedAt).getTime(),
+        cell: (row) => formatDate(row.updatedAt),
       },
     ],
     [],
@@ -302,27 +280,32 @@ export function OutboundTable(props: WebhookTableProps<OutboundWebhook>) {
 }
 
 export function InboundTable(props: WebhookTableProps<InboundWebhook>) {
-  const detailColumns = useMemo<ColumnDef<InboundWebhook>[]>(
+  const detailColumns = useMemo<AdminColumn<InboundWebhook>[]>(
     () => [
       {
         id: "endpoint",
         header: "Endpoint",
-        cell: ({ row }) => <code className="webhooks-url">/v1/webhooks/{row.original.slug}</code>,
+        sortValue: (row) => row.slug,
+        cell: (row) => <code className="webhooks-url">/v1/webhooks/{row.slug}</code>,
       },
       {
         id: "source",
         header: "Source",
-        cell: ({ row }) => row.original.source,
+        sortValue: (row) => row.source,
+        cell: (row) => row.source,
       },
       {
         id: "action",
         header: "Action",
-        cell: ({ row }) => actionLabel(row.original.metadata),
+        sortValue: (row) => actionLabel(row.metadata),
+        cell: (row) => actionLabel(row.metadata),
       },
       {
         id: "lastReceived",
         header: "Last received",
-        cell: ({ row }) => formatDate(row.original.lastReceivedAt),
+        sortValue: (row) =>
+          row.lastReceivedAt === null ? null : new Date(row.lastReceivedAt).getTime(),
+        cell: (row) => formatDate(row.lastReceivedAt),
       },
     ],
     [],

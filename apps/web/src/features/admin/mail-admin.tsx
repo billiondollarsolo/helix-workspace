@@ -1,3 +1,5 @@
+import { FormPanel } from "@/components/ui/form-panel";
+import { AdminTable } from "./console/table";
 import { formatRelativeTime } from "@/features/admin/console/format";
 import { RelativeTime } from "@/features/admin/console/widgets";
 import { cn } from "@/lib/utils";
@@ -47,6 +49,9 @@ import {
   mailProviderKindLabels,
   mailProvidersQueryOptions,
   patchRoutingRule,
+  patchMailProvider,
+  type MailProvider,
+  type CreateMailProviderInput,
   removeMailSuppression,
   replayDeadLetter,
   ROUTING_ACTIONS,
@@ -64,6 +69,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState, type ReactNode } from "react";
 import { PeoplePicker } from "@/components/people/people-picker";
 import type { PersonRef } from "@/features/people/person-ref";
+import { apiPath } from "@/lib/auth";
+import { AdminField, AdminInput, AdminSelect } from "./console/controls";
 import { adminUsersQueryOptions, type AdminUser } from "./admin-users";
 
 /* ------------------------------------------------------------------ */
@@ -102,163 +109,216 @@ export function mailAdminSearchForSubview(subview: MailSubviewId): { readonly ta
   return subview === DEFAULT_MAIL_SUBVIEW ? {} : { tab: subview };
 }
 
-const EMPTY_PROVIDER_CONFIG: MailProviderConfig = {
-  apiKeyRef: "",
-  region: "",
-  domain: "",
-  host: "",
-  port: null,
-};
-
 function configSummary(kind: MailProviderKind, config: MailProviderConfig): string {
-  switch (kind) {
-    case "ses":
-      return `region ${config.region ?? "—"} · key ${config.apiKeyRef ?? "—"}`;
-    case "mailgun":
-      return `domain ${config.domain ?? "—"} · key ${config.apiKeyRef ?? "—"}`;
-    case "postmark":
-      return `key ${config.apiKeyRef ?? "—"}`;
-    case "smtp":
-      return `host ${config.host ?? "—"}:${config.port ?? "—"}`;
-  }
+  if (kind === "ses" || kind === "smtp")
+    return `${config.host ?? "—"}:${config.port ?? 587}${config.feedbackTopicArn ? " · SES feedback configured" : ""}`;
+  return kind === "mailgun"
+    ? `domain ${config.domain ?? "—"}`
+    : `stream ${config.messageStream ?? "outbound"}`;
 }
 
-interface ProviderFormProps {
+function ProviderForm({
+  onCancel,
+  onSubmit,
+  pending,
+  initial,
+}: {
   readonly onCancel: () => void;
-  readonly onSubmit: (input: {
-    name: string;
-    kind: MailProviderKind;
-    config: MailProviderConfig;
-  }) => void;
+  readonly onSubmit: (input: CreateMailProviderInput) => void;
   readonly pending: boolean;
-}
-
-function ProviderForm({ onCancel, onSubmit, pending }: ProviderFormProps) {
-  const [name, setName] = useState("");
-  const [kind, setKind] = useState<MailProviderKind>("ses");
-  const [config, setConfig] = useState<MailProviderConfig>(EMPTY_PROVIDER_CONFIG);
-
-  const setField = (key: keyof MailProviderConfig, value: string) => {
+  readonly initial?: MailProvider | undefined;
+}) {
+  const [name, setName] = useState(initial?.name ?? "");
+  const [setup, setSetup] = useState<string>(initial?.kind ?? "ses");
+  const [kind, setKind] = useState<MailProviderKind>(initial?.kind ?? "ses");
+  const [config, setConfig] = useState<MailProviderConfig>(initial?.config ?? {});
+  const [secretRef, setSecretRef] = useState(initial?.secretRef ?? "");
+  const [webhookSecretRef, setWebhookSecretRef] = useState(initial?.webhookSecretRef ?? "");
+  const smtp = kind === "ses" || kind === "smtp";
+  const setField = (key: keyof MailProviderConfig, value: string) =>
     setConfig((current) => ({
       ...current,
       [key]: key === "port" ? (value === "" ? null : Number(value)) : value,
     }));
-  };
-
+  const field = (
+    key: Exclude<keyof MailProviderConfig, "secure">,
+    label: string,
+    placeholder: string,
+    required = false,
+  ) => (
+    <AdminField key={key} label={label}>
+      <AdminInput
+        aria-label={label}
+        required={required}
+        type={key === "port" ? "number" : "text"}
+        min={key === "port" ? 1 : undefined}
+        max={key === "port" ? 65535 : undefined}
+        value={config[key] ?? ""}
+        onChange={(event) => setField(key, event.target.value)}
+        placeholder={placeholder}
+      />
+    </AdminField>
+  );
   return (
     <form
-      className="panel p-4 mb-3 grid gap-2.5"
-
+      className="panel p-4 mb-3 grid gap-3"
       onSubmit={(event) => {
         event.preventDefault();
-        if (name.trim().length === 0) {
-          return;
-        }
-        onSubmit({ name: name.trim(), kind, config });
+        const keys: (keyof MailProviderConfig)[] = smtp
+          ? [
+              "host",
+              "port",
+              "user",
+              "feedbackTopicArn",
+              ...(kind === "ses" ? ["region" as const] : []),
+            ]
+          : kind === "mailgun"
+            ? ["domain", "baseUrl"]
+            : ["messageStream", "baseUrl"];
+        const publicConfig = Object.fromEntries(
+          keys
+            .filter(
+              (key) => config[key] !== undefined && config[key] !== null && config[key] !== "",
+            )
+            .map((key) => [
+              key,
+              typeof config[key] === "string" ? config[key].trim() : config[key],
+            ]),
+        );
+        if (smtp) publicConfig.secure = config.secure ?? Number(config.port) === 465;
+        onSubmit({
+          name: name.trim(),
+          kind,
+          config: publicConfig,
+          secretRef: secretRef.trim() || null,
+          webhookSecretRef: kind === "mailgun" ? webhookSecretRef.trim() || null : null,
+        });
       }}
     >
-      <div className="font-semibold type-body-sm">Add outbound provider</div>
-      <div className="grid [grid-template-columns:1fr_1fr] gap-2.5">
-        <label>
-          <span className="type-caption text-muted-foreground block">Name</span>
-          <input
+      <h3 className="type-h3">{initial ? "Edit outbound provider" : "Add outbound provider"}</h3>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <AdminField label="Name">
+          <AdminInput
             aria-label="Provider name"
             value={name}
+            required
+            maxLength={200}
             onChange={(event) => setName(event.target.value)}
-            placeholder="Primary SES"
-            className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] type-meta w-full"
           />
-        </label>
-        <label>
-          <span className="type-caption text-muted-foreground block">Kind</span>
-          <select
+        </AdminField>
+        <AdminField label="Kind">
+          <AdminSelect
             aria-label="Provider kind"
-            value={kind}
-            onChange={(event) => setKind(event.target.value as MailProviderKind)}
-            className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] type-meta w-full"
+            value={setup}
+            disabled={initial !== undefined}
+            onChange={(event) => {
+              const value = event.target.value;
+              setSetup(value);
+              if (value === "resend" || value === "sendgrid") {
+                setKind("smtp");
+                setConfig({
+                  host: value === "resend" ? "smtp.resend.com" : "smtp.sendgrid.net",
+                  port: 587,
+                  secure: false,
+                  user: value === "resend" ? "resend" : "apikey",
+                });
+              } else setKind(MAIL_PROVIDER_KINDS.find((entry) => entry === value) ?? "ses");
+            }}
           >
             {MAIL_PROVIDER_KINDS.map((value) => (
               <option key={value} value={value}>
                 {mailProviderKindLabels[value]}
               </option>
             ))}
-          </select>
-        </label>
-      </div>
-
-      {/* Kind-specific config fields */}
-      <div className="grid [grid-template-columns:1fr_1fr] gap-2.5">
-        {(kind === "ses" || kind === "mailgun" || kind === "postmark") && (
-          <label>
-            <span className="type-caption text-muted-foreground block">
-              API key (secret reference)
-            </span>
-            <input
-              aria-label="API key secret reference"
-              value={config.apiKeyRef ?? ""}
-              onChange={(event) => setField("apiKeyRef", event.target.value)}
-              placeholder="env:MAIL_API_KEY"
-              className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] type-meta w-full"
-            />
-          </label>
-        )}
-        {kind === "ses" && (
-          <label>
-            <span className="type-caption text-muted-foreground block">Region</span>
-            <input
-              aria-label="Region"
-              value={config.region ?? ""}
-              onChange={(event) => setField("region", event.target.value)}
-              placeholder="us-east-1"
-              className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] type-meta w-full"
-            />
-          </label>
-        )}
-        {kind === "mailgun" && (
-          <label>
-            <span className="type-caption text-muted-foreground block">Domain</span>
-            <input
-              aria-label="Mailgun domain"
-              value={config.domain ?? ""}
-              onChange={(event) => setField("domain", event.target.value)}
-              placeholder="mg.helix.io"
-              className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] type-meta w-full"
-            />
-          </label>
-        )}
-        {kind === "smtp" && (
+            <option value="resend">Resend (SMTP)</option>
+            <option value="sendgrid">SendGrid (SMTP)</option>
+          </AdminSelect>
+        </AdminField>
+        {kind === "smtp" ? (
+          <p className="admin-muted sm:col-span-2">
+            SMTP sends through your provider. For Resend and SendGrid, store the API key as the SMTP
+            password in the secret handle below. Delivery and bounce events from these services are
+            not yet imported into Helix. Your inbound mail routing stays separate.
+          </p>
+        ) : null}
+        {smtp ? (
           <>
-            <label>
-              <span className="type-caption text-muted-foreground block">Host</span>
-              <input
-                aria-label="SMTP host"
-                value={config.host ?? ""}
-                onChange={(event) => setField("host", event.target.value)}
-                placeholder="smtp.relay.example"
-                className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] type-meta w-full"
-              />
-            </label>
-            <label>
-              <span className="type-caption text-muted-foreground block">Port</span>
-              <input
-                aria-label="SMTP port"
-                type="number"
-                value={config.port ?? ""}
-                onChange={(event) => setField("port", event.target.value)}
-                placeholder="587"
-                className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] type-meta w-full"
-              />
-            </label>
+            {field("host", "SMTP host", "email-smtp.us-east-2.amazonaws.com", true)}
+            {field("port", "SMTP port", "587")}
+            <AdminField label="Transport security">
+              <AdminSelect
+                value={(config.secure ?? config.port === 465) ? "tls" : "starttls"}
+                onChange={(event) =>
+                  setConfig((current) => ({ ...current, secure: event.target.value === "tls" }))
+                }
+              >
+                <option value="starttls">STARTTLS (usually port 587)</option>
+                <option value="tls">TLS (usually port 465)</option>
+              </AdminSelect>
+            </AdminField>
+            {field("user", "SMTP username", "AWS SMTP username")}
+            {kind === "ses" ? field("region", "Region", "us-east-2", true) : null}
+            {field(
+              "feedbackTopicArn",
+              "SES feedback topic ARN",
+              "arn:aws:sns:us-east-2:123456789012:helix-feedback",
+            )}
           </>
+        ) : kind === "mailgun" ? (
+          field("domain", "Mailgun domain", "mg.example.com", true)
+        ) : (
+          field("messageStream", "Message stream", "outbound")
         )}
+        {!smtp
+          ? field(
+              "baseUrl",
+              "API endpoint (optional)",
+              kind === "mailgun" ? "https://api.mailgun.net" : "https://api.postmarkapp.com",
+            )
+          : null}
+        <AdminField label={smtp ? "SMTP password secret handle" : "API key secret handle"}>
+          <AdminInput
+            aria-label="Provider secret handle"
+            value={secretRef}
+            pattern="[a-z0-9][a-z0-9._-]{0,98}[a-z0-9]|[a-z0-9]"
+            onChange={(event) => setSecretRef(event.target.value)}
+            placeholder="mail-primary"
+          />
+        </AdminField>
+        {kind === "mailgun" ? (
+          <AdminField label="Webhook signing secret handle">
+            <AdminInput
+              value={webhookSecretRef}
+              onChange={(event) => setWebhookSecretRef(event.target.value)}
+              placeholder="mailgun-feedback"
+            />
+          </AdminField>
+        ) : null}
       </div>
-
+      <p className="type-meta text-muted-foreground">
+        Secret handles refer to tenant-managed credentials; enter no passwords here. SES uses SMTP
+        credentials, including Mail Manager endpoints. Port 587 uses STARTTLS; 465 uses TLS.
+      </p>
+      {smtp ? (
+        <p className="type-meta text-muted-foreground">
+          For signed delivery, bounce and complaint feedback, set the exact SNS topic ARN, subscribe
+          this provider’s webhook URL below, and enable original headers in SES notifications.
+        </p>
+      ) : null}
+      {initial?.orgId ? (
+        <AdminField label="Feedback webhook URL">
+          <AdminInput
+            readOnly
+            value={`${window.location.origin}${apiPath(`/webhooks/mail/providers/${initial.orgId}/${initial.id}`)}`}
+          />
+        </AdminField>
+      ) : null}
       <div className="flex gap-2 justify-end">
         <Button type="button" variant="outline" onClick={onCancel}>
           Cancel
         </Button>
         <Button type="submit" disabled={pending}>
-          {pending ? "Saving…" : "Add provider"}
+          {pending ? "Saving…" : initial ? "Save provider" : "Add provider"}
         </Button>
       </div>
     </form>
@@ -269,6 +329,7 @@ function MailProviders() {
   const queryClient = useQueryClient();
   const providersQuery = useQuery(mailProvidersQueryOptions());
   const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState<MailProvider | null>(null);
 
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: mailAdminQueryKeys.providers() });
@@ -283,6 +344,23 @@ function MailProviders() {
     },
   });
 
+  const editMutation = useMutation({
+    mutationFn: ({ id, ...input }: CreateMailProviderInput & { id: string }) =>
+      patchMailProvider(id, {
+        name: input.name,
+        config: input.config,
+        secretRef: input.secretRef ?? null,
+        webhookSecretRef: input.webhookSecretRef ?? null,
+      }),
+    onMutate: () => undefined,
+    onError: () => undefined,
+    onSuccess: () => {
+      setEditing(null);
+      setShowForm(false);
+      void invalidate();
+    },
+  });
+
   const defaultMutation = useMutation({
     mutationFn: (id: string) => setDefaultMailProvider(id),
     onMutate: () => undefined,
@@ -291,6 +369,7 @@ function MailProviders() {
   });
 
   const providers = providersQuery.data?.providers ?? [];
+  const [search, setSearch] = useState("");
 
   return (
     <>
@@ -301,7 +380,11 @@ function MailProviders() {
           <Button
             type="button"
 
-            onClick={() => setShowForm((open) => !open)}
+            disabled={showForm || providersQuery.isPending || providersQuery.isError}
+            onClick={() => {
+              setEditing(null);
+              setShowForm(true);
+            }}
           >
             <PlusIcon size={16} /> Add provider
           </Button>
@@ -314,67 +397,125 @@ function MailProviders() {
           Outbound providers could not be loaded. You may not have permission to manage mail.
         </ErrorNotice>
       ) : null}
-      {createMutation.isError ? <ErrorNotice>{createMutation.error.message}</ErrorNotice> : null}
+      {!showForm && createMutation.isError ? (
+        <ErrorNotice>{createMutation.error.message}</ErrorNotice>
+      ) : null}
+      {!showForm && editMutation.isError ? (
+        <ErrorNotice>{editMutation.error.message}</ErrorNotice>
+      ) : null}
       {defaultMutation.isError ? <ErrorNotice>{defaultMutation.error.message}</ErrorNotice> : null}
 
       {showForm ? (
-        <ProviderForm
-          pending={createMutation.isPending}
-          onCancel={() => setShowForm(false)}
-          onSubmit={(input) => createMutation.mutate(input)}
-        />
+        <FormPanel
+          title={editing ? "Edit outbound provider" : "Add outbound provider"}
+          onClose={() => {
+            if (!createMutation.isPending && !editMutation.isPending) setShowForm(false);
+          }}
+        >
+          {createMutation.isError ? (
+            <ErrorNotice>{createMutation.error.message}</ErrorNotice>
+          ) : null}
+          {editMutation.isError ? <ErrorNotice>{editMutation.error.message}</ErrorNotice> : null}
+          <ProviderForm
+            key={editing?.id ?? "new"}
+            initial={editing ?? undefined}
+            pending={createMutation.isPending || editMutation.isPending}
+            onCancel={() => {
+              setEditing(null);
+              setShowForm(false);
+            }}
+            onSubmit={(input) =>
+              editing
+                ? editMutation.mutate({ ...input, id: editing.id })
+                : createMutation.mutate(input)
+            }
+          />
+        </FormPanel>
       ) : null}
 
-      <div className="panel overflow-hidden">
-        <div className="grid [grid-template-columns:1fr_130px_1.6fr_90px_110px] [padding:0_12px] h-8 items-center [border-bottom:1px_solid_var(--border)] bg-muted type-caption text-muted-foreground font-semibold uppercase [letter-spacing:.06em]">
-          <span>Name</span>
-          <span>Kind</span>
-          <span>Config</span>
-          <span>Status</span>
-          <span />
-        </div>
-        {providers.length === 0 ? (
-          <EmptyRow>
-            {providersQuery.isPending ? "Loading providers…" : "No outbound providers configured."}
-          </EmptyRow>
-        ) : (
-          providers.map((provider) => (
-            <div
-              key={provider.id}
-              className="grid [grid-template-columns:1fr_130px_1.6fr_90px_110px] [padding:0_12px] [height:var(--rd-list-row-h)] items-center type-row [border-bottom:1px_solid_var(--border)]"
-            >
-              <span className="font-medium">
-                {provider.name}
-                {provider.isDefault ? <span className="chip accent ml-2">Default</span> : null}
+      <AdminInput
+        type="search"
+        aria-label="Search mail providers"
+        placeholder="Search providers…"
+        value={search}
+        onChange={(event) => setSearch(event.target.value)}
+      />
+      <AdminTable<MailProvider>
+        label="Outbound providers"
+        rows={providers.filter((provider) =>
+          `${provider.name} ${provider.kind} ${configSummary(provider.kind, provider.config)}`
+            .toLowerCase()
+            .includes(search.toLowerCase().trim()),
+        )}
+        rowKey={(row) => row.id}
+        empty={
+          search
+            ? "No providers match your search."
+            : "No saved providers. Check deployment SMTP settings if mail is already sending."
+        }
+        columns={[
+          {
+            id: "name",
+            header: "Name",
+            sortValue: (row) => row.name,
+            cell: (row) => (
+              <>
+                <Button
+                  type="button"
+                  variant="link"
+                  disabled={showForm}
+                  aria-label={`Edit ${row.name}`}
+                  onClick={() => {
+                    setEditing(row);
+                    setShowForm(true);
+                  }}
+                >
+                  {row.name}
+                </Button>
+                {row.isDefault ? <span className="chip accent">Default</span> : null}
+              </>
+            ),
+          },
+          {
+            id: "kind",
+            header: "Connection",
+            sortValue: (row) => row.kind,
+            cell: (row) => mailProviderKindLabels[row.kind],
+          },
+          {
+            id: "config",
+            header: "Configuration",
+            cell: (row) => configSummary(row.kind, row.config),
+          },
+          {
+            id: "status",
+            header: "Status",
+            sortValue: (row) => (row.enabled ? 1 : 0),
+            cell: (row) => (
+              <span className={`chip ${row.enabled ? "success" : "warning"}`}>
+                {row.enabled ? "Enabled" : "Disabled"}
               </span>
-              <span>
-                <span className="chip">{mailProviderKindLabels[provider.kind]}</span>
-              </span>
-              <span className="mono truncate type-caption [color:var(--text-2)]">
-                {configSummary(provider.kind, provider.config)}
-              </span>
-              <span>
-                <span className={`chip ${provider.enabled ? "success" : "warning"}`}>
-                  <span className="chip-dot" />
-                  {provider.enabled ? "Enabled" : "Disabled"}
-                </span>
-              </span>
+            ),
+          },
+          {
+            id: "actions",
+            header: "Actions",
+            headerHidden: true,
+            cell: (row) => (
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
-                className="[justify-self:flex-end]"
-
-                disabled={provider.isDefault || defaultMutation.isPending}
-                aria-label={`Make ${provider.name} default`}
-                onClick={() => defaultMutation.mutate(provider.id)}
+                disabled={row.isDefault || defaultMutation.isPending}
+                aria-label={`Make ${row.name} default`}
+                onClick={() => defaultMutation.mutate(row.id)}
               >
-                {provider.isDefault ? "Default" : "Set default"}
+                {row.isDefault ? "Default" : "Set default"}
               </Button>
-            </div>
-          ))
-        )}
-      </div>
+            ),
+          },
+        ]}
+      />
     </>
   );
 }
@@ -1203,6 +1344,12 @@ export function MailAdminSection() {
 }
 
 const MAIL_FLAGS = [
+  {
+    key: "mail_ai_assistance",
+    label: "AI email assistance",
+    description:
+      "Let people and agents draft, rewrite, summarize, and suggest replies using configured AI providers. Suggestions never send mail. Sensitivity restrictions and AI spending limits apply.",
+  },
   {
     key: "mail_outbound",
     label: "Send mail outside the organization",

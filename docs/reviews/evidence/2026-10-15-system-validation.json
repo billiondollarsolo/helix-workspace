@@ -1,0 +1,1261 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-15",
+  "environment": "development",
+  "source": {
+    "commit": "aa4d2da67c37a851a3ce1a89c24fd307073f5be1",
+    "workingTreeChangesIncluded": true,
+    "unrelatedWorkPreserved": true
+  },
+  "productionAcceptance": false,
+  "deployment": {
+    "deployed": true,
+    "apiImage": "helix/workspace-development:validation-r5-openapi",
+    "previousApiImage": "helix/workspace-development:native-keepass-r4-bind",
+    "ready": true,
+    "webUnchanged": true,
+    "legacyVaultPreserved": true,
+    "finalWebDeployment": {
+      "deployed": true,
+      "webImage": "helix/workspace-web-development:validation-r5-accessibility",
+      "previousWebImage": "helix/workspace-web-development:native-keepass-r4-final",
+      "ready": true,
+      "apiUnchanged": true,
+      "legacyVaultPreserved": true
+    }
+  },
+  "workspaceChecks": {
+    "compose": {
+      "command": "pnpm infra:compose:validate",
+      "exitCode": 0
+    },
+    "format": {
+      "command": "pnpm format:check",
+      "exitCode": 0
+    },
+    "launch-docs": {
+      "command": "pnpm quality:launch-docs",
+      "exitCode": 0
+    },
+    "e2e-lint": {
+      "command": "pnpm --filter @helix/web lint:e2e",
+      "exitCode": 0
+    },
+    "meet-static": {
+      "command": "pnpm infra:meet:validate",
+      "exitCode": 0
+    },
+    "boundaries": {
+      "command": "pnpm quality:boundaries",
+      "exitCode": 0
+    },
+    "dependencies": {
+      "command": "pnpm quality:dependencies",
+      "exitCode": 0
+    },
+    "file-size": {
+      "command": "pnpm quality:file-size",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "command": "pnpm typecheck",
+      "exitCode": 0
+    },
+    "lint": {
+      "command": "pnpm lint",
+      "exitCode": 0
+    },
+    "test": {
+      "command": "pnpm test",
+      "exitCode": 0
+    },
+    "production-audit": {
+      "command": "pnpm audit:prod",
+      "exitCode": 0
+    },
+    "mail-edge": {
+      "command": "pnpm infra:mail-edge:validate",
+      "exitCode": 0
+    },
+    "e2e-typecheck": {
+      "command": "pnpm --filter @helix/web typecheck:e2e",
+      "exitCode": 0
+    },
+    "source-structure": {
+      "command": "pnpm quality:duplicates",
+      "exitCode": 0
+    }
+  },
+  "build": {
+    "passed": true
+  },
+  "tests": {
+    "passed": 5515,
+    "skipped": 393,
+    "packages": [
+      {
+        "package": "@helix/config",
+        "passed": 10,
+        "skipped": 0
+      },
+      {
+        "package": "@helix/sdk-web",
+        "passed": 3,
+        "skipped": 0
+      },
+      {
+        "package": "@helix/contracts",
+        "passed": 49,
+        "skipped": 0
+      },
+      {
+        "package": "@helix/cli",
+        "passed": 167,
+        "skipped": 0
+      },
+      {
+        "package": "@helix/sdk-types",
+        "passed": 5,
+        "skipped": 0
+      },
+      {
+        "package": "@helix/sdk",
+        "passed": 10,
+        "skipped": 0
+      },
+      {
+        "package": "@helix/app",
+        "passed": 3848,
+        "skipped": 393
+      },
+      {
+        "package": "@helix/web",
+        "passed": 1423,
+        "skipped": 0
+      }
+    ],
+    "separateLivePostgresPassed": 26,
+    "livePostgresScopes": [
+      "Vault RLS and conflicting saves",
+      "Mail threading and approval expiry",
+      "Chat inbox and realtime",
+      "Calendar permissions",
+      "Assistant pending turns",
+      "Meet guest authorization",
+      "Runtime audit role"
+    ]
+  },
+  "browser": {
+    "uniqueCasesValidated": 211,
+    "skipped": 1,
+    "initialFullRun": {
+      "passed": 209,
+      "failed": 2,
+      "skipped": 1
+    },
+    "focusedCorrectedRun": {
+      "passed": 7,
+      "tests": "admin-agent-secrets.spec.ts and product-scope.spec.ts"
+    },
+    "backend": "fixtures",
+    "skippedReason": "Live SMTP browser test requires a separate live backend"
+  },
+  "accessibility": {
+    "status": "passed",
+    "configurations": 306,
+    "routeCount": 51,
+    "violations": 0,
+    "visualFindings": 0,
+    "executionErrors": 0,
+    "backend": "fixtures",
+    "nativeVaultUnlockedFlow": "Covered separately by native Passwords browser/axe tests; the full route audit does not unlock a personal vault",
+    "loadedAdminFollowup": {
+      "configurations": 12,
+      "violations": 0,
+      "visualFindings": 0,
+      "executionErrors": 0,
+      "status": "passed",
+      "reason": "Initial missing fixtures covered error states; populated responses exposed invalid definition-list children, which are corrected."
+    },
+    "fullMatrixAndCorrectedLoadedStatesPassed": true
+  },
+  "liveMcp": {
+    "toolCount": 135,
+    "checks": [
+      {
+        "name": "initialize",
+        "passed": true,
+        "count": null
+      },
+      {
+        "name": "tools/list",
+        "passed": true,
+        "count": 135
+      },
+      {
+        "name": "resources/list",
+        "passed": true,
+        "count": 5
+      },
+      {
+        "name": "prompts/list",
+        "passed": true,
+        "count": 3
+      },
+      {
+        "name": "read assistant.conversations.list",
+        "passed": true,
+        "shape": ["items", "nextCursor"]
+      },
+      {
+        "name": "read assistant.models.list",
+        "passed": true,
+        "shape": ["defaultModelId", "models", "webSearchEnabled"]
+      },
+      {
+        "name": "read assistant.status",
+        "passed": true,
+        "shape": ["available"]
+      },
+      {
+        "name": "read assistant.tools.list",
+        "passed": true,
+        "shape": ["groups", "limit"]
+      },
+      {
+        "name": "read calendar.calendars.list",
+        "passed": true,
+        "shape": ["calendars", "mine", "team"]
+      },
+      {
+        "name": "read calendar.event.list",
+        "passed": true,
+        "shape": ["events"]
+      },
+      {
+        "name": "read chat.export",
+        "passed": true,
+        "shape": ["exportedAt", "messages", "room", "version"]
+      },
+      {
+        "name": "read chat.mentions.list",
+        "passed": true,
+        "shape": ["mentions", "nextBefore"]
+      },
+      {
+        "name": "read chat.message.list",
+        "passed": true,
+        "shape": ["messages"]
+      },
+      {
+        "name": "read chat.pins.list",
+        "passed": true,
+        "shape": ["pins"]
+      },
+      {
+        "name": "read chat.room.discover",
+        "passed": true,
+        "shape": ["rooms"]
+      },
+      {
+        "name": "read chat.room.list",
+        "passed": true,
+        "shape": ["rooms"]
+      },
+      {
+        "name": "read chat.search",
+        "passed": true,
+        "shape": ["hits"]
+      },
+      {
+        "name": "read chat.unread.list",
+        "passed": true,
+        "shape": ["rooms", "totalMentions", "totalUnread"]
+      },
+      {
+        "name": "gated chats.search",
+        "passed": false,
+        "code": "bad_request",
+        "message": "chats.search is only available inside Assistant."
+      },
+      {
+        "name": "read contacts.directory.list",
+        "passed": true,
+        "shape": ["members", "total"]
+      },
+      {
+        "name": "read contacts.duplicates.list",
+        "passed": true,
+        "shape": ["groups"]
+      },
+      {
+        "name": "read contacts.export",
+        "passed": true,
+        "shape": ["count", "filename", "vcard"]
+      },
+      {
+        "name": "read contacts.labels.list",
+        "passed": true,
+        "shape": ["labels", "total"]
+      },
+      {
+        "name": "read contacts.list",
+        "passed": true,
+        "shape": ["contacts", "total"]
+      },
+      {
+        "name": "gated context.grep",
+        "passed": false,
+        "code": "bad_request",
+        "message": "context.grep is only available inside Assistant."
+      },
+      {
+        "name": "read drive.access.list",
+        "passed": true,
+        "shape": ["grants"]
+      },
+      {
+        "name": "read drive.access.requests",
+        "passed": true,
+        "shape": ["requests"]
+      },
+      {
+        "name": "read drive.comment.evidence.list",
+        "passed": true,
+        "shape": ["nextCursor", "revisions"]
+      },
+      {
+        "name": "read drive.comment.list",
+        "passed": true,
+        "shape": ["comments", "nextCursor"]
+      },
+      {
+        "name": "read drive.link.list",
+        "passed": true,
+        "shape": ["links"]
+      },
+      {
+        "name": "read drive.list",
+        "passed": true,
+        "shape": ["entries", "nextCursor"]
+      },
+      {
+        "name": "read drive.s3-keys.list",
+        "passed": true,
+        "shape": ["accessKeys", "endpointPath", "grantableScopes"]
+      },
+      {
+        "name": "read drive.search",
+        "passed": true,
+        "shape": ["hits"]
+      },
+      {
+        "name": "read drive.storage.usage",
+        "passed": true,
+        "shape": ["limitBytes", "organizationUsedBytes", "usedBytes"]
+      },
+      {
+        "name": "read drive.upload.status",
+        "passed": true,
+        "shape": ["available", "label", "objectId", "state", "terminal", "updatedAt"]
+      },
+      {
+        "name": "read drive.versions.list",
+        "passed": true,
+        "shape": ["versions"]
+      },
+      {
+        "name": "gated drive.view.get",
+        "passed": false,
+        "code": "forbidden",
+        "message": "Active organization membership required."
+      },
+      {
+        "name": "read drive.workflow.list",
+        "passed": true,
+        "shape": ["workflows"]
+      },
+      {
+        "name": "read mail.alias.list",
+        "passed": true,
+        "shape": ["aliases"]
+      },
+      {
+        "name": "read mail.delegate.list",
+        "passed": true,
+        "shape": ["delegates"]
+      },
+      {
+        "name": "read mail.draft.list",
+        "passed": true,
+        "shape": ["drafts"]
+      },
+      {
+        "name": "read mail.filter.list",
+        "passed": true,
+        "shape": ["filters"]
+      },
+      {
+        "name": "read mail.folders.list",
+        "passed": true,
+        "shape": ["folders"]
+      },
+      {
+        "name": "read mail.labels.list",
+        "passed": true,
+        "shape": ["labels"]
+      },
+      {
+        "name": "read mail.scheduled.list",
+        "passed": true,
+        "shape": ["scheduled", "total"]
+      },
+      {
+        "name": "read mail.search",
+        "passed": true,
+        "shape": ["hits"]
+      },
+      {
+        "name": "read mail.settings.get",
+        "passed": true,
+        "shape": [
+          "blockedSenders",
+          "includeSignatureOnReplies",
+          "signatureHtml",
+          "signatureText",
+          "updatedAt"
+        ]
+      },
+      {
+        "name": "read mail.thread.get",
+        "passed": true,
+        "shape": ["thread"]
+      },
+      {
+        "name": "read mail.threads.list",
+        "passed": true,
+        "shape": ["limit", "offset", "threads", "total"]
+      },
+      {
+        "name": "read mail.vacation.get",
+        "passed": true,
+        "shape": ["vacation"]
+      },
+      {
+        "name": "gated meet.host-controls.get",
+        "passed": false,
+        "code": "not_found",
+        "message": "Unknown Meet room: b4a51c63-f818-400b-a3c9-9eb918a2c84d"
+      },
+      {
+        "name": "read meet.meetings.list",
+        "passed": true,
+        "shape": ["active", "meetings", "recent", "scheduled"]
+      },
+      {
+        "name": "read meet.room.list",
+        "passed": true,
+        "shape": ["rooms"]
+      },
+      {
+        "name": "read meet.status",
+        "passed": true,
+        "shape": ["available"]
+      },
+      {
+        "name": "read memory.list",
+        "passed": true,
+        "shape": ["items"]
+      },
+      {
+        "name": "read memory.search",
+        "passed": true,
+        "shape": ["items"]
+      },
+      {
+        "name": "read platform.ping",
+        "passed": true,
+        "shape": ["id", "ok", "service"]
+      },
+      {
+        "name": "read routines.list",
+        "passed": true,
+        "shape": ["items"]
+      },
+      {
+        "name": "read search.query",
+        "passed": true,
+        "shape": ["estimatedTotalHits", "hits", "processingTimeMs", "query"]
+      },
+      {
+        "name": "gated tasks.list",
+        "passed": false,
+        "code": "bad_request",
+        "message": "tasks.list is only available inside Assistant."
+      },
+      {
+        "name": "gated web.fetch",
+        "passed": false,
+        "code": "bad_request",
+        "message": "Web access is disabled by administrator policy."
+      },
+      {
+        "name": "resource chat",
+        "passed": true
+      },
+      {
+        "name": "resource mail",
+        "passed": true
+      },
+      {
+        "name": "resource drive",
+        "passed": true
+      },
+      {
+        "name": "resource drive",
+        "passed": true
+      },
+      {
+        "name": "resource drive",
+        "passed": true
+      },
+      {
+        "name": "prompt triage-inbox",
+        "passed": true
+      },
+      {
+        "name": "prompt summarize-thread",
+        "passed": true
+      },
+      {
+        "name": "prompt find-file",
+        "passed": true
+      },
+      {
+        "name": "anonymous denied",
+        "passed": true,
+        "status": 401
+      },
+      {
+        "name": "invalid denied",
+        "passed": true,
+        "status": 401
+      },
+      {
+        "name": "agent denied /v1/api/passwords/vault",
+        "passed": true,
+        "status": 401
+      },
+      {
+        "name": "agent denied /v1/api/admin/agents",
+        "passed": true,
+        "status": 403
+      },
+      {
+        "name": "owner mailbox isolated",
+        "passed": true
+      },
+      {
+        "name": "owner private mail resource denied",
+        "passed": true
+      },
+      {
+        "name": "unknown tool rejected",
+        "passed": true
+      },
+      {
+        "name": "quarantine status callable",
+        "passed": true
+      },
+      {
+        "name": "quarantined file unreadable",
+        "passed": true
+      }
+    ],
+    "limitations": [
+      {
+        "tool": "actions.get",
+        "reason": "Requires a dedicated fixture",
+        "required": ["id"]
+      },
+      {
+        "tool": "assistant.conversation.get",
+        "reason": "Requires a dedicated fixture",
+        "required": ["conversationId"]
+      },
+      {
+        "tool": "chat.thread.list",
+        "reason": "Requires a dedicated fixture",
+        "required": ["roomId", "parentMessageId"]
+      },
+      {
+        "tool": "chats.search",
+        "code": "bad_request",
+        "message": "chats.search is only available inside Assistant."
+      },
+      {
+        "tool": "chats.view",
+        "reason": "Requires a dedicated fixture",
+        "required": ["conversationId"]
+      },
+      {
+        "tool": "contacts.get",
+        "reason": "Requires a dedicated fixture",
+        "required": ["id"]
+      },
+      {
+        "tool": "context.grep",
+        "code": "bad_request",
+        "message": "context.grep is only available inside Assistant."
+      },
+      {
+        "tool": "context.view",
+        "reason": "Requires a dedicated fixture",
+        "required": ["sourceId"]
+      },
+      {
+        "tool": "drive.view.get",
+        "code": "forbidden",
+        "message": "Active organization membership required."
+      },
+      {
+        "tool": "mail.draft.get",
+        "reason": "Requires a dedicated fixture",
+        "required": ["id"]
+      },
+      {
+        "tool": "mail.outbound.get",
+        "reason": "Requires a dedicated fixture",
+        "required": ["id"]
+      },
+      {
+        "tool": "meet.host-controls.get",
+        "code": "not_found",
+        "message": "Unknown Meet room: b4a51c63-f818-400b-a3c9-9eb918a2c84d"
+      },
+      {
+        "tool": "meet.join-by-code",
+        "reason": "Requires a dedicated fixture",
+        "required": [
+          "code",
+          "recordingNoticeAccepted",
+          "recordingNoticeVersion",
+          "deviceId",
+          "joinGrantId"
+        ]
+      },
+      {
+        "tool": "meet.mint-token",
+        "reason": "Requires a dedicated fixture",
+        "required": [
+          "roomId",
+          "recordingNoticeAccepted",
+          "recordingNoticeVersion",
+          "deviceId",
+          "joinGrantId"
+        ]
+      },
+      {
+        "tool": "tasks.list",
+        "code": "bad_request",
+        "message": "tasks.list is only available inside Assistant."
+      },
+      {
+        "tool": "web.fetch",
+        "code": "bad_request",
+        "message": "Web access is disabled by administrator policy."
+      },
+      {
+        "tool": "web.search",
+        "reason": "External search is not configured for this test"
+      },
+      {
+        "tool": "meet.host-controls.get",
+        "reason": "No dedicated live meeting was opened during this validation"
+      }
+    ],
+    "atlasPreserved": true,
+    "mutationToolsExercisedByUnitSuiteAndEarlierDatedLiveEvidence": true,
+    "diagnosticAssumptions": [
+      {
+        "tool": "meet.host-controls.get",
+        "reason": "The generic read probe supplied a Chat room ID; expected not_found does not validate a live Meet host-control session."
+      }
+    ]
+  },
+  "liveCli": {
+    "checks": [
+      {
+        "name": "R3 CLI MCP catalogue",
+        "passed": true,
+        "exitCode": 0,
+        "safeError": null
+      },
+      {
+        "name": "R3 CLI REST catalogue",
+        "passed": true,
+        "exitCode": 0,
+        "safeError": null
+      },
+      {
+        "name": "R3 CLI OpenAPI catalogue",
+        "passed": true,
+        "exitCode": 0,
+        "safeError": null
+      },
+      {
+        "name": "R3 CLI describe Chat",
+        "passed": true,
+        "exitCode": 0,
+        "safeError": null
+      },
+      {
+        "name": "R3 CLI MCP resource list",
+        "passed": true,
+        "exitCode": 0,
+        "safeError": null
+      },
+      {
+        "name": "R3 CLI Calendar",
+        "passed": true,
+        "exitCode": 0,
+        "safeError": null
+      },
+      {
+        "name": "R3 CLI own Mail",
+        "passed": true,
+        "exitCode": 0,
+        "safeError": null
+      },
+      {
+        "name": "R3 CLI own Drive",
+        "passed": true,
+        "exitCode": 0,
+        "safeError": null
+      },
+      {
+        "name": "R3 CLI own Chat",
+        "passed": true,
+        "exitCode": 0,
+        "safeError": null
+      },
+      {
+        "name": "R3 CLI Assistant",
+        "passed": true,
+        "exitCode": 0,
+        "safeError": null
+      },
+      {
+        "name": "R3 CLI Meet",
+        "passed": true,
+        "exitCode": 0,
+        "safeError": null
+      },
+      {
+        "name": "R3 CLI invalid JSON",
+        "passed": true,
+        "exitCode": 2,
+        "safeError": "{\"error\":{\"code\":\"usage_error\",\"message\":\"Invalid JSON in --json argument: Expected property name or '}' in JSON at position 1 (line 1 column 2)\"}}\n"
+      },
+      {
+        "name": "R3 CLI missing destructive scope",
+        "passed": true,
+        "exitCode": 3,
+        "safeError": "{\"error\":{\"status\":403,\"code\":\"forbidden\",\"message\":\"Actor cannot invoke tool: drive.delete\",\"traceId\":\"req-i\"}}\n"
+      },
+      {
+        "name": "R3 CLI owner mailbox is isolated",
+        "passed": true,
+        "exitCode": 0,
+        "visibleThreads": 0
+      },
+      {
+        "name": "R3 CLI stdio MCP initialize",
+        "passed": true
+      },
+      {
+        "name": "R3 CLI stdio discovery",
+        "passed": true,
+        "toolCount": 135
+      },
+      {
+        "name": "R3 CLI stdio tool call",
+        "passed": true
+      },
+      {
+        "name": "R3 CLI stdio resource read",
+        "passed": true
+      }
+    ],
+    "framedChecks": [
+      {
+        "name": "R3 MCP prompt discovery remains available",
+        "passed": true,
+        "promptCount": 3
+      },
+      {
+        "name": "R3 MCP resource discovery remains available",
+        "passed": true,
+        "resourceCount": 5
+      },
+      {
+        "name": "R3 CLI Content-Length framed initialize",
+        "passed": true
+      },
+      {
+        "name": "R3 CLI framed Unicode resource reply",
+        "passed": true
+      },
+      {
+        "name": "R3 CLI framed prompt discovery",
+        "passed": true
+      }
+    ]
+  },
+  "sdkExports": {
+    "results": [
+      {
+        "package": "@helix/contracts",
+        "entry": ".",
+        "declaredFilesExist": true,
+        "runtimeImport": true,
+        "browserBundlerOnly": false
+      },
+      {
+        "package": "@helix/contracts",
+        "entry": "./errors",
+        "declaredFilesExist": true,
+        "runtimeImport": true,
+        "browserBundlerOnly": false
+      },
+      {
+        "package": "@helix/contracts",
+        "entry": "./http",
+        "declaredFilesExist": true,
+        "runtimeImport": true,
+        "browserBundlerOnly": false
+      },
+      {
+        "package": "@helix/contracts",
+        "entry": "./tenant-config",
+        "declaredFilesExist": true,
+        "runtimeImport": true,
+        "browserBundlerOnly": false
+      },
+      {
+        "package": "@helix/contracts",
+        "entry": "./drive",
+        "declaredFilesExist": true,
+        "runtimeImport": true,
+        "browserBundlerOnly": false
+      },
+      {
+        "package": "@helix/contracts",
+        "entry": "./mail",
+        "declaredFilesExist": true,
+        "runtimeImport": true,
+        "browserBundlerOnly": false
+      },
+      {
+        "package": "@helix/contracts",
+        "entry": "./chat",
+        "declaredFilesExist": true,
+        "runtimeImport": true,
+        "browserBundlerOnly": false
+      },
+      {
+        "package": "@helix/sdk-types",
+        "entry": ".",
+        "declaredFilesExist": true,
+        "runtimeImport": true,
+        "browserBundlerOnly": false
+      },
+      {
+        "package": "@helix/sdk-types",
+        "entry": "./metering",
+        "declaredFilesExist": true,
+        "runtimeImport": true,
+        "browserBundlerOnly": false
+      },
+      {
+        "package": "@helix/sdk-types",
+        "entry": "./tenant-config",
+        "declaredFilesExist": true,
+        "runtimeImport": true,
+        "browserBundlerOnly": false
+      },
+      {
+        "package": "@helix/sdk",
+        "entry": ".",
+        "declaredFilesExist": true,
+        "runtimeImport": true,
+        "browserBundlerOnly": false
+      },
+      {
+        "package": "@helix/sdk",
+        "entry": "./db-tenant-scoped",
+        "declaredFilesExist": true,
+        "runtimeImport": true,
+        "browserBundlerOnly": false
+      },
+      {
+        "package": "@helix/sdk",
+        "entry": "./feature-flags",
+        "declaredFilesExist": true,
+        "runtimeImport": true,
+        "browserBundlerOnly": false
+      },
+      {
+        "package": "@helix/sdk",
+        "entry": "./manifest",
+        "declaredFilesExist": true,
+        "runtimeImport": true,
+        "browserBundlerOnly": false
+      },
+      {
+        "package": "@helix/sdk",
+        "entry": "./metering",
+        "declaredFilesExist": true,
+        "runtimeImport": true,
+        "browserBundlerOnly": false
+      },
+      {
+        "package": "@helix/sdk-web",
+        "entry": ".",
+        "declaredFilesExist": true,
+        "runtimeImport": false,
+        "browserBundlerOnly": true
+      }
+    ],
+    "privateWorkspacePackages": true
+  },
+  "ai": {
+    "checks": [
+      {
+        "name": "configured AI buffered MCP generation",
+        "passed": true,
+        "status": 200,
+        "safeError": null
+      },
+      {
+        "name": "configured AI REST stream",
+        "passed": true,
+        "status": 200,
+        "eventCount": 1,
+        "eventTypes": ["final"]
+      },
+      {
+        "name": "independent persisted AI read",
+        "passed": true,
+        "messageCount": 4
+      },
+      {
+        "name": "temporary AI credential revoked",
+        "passed": true
+      },
+      {
+        "name": "revoked AI key denied",
+        "passed": true,
+        "status": 401
+      },
+      {
+        "name": "Atlas primary key preserved",
+        "passed": true
+      }
+    ],
+    "toolGroups": [],
+    "memoryOptIn": false,
+    "primaryCredentialPreserved": true
+  },
+  "approval": {
+    "checks": [
+      {
+        "name": "external mail requires human review",
+        "passed": true,
+        "exitCode": 6
+      },
+      {
+        "name": "CLI reads pending confirmation",
+        "passed": true
+      },
+      {
+        "name": "MCP sees pending action",
+        "passed": true
+      },
+      {
+        "name": "agent self approval denied",
+        "passed": true,
+        "exitCode": 4
+      },
+      {
+        "name": "human review preview denied to agent",
+        "passed": true,
+        "status": 403
+      },
+      {
+        "name": "test request cancelled without sending",
+        "passed": true
+      },
+      {
+        "name": "cancelled final state",
+        "passed": true
+      }
+    ],
+    "pendingId": "7f25ca97-4020-4361-bcef-4e5f4d9d3fb4",
+    "externalMessageSent": false,
+    "humanApprovalNotImpersonated": true
+  },
+  "edge": {
+    "checks": [
+      {
+        "name": "trusted HTTPS workspace.helixapps.si",
+        "passed": true,
+        "status": 200
+      },
+      {
+        "name": "trusted HTTPS meet.workspace.helixapps.si",
+        "passed": true,
+        "status": 200
+      },
+      {
+        "name": "trusted HTTPS passwords.workspace.helixapps.si",
+        "passed": true,
+        "status": 200
+      },
+      {
+        "name": "direct origin",
+        "passed": true,
+        "status": 403
+      },
+      {
+        "name": "direct origin with spoof",
+        "passed": true,
+        "status": 403
+      },
+      {
+        "name": "/healthz",
+        "passed": true,
+        "status": 200
+      },
+      {
+        "name": "/readyz",
+        "passed": true,
+        "status": 200
+      }
+    ]
+  },
+  "openapi": {
+    "status": 200,
+    "sessionOnlyVaultDeclared": true,
+    "securitySchemePresent": true,
+    "pathCount": 450
+  },
+  "turn": [
+    {
+      "mode": "udp",
+      "unauthenticatedAllocationDenied": true,
+      "authenticatedAllocationSucceeded": true,
+      "allocationReleased": true,
+      "trustedTls": false
+    },
+    {
+      "mode": "tls",
+      "unauthenticatedAllocationDenied": true,
+      "authenticatedAllocationSucceeded": true,
+      "allocationReleased": true,
+      "trustedTls": true
+    }
+  ],
+  "dns": {
+    "helixapps.si NS": ["woz.ns.cloudflare.com.", "cruz.ns.cloudflare.com."],
+    "workspace.helixapps.si MX": ["10 mail.workspace.helixapps.si."],
+    "_dmarc.workspace.helixapps.si TXT": ["\"v=DMARC1; p=none\""],
+    "darpcr3bmura7m73tab3luw3lbnog5iy._domainkey.workspace.helixapps.si CNAME": [
+      "darpcr3bmura7m73tab3luw3lbnog5iy.dkim.amazonses.com."
+    ],
+    "mail.workspace.helixapps.si A": ["89.167.14.138"],
+    "meet.workspace.helixapps.si A": ["89.167.14.138"],
+    "turn.workspace.helixapps.si A": ["89.167.14.138"],
+    "localPublicSmtpProbe": {
+      "connected": false,
+      "reason": "Port 25 connection timed out from this machine; verify separately from server"
+    }
+  },
+  "smtpTls": {
+    "smtpStartTls": true,
+    "certificateVerified": true,
+    "messageSent": false,
+    "vantage": "deployment-server"
+  },
+  "publicAssets": {
+    "publicAssetsVerified": 213,
+    "exactBytes": true,
+    "workerPresent": true,
+    "indexHtmlExcluded": "Cloudflare inserts an analytics script; current CSP does not authorize it"
+  },
+  "isolatedInterfaceProbes": {
+    "malformedJson": {
+      "status": 400,
+      "body": {
+        "statusCode": 400,
+        "code": "FST_ERR_CTP_INVALID_JSON_BODY",
+        "error": "Bad Request",
+        "message": "Body is not valid JSON but content-type is set to 'application/json'"
+      },
+      "contractAccepted": false
+    },
+    "suspendedTenant": {
+      "status": 423,
+      "body": {
+        "error": {
+          "code": "tenant-suspended",
+          "message": "Suspended fixture",
+          "traceId": "req-2"
+        }
+      },
+      "contractAccepted": false
+    },
+    "resources": {
+      "limitedToolResponse": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "result": {
+          "isError": true,
+          "content": [
+            {
+              "type": "text",
+              "text": "Agent tool invocation limit exceeded: requests_per_minute Rate limited. Retry after 60 seconds."
+            }
+          ],
+          "structuredContent": {
+            "code": "rate_limited",
+            "message": "Agent tool invocation limit exceeded: requests_per_minute",
+            "retryAfterSeconds": 60,
+            "hint": "Rate limited. Retry after 60 seconds."
+          }
+        }
+      },
+      "resourceStillReadable": true,
+      "repeatedResourceStillReadable": true,
+      "auditRecordsAdded": 0,
+      "responseBytes": 2622836
+    },
+    "provenance": {
+      "executions": 1,
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"fixtureExecuted\":true}"
+            }
+          ],
+          "structuredContent": {
+            "fixtureExecuted": true
+          }
+        }
+      },
+      "auditMetadata": {
+        "orgId": "audit-org",
+        "actorType": "agent",
+        "toolId": "mail.audit-send",
+        "toolPermission": "mail.send",
+        "sideEffectClass": "external_communication",
+        "status": "executed",
+        "durationBucket": "lt_10ms",
+        "idempotencyFingerprint": "bd42ad9e1b9bee72a1f96d03c36a83cc7afda55af388379da0413fa0e6be2204",
+        "effectiveClassification": "standard",
+        "requestChannel": "mcp",
+        "sourceIds": [],
+        "containsUntrustedContext": false
+      }
+    },
+    "firewallWithProvenance": {
+      "outcome": "deny",
+      "reason": "untrusted_context_high_risk_blocked"
+    }
+  },
+  "isolatedMfaResendProbe": {
+    "memoryAdapter": true,
+    "maintainedPlugin": "better-auth 1.7.2",
+    "baselineDeliveredCodeStatus": 200,
+    "deliveredMessagesAcrossTwoFixtures": 2,
+    "resendStatus": 429,
+    "originalDeliveredCodeStatus": 401,
+    "originalDeliveredCodeError": "INVALID_CODE",
+    "pendingOtpRecords": 1
+  },
+  "isolatedSmtpReuseProbe": {
+    "plaintextLoopbackFixture": true,
+    "physicalPeer": "127.0.0.1",
+    "identities": [
+      {
+        "remoteAddress": "203.0.113.77",
+        "helo": "audit.example.test"
+      },
+      {
+        "remoteAddress": "203.0.113.77",
+        "helo": "audit.example.test"
+      }
+    ],
+    "staleIdentityOnUnavailable": true
+  },
+  "dependencyAudit": {
+    "critical": 0,
+    "high": 0,
+    "moderate": 7,
+    "newVaultDependencyAdvisories": 0,
+    "licensePolicyPassed": true
+  },
+  "repairs": [
+    "Registered shared session cookie security scheme before Swagger generates the vault routes; public OpenAPI and CLI discovery restored",
+    "Made unused approval helper private",
+    "Updated sidebar assertion for pinned Assistant",
+    "Waited for the asynchronous settings mutation in its browser assertion",
+    "Filled missing agent-credential/control accessibility fixtures",
+    "Corrected definition-list semantics in loaded Agent controls without changing layout"
+  ],
+  "openDefects": [
+    "MCP tool writes discard source provenance used by the policy firewall",
+    "MCP resource reads bypass tool budgets and attributable read audit",
+    "MCP Mail resources have no byte/message-page limit",
+    "Rejected email-MFA resend invalidates the delivered code",
+    "Malformed JSON and suspended-tenant REST errors fail the published error schema",
+    "Unavailable XFORWARD can retain the previous SMTP sender identity",
+    "SES feedback ingestion adapter is not implemented",
+    "Complete WebDAV sync is not implemented; quotas are placeholder values",
+    "Some creation flows still use blocking dialogs"
+  ],
+  "notValidated": [
+    "All 393 environment-gated cases as one live suite; 26 relevant cases ran separately",
+    "Fresh Gmail delivery; earlier human-confirmed development delivery evidence remains dated separately",
+    "Two-participant live Meet media and recording",
+    "New off-server backup or restore drill",
+    "Restart/reboot recovery or extended soak/load",
+    "KeePass desktop/mobile/extension sync",
+    "Public SDK/CLI installation artifacts",
+    "Firefox/Safari interoperability; the repository browser suite uses Chromium"
+  ],
+  "atlasPreserved": true,
+  "humanApprovalNotImpersonated": true,
+  "externalMailSent": false,
+  "cleanup": {
+    "ownerActive": true,
+    "atlasActive": true,
+    "atlasCredentialActive": true,
+    "temporaryAiActorDisabled": true,
+    "temporaryAiCredentialsRevoked": true,
+    "temporarySecretFileRemoved": true
+  },
+  "deployedSourceHashesMatch": {
+    "apps/web/dist/index.html": "89a26f98d8c773e1fcc96c5199d7894dd02b422a620d05ce7c366f3bfdea61c5",
+    "apps/helix/dist/api/openapi.js": "090f05a0fe02c95a2819e53a60617aebace9decd921e2d5df56aa35335a66cc7",
+    "apps/helix/dist/bootstrap/routes.js": "597159383a43e4233862ab77f08740fa155da0f9cc826fc636542daf70eeb542"
+  },
+  "activeImages": [
+    "helix/workspace-development:validation-r5-openapi sha256:769ecc07b2c97e3bc6c3b4431dfef92a59bd73299ec240de85402e1ec8113fb7",
+    "helix/workspace-web-development:validation-r5-accessibility sha256:708d87f557c7c507b3745904d205a1deb1db04cb21d1c771bce7b4ad1e314ec5"
+  ]
+}

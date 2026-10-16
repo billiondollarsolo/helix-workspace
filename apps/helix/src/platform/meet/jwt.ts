@@ -13,6 +13,9 @@ interface JitsiJwtUser {
   readonly email?: string | undefined;
   readonly avatar?: string | undefined;
   readonly moderator?: boolean | undefined;
+  readonly helixOrgId?: string | undefined;
+  readonly helixRoomId?: string | undefined;
+  readonly helixCaptureConsent?: string | undefined;
 }
 
 export interface MintJitsiJwtInput {
@@ -83,6 +86,11 @@ export function mintJitsiJwt(input: MintJitsiJwtInput): MintedJitsiJwt {
         email: input.user.email ?? "",
         avatar: input.user.avatar ?? "",
         moderator: input.user.moderator ?? false,
+        ...(input.user.helixOrgId === undefined ? {} : { helixOrgId: input.user.helixOrgId }),
+        ...(input.user.helixRoomId === undefined ? {} : { helixRoomId: input.user.helixRoomId }),
+        ...(input.user.helixCaptureConsent === undefined
+          ? {}
+          : { helixCaptureConsent: input.user.helixCaptureConsent }),
       },
       ...(input.features === undefined ? {} : { features: input.features }),
     },

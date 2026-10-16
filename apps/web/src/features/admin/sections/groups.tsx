@@ -169,7 +169,7 @@ function GroupsPanel({ onCreate }: { readonly onCreate: () => void }) {
           action={
             needle.length > 0 ? undefined : (
               <Button type="button" variant="outline" onClick={onCreate}>
-                <PlusIcon aria-hidden="true" /> Create group
+                <PlusIcon aria-hidden="true" /> Add group
               </Button>
             )
           }
@@ -283,11 +283,11 @@ export function AdminGroups() {
         actions={
           tab === "groups" ? (
             <Button type="button" size="sm" onClick={() => setCreating("group")}>
-              <PlusIcon aria-hidden="true" /> Create group
+              <PlusIcon aria-hidden="true" /> Add group
             </Button>
           ) : (
             <Button type="button" size="sm" onClick={() => setCreating("org-unit")}>
-              <PlusIcon aria-hidden="true" /> Create org unit
+              <PlusIcon aria-hidden="true" /> Add org unit
             </Button>
           )
         }

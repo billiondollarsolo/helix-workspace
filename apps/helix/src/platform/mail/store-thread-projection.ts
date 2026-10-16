@@ -13,6 +13,8 @@ import type {
 } from "./types.js";
 
 export interface MailThreadRow {
+  readonly body_storage?: string | null;
+  readonly body_truncated?: boolean;
   readonly thread_id: string;
   readonly subject: string | null;
   readonly thread_archived_at: Date | null;
@@ -42,6 +44,7 @@ interface MailThreadAttachmentRow {
 }
 
 export interface MailThreadListRow {
+  readonly follow_up?: "needs_reply" | "waiting_on" | "done";
   readonly thread_id: string;
   readonly subject: string | null;
   readonly message_id: string;
@@ -69,7 +72,9 @@ export function mailPreviewText(message: {
   readonly body: string;
   readonly bodyFormat: string;
   readonly plainBody?: unknown;
+  readonly preview?: unknown;
 }): string {
+  if (typeof message.preview === "string") return message.preview.slice(0, PREVIEW_LENGTH);
   if (message.bodyFormat !== "html") return message.body.slice(0, PREVIEW_LENGTH);
   const text =
     typeof message.plainBody === "string" && message.plainBody.trim() !== ""
@@ -122,6 +127,7 @@ export function mapThreadRow(row: MailThreadListRow, folder: MailFolderId): Mail
   const decisionCatcher =
     decision?.action === "spam" || decision?.action === "phishing" ? "decision-model" : null;
   return {
+    ...(row.follow_up === undefined ? {} : { followUp: row.follow_up }),
     threadId: row.thread_id,
     messageId: row.message_id,
     subject: row.subject ?? "",
@@ -131,6 +137,7 @@ export function mapThreadRow(row: MailThreadListRow, folder: MailFolderId): Mail
       body: row.body,
       bodyFormat: row.body_format,
       plainBody: row.metadata.plainBody,
+      preview: row.metadata.preview,
     }),
     time: row.sent_at.toISOString(),
     unread: row.read_at === null || row.read_at < row.sent_at,

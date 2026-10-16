@@ -250,6 +250,7 @@ function UploadDialog({
 
   return (
     <Dialog
+      modal={false}
       title="Use your own certificate"
       width="min(640px, calc(100vw - 32px))"
       onClose={onClose}

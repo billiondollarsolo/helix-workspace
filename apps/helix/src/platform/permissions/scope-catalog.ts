@@ -173,6 +173,13 @@ const scopeCatalog = [
     surfaces: ["agent", "app_password"],
   },
 
+  {
+    scope: "agent.accounts.request",
+    description: "Request bot accounts for human approval as a trusted installation.",
+    surfaces: ["agent"],
+    grantGated: true,
+  },
+
   // Agent secrets. The scope reaches the tools; each secret also needs a grant.
   {
     scope: "secrets.use",

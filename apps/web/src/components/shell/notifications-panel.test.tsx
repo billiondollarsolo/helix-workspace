@@ -65,6 +65,34 @@ describe("NotificationsPanel", () => {
     vi.clearAllMocks();
   });
 
+  it("opens pending email notifications in the human review page without approving", () => {
+    const pendingId = "00000000-0000-4000-8000-000000000701";
+    vi.mocked(useQuery).mockReturnValue({
+      data: {
+        items: [
+          {
+            id: "email-review",
+            verb: "pending_action.pending_confirmation",
+            objectType: "pending_action",
+            objectId: pendingId,
+            payload: { toolId: "mail.send" },
+            summary: "Action approval required",
+            createdAt: "2026-07-28T12:00:00.000Z",
+            unread: true,
+          },
+        ],
+      },
+    } as never);
+    act(() => root.render(<NotificationsPanel open onClose={() => undefined} />));
+    const row = Array.from(container.querySelectorAll("button")).find((button) =>
+      button.textContent?.includes("Action approval required"),
+    );
+    expect(row).toBeDefined();
+    act(() => row?.click());
+    expect(navigate).toHaveBeenCalledWith({ to: "/approvals/$pendingId", params: { pendingId } });
+    expect(markRead).toHaveBeenCalledWith(["email-review"]);
+  });
+
   it("renders focus-managed tabs and accessible locale-aware timestamps", async () => {
     const opener = document.createElement("button");
     document.body.append(opener);

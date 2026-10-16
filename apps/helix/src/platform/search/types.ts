@@ -52,7 +52,14 @@ export interface SearchEngine {
   search(request: SearchRequest): Promise<SearchResponse>;
 }
 
+export interface MailIndexReference {
+  readonly orgId: string;
+  readonly actorId: string;
+  readonly messageId: string;
+}
+
 export interface SearchIndexMutation {
+  readonly reloadMail?: readonly MailIndexReference[];
   readonly upsert?: readonly IndexDocument[];
   readonly delete?: readonly string[];
   readonly orgId?: string;

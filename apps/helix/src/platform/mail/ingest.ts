@@ -31,6 +31,9 @@ import { dmarcAlignmentEvidence } from "./dmarc-evidence.js";
 import { MAIL_RAW_PARSE_OPTIONS, prepareMailRawSource } from "./raw-source.js";
 import { InMemorySmtpRateLimitStore, type SmtpRateLimitStore } from "./smtp-rate-limit.js";
 import {
+  takeSmtpClientIdentity,
+  smtpError,
+  asSmtpError,
   smtpDisabledCommands,
   smtpTransportSecurityOptions,
   type SmtpTransportSecurity,
@@ -313,6 +316,11 @@ export class SmtpMailReceiver {
   }
 
   private async handleConnect(session: SMTPServerSession): Promise<void> {
+    const security = this.options.transportSecurity;
+    const forwarders = security.mode === "starttls" ? security.trustedForwarderIps : undefined;
+    if (forwarders !== undefined && !forwarders.includes(session.remoteAddress)) {
+      throw smtpError(421, "SMTP handoff is restricted to the configured mail edge.");
+    }
     const allowed = await this.rateLimits.consume({
       scope: "connection",
       key: session.remoteAddress,
@@ -331,6 +339,7 @@ export class SmtpMailReceiver {
       commands: 0,
       messageAttempts: 0,
       connected: true,
+      connectionAddress: session.remoteAddress,
       recipients: new Map(),
     });
   }
@@ -341,11 +350,11 @@ export class SmtpMailReceiver {
       return;
     }
     state.connected = false;
-    const current = this.activeConnectionsByIp.get(session.remoteAddress) ?? 0;
+    const current = this.activeConnectionsByIp.get(state.connectionAddress) ?? 0;
     if (current <= 1) {
-      this.activeConnectionsByIp.delete(session.remoteAddress);
+      this.activeConnectionsByIp.delete(state.connectionAddress);
     } else {
-      this.activeConnectionsByIp.set(session.remoteAddress, current - 1);
+      this.activeConnectionsByIp.set(state.connectionAddress, current - 1);
     }
   }
 
@@ -389,9 +398,14 @@ export class SmtpMailReceiver {
       throw smtpError(554, "No accepted recipients.");
     }
     state.messageAttempts += 1;
+    const client = takeSmtpClientIdentity(
+      session,
+      this.options.transportSecurity,
+      state.connectionAddress,
+    );
     const rateAllowed = await this.rateLimits.consume({
       scope: "message",
-      key: session.remoteAddress,
+      key: client.remoteAddress,
       limit: this.limits.messagesPerWindow,
       windowMs: this.limits.messageWindowMs,
     });
@@ -407,8 +421,7 @@ export class SmtpMailReceiver {
       raw,
       envelopeTo: [...state.recipients.keys()],
       ...(state.envelopeFrom === undefined ? {} : { envelopeFrom: state.envelopeFrom }),
-      remoteAddress: session.remoteAddress,
-      helo: session.hostNameAppearsAs,
+      ...client,
     });
   }
 
@@ -1394,6 +1407,7 @@ interface SmtpSessionState {
   commands: number;
   messageAttempts: number;
   connected: boolean;
+  readonly connectionAddress: string;
   envelopeFrom?: string | undefined;
   readonly recipients: Map<string, MailInboundRecipientResolution>;
 }
@@ -1408,21 +1422,6 @@ function resolveSmtpReceiverLimits(
     }
   }
   return limits;
-}
-
-function smtpError(responseCode: number, message: string): Error {
-  return Object.assign(new Error(message), { responseCode });
-}
-
-function asSmtpError(error: unknown, fallbackCode: number, fallbackMessage: string): Error {
-  if (
-    error instanceof Error &&
-    "responseCode" in error &&
-    typeof (error as { readonly responseCode?: unknown }).responseCode === "number"
-  ) {
-    return error;
-  }
-  return smtpError(fallbackCode, fallbackMessage);
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {

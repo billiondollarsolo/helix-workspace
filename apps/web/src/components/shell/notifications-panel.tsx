@@ -164,7 +164,11 @@ export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
       markRead.mutate([notification.id]);
     }
     const app = appForNotification(notification);
-    if (app !== undefined) {
+    if (notification.objectType === "pending_action" && typeof notification.objectId === "string") {
+      void navigate({ to: "/approvals/$pendingId", params: { pendingId: notification.objectId } });
+    } else if (notification.objectType === "bot_account_request") {
+      void navigate({ to: "/admin/$section", params: { section: "agent-credentials" } });
+    } else if (app !== undefined) {
       void navigate({ to: app.route });
     }
     onClose();

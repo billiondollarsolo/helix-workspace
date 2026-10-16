@@ -92,6 +92,33 @@ describe("sendBytesWithRangeSupport", () => {
 });
 
 describe("sendStreamWithRangeSupport", () => {
+  it("preserves the size on Fastify's automatically exposed HEAD route without opening storage", async () => {
+    const app = fastify();
+    let opened = false;
+    app.get("/automatic-head", (request, reply) =>
+      sendStreamWithRangeSupport({
+        request,
+        reply,
+        byteSize: 512,
+        etag: '"test"',
+        mimeType: "application/octet-stream",
+        disposition: 'attachment; filename="test.bin"',
+        open: async () => {
+          opened = true;
+          return new Uint8Array(512);
+        },
+      }),
+    );
+    try {
+      const response = await app.inject({ method: "HEAD", url: "/automatic-head" });
+      expect(response.statusCode).toBe(200);
+      expect(response.headers["content-length"]).toBe("512");
+      expect(response.rawPayload).toHaveLength(0);
+      expect(opened).toBe(false);
+    } finally {
+      await app.close();
+    }
+  });
   it("opens only the requested range of a 20 GiB object", async () => {
     const opened: unknown[] = [];
     const app = fastify();

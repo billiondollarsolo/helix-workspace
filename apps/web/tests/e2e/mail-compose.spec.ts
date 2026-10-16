@@ -165,6 +165,37 @@ test.describe("/mail compose and reply", () => {
     });
   });
 
+  test("AI suggestions are editable, preserve concurrent edits, and send nothing", async ({
+    page,
+  }) => {
+    const calls = await openMail(page);
+    await page.route("**/api/tools/mail.ai.status", (route) =>
+      fulfillJson(route, { enabled: true }),
+    );
+    await page.route("**/api/tools/mail.ai.suggest", (route) =>
+      fulfillJson(route, { text: "Thanks for the update.", classification: "standard" }),
+    );
+    await page.getByRole("button", { name: "Compose", exact: true }).click();
+    const compose = page.locator("[data-compose-window]");
+    await compose.getByRole("textbox", { name: "Message body" }).fill("My draft");
+    await compose.getByRole("button", { name: "Help me write" }).click();
+    const panel = page.getByRole("dialog", { name: "Help me write", exact: true });
+    await panel.getByRole("button", { name: "Generate", exact: true }).click();
+    await expect(panel.getByRole("textbox", { name: "Suggested text" })).toHaveValue(
+      "Thanks for the update.",
+    );
+    expect(await axeViolations(page, ".form-panel")).toEqual([]);
+    await compose.getByRole("textbox", { name: "Message body" }).fill("My newer draft");
+    await expect(panel.getByRole("button", { name: "Use in draft" })).toBeDisabled();
+    await panel.getByRole("button", { name: "Generate", exact: true }).click();
+    await panel.getByRole("textbox", { name: "Suggested text" }).fill("Thanks, I will review it.");
+    await panel.getByRole("button", { name: "Use in draft" }).click();
+    await expect(compose.getByRole("textbox", { name: "Message body" })).toHaveText(
+      "Thanks, I will review it.",
+    );
+    expect(calls.some((call) => ["mail.send", "mail.reply"].includes(call.tool))).toBe(false);
+  });
+
   test("a person link opens compose addressed to them", async ({ page }) => {
     await seedBrowserSession(page, "e2e-compose-token");
     await page.route("**/api/**", (route) => mockBackend(route, []));

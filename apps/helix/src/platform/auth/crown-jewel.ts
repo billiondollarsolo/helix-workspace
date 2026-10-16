@@ -125,6 +125,7 @@ const policies: readonly {
     "admin.security",
   ),
   policy("POST", /^\/api\/tools\/agent\.credentials\.create$/u, "credential.issue", "admin.agents"),
+  policy("POST", /^\/api\/tools\/agent\.account\.approve$/u, "credential.issue", "admin.agents"),
   policy("POST", /^\/api\/tools\/agent\.credentials\.rotate$/u, "key.rotate", "admin.agents"),
   policy("POST", /^\/api\/tools\/app\.passwords\.create$/u, "credential.issue", "admin.users"),
   // Granting a secret to agents. Storing one is left out on purpose: an
@@ -153,8 +154,22 @@ function policy(
   };
 }
 
-export function crownJewelActionFor(method: string, requestUrl: string): CrownJewelAction | null {
-  const path = decodeURIComponent(requestUrl.split("?")[0] ?? requestUrl);
+const mcpToolCall = z.object({
+  method: z.literal("tools/call"),
+  params: z.object({ name: z.string() }),
+});
+
+export function crownJewelActionFor(
+  method: string,
+  requestUrl: string,
+  body?: unknown,
+): CrownJewelAction | null {
+  let path = decodeURIComponent(requestUrl.split("?")[0] ?? requestUrl);
+  if (method === "POST" && path === "/mcp") {
+    const call = mcpToolCall.safeParse(body);
+    if (!call.success) return null;
+    path = `/api/tools/${call.data.params.name}`;
+  }
   return (
     policies.find((candidate) => candidate.method === method && candidate.path.test(path))
       ?.action ?? null
@@ -417,7 +432,7 @@ export function installCrownJewelGate(app: FastifyInstance, options: CrownJewelG
   const ttlMs = options.approvalTtlMs ?? 10 * 60 * 1000;
 
   app.addHook("preHandler", async (request, reply) => {
-    const action = crownJewelActionFor(request.method, request.url);
+    const action = crownJewelActionFor(request.method, request.url, request.body);
     if (action === null) return;
     const actor = await options.actorFromRequest(request);
     if (!canAuthorize(action, actor)) return;

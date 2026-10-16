@@ -1,0 +1,409 @@
+{
+  "environment": "development",
+  "webImage": "helix/workspace-web-development:passwords-sidebar-r3",
+  "agent": "Atlas",
+  "agentPreserved": true,
+  "checks": [
+    {
+      "name": "R3 CLI MCP catalogue",
+      "passed": true,
+      "exitCode": 0,
+      "safeError": null
+    },
+    {
+      "name": "R3 CLI REST catalogue",
+      "passed": true,
+      "exitCode": 0,
+      "safeError": null
+    },
+    {
+      "name": "R3 CLI OpenAPI catalogue",
+      "passed": true,
+      "exitCode": 0,
+      "safeError": null
+    },
+    {
+      "name": "R3 CLI describe Chat",
+      "passed": true,
+      "exitCode": 0,
+      "safeError": null
+    },
+    {
+      "name": "R3 CLI MCP resource list",
+      "passed": true,
+      "exitCode": 0,
+      "safeError": null
+    },
+    {
+      "name": "R3 CLI Calendar",
+      "passed": true,
+      "exitCode": 0,
+      "safeError": null
+    },
+    {
+      "name": "R3 CLI own Mail",
+      "passed": true,
+      "exitCode": 0,
+      "safeError": null
+    },
+    {
+      "name": "R3 CLI own Drive",
+      "passed": true,
+      "exitCode": 0,
+      "safeError": null
+    },
+    {
+      "name": "R3 CLI own Chat",
+      "passed": true,
+      "exitCode": 0,
+      "safeError": null
+    },
+    {
+      "name": "R3 CLI Assistant",
+      "passed": true,
+      "exitCode": 0,
+      "safeError": null
+    },
+    {
+      "name": "R3 CLI Meet",
+      "passed": true,
+      "exitCode": 0,
+      "safeError": null
+    },
+    {
+      "name": "R3 CLI invalid JSON",
+      "passed": true,
+      "exitCode": 2,
+      "safeError": "{\"error\":{\"code\":\"usage_error\",\"message\":\"Invalid JSON in --json argument: Expected property name or '}' in JSON at position 1 (line 1 column 2)\"}}\n"
+    },
+    {
+      "name": "R3 CLI missing destructive scope",
+      "passed": true,
+      "exitCode": 3,
+      "safeError": "{\"error\":{\"status\":403,\"code\":\"forbidden\",\"message\":\"Actor cannot invoke tool: drive.delete\",\"traceId\":\"req-69\"}}\n"
+    },
+    {
+      "name": "R3 CLI owner mailbox is isolated",
+      "passed": true,
+      "exitCode": 0,
+      "visibleThreads": 0
+    },
+    {
+      "name": "R3 CLI stdio MCP initialize",
+      "passed": true
+    },
+    {
+      "name": "R3 CLI stdio discovery",
+      "passed": true,
+      "toolCount": 135
+    },
+    {
+      "name": "R3 CLI stdio tool call",
+      "passed": true
+    },
+    {
+      "name": "R3 CLI stdio resource read",
+      "passed": true
+    },
+    {
+      "name": "R3 CLI signed file upload and scanned finalize",
+      "passed": true,
+      "exitCode": 0,
+      "safeError": null
+    },
+    {
+      "name": "R3 CLI uploaded file is scan-approved and available",
+      "passed": true,
+      "state": "active"
+    },
+    {
+      "name": "R3 CLI write preserves exact Unicode bytes through MCP read",
+      "passed": true,
+      "bytes": 2160
+    },
+    {
+      "name": "R3 CLI resource read preserves exact file content",
+      "passed": true
+    },
+    {
+      "name": "R3 CLI rejects a false local checksum before upload",
+      "passed": true,
+      "exitCode": 1
+    },
+    {
+      "name": "R3 CLI Chat stdin input and flag overrides",
+      "passed": true,
+      "exitCode": 0,
+      "safeError": null
+    },
+    {
+      "name": "R3 CLI Chat retry returns the same message",
+      "passed": true
+    },
+    {
+      "name": "R3 MCP confirms one CLI message with its file attachment",
+      "passed": true
+    },
+    {
+      "name": "R3 vault verification email reaches test agent through SES and inbound SMTP",
+      "passed": true,
+      "threadId": "b72eabfc-34d3-4eab-917b-0541b759b5f7"
+    },
+    {
+      "name": "R3 MCP read assistant.tools.list",
+      "passed": true,
+      "shape": ["limit", "groups"]
+    },
+    {
+      "name": "R3 MCP read memory.list",
+      "passed": true,
+      "shape": ["items"]
+    },
+    {
+      "name": "R3 MCP read memory.search",
+      "passed": true,
+      "shape": ["items"]
+    },
+    {
+      "name": "R3 MCP read routines.list",
+      "passed": true,
+      "shape": ["items"]
+    },
+    {
+      "name": "R3 MCP read chat.room.discover",
+      "passed": true,
+      "shape": ["rooms"]
+    },
+    {
+      "name": "R3 MCP read chat.mentions.list",
+      "passed": true,
+      "shape": ["mentions", "nextBefore"]
+    },
+    {
+      "name": "R3 MCP read meet.meetings.list",
+      "passed": true,
+      "shape": ["meetings", "scheduled", "recent", "active"]
+    },
+    {
+      "name": "R3 MCP read calendar.event.list",
+      "passed": true,
+      "shape": ["events"]
+    },
+    {
+      "name": "R3 MCP read search.query",
+      "passed": true,
+      "shape": ["hits", "query", "estimatedTotalHits", "processingTimeMs"]
+    },
+    {
+      "name": "R3 agent can cancel its own test approval request",
+      "passed": true,
+      "status": "cancelled",
+      "approved": false
+    },
+    {
+      "name": "R3 CLI external email requires human approval",
+      "passed": true,
+      "exitCode": 6
+    },
+    {
+      "name": "R3 MCP reads CLI approval state",
+      "passed": true
+    },
+    {
+      "name": "R3 CLI polls human approval",
+      "passed": true
+    },
+    {
+      "name": "R3 CLI agent cannot self-approve external mail",
+      "passed": true,
+      "exitCode": 4
+    },
+    {
+      "name": "R3 email preview remains restricted to its human reviewer",
+      "passed": true,
+      "httpStatus": 403
+    },
+    {
+      "name": "R3 Atlas delivers the human review link through Chat",
+      "passed": true,
+      "messageId": "a363aa00-aa2f-46a5-9c08-99afaf979832"
+    },
+    {
+      "name": "R3 human approval executes the CLI email as Atlas",
+      "passed": true,
+      "status": "executed",
+      "humanApproverMatched": true,
+      "executionActorMatched": true
+    },
+    {
+      "name": "R3 one human-approved CLI email accepted by SES SMTP",
+      "passed": true,
+      "status": "accepted",
+      "providerKind": null
+    },
+    {
+      "name": "R3 human-approved CLI test email arrived in Gmail",
+      "passed": true,
+      "userConfirmed": true
+    },
+    {
+      "name": "R3 persistent Atlas remains authenticated",
+      "passed": true,
+      "httpStatus": 200
+    },
+    {
+      "name": "R3 Atlas scopes remain limited with no vault-secret or admin tools",
+      "passed": true,
+      "toolCount": 135
+    },
+    {
+      "name": "R3 MCP prompt discovery remains available",
+      "passed": true,
+      "promptCount": 3
+    },
+    {
+      "name": "R3 MCP resource discovery remains available",
+      "passed": true,
+      "resourceCount": 5
+    },
+    {
+      "name": "R3 CLI Content-Length framed initialize",
+      "passed": true
+    },
+    {
+      "name": "R3 CLI framed Unicode resource reply",
+      "passed": true
+    },
+    {
+      "name": "R3 CLI framed prompt discovery",
+      "passed": true
+    },
+    {
+      "name": "R3 temporary vault mailbox credential is revoked",
+      "passed": true,
+      "httpStatus": 401
+    },
+    {
+      "name": "R3 Atlas remains active after disposable vault cleanup",
+      "passed": true,
+      "httpStatus": 200
+    },
+    {
+      "name": "R3 live standalone vault account and item flows",
+      "passed": true,
+      "flows": {
+        "signup": true,
+        "verificationMailDelivered": true,
+        "browserVaultCreate": true,
+        "browserVaultLock": true,
+        "wrongMasterPasswordDenied": true,
+        "serverCipherFieldsEncrypted": true,
+        "emailConfirmedFixtureDeletion": true,
+        "logout": true,
+        "correctMasterPasswordUnlock": true,
+        "secureNotePersistsAcrossLock": true,
+        "secureNoteExactUnicodeReadback": true,
+        "secureNoteEdited": true,
+        "freshFixtureLogout": true,
+        "freshPasswordLogin": true,
+        "editedSecureNoteRecoveredAfterFreshLogin": true,
+        "authenticatedFixtureAccountDeletion": true,
+        "fixtureCredentialRevoked": true,
+        "fixtureMailActorDisabled": true
+      }
+    },
+    {
+      "name": "R3 MCP explains checklist context and existing external read API",
+      "passed": true
+    },
+    {
+      "name": "R3 Assistant remains available after API restart",
+      "passed": true
+    },
+    {
+      "name": "R3 CLI describes Assistant-only checklist context",
+      "passed": true
+    },
+    {
+      "name": "R3 final HTTPS workspace.helixapps.si",
+      "passed": true,
+      "httpStatus": 200
+    },
+    {
+      "name": "R3 final HTTPS meet.workspace.helixapps.si",
+      "passed": true,
+      "httpStatus": 200
+    },
+    {
+      "name": "R3 final HTTPS passwords.workspace.helixapps.si",
+      "passed": true,
+      "httpStatus": 200
+    },
+    {
+      "name": "R3 direct origin remains denied with spoofed forwarding header",
+      "passed": true,
+      "httpStatus": 403
+    }
+  ],
+  "initialRunnerAssumptions": [
+    {
+      "name": "R3 CLI owner mailbox denied",
+      "passed": false,
+      "exitCode": 0,
+      "safeError": ""
+    }
+  ],
+  "initialAssumptionResolution": "Mailbox RLS returns an empty listing for another mailbox; it does not promise a 403. Explicit checks verified empty foreign results.",
+  "vault": {
+    "signup": true,
+    "verificationMailDelivered": true,
+    "browserVaultCreate": true,
+    "browserVaultLock": true,
+    "wrongMasterPasswordDenied": true,
+    "serverCipherFieldsEncrypted": true,
+    "emailConfirmedFixtureDeletion": true,
+    "logout": true,
+    "correctMasterPasswordUnlock": true,
+    "secureNotePersistsAcrossLock": true,
+    "secureNoteExactUnicodeReadback": true,
+    "secureNoteEdited": true,
+    "freshFixtureLogout": true,
+    "freshPasswordLogin": true,
+    "editedSecureNoteRecoveredAfterFreshLogin": true,
+    "authenticatedFixtureAccountDeletion": true,
+    "fixtureCredentialRevoked": true,
+    "fixtureMailActorDisabled": true
+  },
+  "gmailArrivalConfirmedByUser": true,
+  "humanApprovalExecutedAsRequester": true,
+  "temporaryCredentialRevoked": true,
+  "temporaryActorDisabled": true,
+  "standaloneVaultAccountRemoved": true,
+  "verification": {
+    "format": true,
+    "typecheck": true,
+    "lint": true,
+    "test": true,
+    "testsPassed": 5508,
+    "testsSkipped": 391,
+    "build": true,
+    "boundaries": true,
+    "passwordsPlaywrightPassed": 6,
+    "passwordsAccessibilityIncluded": true,
+    "e2eLint": true,
+    "e2eTypecheck": true
+  },
+  "knownLimitations": [
+    "Native Passwords UI and shared sign-in are planned.",
+    "Assistant checklist tools remain conversation-internal; discovery descriptions now explain the context and external read path.",
+    "Bitwarden extension and mobile compatibility were not tested.",
+    "No new production or restore-drill certification."
+  ],
+  "apiImage": "helix/workspace-development:agent-context-docs-r3",
+  "publicAssets": {
+    "assets": 207,
+    "failed": [],
+    "passed": true
+  },
+  "liveChecksPassed": 63
+}

@@ -7,7 +7,7 @@ import { betterAuth } from "better-auth";
 import { makeSignature } from "better-auth/crypto";
 import { fromNodeHeaders } from "better-auth/node";
 import { twoFactor } from "better-auth/plugins";
-import { randomBytes } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import type { IncomingHttpHeaders } from "node:http";
 import { Pool } from "pg";
 import type postgres from "postgres";
@@ -18,6 +18,7 @@ import { sessionPermissions } from "../permissions/scope-catalog.js";
 import { detachedFromTenantPostgresContext } from "../tenancy/postgres-roles.js";
 import { isRecord } from "../util/json.js";
 import { isSecurityPolicyRecoveryRequest } from "./admin-security-policy.js";
+import type { ExternalEmailMfa } from "./external-email-mfa.js";
 
 export interface BetterAuthInstance {
   readonly api: {
@@ -327,6 +328,7 @@ export interface BetterAuthRuntimeConfig {
     readonly url: string;
     readonly token: string;
   }) => Promise<void>;
+  readonly externalEmailMfa?: ExternalEmailMfa;
   readonly resolveSsoUser?: (
     input: SSOUserResolutionInput,
   ) => Promise<
@@ -359,6 +361,7 @@ export function createBetterAuthRuntime(config: BetterAuthRuntimeConfig): Better
     ...(ssl === false ? {} : { ssl }),
   });
   const sendPasswordReset = config.sendPasswordReset;
+  const emailMfa = config.externalEmailMfa;
   const cookiePolicy = sessionCookiePolicyForBaseUrl(config.baseUrl);
   const auth = betterAuth({
     database: pool,
@@ -412,12 +415,29 @@ export function createBetterAuthRuntime(config: BetterAuthRuntimeConfig): Better
       "/sso/verify-domain",
     ],
     plugins: [
+      ...(emailMfa === undefined ? [] : [emailMfa.deliveryPlugin()]),
       twoFactor({
         issuer: "Helix",
         twoFactorCookieMaxAge: 600,
         trustDeviceMaxAge: 0,
         accountLockout: { enabled: true, maxFailedAttempts: 5, durationSeconds: 900 },
         backupCodeOptions: { storeBackupCodes: "encrypted" },
+        ...(emailMfa === undefined
+          ? {}
+          : {
+              otpOptions: {
+                digits: 6,
+                period: 5,
+                allowedAttempts: 5,
+                storeOTP: {
+                  hash: async (code: string) =>
+                    createHmac("sha256", config.secret)
+                      .update(`helix-sign-in-code:${code}`)
+                      .digest("hex"),
+                },
+                sendOTP: ({ user, otp }) => emailMfa.sendSignInCode(user.id, otp),
+              },
+            }),
       }),
       passkey({
         rpID: new URL(config.baseUrl).hostname,

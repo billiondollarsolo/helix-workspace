@@ -318,6 +318,7 @@ async function realtimeClose(
     {
       store,
       tickets: new BoundTicketStore(actor, roomId),
+      actorFromRequest: () => ({ ...actor, scopes: ["chat.read", "chat.post"] }),
       bus: new InMemoryChatRoomBus(),
       presence: new InMemoryChatPresenceStore(),
       trustedOrigins: [],

@@ -1,6 +1,6 @@
-import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from "@tanstack/react-table";
-import { useVirtualizer } from "@tanstack/react-virtual";
-import { useMemo, useRef } from "react";
+import { Button } from "@/components/ui/button";
+import { AdminTable, type AdminColumn } from "@/features/admin/console/table";
+import { useMemo } from "react";
 import type { WebhookDeliveryListInput } from "./api";
 import { webhookDeliveryStatuses } from "./api";
 import type { WebhookDelivery, WebhookDeliveryStatus, WebhookDirection } from "./types";
@@ -8,7 +8,6 @@ import {
   DeliveryStatusPill,
   DetailRow,
   EditorTitle,
-  EmptyRow,
   PanelTitle,
   TextField,
 } from "./webhook-controls";
@@ -84,17 +83,19 @@ export function DeliveriesPanel({
   readonly onReplay: (deliveryId: string) => void;
   readonly isReplaying: boolean;
 }) {
-  const tableWrapRef = useRef<HTMLDivElement | null>(null);
-  const columns = useMemo<ColumnDef<WebhookDelivery>[]>(
+  const columns = useMemo<AdminColumn<WebhookDelivery>[]>(
     () => [
       {
         id: "detail",
         header: "Detail",
-        cell: ({ row }) => {
-          const delivery = row.original;
+        cell: (row) => {
+          const delivery = row;
           return (
-            <button
-              className="helix-button helix-button-secondary"
+            <Button
+              variant="outline"
+              size="sm"
+              aria-label={`View delivery ${delivery.id}`}
+              aria-pressed={selectedDelivery?.id === delivery.id}
               onClick={(event) => {
                 event.stopPropagation();
                 setSelectedDelivery(delivery);
@@ -102,77 +103,55 @@ export function DeliveriesPanel({
               type="button"
             >
               View
-            </button>
+            </Button>
           );
         },
       },
       {
         id: "status",
         header: "Status",
-        cell: ({ row }) => <DeliveryStatusPill status={row.original.status} />,
+        sortValue: (row) => row.status,
+        cell: (row) => <DeliveryStatusPill status={row.status} />,
       },
       {
         id: "direction",
         header: "Direction",
-        cell: ({ row }) => row.original.direction,
+        sortValue: (row) => row.direction,
+        cell: (row) => row.direction,
       },
       {
         id: "endpoint",
         header: "Endpoint",
-        cell: ({ row }) => deliveryEndpointLabel(row.original, webhookNames),
+        sortValue: (row) => deliveryEndpointLabel(row, webhookNames),
+        cell: (row) => deliveryEndpointLabel(row, webhookNames),
       },
       {
         id: "subject",
         header: "Subject",
-        cell: ({ row }) => row.original.eventSubject,
+        sortValue: (row) => row.eventSubject,
+        cell: (row) => row.eventSubject,
       },
       {
         id: "attempt",
         header: "Attempt",
-        cell: ({ row }) => row.original.attempt,
+        sortValue: (row) => row.attempt,
+        cell: (row) => row.attempt,
       },
       {
         id: "http",
         header: "HTTP",
-        cell: ({ row }) => row.original.responseStatus ?? "-",
+        sortValue: (row) => row.responseStatus,
+        cell: (row) => row.responseStatus ?? "-",
       },
       {
         id: "created",
         header: "Created",
-        cell: ({ row }) => formatDate(row.original.createdAt),
+        sortValue: (row) => new Date(row.createdAt).getTime(),
+        cell: (row) => formatDate(row.createdAt),
       },
     ],
-    [setSelectedDelivery, webhookNames],
+    [setSelectedDelivery, webhookNames, selectedDelivery?.id],
   );
-  const data = useMemo(() => [...deliveries], [deliveries]);
-  const table = useReactTable({
-    columns,
-    data,
-    getCoreRowModel: getCoreRowModel(),
-  });
-  const rows = table.getRowModel().rows;
-  const rowVirtualizer = useVirtualizer({
-    count: rows.length,
-    getScrollElement: () => tableWrapRef.current,
-    estimateSize: () => 41,
-    overscan: 8,
-  });
-  const measuredVirtualRows = rowVirtualizer.getVirtualItems();
-  const virtualRows =
-    measuredVirtualRows.length > 0 || rows.length === 0
-      ? measuredVirtualRows
-      : rows.slice(0, 20).map((_, index) => ({
-          end: (index + 1) * 41,
-          index,
-          size: 41,
-          start: index * 41,
-        }));
-  const firstVirtualRow = virtualRows[0];
-  const lastVirtualRow = virtualRows[virtualRows.length - 1];
-  const paddingTop = firstVirtualRow?.start ?? 0;
-  const paddingBottom =
-    lastVirtualRow === undefined ? 0 : rowVirtualizer.getTotalSize() - lastVirtualRow.end;
-
   return (
     <div className="webhooks-grid">
       <div className="webhooks-panel">
@@ -181,6 +160,7 @@ export function DeliveriesPanel({
           <label className="webhooks-field">
             <span>Direction</span>
             <select
+              className="select"
               value={filters.direction}
               onChange={(event) =>
                 setFilters({ ...filters, direction: event.target.value as "" | WebhookDirection })
@@ -194,6 +174,7 @@ export function DeliveriesPanel({
           <label className="webhooks-field">
             <span>Status</span>
             <select
+              className="select"
               value={filters.status}
               onChange={(event) =>
                 setFilters({ ...filters, status: event.target.value as "" | WebhookDeliveryStatus })
@@ -231,83 +212,23 @@ export function DeliveriesPanel({
             onChange={(value) => setFilters({ ...filters, limit: value })}
           />
         </div>
-        <div className="webhooks-table-wrap deliveries" ref={tableWrapRef} tabIndex={0}>
-          <table className="webhooks-table" aria-label="Webhook deliveries">
-            <thead>
-              {table.getHeaderGroups().map((headerGroup) => (
-                <tr key={headerGroup.id}>
-                  {headerGroup.headers.map((header) => (
-                    <th key={header.id}>
-                      {header.isPlaceholder
-                        ? null
-                        : flexRender(header.column.columnDef.header, header.getContext())}
-                    </th>
-                  ))}
-                </tr>
-              ))}
-            </thead>
-            <tbody>
-              {rows.length === 0 ? (
-                <EmptyRow
-                  colSpan={columns.length}
-                  text={
-                    isLoading ? "Loading deliveries..." : "No deliveries match the current filters."
-                  }
-                />
-              ) : (
-                <>
-                  {paddingTop > 0 ? (
-                    <tr aria-hidden="true">
-                      <td colSpan={columns.length} style={{ height: `${String(paddingTop)}px` }} />
-                    </tr>
-                  ) : null}
-                  {virtualRows.map((virtualRow) => {
-                    const row = rows[virtualRow.index];
-                    if (row === undefined) {
-                      return null;
-                    }
-                    const delivery = row.original;
-                    return (
-                      <tr
-                        aria-selected={selectedDelivery?.id === delivery.id}
-                        className={selectedDelivery?.id === delivery.id ? "selected" : undefined}
-                        data-index={virtualRow.index}
-                        key={row.id}
-                        onClick={() => setSelectedDelivery(delivery)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault();
-                            setSelectedDelivery(delivery);
-                          }
-                        }}
-                        tabIndex={0}
-                        ref={(node) => {
-                          if (node !== null) {
-                            rowVirtualizer.measureElement(node);
-                          }
-                        }}
-                      >
-                        {row.getVisibleCells().map((cell) => (
-                          <td key={cell.id}>
-                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                          </td>
-                        ))}
-                      </tr>
-                    );
-                  })}
-                  {paddingBottom > 0 ? (
-                    <tr aria-hidden="true">
-                      <td
-                        colSpan={columns.length}
-                        style={{ height: `${String(paddingBottom)}px` }}
-                      />
-                    </tr>
-                  ) : null}
-                </>
-              )}
-            </tbody>
-          </table>
-        </div>
+        <AdminTable
+          label="Webhook deliveries"
+          columns={columns}
+          rows={deliveries}
+          rowKey={(row) => row.id}
+          searchText={(row) =>
+            [
+              row.id,
+              row.eventSubject,
+              row.status,
+              row.direction,
+              deliveryEndpointLabel(row, webhookNames),
+            ].join(" ")
+          }
+          partialNote="Search and sorting apply to loaded deliveries. Use the filters above to query other dates or endpoints."
+          empty={isLoading ? "Loading deliveries..." : "No deliveries match the current filters."}
+        />
       </div>
       {selectedDelivery !== null ? (
         <aside className="webhooks-editor">
@@ -331,8 +252,8 @@ export function DeliveriesPanel({
           <DetailRow label="Error" value={selectedDelivery.error ?? "-"} />
           {canReplayDelivery(selectedDelivery) ? (
             <div className="webhooks-row-actions">
-              <button
-                className="helix-button"
+              <Button
+                size="sm"
                 disabled={isReplaying}
                 onClick={() => {
                   onReplay(selectedDelivery.id);
@@ -340,9 +261,10 @@ export function DeliveriesPanel({
                 type="button"
               >
                 {isReplaying ? "Replaying…" : "Replay delivery"}
-              </button>
-              <button
-                className="helix-button helix-button-secondary"
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={() => {
                   /* Jump straight from one failure to that endpoint's whole
                      history — the question after "this failed" is almost always
@@ -355,7 +277,7 @@ export function DeliveriesPanel({
                 type="button"
               >
                 Show this endpoint
-              </button>
+              </Button>
             </div>
           ) : null}
           <pre>

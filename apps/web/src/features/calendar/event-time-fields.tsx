@@ -142,7 +142,7 @@ export function EventTimeFields({
             </label>
             <select
               id={`${ids}-start`}
-              className="cal-field type-body-sm"
+              className="input type-body-sm"
               value={String(draft.startTime)}
               onChange={(event) =>
                 onChange(withStart(draft, draft.startDate, Number(event.target.value)))
@@ -160,7 +160,7 @@ export function EventTimeFields({
             </label>
             <select
               id={`${ids}-end`}
-              className="cal-field type-body-sm"
+              className="input type-body-sm"
               value={String(draft.endTime)}
               onChange={(event) => onChange({ ...draft, endTime: Number(event.target.value) })}
             >
@@ -201,7 +201,7 @@ export function EventTimeFields({
           <label className="flex items-center gap-2 type-body-sm">
             Time zone
             <select
-              className="cal-field type-body-sm max-w-56"
+              className="input type-body-sm max-w-56"
               value={draft.timeZone}
               onChange={(event) => onChange({ ...draft, timeZone: event.target.value })}
             >

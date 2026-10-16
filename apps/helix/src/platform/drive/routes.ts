@@ -180,14 +180,22 @@ export async function registerDriveRoutes(
   app: FastifyInstance,
   options: RegisterDriveRoutesOptions,
 ): Promise<void> {
+  await app.register(async (dav) => {
+    // WebDAV clients may omit Content-Type, and file bodies must retain their exact bytes.
+    dav.removeAllContentTypeParsers();
+    dav.addContentTypeParser("*", { parseAs: "buffer" }, (_request, body, done) => {
+      done(null, body);
+    });
+    installDriveWebDavRoutes(dav, options);
+  });
+}
+
+function installDriveWebDavRoutes(app: FastifyInstance, options: RegisterDriveRoutesOptions): void {
   safeAddHttpMethod(app, "PROPFIND", { hasBody: true });
   safeAddHttpMethod(app, "REPORT", { hasBody: true });
   safeAddHttpMethod(app, "MKCOL", { hasBody: true });
   safeAddHttpMethod(app, "LOCK", { hasBody: true });
   safeAddHttpMethod(app, "UNLOCK", { hasBody: false });
-  safeAddContentTypeParser(app, "application/xml");
-  safeAddContentTypeParser(app, "application/octet-stream");
-  safeAddContentTypeParser(app, "text/xml");
 
   const rateLimiter = options.rateLimiter ?? createWebDavRateLimiter();
   app.route({
@@ -278,6 +286,19 @@ export async function registerDriveRoutes(
                 limit: 1,
               })
             : undefined;
+        let quota: { readonly usedBytes: number; readonly limitBytes: number | null } | undefined =
+          await options.store.getStorageQuotaUsage?.({ orgId: actor.orgId });
+        const personal = await options.store.getMemberStorageUsage?.({
+          orgId: actor.orgId,
+          actorId: actor.id,
+        });
+        if (
+          personal?.personal &&
+          (quota?.limitBytes == null ||
+            personal.personal.limitBytes - personal.personal.usedBytes <
+              quota.limitBytes - quota.usedBytes)
+        )
+          quota = personal.personal;
         return reply
           .code(207)
           .type("application/xml; charset=utf-8")
@@ -290,6 +311,7 @@ export async function registerDriveRoutes(
               sync === undefined
                 ? undefined
                 : webDavSyncToken(actor.orgId, pathKey(path), sync.version),
+              quota,
             ),
           );
       }
@@ -636,10 +658,11 @@ function propfindMultistatusXml(
   body: string,
   locks: ReadonlyMap<string, WebDavLock>,
   syncToken?: string,
+  quota?: { readonly usedBytes: number; readonly limitBytes: number | null },
 ) {
   const request = propfindRequest(body);
   const entries = [
-    targetResponseXml(target, request, locks, syncToken),
+    targetResponseXml(target, request, locks, syncToken, quota),
     ...children.map((child) => childResponseXml(target.path, child, request, locks)),
   ];
   return xmlDocument(`<D:multistatus xmlns:D="DAV:">${entries.join("")}</D:multistatus>`);
@@ -650,6 +673,7 @@ function targetResponseXml(
   request: PropfindRequest,
   locks: ReadonlyMap<string, WebDavLock>,
   syncToken?: string,
+  quota?: { readonly usedBytes: number; readonly limitBytes: number | null },
 ): string {
   const href = target.kind === "folder" ? folderHref(target.path) : fileHref(target.path);
   const entry = target.entry;
@@ -665,6 +689,7 @@ function targetResponseXml(
     etag: entry === undefined ? undefined : entryEtag(entry),
     lock: locks.get(pathKey(target.path)),
     syncToken,
+    quota,
   });
 }
 
@@ -725,8 +750,6 @@ const supportedWebDavProperties = new Set<WebDavProperty>([
   "supportedlock",
 ]);
 
-const webDavQuotaAvailableBytes = 10 * 1024 * 1024 * 1024 * 1024;
-
 type WebDavLock = DriveWebDavLock;
 
 function responseXml(input: {
@@ -741,6 +764,7 @@ function responseXml(input: {
   readonly etag?: string | undefined;
   readonly lock?: WebDavLock | undefined;
   readonly syncToken?: string | undefined;
+  readonly quota?: { readonly usedBytes: number; readonly limitBytes: number | null } | undefined;
 }): string {
   const values: Partial<Record<WebDavProperty, string | undefined>> = {
     creationdate:
@@ -763,8 +787,14 @@ function responseXml(input: {
         ? undefined
         : `<D:getlastmodified>${input.updatedAt.toUTCString()}</D:getlastmodified>`,
     lockdiscovery: lockDiscoveryProp(input.lock, input.href),
-    "quota-available-bytes": `<D:quota-available-bytes>${String(webDavQuotaAvailableBytes)}</D:quota-available-bytes>`,
-    "quota-used-bytes": `<D:quota-used-bytes>${String(input.contentLength ?? 0)}</D:quota-used-bytes>`,
+    "quota-available-bytes":
+      input.quota?.limitBytes == null
+        ? undefined
+        : `<D:quota-available-bytes>${String(Math.max(0, input.quota.limitBytes - input.quota.usedBytes))}</D:quota-available-bytes>`,
+    "quota-used-bytes":
+      input.quota === undefined
+        ? undefined
+        : `<D:quota-used-bytes>${String(input.quota.usedBytes)}</D:quota-used-bytes>`,
     resourcetype: `<D:resourcetype>${input.isCollection ? "<D:collection/>" : ""}</D:resourcetype>`,
     "sync-token":
       input.syncToken === undefined
@@ -779,7 +809,9 @@ function responseXml(input: {
   const requested = requestedProperties(input.request);
   const okProps =
     input.request.mode === "propname"
-      ? [...supportedWebDavProperties].map((name) => `<D:${name}/>`)
+      ? [...supportedWebDavProperties]
+          .filter((name) => values[name] !== undefined)
+          .map((name) => `<D:${name}/>`)
       : requested
           .map((name) => values[name])
           .filter((value): value is string => value !== undefined);
@@ -1110,16 +1142,6 @@ function safeAddHttpMethod(
     app.addHttpMethod(method, options);
   } catch {
     // Another DAV module may already have registered the extension method.
-  }
-}
-
-function safeAddContentTypeParser(app: FastifyInstance, contentType: string): void {
-  try {
-    app.addContentTypeParser(contentType, { parseAs: "buffer" }, (_request, body, done) => {
-      done(null, body);
-    });
-  } catch {
-    // Parser may already be registered by a sibling route module in tests.
   }
 }
 

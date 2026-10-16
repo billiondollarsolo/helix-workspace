@@ -193,7 +193,8 @@ describe("listTenantStorageMigrationObjects", () => {
     expect(recording.calls[0]?.text).toContain("from drive_versions v");
     expect(recording.calls[0]?.text).toContain("metadata->'preview'->>'storageKey'");
     expect(recording.calls[0]?.text).toContain("distinct on (stored.storage_key)");
-    expect(recording.calls[0]?.values).toEqual(["org-1", "org-1", "org-1"]);
+    expect(recording.calls[0]?.values).toEqual(["org-1", "org-1", "org-1", "org-1"]);
+    expect(recording.calls[0]?.text).toContain("from mail_message_bodies");
   });
 });
 

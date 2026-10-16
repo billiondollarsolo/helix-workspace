@@ -1,3 +1,5 @@
+import { runEventsWatch } from "./events.js";
+import { readServerEvents } from "@helix/sdk/live";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { uploadLocalDriveFile } from "./upload.js";
@@ -56,6 +58,7 @@ export interface CliContext {
   readonly env: HelixCliEnv;
   readonly io: CliIo;
   readonly http: HttpClient;
+  readonly fetch?: FetchLike;
   readonly options: GlobalOptions;
   /** Idempotency-Key for this invocation's tool calls, reused across retries. */
   readonly idempotencyKey: string;
@@ -95,6 +98,7 @@ export async function runCli(
     const context: CliContext = {
       env,
       io,
+      fetch: fetchImpl,
       options,
       http: createHttpClient(fetchImpl, {
         timeoutMs: options.timeoutMs,
@@ -112,6 +116,8 @@ export async function runCli(
 async function runCommand(command: HelixCommand, context: CliContext): Promise<number> {
   const { env, io } = context;
   switch (command.kind) {
+    case "events-watch":
+      return runEventsWatch(command, context);
     case "mcp-serve":
       return await serveMcpStdio(context);
     case "completion":
@@ -419,28 +425,89 @@ type McpInputFrame = {
 async function serveMcpStdio(context: CliContext): Promise<number> {
   const { io } = context;
   let buffer: Buffer = Buffer.alloc(0);
-
-  for await (const chunk of io.stdin) {
-    buffer = Buffer.concat([buffer, Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)]);
-    const parsed = extractMcpFrames(buffer, false);
-    buffer = parsed.remaining;
-    for (const frame of parsed.frames) {
+  const subscriptions = new Map<
+    string | number,
+    { controller: AbortController; done: Promise<void> }
+  >();
+  const forward = async (frame: McpInputFrame) => {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(frame.body);
+    } catch {
       await forwardMcpFrame(frame, context);
+      return;
     }
-  }
-
-  const parsed = extractMcpFrames(buffer, true);
-  for (const frame of parsed.frames) {
+    if (
+      isRecord(parsed) &&
+      parsed.method === "notifications/cancelled" &&
+      isRecord(parsed.params)
+    ) {
+      const id = parsed.params.requestId;
+      if (typeof id === "string" || typeof id === "number")
+        subscriptions.get(id)?.controller.abort();
+      return;
+    }
+    if (
+      isRecord(parsed) &&
+      parsed.method === "subscriptions/listen" &&
+      (typeof parsed.id === "string" || typeof parsed.id === "number")
+    ) {
+      const id = parsed.id;
+      if (subscriptions.has(id) || subscriptions.size >= 8) {
+        await writeMcpFrame(
+          io.stdout,
+          frame.framing,
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id,
+            error: {
+              code: -32600,
+              message: "Duplicate subscription id or connection limit reached.",
+            },
+          }),
+        );
+        return;
+      }
+      const controller = new AbortController();
+      const done = forwardMcpFrame(frame, context, controller.signal).finally(() =>
+        subscriptions.delete(id),
+      );
+      subscriptions.set(id, { controller, done });
+      return;
+    }
     await forwardMcpFrame(frame, context);
-  }
-  if (parsed.remaining.toString("utf8").trim().length > 0) {
-    throw new Error("Incomplete MCP JSON-RPC message.");
-  }
+  };
+  try {
+    for await (const chunk of io.stdin) {
+      buffer = Buffer.concat([buffer, Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)]);
+      const parsed = extractMcpFrames(buffer, false);
+      buffer = parsed.remaining;
+      for (const frame of parsed.frames) {
+        await forward(frame);
+      }
+    }
 
-  return 0;
+    const parsed = extractMcpFrames(buffer, true);
+    for (const frame of parsed.frames) {
+      await forward(frame);
+    }
+    if (parsed.remaining.toString("utf8").trim().length > 0) {
+      throw new Error("Incomplete MCP JSON-RPC message.");
+    }
+
+    return 0;
+  } finally {
+    const pending = [...subscriptions.values()];
+    for (const item of pending) item.controller.abort();
+    await Promise.all(pending.map((item) => item.done));
+  }
 }
 
-async function forwardMcpFrame(frame: McpInputFrame, context: CliContext): Promise<void> {
+async function forwardMcpFrame(
+  frame: McpInputFrame,
+  context: CliContext,
+  signal?: AbortSignal,
+): Promise<void> {
   const { env, io } = context;
   let message: unknown;
   const failure = (id: string | number | null, code: number, reason: string) =>
@@ -470,10 +537,42 @@ async function forwardMcpFrame(frame: McpInputFrame, context: CliContext): Promi
   const notification = !Object.hasOwn(message, "id");
   const id = notification ? null : (message.id as string | number | null);
   try {
-    const request = buildMcpRequest(env, frame.body);
+    const request = buildMcpRequest(env, frame.body, false);
     // The MCP client owns retries for forwarded frames; only 429 is retried here.
-    const response = await context.http.send(request.url, request.init, { idempotent: false });
+    const response =
+      signal === undefined
+        ? await context.http.send(request.url, request.init, { idempotent: false })
+        : await (context.fetch ?? fetch)(request.url, {
+            ...request.init,
+            signal,
+            redirect: "error",
+          });
+    if (
+      response.ok &&
+      response.headers.get("content-type")?.startsWith("text/event-stream") &&
+      response.body
+    ) {
+      for await (const event of readServerEvents(response.body)) {
+        if (event.event !== "message") continue;
+        const item: unknown = JSON.parse(event.data);
+        if (!isRecord(item) || item.jsonrpc !== "2.0") throw new Error("Invalid MCP stream.");
+        await writeMcpFrame(io.stdout, frame.framing, event.data);
+      }
+      return;
+    }
     if (!response.ok) {
+      if (!notification) {
+        const errorBody: unknown = await response.json().catch(() => null);
+        if (
+          isRecord(errorBody) &&
+          errorBody.jsonrpc === "2.0" &&
+          errorBody.id === id &&
+          isRecord(errorBody.error)
+        ) {
+          await writeMcpFrame(io.stdout, frame.framing, JSON.stringify(errorBody));
+          return;
+        }
+      }
       if (!notification)
         await failure(id, -32000, `Helix MCP request failed (${String(response.status)}).`);
       io.stderr.write(`Helix MCP request failed (${String(response.status)}).\n`);
@@ -493,6 +592,7 @@ async function forwardMcpFrame(frame: McpInputFrame, context: CliContext): Promi
     }
     await writeMcpFrame(io.stdout, frame.framing, text);
   } catch {
+    if (signal?.aborted) return;
     if (!notification) await failure(id, -32000, "Helix MCP transport failed.");
     io.stderr.write("Helix MCP transport failed.\n");
   }

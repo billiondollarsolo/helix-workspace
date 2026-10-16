@@ -15,18 +15,21 @@ import {
   signInWithPasskey,
   verifyRecoveryCode,
   verifyTotp,
+  sendEmailMfaCode,
+  verifyEmailMfaCode,
   type SessionUser,
   type SignInInput,
 } from "@/lib/auth";
 import { AuthCard } from "./auth-card";
 
-type Step = "email" | "password" | "totp" | "recovery" | "forgot" | "reset";
+type Step = "email" | "password" | "totp" | "recovery" | "email_code" | "forgot" | "reset";
 
 const TITLES: Readonly<Record<Step, string>> = {
   email: "Sign in",
   password: "Welcome",
   totp: "2-step verification",
   recovery: "2-step verification",
+  email_code: "2-step verification",
   forgot: "Reset your password",
   reset: "Choose a new password",
 };
@@ -54,6 +57,8 @@ export function LocalLoginPanel({
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [code, setCode] = useState("");
+  const [factorMethods, setFactorMethods] = useState<readonly string[]>(["totp"]);
+  const [emailCodeSent, setEmailCodeSent] = useState(false);
   const [newPassword, setNewPassword] = useState("");
   const [status, setStatus] = useState<"idle" | "submitting" | "sent">("idle");
   const [error, setError] = useState<string | null>(null);
@@ -77,8 +82,17 @@ export function LocalLoginPanel({
       else setStatus("sent");
     } catch (caught) {
       setStatus("idle");
-      if (caught instanceof SecondFactorRequiredError) goTo("totp");
-      else setError(caught instanceof Error ? caught.message : "Sign-in failed. Try again.");
+      if (caught instanceof SecondFactorRequiredError) {
+        setCode("");
+        setEmailCodeSent(false);
+        setFactorMethods(caught.methods);
+        if (caught.methods.includes("totp")) goTo("totp");
+        else if (caught.methods.includes("otp")) goTo("email_code");
+        else
+          setError(
+            "Your verification method is unavailable. Ask your administrator to restore it.",
+          );
+      } else setError(caught instanceof Error ? caught.message : "Sign-in failed. Try again.");
     }
   }
 
@@ -170,32 +184,71 @@ export function LocalLoginPanel({
             <SubmitButton busy={busy}>Sign in</SubmitButton>
           </div>
         </AuthForm>
-      ) : step === "totp" || step === "recovery" ? (
+      ) : step === "totp" || step === "recovery" || step === "email_code" ? (
         <AuthForm
           legend="Confirm it’s you"
           onSubmit={() =>
-            void run(() => (step === "totp" ? verifyTotp(code) : verifyRecoveryCode(code)))
+            void run(() =>
+              step === "totp"
+                ? verifyTotp(code)
+                : step === "email_code"
+                  ? verifyEmailMfaCode(code)
+                  : verifyRecoveryCode(code),
+            )
           }
         >
           <AuthInput
-            label={step === "totp" ? "Authenticator code" : "Recovery code"}
+            label={
+              step === "totp"
+                ? "Authenticator code"
+                : step === "email_code"
+                  ? "Email code"
+                  : "Recovery code"
+            }
             name="code"
             autoComplete="one-time-code"
-            inputMode={step === "totp" ? "numeric" : "text"}
+            inputMode={step === "recovery" ? "text" : "numeric"}
             value={code}
             onChange={setCode}
             autoFocus
             {...errorProps}
           />
           {message}
+          {step === "email_code" && emailCodeSent ? (
+            <p role="status" className="auth-notice">
+              A code was sent to your verified external email. It expires in 5 minutes.
+            </p>
+          ) : null}
           <div className="auth-actions">
-            <button
-              className="btn ghost"
-              type="button"
-              onClick={() => goTo(step === "totp" ? "recovery" : "totp")}
-            >
-              {step === "totp" ? "Use a recovery code" : "Use an authenticator code"}
-            </button>
+            {step === "email_code" ? (
+              <button
+                type="button"
+                className="btn ghost"
+                disabled={busy}
+                onClick={() =>
+                  void run(async () => {
+                    await sendEmailMfaCode();
+                    setEmailCodeSent(true);
+                  })
+                }
+              >
+                {emailCodeSent ? "Resend email code" : "Send email code"}
+              </button>
+            ) : null}
+            {factorMethods.includes("totp") ? (
+              <button
+                className="btn ghost"
+                type="button"
+                onClick={() => goTo(step === "totp" ? "recovery" : "totp")}
+              >
+                {step === "totp" ? "Use a recovery code" : "Use an authenticator code"}
+              </button>
+            ) : null}
+            {factorMethods.includes("otp") && step !== "email_code" ? (
+              <button type="button" className="btn ghost" onClick={() => goTo("email_code")}>
+                Use an email code
+              </button>
+            ) : null}
             <SubmitButton busy={busy}>Verify</SubmitButton>
           </div>
         </AuthForm>
@@ -284,6 +337,8 @@ function subtitle(step: Step): string {
       return "Enter the 6-digit code from your authenticator app";
     case "recovery":
       return "Enter one of your saved recovery codes";
+    case "email_code":
+      return "Send a 6-digit code to your verified external inbox";
     case "forgot":
       return "We’ll email you a link to choose a new password";
     case "reset":

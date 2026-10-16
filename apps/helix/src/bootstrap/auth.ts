@@ -33,6 +33,7 @@ import {
 } from "../platform/auth/better-auth.js";
 import { PostgresDomainIdentityStore } from "../platform/auth/domain-identity.js";
 import { recoveryCodeDigest } from "../platform/auth/mfa.js";
+import { ExternalEmailMfa } from "../platform/auth/external-email-mfa.js";
 import {
   PostgresAgentCredentialStore,
   PostgresAuthorizationCodeStore,
@@ -178,6 +179,38 @@ export async function installAuth(context: Awaited<ReturnType<typeof installHttp
 
   const betterAuthConfig = getBetterAuthRuntimeConfig(runtimeEnvironment());
 
+  const externalEmailMfa =
+    betterAuthConfig === undefined
+      ? undefined
+      : new ExternalEmailMfa(
+          sql,
+          betterAuthConfig.secret,
+          identityMailTransport === undefined
+            ? undefined
+            : {
+                ready: () => identityMailTransport.verifyConnection(),
+                send: async ({ email, code, purpose }) => {
+                  await identityMailTransport.send(
+                    {
+                      from: { address: mailCfg.signupFrom.address, name: mailCfg.signupFrom.name },
+                      to: [{ address: email }],
+                      cc: [],
+                      bcc: [],
+                      subject:
+                        purpose === "verification"
+                          ? "Verify your Helix external email"
+                          : "Your Helix sign-in code",
+                      text: `${purpose === "verification" ? "Your external email verification code" : "Your sign-in code"} is ${code}.\n\nIt works once and expires in ${purpose === "verification" ? "10" : "5"} minutes.\n\nIf you did not request this, ignore this email.`,
+                      attachments: [],
+                    },
+                    {
+                      idempotencyKey: `identity-code:${recoveryCodeDigest(`${email}:${purpose}:${code}`)}`,
+                    },
+                  );
+                },
+              },
+        );
+
   if (
     bootEnv.NODE_ENV === "production" &&
     betterAuthConfig !== undefined &&
@@ -191,6 +224,11 @@ export async function installAuth(context: Awaited<ReturnType<typeof installHttp
       ? undefined
       : createBetterAuthRuntime({
           ...betterAuthConfig,
+          ...(externalEmailMfa === undefined || identityMailTransport === undefined
+            ? {}
+            : {
+                externalEmailMfa,
+              }),
           resolveSsoUser: (input) => resolveTenantOidcUser(sql, input),
           resolveSsoPrivateKey: (input) =>
             resolveTenantOidcPrivateKey(sql, tenantStorageSecretReader, input),
@@ -481,6 +519,7 @@ export async function installAuth(context: Awaited<ReturnType<typeof installHttp
     tenantSecretCipher,
     betterAuthConfig,
     betterAuthRuntime,
+    externalEmailMfa,
     betterAuthSessionIssuer,
     orgStore,
     domainsStore,

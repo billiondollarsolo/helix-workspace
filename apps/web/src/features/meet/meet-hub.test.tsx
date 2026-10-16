@@ -81,7 +81,7 @@ const tokenRecord = {
   expiresAt: "2026-05-21T11:00:00.000Z",
   recordingAvailable: true,
   canStartRecording: true,
-  recordingNoticeVersion: "2026-09-02",
+  recordingNoticeVersion: "2026-10-15",
   recordingActive: false,
   canModerate: false,
   controls: {
@@ -348,7 +348,7 @@ describe("Meet pre-join", () => {
     expect(JSON.parse(joinCall[1]?.body as string)).toMatchObject({
       code: "hrbr-dsgn-rvw0",
       recordingNoticeAccepted: true,
-      recordingNoticeVersion: "2026-09-02",
+      recordingNoticeVersion: "2026-10-15",
     });
     // The preview releases the camera and microphone for the call.
     expect(media.stop).toHaveBeenCalled();
@@ -368,8 +368,9 @@ describe("Meet pre-join", () => {
       }),
       "meet.mint-token": () => tokenRecord,
     });
+    const onCodeChange = vi.fn();
     renderWithClient(
-      <MeetShell onCodeChange={() => undefined} onScheduleInCalendar={() => undefined} />,
+      <MeetShell onCodeChange={onCodeChange} onScheduleInCalendar={() => undefined} />,
       root,
     );
     await flush();
@@ -411,6 +412,7 @@ describe("Meet pre-join", () => {
       buttonNamed(container, "Join now")?.click();
     });
     await waitForText(container, "Leave");
+    expect(onCodeChange).toHaveBeenCalledWith("inst-ant0-room");
     expect(fetchSpy).toHaveBeenCalledWith("/api/tools/meet.create-room", expect.anything());
     const mintCall = fetchSpy.mock.calls.find((call) => call[0] === "/api/tools/meet.mint-token");
     if (mintCall === undefined) throw new Error("Expected Meet token request.");

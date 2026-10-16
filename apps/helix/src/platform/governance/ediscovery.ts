@@ -1,3 +1,4 @@
+import { readStoredBody } from "../mail/body-storage.js";
 import type { Actor, JsonObject } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { createHash, randomUUID } from "node:crypto";
@@ -59,6 +60,7 @@ interface GovernanceHoldRow {
 }
 
 interface GovernanceSearchRow {
+  readonly matches_metadata?: boolean;
   readonly item_key: string;
   readonly product: Exclude<GovernanceProduct, "all">;
   readonly resource_type: string;
@@ -212,14 +214,46 @@ export class PostgresGovernanceStore {
 
   search(input: GovernanceSearchInput): Promise<readonly GovernanceSearchItem[]> {
     return withTenantPostgresContext(this.sql, input, async (tx) => {
-      const rows = await tx<GovernanceSearchRow[]>`
-        select * from helix_governance_search(
-          ${input.orgId}, ${input.actorId}, ${input.matterId}, ${input.query ?? ""},
-          ${tx.array([...(input.products ?? [])])}::text[], ${input.from ?? null}, ${input.to ?? null},
-          ${input.after ?? null}, ${input.limit ?? 100}
-        )
-      `;
-      return rows.map(mapSearchItem);
+      const result: GovernanceSearchItem[] = [];
+      const limit = Math.max(1, Math.min(500, Math.trunc(input.limit ?? 100)));
+      let after = input.after ?? null;
+      for (;;) {
+        const rows = await tx<GovernanceSearchRow[]>`
+          select * from helix_governance_search_with_bodies(
+            ${input.orgId}, ${input.actorId}, ${input.matterId}, ${input.query ?? ""},
+            ${tx.array([...(input.products ?? [])])}::text[], ${input.from ?? null}, ${input.to ?? null},
+            ${after}, ${limit}
+          )
+        `;
+        for (const row of rows) {
+          if (row.matches_metadata === false && row.snapshot.mailBody !== undefined) {
+            // This reference was returned by the matter-authorized SQL function,
+            // which intentionally permits reviewed content outside one's mailbox.
+            const reference = z
+              .object({
+                storageKey: z.string().regex(/^mail\/bodies\/[a-f0-9-]{36}\.json\.gz$/u),
+                sha256: z.string(),
+                byteSize: z.number(),
+                logicalSize: z.number(),
+              })
+              .parse(row.snapshot.mailBody);
+            const storage = (await this.storageResolver?.({ orgId: input.orgId }))?.client;
+            if (storage === undefined)
+              throw new Error("Mail content storage is unavailable for eDiscovery.");
+            const body = await readStoredBody(storage, reference);
+            if (
+              ![body.text, body.html ?? ""].some((text) =>
+                text.toLowerCase().includes((input.query ?? "").toLowerCase()),
+              )
+            )
+              continue;
+          }
+          result.push(mapSearchItem(row));
+          if (result.length === limit) return result;
+        }
+        if (rows.length < limit) return result;
+        after = rows.at(-1)?.item_key ?? null;
+      }
     });
   }
 

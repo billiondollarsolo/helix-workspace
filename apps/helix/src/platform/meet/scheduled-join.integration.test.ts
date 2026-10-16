@@ -165,7 +165,7 @@ function actor(id: string, orgId = ORG): Actor {
 function consent() {
   return {
     recordingNoticeAccepted: true,
-    recordingNoticeVersion: "2026-09-02",
+    recordingNoticeVersion: "2026-10-15",
     deviceId: randomUUID(),
     joinGrantId: randomUUID(),
   };

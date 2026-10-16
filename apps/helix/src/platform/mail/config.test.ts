@@ -86,9 +86,15 @@ describe("mailConfig", () => {
           MAIL_SMTP_RECEIVER_TRANSPORT_SECURITY: "starttls",
           MAIL_SMTP_RECEIVER_TLS_KEY: "private key",
           MAIL_SMTP_RECEIVER_TLS_CERT: "certificate",
+          MAIL_SMTP_RECEIVER_TRUSTED_PROXY_IPS: "10.0.0.10",
         }),
       ).receiver?.transportSecurity,
-    ).toMatchObject({ mode: "starttls", key: "private key", cert: "certificate" });
+    ).toMatchObject({
+      mode: "starttls",
+      key: "private key",
+      cert: "certificate",
+      trustedForwarderIps: ["10.0.0.10"],
+    });
 
     expect(() =>
       mailConfig(

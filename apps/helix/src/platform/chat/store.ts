@@ -1,3 +1,4 @@
+import { selectPresenceHiddenActors } from "./store-presence.js";
 import { chatBodyFormatSchema, chatMetadataSchema } from "@helix/contracts";
 import type { JsonObject } from "@helix/sdk-types";
 import { createHash } from "node:crypto";
@@ -1965,13 +1966,7 @@ export class PostgresChatStore
     readonly actorId: string;
     readonly candidateActorIds: readonly string[];
   }): Promise<readonly string[]> {
-    if (input.candidateActorIds.length === 0) return [];
-    const rows = await this.sql<{ readonly actor_id: string }[]>`
-      select actor_id from helix_chat_presence_blocked_actor_ids(
-        ${input.orgId}, ${input.actorId}, ${this.sql.array([...input.candidateActorIds])}::uuid[]
-      )
-    `;
-    return rows.map((row) => row.actor_id);
+    return selectPresenceHiddenActors(this.sql, input);
   }
 
   private async requireRoomAccess(orgId: string, actorId: string, roomId: string): Promise<void> {

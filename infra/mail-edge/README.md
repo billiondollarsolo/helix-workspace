@@ -23,6 +23,21 @@ HELIX_MAIL_EDGE_SMOKE_RECIPIENT=probe@example.com \
   pnpm infra:mail-edge:smoke
 ```
 
+For certificates renewed by atomic file replacement, override the two file
+mounts with a read-only directory mount and set `SSL_CERT_PATH`/`SSL_KEY_PATH`
+inside that directory. Docker Mailserver's change detector can then see renewed
+files and reload Postfix. Confirm that behavior before relying on automatic
+renewal. When the backend network is internal, attach a separate egress network
+for recursive DNS queries and mail queue retries. The healthcheck requires the
+enabled Postfix, Rspamd, Redis and Fail2Ban services as well as the SMTP listener.
+
+Pin the mail edge's private IP and set Helix's
+`MAIL_SMTP_RECEIVER_TRUSTED_PROXY_IPS` to that explicit IP in `starttls` mode.
+The Node receiver then restricts all connections to that edge and permits
+Postfix's XFORWARD handoff of the original sender IP and HELO. This preserves
+correct SPF evaluation without trusting message-supplied headers. Keep verified
+TLS on the private delivery hop and never use a subnet or wildcard allowlist.
+
 Before DNS cutover, run the fail-closed public readiness check. It resolves MX,
 forward-confirmed PTR, SPF, the active DKIM selector, DMARC, MTA-STS, and TLS-RPT,
 then performs a trusted SMTP STARTTLS handshake against the named edge:

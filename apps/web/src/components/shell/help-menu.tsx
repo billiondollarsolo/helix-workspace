@@ -1,3 +1,4 @@
+import { FormPanel } from "@/components/ui/form-panel";
 /* Help — the rail's help menu (keyboard shortcuts, documentation, about) and
    the About dialog it opens. */
 
@@ -8,11 +9,10 @@ import {
   CircleHelp as HelpIcon,
   Info as InfoIcon,
   Keyboard as KeyboardIcon,
-  X as XIcon,
 } from "lucide-react";
 import { Menu, MenuItem, MenuLabel, MenuSeparator, MenuTrigger } from "@/components/ui/menu";
 import { menuItemClass, menuSurfaceClass } from "@/components/ui/menu-styles";
-import { Dialog, DropdownMenu } from "radix-ui";
+import { DropdownMenu } from "radix-ui";
 
 /** Product documentation, opened in a new tab. */
 const HELIX_DOCS_URL = "https://github.com/billiondollarsolo/helix-workspace/tree/main/docs";
@@ -55,33 +55,22 @@ export interface AboutDialogProps {
 }
 
 export function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
+  if (!open) return null;
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="sheet-overlay" />
-        <Dialog.Content className="about-dialog">
-          <div className="about-dialog-header">
-            <HelixLogo size={28} />
-            <Dialog.Title className="about-dialog-title">Helix Workspace</Dialog.Title>
-            <Dialog.Close className="icon-btn ml-auto" aria-label="Close">
-              <XIcon size={16} aria-hidden="true" />
-            </Dialog.Close>
-          </div>
-          <Dialog.Description className="about-dialog-text">
-            Mail, file storage, chat, calendar and video meetings in one self-hosted workspace.
-          </Dialog.Description>
-          <p className="about-dialog-text">Open source under the Apache License 2.0.</p>
-          <a
-            className="btn about-dialog-docs"
-            href={HELIX_DOCS_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <DocsIcon size={16} aria-hidden="true" />
-            Read the documentation
-          </a>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+    <FormPanel title="Helix Workspace" onClose={() => onOpenChange(false)}>
+      <HelixLogo size={28} />
+      <p className="about-dialog-text">
+        Mail, file storage, chat, calendar and video meetings in one self-hosted workspace.
+      </p>
+      <p className="about-dialog-text">Open source under the Apache License 2.0.</p>
+      <a
+        className="btn about-dialog-docs"
+        href={HELIX_DOCS_URL}
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        <DocsIcon size={16} aria-hidden="true" /> Read the documentation
+      </a>
+    </FormPanel>
   );
 }

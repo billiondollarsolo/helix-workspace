@@ -1,0 +1,288 @@
+{
+  "date": "2026-10-15",
+  "environment": "development",
+  "productionReady": false,
+  "deployment": {
+    "deployed": true,
+    "apiImage": "helix/workspace-development:security-r13",
+    "ready": true,
+    "rollbackConfig": "/srv/helix/config/development-compose.pre-security-r13-20261015T182553Z.json",
+    "apiImageId": "sha256:9875137077f46a0fc22e975411dc2a2e6066740c585cb2c3040bb60775b7eec6"
+  },
+  "optionalDeployment": [
+    {
+      "config": "/srv/helix/config/development-compose.json",
+      "rollbackConfig": "/srv/helix/config/development-compose.pre-security-20261015-182602.json",
+      "services": ["jitsi-turn", "jitsi-prosody", "jitsi-jvb", "jitsi-jicofo", "jitsi-web"],
+      "started": true
+    },
+    {
+      "config": "/srv/helix/config/mail-edge-compose.json",
+      "rollbackConfig": "/srv/helix/config/mail-edge-compose.pre-security-20261015-182619.json",
+      "services": ["inbound"],
+      "started": true
+    }
+  ],
+  "checks": {
+    "format": "passed",
+    "typecheck": "passed",
+    "lint": "passed",
+    "test": {
+      "passed": 5608,
+      "skipped": 401
+    },
+    "build": "passed",
+    "qualityBoundaries": "passed",
+    "productionJavaScriptAudit": {
+      "info": 0,
+      "low": 0,
+      "moderate": 0,
+      "high": 0,
+      "critical": 0
+    }
+  },
+  "configuredDatabase": {
+    "multiTenant": {
+      "passed": 427,
+      "skipped": 1
+    },
+    "singleTenant": {
+      "passed": 427,
+      "skipped": 1
+    },
+    "skipped": "Large demo-seed integration requires separate storage/search/scanner fixture.",
+    "sharingRegression": "Real PostgreSQL and HTTP S3/WebDAV handlers, fixture object backing and scanner: private objects hidden, reader/editor enforcement, cross-protocol updates and signed URL revocation."
+  },
+  "eventStreams": {
+    "privateCalendarEventsFiltered": true,
+    "anonymousMailSse": 401,
+    "authorizedMailSse": 200,
+    "authorizedWebSocket": true,
+    "beforeRevocationEventsDelivered": true,
+    "afterRevocationEventsDelivered": false,
+    "revokedMailStreamClosed": true,
+    "revokedWebSocketCloseCode": 1008,
+    "newRevokedRequest": 401,
+    "persistentAtlasMcp": 200,
+    "fixtureCredentialRevoked": true,
+    "fixtureActorDisabled": true
+  },
+  "restore": {
+    "archive": "development-daily-20261015T174859Z.tar.gz.age",
+    "scope": "Nine isolated core services on the existing encrypted host, outbound networking blocked.",
+    "client": {
+      "ready": true,
+      "atlasMcp": true,
+      "discoveredTools": 137,
+      "cliRestoredReads": ["mail", "drive", "calendar", "chat", "assistant"]
+    },
+    "objects": {
+      "restoredObjects": 38,
+      "bytes": 2112180,
+      "allHashesAndSizesMatch": true,
+      "sseKmsDecryption": true,
+      "tlsVerified": true
+    },
+    "cleanup": "Isolated containers, network, restored scratch, SSH tunnel and disposable PostgreSQL template removed."
+  },
+  "imageScanner": {
+    "tool": "Trivy",
+    "version": "0.76.0",
+    "apiR13Counts": {
+      "MEDIUM": 23,
+      "LOW": 8
+    },
+    "optionalImages": [
+      {
+        "name": "jitsi-turn-1",
+        "image": "sha256:3342ad15457b3137b24a5022be7af6b92ad6754943d9aa3726ae5eb7d59cdcde",
+        "source": "coturn/coturn:4.18.0-alpine@sha256:c29135c08565810d37053f384584392b7c24b69570fc81a721b878d6fe63e04e",
+        "counts": {},
+        "fixableHighCritical": 0,
+        "beforeCounts": {
+          "HIGH": 14,
+          "MEDIUM": 16
+        }
+      },
+      {
+        "name": "jitsi-prosody-1",
+        "image": "sha256:0bedb743346ff4cbf9823f855e7c4dbcb557f077221a5576f8ac71b7bb847e46",
+        "source": "jitsi/prosody:stable-11031@sha256:926c508c0d9198bf9d0b6adb88ce9092461e9a79e2895fb57fe4ef5f44ff3523",
+        "counts": {
+          "LOW": 217,
+          "HIGH": 82,
+          "MEDIUM": 189,
+          "UNKNOWN": 5,
+          "CRITICAL": 7
+        },
+        "fixableHighCritical": 0,
+        "beforeCounts": {
+          "LOW": 247,
+          "HIGH": 159,
+          "MEDIUM": 294,
+          "UNKNOWN": 14,
+          "CRITICAL": 20
+        }
+      },
+      {
+        "name": "jitsi-web-1",
+        "image": "sha256:dccee19b1443cc5480a1447e5faaf40f767c108c6db516d3e759fa3c4ff5bed5",
+        "source": "jitsi/web:stable-11031@sha256:2183593bbbe1b5e27c368e3737efc51915ce7742de93f594e5ca7950c864c233",
+        "counts": {
+          "LOW": 280,
+          "HIGH": 121,
+          "MEDIUM": 235,
+          "CRITICAL": 7,
+          "UNKNOWN": 81
+        },
+        "fixableHighCritical": 0,
+        "beforeCounts": {
+          "LOW": 314,
+          "HIGH": 268,
+          "MEDIUM": 413,
+          "UNKNOWN": 92,
+          "CRITICAL": 20
+        }
+      },
+      {
+        "name": "jitsi-jvb-1",
+        "image": "sha256:a3f5dc8b53aed236768541d93d48fe36f68cd02ca2ba59b98d7a65cf166d4b23",
+        "source": "jitsi/jvb:stable-11031@sha256:3460de3541a8f96d007b8f2b4681ea8321cae64c17387338eabf776e73cd0f51",
+        "counts": {
+          "LOW": 252,
+          "HIGH": 147,
+          "MEDIUM": 318,
+          "UNKNOWN": 10,
+          "CRITICAL": 11
+        },
+        "fixableHighCritical": 0,
+        "beforeCounts": {
+          "LOW": 316,
+          "HIGH": 304,
+          "MEDIUM": 503,
+          "UNKNOWN": 21,
+          "CRITICAL": 16
+        }
+      },
+      {
+        "name": "jitsi-jicofo-1",
+        "image": "sha256:d953c39ce438079c9d86716b178346cabc2d0ac6488ed1f716b5537148c5513a",
+        "source": "jitsi/jicofo:stable-11031@sha256:1f78fb0c0548ae5efd83a2b488df6aabbae4a70bc6f64c74395b6937b3aceb98",
+        "counts": {
+          "LOW": 233,
+          "HIGH": 105,
+          "MEDIUM": 276,
+          "UNKNOWN": 10,
+          "CRITICAL": 7
+        },
+        "fixableHighCritical": 0,
+        "beforeCounts": {
+          "LOW": 293,
+          "HIGH": 226,
+          "MEDIUM": 444,
+          "UNKNOWN": 21,
+          "CRITICAL": 12
+        }
+      },
+      {
+        "name": "helix-mail-edge-inbound-1",
+        "image": "sha256:4758c26aff81cac48fb80c4bec2a14a27ef8ef2c0439ea39a845ba51f5aef1ff",
+        "source": "ghcr.io/docker-mailserver/docker-mailserver:16.0.1@sha256:d0fe7668defe157aad57ea31b1707ad1e2fb57d7a91bdf17cbdf876549946c86",
+        "counts": {
+          "HIGH": 167,
+          "MEDIUM": 268,
+          "LOW": 858,
+          "UNKNOWN": 30,
+          "CRITICAL": 4
+        },
+        "fixableHighCritical": 0,
+        "beforeCounts": {
+          "HIGH": 355,
+          "MEDIUM": 546,
+          "LOW": 920,
+          "UNKNOWN": 52,
+          "CRITICAL": 24
+        }
+      }
+    ],
+    "disposition": "Available High/Critical fixes applied; remaining vendor-unfixed findings are not production-approved exceptions."
+  },
+  "hostScanner": {
+    "os": {
+      "Family": "ubuntu",
+      "Name": "26.04"
+    },
+    "runningKernel": "7.0.0-38-generic",
+    "counts": {
+      "MEDIUM": 6849,
+      "LOW": 316,
+      "CRITICAL": 5,
+      "HIGH": 183
+    },
+    "highCriticalByPackage": {
+      "linux-modules-7.0.0-30-generic": 162,
+      "linux-modules-7.0.0-38-generic": 23,
+      "qemu-guest-agent": 1,
+      "ubuntu-helper-virt-hwe": 1,
+      "ubuntu-virt": 1
+    },
+    "fixAvailableHighCriticalByPackage": {
+      "linux-modules-7.0.0-30-generic": 139
+    }
+  },
+  "mailDnsRepair": {
+    "cause": "Unbound -> Docker -> nss-lookup.target -> Unbound startup ordering cycle; resolver remained stopped after reboot.",
+    "fix": "Remove Unbound Docker dependency; bind only loopback/private mail bridge with ip-freebind enabled.",
+    "checked": [
+      "unbound-checkconf",
+      "systemd-analyze verify unbound.service docker.service",
+      "Unbound service active",
+      "Gmail DNS lookup from the mail container",
+      "SMTP STARTTLS and RCPT probe"
+    ],
+    "operatorRecovery": "Recovery helper starts Unbound and verifies mail-container DNS.",
+    "secondHostReboot": false
+  },
+  "serviceProbes": {
+    "smtpProbeLocation": "deployment host; local operator network times out on TCP 25",
+    "starttlsVerified": true,
+    "externalRelayRejected": 554,
+    "configuredRecipientAccepted": 250,
+    "workspace.helixapps.si/readyz": 200,
+    "meet.workspace.helixapps.si/": 200
+  },
+  "turn": [
+    {
+      "mode": "udp",
+      "unauthenticatedAllocationDenied": true,
+      "authenticatedAllocationSucceeded": true,
+      "allocationReleased": true,
+      "trustedTls": false
+    },
+    {
+      "mode": "tls",
+      "unauthenticatedAllocationDenied": true,
+      "authenticatedAllocationSucceeded": true,
+      "allocationReleased": true,
+      "trustedTls": true
+    }
+  ],
+  "limits": [
+    "No new full browser/accessibility run: no web source changes in this follow-up.",
+    "No two-participant media or recording acceptance test.",
+    "Restore is same-host core recovery, not a new-host failover or vault unlock proof.",
+    "Backup destination remains the operator machine; failure alerts and pruning are not configured.",
+    "TCP 25 from the operator network times out; SMTP probes ran on the deployment host and sent no DATA.",
+    "Repeated negative SMTP probes triggered a temporary ban on the probe host; only that probe IP was unbanned.",
+    "Host retains the older fallback kernel with available fixes; active kernel and virtualization findings also remain.",
+    "Future AI roadmap, release promotion and long-duration load tests remain separate.",
+    "Mail body object-storage migration is proposed in the plan, not implemented."
+  ],
+  "sourceSha256": {
+    "apps/helix/src/platform/events/routes.ts": "eb020d3f9ac36fa9ae4d40aae2aac51141f24ebe2ed1238db80784ac95ff499f",
+    "apps/helix/src/platform/events/routes.test.ts": "41bd29936831f6178bb40dbf5c181d79be940ced1b8395b97535087f575397ad",
+    "apps/helix/src/platform/drive/s3/gateway.integration.test.ts": "50ad744317d4187b5cb11783e8e896ea5b546023c1648156a7d718670665f1d0",
+    "apps/helix/src/test-support/s3-storage.ts": "3bc0ffa1e77b443df305484dcdaed5a5235b7babba2b1c13e7c498e9f48b18af",
+    "infra/docker/optional-runtime.Dockerfile": "86656de5623a44ffb7bc29d77cb7a07fb77b5828f9c1e525571bfbbcf4559cf7"
+  }
+}

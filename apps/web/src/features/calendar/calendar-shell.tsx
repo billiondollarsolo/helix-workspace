@@ -324,7 +324,7 @@ export function CalendarShell({
   const createButton = (
     <Button onClick={createNew}>
       <Plus aria-hidden="true" />
-      Create event
+      New event
     </Button>
   );
 
@@ -451,9 +451,9 @@ export function CalendarShell({
                 />
               ) : null}
               {body}
-              <Button className="cal-fab" size="lg" aria-label="Create event" onClick={createNew}>
+              <Button className="cal-fab" size="lg" aria-label="New event" onClick={createNew}>
                 <Plus aria-hidden="true" />
-                Create
+                New event
               </Button>
             </>
           )}

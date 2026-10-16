@@ -1,3 +1,5 @@
+import { finishTenantRequestTransaction } from "../platform/tenancy/middleware.js";
+import { pendingActionLinks } from "../api/pending-action-links.js";
 import { redactToolInvokeResult } from "../platform/tools/sensitive-output.js";
 import { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { z } from "zod";
@@ -5,6 +7,9 @@ import { type SessionActorResolver } from "../api/actor.js";
 import { buildErrorEnvelope, toolErrorEnvelope } from "../api/error-envelope.js";
 import {
   DEFAULT_IDEMPOTENCY_TTL_MS,
+  authorizeIdempotentReplay,
+  idempotencyPrincipalFingerprint,
+  isPersistableIdempotentResult,
   fingerprintRequestPayload,
   idempotencyStorageKey,
   type IdempotencyStore,
@@ -36,6 +41,7 @@ const pendingActionParamsSchema = z.object({
 });
 
 export interface ToolRestRoutesOptions {
+  readonly publicBaseUrl?: string;
   readonly tools: RuntimeToolRegistry;
   readonly metrics: PlatformMetrics;
   readonly tokenStore: AccessTokenStore;
@@ -60,26 +66,25 @@ export interface ToolRestRoutesOptions {
  */
 const IDEMPOTENCY_CLAIM_TTL_MS = 10 * 60 * 1000;
 const IDEMPOTENCY_IN_PROGRESS_RETRY_AFTER_SECONDS = 2;
-/** Failures that describe the caller's situation rather than the request; never replayed. */
-const TRANSIENT_TOOL_STATUS_CODES: ReadonlySet<number> = new Set([401, 403, 408, 429]);
-
-function isPersistableIdempotentResult(result: ToolInvokeResult): boolean {
-  return (
-    result.ok || (result.statusCode < 500 && !TRANSIENT_TOOL_STATUS_CODES.has(result.statusCode))
-  );
-}
-
 function toolResultStatusCode(result: ToolInvokeResult): number {
   if (!result.ok) return result.statusCode;
   return result.status === "pending_confirmation" ? 202 : 200;
 }
 
-function sendToolInvokeResult(reply: FastifyReply, result: ToolInvokeResult, traceId: string) {
+function sendToolInvokeResult(
+  reply: FastifyReply,
+  result: ToolInvokeResult,
+  traceId: string,
+  publicBaseUrl?: string,
+) {
   if (!result.ok) {
     return sendToolInvokeError(reply, result, traceId);
   }
   if (result.status === "pending_confirmation") {
-    return reply.code(202).send({ status: result.status, pending: result.pending });
+    return reply.code(202).send({
+      status: result.status,
+      pending: { ...result.pending, ...pendingActionLinks(result.pending.id, publicBaseUrl) },
+    });
   }
   return reply.code(200).send(result.output);
 }
@@ -155,7 +160,7 @@ export function registerToolRestRoutes(
           request.body,
           request,
         );
-        return sendToolInvokeResult(reply, result, traceId);
+        return sendToolInvokeResult(reply, result, traceId, options.publicBaseUrl);
       }
       // CA3: claim the key atomically before invoking so concurrent retries
       // cannot both execute the mutation.
@@ -191,7 +196,18 @@ export function registerToolRestRoutes(
       }
       if (claim.kind === "replay") {
         reply.header("idempotency-replayed", "true");
-        return sendToolInvokeResult(reply, claim.record.result, traceId);
+        return sendToolInvokeResult(
+          reply,
+          await authorizeIdempotentReplay(
+            options.tools,
+            principal,
+            params.toolId,
+            request.body,
+            claim.record,
+          ),
+          traceId,
+          options.publicBaseUrl,
+        );
       }
       let result: ToolInvokeResult;
       try {
@@ -200,15 +216,17 @@ export function registerToolRestRoutes(
         await idempotency.store.release(idempotency.key, claim.claimToken);
         throw error;
       }
+      await finishTenantRequestTransaction(request, result.ok || result.statusCode < 500);
       if (!isPersistableIdempotentResult(result)) {
         // Auth, timeout, rate-limit, and server failures describe the moment,
         // not the request: free the key so a retry runs instead of replaying.
         await idempotency.store.release(idempotency.key, claim.claimToken);
-        return sendToolInvokeResult(reply, result, traceId);
+        return sendToolInvokeResult(reply, result, traceId, options.publicBaseUrl);
       }
       try {
         await idempotency.store.complete(idempotency.key, claim.claimToken, {
           result: redactToolInvokeResult(tool, result),
+          principalFingerprint: idempotencyPrincipalFingerprint(principal),
           statusCode: toolResultStatusCode(result),
           requestHash: idempotency.hash,
           expiresAt: Date.now() + (options.idempotencyTtlMs ?? DEFAULT_IDEMPOTENCY_TTL_MS),
@@ -218,7 +236,7 @@ export function registerToolRestRoutes(
         // retry that could execute it twice.
         request.log.warn({ err: error }, "Failed to persist idempotent tool result");
       }
-      return sendToolInvokeResult(reply, result, traceId);
+      return sendToolInvokeResult(reply, result, traceId, options.publicBaseUrl);
     });
   }
   if (methods.includes("GET")) {
@@ -261,9 +279,8 @@ export function registerToolRestRoutes(
       if (!result.ok) {
         return sendToolInvokeError(reply, result, traceId);
       }
-      if (result.status === "pending_confirmation") {
-        return reply.code(202).send({ status: result.status, pending: result.pending });
-      }
+      if (result.status === "pending_confirmation")
+        return sendToolInvokeResult(reply, result, traceId, options.publicBaseUrl);
       return result.output;
     });
   }
@@ -290,6 +307,21 @@ export function registerActionStatusRoutes(
     return { action: result.pending };
   };
   app.get("/actions/:pendingId", actionStatusHandler);
+  app.get("/actions/:pendingId/review", async (request, reply) => {
+    const params = pendingActionParamsSchema.parse(request.params);
+    const principal = await resolveRequestPrincipal(
+      request,
+      options.tokenStore,
+      options.sessionResolver,
+      options.credentialStore,
+    );
+    const result = await options.tools.getPendingAction(params.pendingId, {
+      actor: principal.actor,
+      includeMailReview: true,
+    });
+    if (!result.ok) return sendToolInvokeError(reply, result, traceIdForRequest(request));
+    return { action: result.pending, review: result.review };
+  });
 }
 
 /** Register authenticated approval/cancellation routes with fresh credential policy resolution. */

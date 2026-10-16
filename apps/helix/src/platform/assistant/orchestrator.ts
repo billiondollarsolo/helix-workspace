@@ -129,7 +129,6 @@ interface TurnSettings {
   readonly maxToolRounds?: number;
   readonly originMessageId?: string;
 }
-
 export class AssistantOrchestrator {
   readonly #historyLimit: number;
   readonly #searchLimit: number;
@@ -295,7 +294,6 @@ export class AssistantOrchestrator {
       });
       conversation = updated ?? conversation;
     }
-
     const slashCommand = parseAssistantSlashCommand(input.content);
     const slashHook =
       slashCommand === null
@@ -308,6 +306,7 @@ export class AssistantOrchestrator {
               ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
             });
     const settings: TurnSettings = {
+      ...(input.maxToolRounds === undefined ? {} : { maxToolRounds: input.maxToolRounds }),
       webSearch: input.webSearch === true,
       toolGroups,
       ...(input.metadata?.timeZone === undefined ? {} : { timeZone: input.metadata.timeZone }),
@@ -448,6 +447,7 @@ export class AssistantOrchestrator {
       round += 1
     ) {
       input.signal?.throwIfAborted();
+      await input.beforeStep?.();
       const roundTools = round === maxRounds ? [] : visibleTools;
       if (round === maxRounds)
         finishToolPrompt(promptMessages, settings.timeZone, settings.slashInstruction);
@@ -492,6 +492,7 @@ export class AssistantOrchestrator {
       const roundResults: AssistantToolCallResult[] = [];
       for (const call of aiResponse.toolCalls ?? []) {
         input.signal?.throwIfAborted();
+        await input.beforeStep?.();
         const toolCallId = call.callId ?? randomUUID();
         yield { type: "tool", toolCallId, toolId: call.id, status: "running" };
         const result: AssistantToolCallResult =

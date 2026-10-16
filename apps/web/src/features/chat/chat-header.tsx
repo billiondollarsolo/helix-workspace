@@ -43,9 +43,7 @@ export function ChatConversationHeader({
       ? `${String(conversation.memberCount)} members`
       : conversation.peer === null
         ? `${String(conversation.memberCount)} people`
-        : conversation.active
-          ? "Active"
-          : null;
+        : (conversation.presenceLabel ?? (conversation.active ? "Active" : null));
   return (
     <header className="chat-conversation-header">
       <button
@@ -129,6 +127,7 @@ export function AddPeopleDialog({
   });
   return (
     <Dialog
+      modal={false}
       title={`Add people to ${roomName}`}
       onClose={onClose}
       footer={

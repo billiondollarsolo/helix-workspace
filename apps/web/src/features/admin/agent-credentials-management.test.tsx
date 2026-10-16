@@ -71,24 +71,26 @@ describe("AgentCredentialsManagement", () => {
           }),
         );
       }
+      if (input === "/v1/api/tools/agent.account.requests.list")
+        return Promise.resolve(Response.json({ requests: [] }));
       return Promise.resolve(Response.json({ error: "unexpected" }, { status: 500 }));
     });
 
-    renderAgentCredentials();
+    await renderAgentCredentials();
 
     await waitForText("Scheduler key");
-    expect(container.querySelector('table[aria-label="Agent credentials"]')).not.toBeNull();
-    expect(container.textContent).toContain("platform.read");
-    expect(container.textContent).toContain("API key");
-    expect(container.textContent).not.toContain("Retired client");
+    expect(document.querySelector('table[aria-label="Agent credentials"]')).not.toBeNull();
+    expect(document.body.textContent).toContain("platform.read");
+    expect(document.body.textContent).toContain("API key");
+    expect(document.body.textContent).not.toContain("Retired client");
     // The agent is named, not shown as an id.
-    await waitForText("Scheduler Agent", container);
+    await waitForText("Scheduler Agent", document.body);
 
     clickIncludeRevoked();
 
     await waitForText("Retired client");
     // An OAuth client shows the client ID an operator has to configure.
-    expect(container.textContent).toContain("OAuth client · client-revoked");
+    expect(document.body.textContent).toContain("OAuth client · client-revoked");
     expect(latestListBody()).toEqual({ includeRevoked: true });
     expect(alertMock).not.toHaveBeenCalled();
     expect(confirmMock).not.toHaveBeenCalled();
@@ -103,14 +105,16 @@ describe("AgentCredentialsManagement", () => {
       if (input === "/v1/api/tools/agent.credentials.list") {
         return Promise.resolve(Response.json({ credentials: [] }));
       }
+      if (input === "/v1/api/tools/agent.account.requests.list")
+        return Promise.resolve(Response.json({ requests: [] }));
       return Promise.resolve(Response.json({ error: "unexpected" }, { status: 500 }));
     });
 
-    renderAgentCredentials();
-    await waitForText("No active credentials", container);
+    await renderAgentCredentials();
+    await waitForText("No active credentials", document.body);
 
-    const headings = Array.from(container.querySelectorAll("h1, h2, h3, h4"));
-    expect(headings.map((heading) => heading.tagName)).toEqual(["H1", "H2", "H2"]);
+    const headings = Array.from(document.querySelectorAll("h1, h2, h3, h4"));
+    expect(headings.map((heading) => heading.tagName)).toEqual(["H1", "H2", "H2", "H2", "H2"]);
     expect(headings[0]?.textContent).toBe("Agent credentials");
   });
 
@@ -122,10 +126,12 @@ describe("AgentCredentialsManagement", () => {
       if (input === "/v1/api/tools/agent.credentials.list") {
         return Promise.resolve(Response.json({ credentials: [] }));
       }
+      if (input === "/v1/api/tools/agent.account.requests.list")
+        return Promise.resolve(Response.json({ requests: [] }));
       return Promise.resolve(Response.json({ error: "unexpected" }, { status: 500 }));
     });
 
-    renderAgentCredentials();
+    await renderAgentCredentials();
     await waitForOption("agent-actor-id", agentActor().id);
 
     const select = selectElement("agent-actor-id");
@@ -157,15 +163,17 @@ describe("AgentCredentialsManagement", () => {
       if (input === "/v1/api/tools/agent.credentials.list") {
         return Promise.resolve(Response.json({ credentials: [] }));
       }
+      if (input === "/v1/api/tools/agent.account.requests.list")
+        return Promise.resolve(Response.json({ requests: [] }));
       return Promise.resolve(Response.json({ error: "unexpected" }, { status: 500 }));
     });
 
-    renderAgentCredentials();
+    await renderAgentCredentials();
     await waitForOption("agent-actor-id", agentActor().id);
-    expect(findButton("Add agent", container).disabled).toBe(true);
+    expect(findButton("Add agent", document.body).disabled).toBe(true);
 
     typeInto("New agent name", "Release bot");
-    clickButton("Add agent", container);
+    clickButton("Add agent", document.body);
 
     await waitForOption("agent-actor-id", NEW_AGENT_ID);
     const added = fetchMock.mock.calls.find(
@@ -185,15 +193,17 @@ describe("AgentCredentialsManagement", () => {
       if (input === "/v1/api/tools/agent.credentials.list") {
         return Promise.resolve(Response.json({ credentials: [] }));
       }
+      if (input === "/v1/api/tools/agent.account.requests.list")
+        return Promise.resolve(Response.json({ requests: [] }));
       return Promise.resolve(Response.json({ error: "unexpected" }, { status: 500 }));
     });
 
-    renderAgentCredentials();
-    await waitForText("Credentials cannot be issued until the list loads.", container);
+    await renderAgentCredentials();
+    await waitForText("Credentials cannot be issued until the list loads.", document.body);
 
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain("actors offline");
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("actors offline");
     expect(selectElement("agent-actor-id").disabled).toBe(true);
-    expect(findButton("Create credential", container).disabled).toBe(true);
+    expect(findButton("Create credential", document.body).disabled).toBe(true);
     expect(
       fetchMock.mock.calls.some((call) => call[0] === "/v1/api/tools/agent.credentials.create"),
     ).toBe(false);
@@ -226,11 +236,13 @@ describe("AgentCredentialsManagement", () => {
           }),
         );
       }
+      if (input === "/v1/api/tools/agent.account.requests.list")
+        return Promise.resolve(Response.json({ requests: [] }));
       return Promise.resolve(Response.json({ error: "unexpected" }, { status: 500 }));
     });
 
-    renderAgentCredentials();
-    await waitForText("No active credentials", container);
+    await renderAgentCredentials();
+    await waitForText("No active credentials", document.body);
     await waitForOption("agent-actor-id", activeCredential().actorId);
     selectOption("agent-actor-id", activeCredential().actorId);
     typeInto("Label", "Scheduler key");
@@ -240,7 +252,7 @@ describe("AgentCredentialsManagement", () => {
     await waitFor(() => {
       expect(inputValue("agent-client-secret")).toBe("helix_ak_secret-agent-token");
     });
-    expect(container.textContent).toContain("Send it in the x-api-key header.");
+    expect(document.body.textContent).toContain("Send it in the x-api-key header.");
     // Everything the server requires, including an expiry it will accept.
     const sent = fetchBody("/v1/api/tools/agent.credentials.create") as {
       readonly expiresAt: string;
@@ -282,10 +294,12 @@ describe("AgentCredentialsManagement", () => {
           ),
         );
       }
+      if (input === "/v1/api/tools/agent.account.requests.list")
+        return Promise.resolve(Response.json({ requests: [] }));
       return Promise.resolve(Response.json({ error: "unexpected" }, { status: 500 }));
     });
 
-    renderAgentCredentials();
+    await renderAgentCredentials();
     await waitForOption("agent-actor-id", activeCredential().actorId);
     selectOption("agent-actor-id", activeCredential().actorId);
     typeInto("Label", "Scheduler key");
@@ -293,7 +307,7 @@ describe("AgentCredentialsManagement", () => {
     clickButton("Create credential");
 
     await waitForText("A second administrator must approve this change (request approval-1)");
-    expect(container.textContent).toContain("under Admin → Policies");
+    expect(document.body.textContent).toContain("under Admin → Policies");
   });
 
   it("revokes a credential through the shared confirmation dialog without native confirm", async () => {
@@ -323,13 +337,15 @@ describe("AgentCredentialsManagement", () => {
           }),
         );
       }
+      if (input === "/v1/api/tools/agent.account.requests.list")
+        return Promise.resolve(Response.json({ requests: [] }));
       return Promise.resolve(Response.json({ error: "unexpected" }, { status: 500 }));
     });
 
-    renderAgentCredentials();
+    await renderAgentCredentials();
     await waitForText("Scheduler key");
-    await waitForText("Scheduler Agent", container);
-    clickButton("Revoke", container);
+    await waitForText("Scheduler Agent", document.body);
+    clickButton("Revoke", document.body);
     await waitForText("Revoke agent credential", document.body);
 
     const dialog = document.querySelector('[data-slot="alert-dialog-description"]');
@@ -365,12 +381,14 @@ describe("AgentCredentialsManagement", () => {
       if (input === "/v1/api/tools/agent.credentials.list") {
         return Promise.resolve(Response.json({ credentials: [activeCredential()] }));
       }
+      if (input === "/v1/api/tools/agent.account.requests.list")
+        return Promise.resolve(Response.json({ requests: [] }));
       return Promise.resolve(Response.json({ error: "unexpected" }, { status: 500 }));
     });
 
-    renderAgentCredentials();
+    await renderAgentCredentials();
     await waitForText("Scheduler key");
-    clickButton("Revoke", container);
+    clickButton("Revoke", document.body);
     await waitForText("Revoke agent credential", document.body);
     clickButton("Cancel", document.body);
 
@@ -385,7 +403,7 @@ describe("AgentCredentialsManagement", () => {
     expect(document.body.style.pointerEvents).not.toBe("none");
   });
 
-  function renderAgentCredentials() {
+  async function renderAgentCredentials() {
     act(() => {
       root.render(
         createElement(
@@ -395,6 +413,8 @@ describe("AgentCredentialsManagement", () => {
         ),
       );
     });
+    await waitFor(() => expect(findButton("Add credential")).toBeDefined());
+    clickButton("Add credential");
   }
 
   function latestListBody() {

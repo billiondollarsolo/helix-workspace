@@ -144,7 +144,14 @@ export function installTenantPostgresContextHook(app: FastifyInstance, sql: post
 export function isLongLivedTenantRequest(request: FastifyRequest): boolean {
   return (
     request.ws ||
-    (request.method === "GET" && internalApiUrl(request.url).split("?")[0] === "/sse/mail")
+    (request.method === "POST" &&
+      internalApiUrl(request.url).split("?")[0] === "/mcp" &&
+      typeof request.body === "object" &&
+      request.body !== null &&
+      "method" in request.body &&
+      request.body.method === "subscriptions/listen") ||
+    (request.method === "GET" &&
+      ["/sse/mail", "/api/events/stream"].includes(internalApiUrl(request.url).split("?")[0] ?? ""))
   );
 }
 

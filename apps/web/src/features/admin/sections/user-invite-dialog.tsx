@@ -4,7 +4,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useId, useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
-import { Dialog } from "@/components/ui/helix-dialog";
+import { FormPanel } from "@/components/ui/form-panel";
 import { notify } from "@/components/ui/toast";
 import { inviteAdminUser, type AdminInviteRole } from "@/features/admin/admin-users";
 import { AdminField, AdminInput, AdminSelect } from "@/features/admin/console/controls";
@@ -47,7 +47,7 @@ export function UserInviteDialog({ onClose }: { readonly onClose: () => void }) 
   };
 
   return (
-    <Dialog
+    <FormPanel
       title="Invite people"
       onClose={onClose}
       footer={
@@ -107,6 +107,6 @@ export function UserInviteDialog({ onClose }: { readonly onClose: () => void }) 
           </p>
         )}
       </form>
-    </Dialog>
+    </FormPanel>
   );
 }

@@ -13,7 +13,6 @@ import type {
   JsonObject,
   LLMProviderCapability,
   MeteringClient,
-  SecurityTier,
   TraceContext,
 } from "@helix/sdk-types";
 import { SpanStatusCode, trace, type Span } from "@opentelemetry/api";
@@ -21,76 +20,23 @@ import { createHash } from "node:crypto";
 import { errorMessage } from "../util/errors.js";
 import { confidentialProviderTags, localOnlyProviderTags } from "./classification/provider-tags.js";
 
-interface AIRoutingFeatureRoute {
-  readonly primary: AiProviderModelRef;
-  readonly fallback?: AiProviderModelRef;
-}
-
-export interface AIRoutingPolicy {
-  readonly defaultProviderId?: string;
-  readonly featureProviders?: Readonly<Record<string, string>>;
-  readonly featureRoutes?: Readonly<Record<string, AIRoutingFeatureRoute>>;
-  readonly classificationEnabled?: boolean;
-  readonly tier?: SecurityTier;
-  readonly localAiOnly?: boolean;
-}
-
-export interface AICostGuard {
-  reserve(input: {
-    readonly actor: Actor;
-    readonly feature: string;
-    readonly providerId: string;
-    readonly model: string;
-    readonly estimatedCostCents: number;
-  }): Promise<void>;
-  record(input: {
-    readonly actor: Actor;
-    readonly feature: string;
-    readonly providerId: string;
-    readonly model: string;
-    readonly costCents: number;
-  }): Promise<void>;
-}
-
-export type LLMMetricStatus = "success" | "error";
-
-export interface LLMChatMetrics {
-  recordLLMChat(input: {
-    readonly feature: string;
-    readonly providerId: string;
-    readonly model: string;
-    readonly classification: AIClassification;
-    readonly status: LLMMetricStatus;
-    readonly durationSeconds: number;
-    readonly fallback: boolean;
-    readonly costCents?: number | undefined;
-    readonly errorType?: string | undefined;
-  }): void;
-}
-
-export interface AIProvenanceRecorder {
-  record(input: {
-    readonly actor: Actor;
-    readonly feature: string;
-    readonly providerId: string;
-    readonly model: string;
-    readonly inputHash: string;
-    readonly outputHash: string;
-    readonly metadata?: Record<string, unknown>;
-  }): Promise<{ readonly id: string }>;
-}
-
-export interface AIRouterOptions {
-  readonly providers: readonly LLMProviderCapability[];
-  readonly imageProviders?: readonly ImageProviderCapability[];
-  readonly policy?: AIRoutingPolicy;
-  readonly costGuard?: AICostGuard;
-  readonly metrics?: LLMChatMetrics;
-  readonly provenance?: AIProvenanceRecorder;
-  readonly metering?: MeteringClient;
-  readonly onMeteringError?: (error: unknown) => void;
-  readonly systemActor?: Actor;
-}
+import type {
+  AICostGuard,
+  AICostReservation,
+  AIProvenanceRecorder,
+  AIRouterOptions,
+  AIRoutingPolicy,
+  LLMChatMetrics,
+} from "./routing-types.js";
+export type {
+  AICostGuard,
+  AICostReservation,
+  AIProvenanceRecorder,
+  AIRouterOptions,
+  AIRoutingPolicy,
+  LLMChatMetrics,
+  LLMMetricStatus,
+} from "./routing-types.js";
 
 export class AIProviderUnavailableError extends Error {
   constructor(message: string) {
@@ -205,6 +151,7 @@ export class AIRouter implements AICapability {
       // throws after `reserve(...)` succeeds. Without this, abandoned streams
       // permanently consume the actor's daily budget.
       let reservationFinalized = false;
+      let reservation: AICostReservation | undefined;
       let reservationProviderId = attempt.provider.id;
       let resolvedModel = request.model ?? attempt.model ?? "unknown";
       let estimatedCostCents = 0;
@@ -214,13 +161,14 @@ export class AIRouter implements AICapability {
         resolvedModel = model;
         assertClassificationAllowed(attempt.provider, classification, this.#policy);
         estimatedCostCents = await estimateRequestCost(attempt.provider, request, model);
-        await this.#costGuard?.reserve({
-          actor,
-          feature: request.feature,
-          providerId: attempt.provider.id,
-          model,
-          estimatedCostCents,
-        });
+        reservation =
+          (await this.#costGuard?.reserve({
+            actor,
+            feature: request.feature,
+            providerId: attempt.provider.id,
+            model,
+            estimatedCostCents,
+          })) || undefined;
 
         const streamRequest: ChatRequest = { ...request, model, classification };
         const provider = attempt.provider;
@@ -244,6 +192,7 @@ export class AIRouter implements AICapability {
             message: response.message,
             usage: response.usage,
             estimatedCostCents,
+            reservation,
             started,
             span,
           });
@@ -279,6 +228,7 @@ export class AIRouter implements AICapability {
           message,
           usage: partialUsage,
           estimatedCostCents,
+          reservation,
           started,
           span,
         });
@@ -310,7 +260,7 @@ export class AIRouter implements AICapability {
         // disconnect, generator `return()`, or thrown error after reserve).
         // Recording the partial usage we observed prevents the actor's daily
         // cost budget from drifting upward over time when streams are aborted.
-        if (!reservationFinalized) {
+        if (!reservationFinalized && reservation !== undefined) {
           await this.#releaseReservation({
             actor,
             feature: request.feature,
@@ -318,6 +268,7 @@ export class AIRouter implements AICapability {
             model: resolvedModel,
             partialUsage,
             estimatedCostCents,
+            reservation,
           });
         }
       }
@@ -337,13 +288,14 @@ export class AIRouter implements AICapability {
     readonly model: string;
     readonly partialUsage: ChatResponse["usage"];
     readonly estimatedCostCents: number;
+    readonly reservation?: AICostReservation | undefined;
   }): Promise<void> {
     if (this.#costGuard === undefined) {
       return;
     }
     // Bill the actual partial usage if the provider reported any, otherwise
-    // bill zero so the reservation is closed without double-charging.
-    const costCents = input.partialUsage?.costCents ?? 0;
+    // retain the estimate when the provider cannot confirm its actual charge.
+    const costCents = input.partialUsage?.costCents ?? input.estimatedCostCents;
     try {
       await this.#costGuard.record({
         actor: input.actor,
@@ -351,6 +303,7 @@ export class AIRouter implements AICapability {
         providerId: input.providerId,
         model: input.model,
         costCents,
+        reservation: input.reservation,
       });
     } catch {
       // Swallow release errors so they cannot mask the original abort/throw.
@@ -396,6 +349,7 @@ export class AIRouter implements AICapability {
     readonly message: string;
     readonly usage: ChatResponse["usage"];
     readonly estimatedCostCents: number;
+    readonly reservation?: AICostReservation | undefined;
     readonly started: bigint;
     readonly span: Span;
   }): Promise<void> {
@@ -406,6 +360,7 @@ export class AIRouter implements AICapability {
       providerId: input.providerId,
       model: input.model,
       costCents,
+      reservation: input.reservation,
     });
     this.#metrics?.recordLLMChat({
       feature: input.request.feature,
@@ -475,17 +430,19 @@ export class AIRouter implements AICapability {
     for (const attempt of attempts) {
       const started = process.hrtime.bigint();
       const modelForMetrics = request.model ?? attempt.model ?? "unknown";
+      let reservation: AICostReservation | undefined;
       try {
         const model = request.model ?? attempt.model ?? (await firstModel(attempt.provider));
         assertClassificationAllowed(attempt.provider, classification, this.#policy);
         const estimatedCostCents = await estimateRequestCost(attempt.provider, request, model);
-        await this.#costGuard?.reserve({
-          actor,
-          feature: request.feature,
-          providerId: attempt.provider.id,
-          model,
-          estimatedCostCents,
-        });
+        reservation =
+          (await this.#costGuard?.reserve({
+            actor,
+            feature: request.feature,
+            providerId: attempt.provider.id,
+            model,
+            estimatedCostCents,
+          })) || undefined;
 
         const responseOrStream = await attempt.provider.chat(
           { ...request, model, classification },
@@ -506,7 +463,9 @@ export class AIRouter implements AICapability {
           providerId: output.providerId,
           model: output.model,
           costCents,
+          reservation,
         });
+        reservation = undefined;
         this.#metrics?.recordLLMChat({
           feature: request.feature,
           providerId: output.providerId,
@@ -585,6 +544,17 @@ export class AIRouter implements AICapability {
           "exception.type": errorName(error),
           "exception.message": errorMessage(error),
         });
+      } finally {
+        if (reservation !== undefined)
+          await this.#releaseReservation({
+            actor,
+            feature: request.feature,
+            providerId: attempt.provider.id,
+            model: modelForMetrics,
+            partialUsage: undefined,
+            estimatedCostCents: reservation.estimatedCostCents,
+            reservation,
+          });
       }
     }
 
@@ -611,6 +581,7 @@ export class AIRouter implements AICapability {
     let lastError: unknown;
     for (const attempt of attempts) {
       const modelForMetrics = request.model ?? attempt.model ?? "unknown";
+      let reservation: AICostReservation | undefined;
       try {
         const model = request.model ?? attempt.model ?? (await firstModel(attempt.provider));
         const estimatedCostCents = await estimateImageGenerationCost(
@@ -619,13 +590,14 @@ export class AIRouter implements AICapability {
           model,
         );
         assertClassificationAllowed(attempt.provider, classification, this.#policy);
-        await this.#costGuard?.reserve({
-          actor,
-          feature: request.feature,
-          providerId: attempt.provider.id,
-          model,
-          estimatedCostCents,
-        });
+        reservation =
+          (await this.#costGuard?.reserve({
+            actor,
+            feature: request.feature,
+            providerId: attempt.provider.id,
+            model,
+            estimatedCostCents,
+          })) || undefined;
 
         const response = await attempt.provider.generateImage(
           { ...request, model, classification },
@@ -643,7 +615,9 @@ export class AIRouter implements AICapability {
           providerId: output.providerId,
           model: output.model,
           costCents,
+          reservation,
         });
+        reservation = undefined;
         span.setAttribute("llm.provider", output.providerId);
         span.setAttribute("llm.model", output.model);
         span.setAttribute("llm.usage.cost_cents", costCents);
@@ -670,6 +644,17 @@ export class AIRouter implements AICapability {
           "exception.type": errorName(error),
           "exception.message": errorMessage(error),
         });
+      } finally {
+        if (reservation !== undefined)
+          await this.#releaseReservation({
+            actor,
+            feature: request.feature,
+            providerId: attempt.provider.id,
+            model: modelForMetrics,
+            partialUsage: undefined,
+            estimatedCostCents: reservation.estimatedCostCents,
+            reservation,
+          });
       }
     }
 
@@ -777,6 +762,9 @@ export class AIRouter implements AICapability {
       if (allowedAttempts.length > 0) {
         return dedupeAttempts(allowedAttempts);
       }
+      throw new AIProviderUnavailableError(
+        `No allowed AI provider is available for the configured route ${request.feature}.`,
+      );
     }
 
     const preferredId =

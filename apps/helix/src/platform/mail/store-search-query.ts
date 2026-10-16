@@ -32,6 +32,8 @@ export interface ParsedMailSearchQuery {
   readonly hasAttachment?: boolean;
   readonly unread?: boolean;
   readonly starred?: boolean;
+  readonly followUp?: "needs_reply" | "waiting_on" | "done";
+  readonly overdue?: boolean;
   readonly category?: MailCategoryTab;
   readonly scope?: MailSearchScope;
   /** Messages sent before this instant (exclusive). */
@@ -80,6 +82,8 @@ export function parseMailSearchQuery(raw: string, now: Date = new Date()): Parse
     hasAttachment?: boolean;
     unread?: boolean;
     starred?: boolean;
+    followUp?: "needs_reply" | "waiting_on" | "done";
+    overdue?: boolean;
     category?: MailCategoryTab;
     scope?: MailSearchScope;
     before?: Date;
@@ -115,6 +119,10 @@ export function parseMailSearchQuery(raw: string, now: Date = new Date()): Parse
           if (lower === "unread" || lower === "read") parsed.unread = lower === "unread";
           else if (lower === "starred" || lower === "unstarred")
             parsed.starred = lower === "starred";
+          else if (lower === "needs-reply") parsed.followUp = "needs_reply";
+          else if (lower === "waiting-on") parsed.followUp = "waiting_on";
+          else if (lower === "done") parsed.followUp = "done";
+          else if (lower === "overdue") parsed.overdue = true;
           else return match;
           break;
         case "category":

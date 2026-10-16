@@ -36,6 +36,44 @@ test.describe("/meet Jitsi embed", () => {
     await expect(page.getByRole("heading", { level: 1, name: "Ready to join?" })).toBeVisible();
     await expect(page.getByText("Backend launch review", { exact: true })).toBeVisible();
     await expectJoinedRoom(page, calls);
+    const stage = await page.locator(".meet-iframe").boundingBox();
+    const viewport = page.viewportSize()!;
+    expect(stage!.width).toBeGreaterThan(viewport.width * 0.8);
+    expect(stage!.height).toBeGreaterThan(viewport.height * 0.5);
+    expect(stage!.y + stage!.height).toBeLessThanOrEqual(viewport.height);
+    await page.addScriptTag({ content: axe.source });
+    const violations = await page.evaluate(async () => {
+      const browser = window as typeof window & { axe: typeof axe };
+      return (
+        await browser.axe.run(document, {
+          runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"] },
+        })
+      ).violations.map((violation) => ({
+        id: violation.id,
+        nodes: violation.nodes.map((node) => ({
+          target: node.target,
+          summary: node.failureSummary,
+        })),
+      }));
+    });
+    expect(violations).toEqual([]);
+  });
+
+  test("keeps an instant meeting code in the URL and returns to pre-join after reload", async ({
+    page,
+  }) => {
+    await openMeet(page);
+    await page.goto("/meet");
+    await page.getByRole("button", { name: "New meeting" }).click();
+    await page.getByRole("menuitem", { name: "Start an instant meeting" }).click();
+    await page.getByRole("checkbox", { name: "I consent to recording and transcription" }).check();
+    await page.getByRole("button", { name: "Join now", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Leave", exact: true })).toBeVisible();
+    await expect(page).toHaveURL(/\/meet\?code=bckl-lnch-rvw0$/);
+    await expect(page.locator(".meet-iframe")).toHaveCount(1);
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "Ready to join?" })).toBeVisible();
+    await expect(page).toHaveURL(/\/meet\?code=bckl-lnch-rvw0$/);
   });
 
   test("says Meet is unavailable, with the next step, when no meeting server is set up", async ({
@@ -111,7 +149,7 @@ async function openMeet(
 }
 
 async function expectJoinedRoom(page: Page, calls: readonly MeetToolCall[]): Promise<void> {
-  await page.getByRole("checkbox", { name: "I consent to this meeting being recorded" }).check();
+  await page.getByRole("checkbox", { name: "I consent to recording and transcription" }).check();
   await page.getByRole("button", { name: "Join now", exact: true }).click();
 
   await expect
@@ -120,7 +158,7 @@ async function expectJoinedRoom(page: Page, calls: readonly MeetToolCall[]): Pro
       expect.objectContaining({
         code: "bckl-lnch-rvw0",
         recordingNoticeAccepted: true,
-        recordingNoticeVersion: "2026-09-02",
+        recordingNoticeVersion: "2026-10-15",
         deviceId: expect.any(String),
         joinGrantId: expect.any(String),
       }),
@@ -168,6 +206,7 @@ async function mockJitsiExternalApi(page: Page): Promise<void> {
             };
             this.iframe = document.createElement("iframe");
             this.iframe.className = "meet-iframe";
+            this.iframe.title = "Helix meeting";
             options.parentNode.append(this.iframe);
           }
           addListener(event, handler) {
@@ -219,7 +258,14 @@ async function mockMeetTools(page: Page, calls: MeetToolCall[], meetStatus: unkn
       });
       return;
     }
-    if (pathname === "/v1/api/tools/meet.join-by-code") {
+    if (pathname === "/v1/api/tools/meet.create-room") {
+      await fulfillJson(route, { ...meetRoom, joinCode: meetMeeting.code });
+      return;
+    }
+    if (
+      pathname === "/v1/api/tools/meet.join-by-code" ||
+      pathname === "/v1/api/tools/meet.mint-token"
+    ) {
       await fulfillJson(route, {
         roomId,
         code: meetMeeting.code,
@@ -231,7 +277,7 @@ async function mockMeetTools(page: Page, calls: MeetToolCall[], meetStatus: unkn
         expiresAt: "2026-05-20T13:00:00.000Z",
         recordingAvailable: true,
         canStartRecording: true,
-        recordingNoticeVersion: "2026-09-02",
+        recordingNoticeVersion: "2026-10-15",
         canModerate: true,
         controls: {
           roomId,

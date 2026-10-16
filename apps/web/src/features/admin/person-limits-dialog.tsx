@@ -83,6 +83,7 @@ export function PersonLimitsDialog({
 
   return (
     <Dialog
+      modal={false}
       title={<h2 className="type-h3 m-0 truncate">Limits for {name}</h2>}
       onClose={onClose}
       width="min(640px, calc(100vw - 32px))"

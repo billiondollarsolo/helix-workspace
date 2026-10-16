@@ -348,6 +348,7 @@ describe("Chat durable realtime events", { skip: process.env.DATABASE_URL === un
       await handleChatSocket(socket, ticketRequest(), {
         store: new PostgresChatStore(appSql),
         tickets: new IntegrationTicketStore(),
+        actorFromRequest: () => ownerActor,
         bus: replica,
         presence: new InMemoryChatPresenceStore(),
         trustedOrigins: [],
@@ -457,6 +458,7 @@ const ownerActor: Actor = {
   type: "user",
   email: EMAIL,
   displayName: "Realtime Owner",
+  scopes: ["chat.read", "chat.post"],
 };
 
 class IntegrationTicketStore implements ChatWebSocketTicketStore {

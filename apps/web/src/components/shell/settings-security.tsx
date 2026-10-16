@@ -2,6 +2,7 @@
    (passkeys, an authenticator app and recovery codes). */
 
 import { useQuery } from "@tanstack/react-query";
+import { QRCodeSVG } from "qrcode.react";
 import { useCallback, useEffect, useId, useState, type FormEvent } from "react";
 import {
   addPasskey,
@@ -17,6 +18,7 @@ import {
 import { SettingsCard, SettingsField, SettingsHeader, SettingsStatus } from "./settings-controls";
 import { DevicesCard } from "./settings-devices";
 import { ChangePasswordCard } from "./settings-password";
+import { EmailFactorSettings } from "./settings-email-factor";
 
 export function SecuritySection() {
   return (
@@ -44,7 +46,7 @@ function TwoStepCard() {
   const [error, setError] = useState<string | null>(null);
   const [passkeyLoadError, setPasskeyLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const totpOn = user?.twoFactorEnabled === true;
+  const totpOn = user?.twoFactorEnabled === true && user.totpEnabled !== false;
 
   async function run(operation: () => Promise<void>): Promise<void> {
     setBusy(true);
@@ -187,10 +189,24 @@ function TwoStepCard() {
               });
             }}
           >
-            <p className="m-0 type-body-sm">Add this key to your authenticator app:</p>
-            <code className="block rounded bg-muted p-2 type-caption [overflow-wrap:anywhere]">
-              {totpUri}
-            </code>
+            <p className="m-0 type-body-sm">Scan this QR code with your authenticator app.</p>
+            <QRCodeSVG
+              value={totpUri}
+              size={224}
+              level="M"
+              marginSize={4}
+              role="img"
+              title="Scan to set up your authenticator app"
+              className="h-auto max-w-full rounded"
+            />
+            <details>
+              <summary className="cursor-pointer type-body-sm">
+                Can’t scan? Enter a setup key
+              </summary>
+              <code className="mt-2 block rounded bg-muted p-2 type-caption [overflow-wrap:anywhere]">
+                {new URL(totpUri).searchParams.get("secret") ?? totpUri}
+              </code>
+            </details>
             <label htmlFor={ids.code} className="type-body-sm">
               6-digit code from your authenticator app
             </label>
@@ -244,6 +260,7 @@ function TwoStepCard() {
           <pre className="mt-2 rounded bg-muted p-2 type-body-sm">{recoveryCodes.join("\n")}</pre>
         )}
       </SettingsField>
+      <EmailFactorSettings />
       {error === null ? null : (
         <p id={ids.error} role="alert" className="m-0 mt-2 type-body-sm text-destructive">
           {error}

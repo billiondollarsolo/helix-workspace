@@ -19,6 +19,8 @@ import {
   type ProviderDeliveryEventStore,
 } from "./delivery-events.js";
 import type { MailSecretProvider } from "./outbound-routing.js";
+import { verifySesFeedback } from "./ses-feedback.js";
+import { isSesSmtpHost } from "./threading.js";
 
 const rawProviderWebhookBodies = new WeakMap<object, Buffer>();
 const webhookParams = z.object({
@@ -90,9 +92,57 @@ export async function registerMailProviderWebhookRoutes(
       params.data.orgId,
       params.data.providerId,
     );
-    if (provider === null || !provider.enabled || provider.webhookSecretRef === null) {
+    if (provider === null || !provider.enabled) {
       return reply.code(404).send({ error: "Unknown provider webhook." });
     }
+    if (
+      provider.kind === "ses" ||
+      (provider.kind === "smtp" &&
+        typeof provider.config.host === "string" &&
+        isSesSmtpHost(provider.config.host))
+    ) {
+      if (typeof provider.config.feedbackTopicArn !== "string")
+        return reply
+          .code(503)
+          .send({ error: "Configure this provider's SES feedback topic ARN first." });
+      try {
+        const raw = rawProviderWebhookBodies.get(request) ?? bodyToBuffer(request.body);
+        const result = await verifySesFeedback(
+          JSON.parse(raw.toString("utf8")),
+          provider.config.feedbackTopicArn,
+        );
+        const events = [];
+        for (const event of result.events) {
+          events.push(
+            await options.deliveryStore.ingestEvent({
+              orgId: provider.orgId,
+              providerId: provider.id,
+              event,
+            }),
+          );
+          await options.alertMonitor?.observe(provider.orgId, event.type);
+        }
+        return await reply.code(202).send({
+          accepted: true,
+          subscriptionConfirmed: result.subscriptionConfirmed,
+          events: events.map((event) => ({
+            duplicate: event.duplicate,
+            outboundMatched: event.outboundMatched,
+            suppressed: event.suppressed,
+          })),
+        });
+      } catch (error) {
+        if (error instanceof ProviderWebhookVerificationError) {
+          options.onSignatureFailure?.({ orgId: provider.orgId, providerId: provider.id });
+          return reply.code(401).send({ error: "Invalid SES feedback signature or topic." });
+        }
+        if (error instanceof ProviderWebhookPayloadError || error instanceof SyntaxError)
+          return reply.code(400).send({ error: "Invalid SES feedback payload." });
+        throw error;
+      }
+    }
+    if (provider.webhookSecretRef === null)
+      return reply.code(503).send({ error: "Provider webhook signing is not configured." });
     if (provider.kind !== "mailgun") {
       return reply.code(422).send({ error: "Provider does not support signed delivery webhooks." });
     }

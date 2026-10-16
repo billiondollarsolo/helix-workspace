@@ -1,7 +1,9 @@
+import { PreparedReply } from "../productivity/thread-controls";
 /* The body and bottom bar shared by the compose window and the inline reply:
    editor, signature, attachments, errors, the formatting toolbar, and
    Send ▾ · Formatting · Attach · Link · Emoji · More · Discard. */
 
+import { MailAiAssistance } from "../mail-ai-assistance";
 import { useQuery } from "@tanstack/react-query";
 import {
   EllipsisVertical,
@@ -65,6 +67,7 @@ export function ComposerBody({
   const { fields, update } = composer;
   const selectionRef = useRef<Range | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [aiRevision, setAiRevision] = useState(0);
   const [showFormatting, setShowFormatting] = useState(false);
   const [linkText, setLinkText] = useState<string | null>(null);
   const settings = useQuery(mailUserSettingsQueryOptions());
@@ -88,6 +91,7 @@ export function ComposerBody({
   return (
     <>
       <ComposeEditor
+        resetKey={String(aiRevision)}
         html={fields.html}
         plainText={fields.plainText}
         onChange={(html) => {
@@ -125,6 +129,25 @@ export function ComposerBody({
           onInsertLink={openLinkDialog}
         />
       ) : null}
+      {isReply && composer.threadId ? (
+        <PreparedReply
+          threadId={composer.threadId}
+          body={composeHtmlToText(fields.html)}
+          onApply={(text) => {
+            update({ html: textToComposeHtml(text) });
+            setAiRevision((value) => value + 1);
+          }}
+        />
+      ) : null}
+      <MailAiAssistance
+        threadId={composer.threadId}
+        subject={fields.subject}
+        body={composeHtmlToText(fields.html)}
+        onApply={(text) => {
+          update({ html: textToComposeHtml(text) });
+          setAiRevision((value) => value + 1);
+        }}
+      />
       <div className="compose-bottom-bar">
         <SendButton
           onSend={composer.send}

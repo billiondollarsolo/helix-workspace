@@ -165,7 +165,7 @@ function mint(
     {
       roomId,
       recordingNoticeAccepted: true,
-      recordingNoticeVersion: "2026-09-02",
+      recordingNoticeVersion: "2026-10-15",
       deviceId: "20000000-0000-4000-8000-000000000001",
       joinGrantId,
     },

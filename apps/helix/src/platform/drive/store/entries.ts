@@ -343,6 +343,15 @@ export async function setStarred(
     context.sql,
     { orgId: input.orgId, actorId: input.actorId },
     async (tx) => {
+      const memberships = await tx`
+        select id from organization_memberships
+        where org_id = ${input.orgId} and actor_id = ${input.actorId} and status = 'active'
+      `;
+      if (memberships.length === 0) {
+        throw new DriveForbiddenError(
+          "Stars are personal preferences and require an active human organization membership.",
+        );
+      }
       const rows = input.starred
         ? await tx<DriveSearchRow[]>`
               with readable as (

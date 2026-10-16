@@ -154,27 +154,29 @@ describe("AICostLimitsManagement", () => {
     });
 
     await waitFor(() => {
-      expect(container.textContent ?? "").toContain("Jordan Rivera");
+      expect(document.body.textContent ?? "").toContain("Jordan Rivera");
     });
-    expect(container.textContent).toContain("jordan@example.test");
+    expect(document.body.textContent).toContain("jordan@example.test");
     // An override can outlive its account; it is still listed, and still clearable.
-    expect(container.textContent).toContain("Removed account");
-    expect(container.textContent).not.toMatch(/0000-0000-0000/u);
+    expect(document.body.textContent).toContain("Removed account");
+    expect(document.body.textContent).not.toMatch(/0000-0000-0000/u);
+    act(() => buttonByText("Add limit").click());
+    await waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
     // The override is for a person someone picks, not an id someone pastes.
-    expect(container.querySelector('[role="combobox"]')).not.toBeNull();
-    expect(container.querySelector('input[aria-label="Actor ID"]')).toBeNull();
+    expect(document.querySelector('[role="combobox"]')).not.toBeNull();
+    expect(document.querySelector('input[aria-label="Actor ID"]')).toBeNull();
     // h1 from PageHeading, then two sibling h2 panels — no skipped levels.
     expect(headingOutline()).toEqual([
       "H1:AI costs",
-      "H2:Give one person a different budget",
       "H2:Active overrides",
+      "H2:Set a person's AI budget",
     ]);
     // A null tier budget is "no cap", not "tier default" — the tier row cannot
     // inherit from itself.
-    expect(container.querySelector(".admin-page-subtitle")?.textContent).toContain(
+    expect(document.querySelector(".admin-page-subtitle")?.textContent).toContain(
       "business tier default: $10.00 per person, Unlimited per feature.",
     );
-    expect(container.textContent).toContain("$25.00");
+    expect(document.body.textContent).toContain("$25.00");
     // Save owns the only filled button; the row action stays outlined.
     expect(buttonByLabel("Clear AI cost limit for Jordan Rivera").dataset.variant).toBe("outline");
     expect(buttonByText("Save limit").dataset.variant).toBe("default");
@@ -208,12 +210,12 @@ describe("AICostLimitsManagement", () => {
     });
 
     await waitFor(() => {
-      expect(container.textContent ?? "").toContain("No per-user overrides");
+      expect(document.body.textContent ?? "").toContain("No per-user overrides");
     });
-    expect(container.querySelector('[data-slot="empty-state"]')).not.toBeNull();
-    expect(container.textContent).toContain("business tier default");
+    expect(document.querySelector('[data-slot="empty-state"]')).not.toBeNull();
+    expect(document.body.textContent).toContain("business tier default");
     // An all-header table says nothing; the empty state replaces it entirely.
-    expect(container.querySelector('[role="table"]')).toBeNull();
+    expect(document.querySelector('[role="table"]')).toBeNull();
   });
 
   it("surfaces an unavailable admin API as an error banner", async () => {
@@ -231,25 +233,25 @@ describe("AICostLimitsManagement", () => {
     });
 
     await waitFor(() => {
-      expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      expect(document.querySelector('[role="alert"]')?.textContent).toContain(
         "Cost limits could not be loaded. You may not have permission to manage AI costs.",
       );
     });
-    expect(container.querySelector('[role="alert"]')?.getAttribute("data-slot")).toBe(
+    expect(document.querySelector('[role="alert"]')?.getAttribute("data-slot")).toBe(
       "inline-error",
     );
     // No override list loaded, so nothing may claim the list is empty.
-    expect(container.querySelector('[data-slot="empty-state"]')).toBeNull();
+    expect(document.querySelector('[data-slot="empty-state"]')).toBeNull();
   });
 
   function headingOutline(): string[] {
-    return Array.from(container.querySelectorAll("h1, h2, h3, h4, h5, h6")).map(
+    return Array.from(document.querySelectorAll("h1, h2, h3, h4, h5, h6")).map(
       (heading) => `${heading.tagName}:${heading.textContent ?? ""}`,
     );
   }
 
   function buttonByText(name: string): HTMLButtonElement {
-    const button = Array.from(container.querySelectorAll("button")).find((candidate) =>
+    const button = Array.from(document.querySelectorAll("button")).find((candidate) =>
       candidate.textContent?.includes(name),
     );
     if (!(button instanceof HTMLButtonElement)) {
@@ -259,7 +261,7 @@ describe("AICostLimitsManagement", () => {
   }
 
   function buttonByLabel(label: string): HTMLButtonElement {
-    const button = container.querySelector(`button[aria-label="${label}"]`);
+    const button = document.querySelector(`button[aria-label="${label}"]`);
     if (!(button instanceof HTMLButtonElement)) {
       throw new Error(`Button not found: ${label}`);
     }

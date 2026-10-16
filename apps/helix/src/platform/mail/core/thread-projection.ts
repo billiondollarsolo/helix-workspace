@@ -125,11 +125,11 @@ export function matchesFilterCriteria(
     readonly attachments?: readonly unknown[] | undefined;
   },
   criteria: {
-    readonly fromContains?: string;
-    readonly toContains?: string;
-    readonly subjectContains?: string;
-    readonly bodyContains?: string;
-    readonly hasAttachment?: boolean;
+    readonly fromContains?: string | undefined;
+    readonly toContains?: string | undefined;
+    readonly subjectContains?: string | undefined;
+    readonly bodyContains?: string | undefined;
+    readonly hasAttachment?: boolean | undefined;
   },
 ): boolean {
   const toContains = criteria.toContains;

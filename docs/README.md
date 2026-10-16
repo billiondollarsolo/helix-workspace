@@ -12,6 +12,7 @@ shipped features, production packaging, security disclosures, and launch limits.
 - [Demo data](demo-data.md): fictional workspace, sign-ins, presets, and safe reseeding.
 - [Pilot installation](runbooks/pilot-install-zero-to-mail.md): production setup through first mail, chat, and file upload.
 - [Production deployment](deployment-production.md): secrets, dependencies, image trust, and deployment gates.
+- [Hetzner staging and agent testing](runbooks/hetzner-workspace-prestage.md): host prestage, activation inputs, and local or hosted agent access.
 - [Platform versions](platform-version-policy.md): supported runtimes, containers, and Kubernetes tools.
 
 ## Use and administer
@@ -27,15 +28,18 @@ shipped features, production packaging, security disclosures, and launch limits.
 ## Integrate and develop
 
 - [Development guide and repository map](development.md#repository-map).
+- [External application integration: Helix Bot](../apps/web/public/agent-integration.md).
+- [CLI installation and SDK integration](reference/clients.md).
 - [Environment reference](reference/environment.md).
 - [Tool and channel inventory](architecture/mvp-tool-channel-inventory.md): REST, CLI, and MCP coverage.
 - [Webhook verification](webhooks/verify.md).
 - [Request rate policy](architecture/request-rate-policy.md).
+- [Provider-assisted setup proposal](architecture/provider-assisted-setup.md).
 - [Accessibility](accessibility.md).
 - [Architecture decisions](adr/README.md), [surface inventory](architecture/v1-surface-inventory.md), and [packaging matrix](architecture/v1-packaging-matrix.md).
 
-A running API publishes `/openapi.json` and `/asyncapi.json`. Its tool catalog is
-available at `/api/tools`, with MCP at `/mcp`; authenticated access and actor scopes
+A running API publishes `/v1/openapi.json` and `/v1/asyncapi.json`. Its tool catalog is
+available at `/v1/api/tools`, with MCP at `/v1/mcp`; authenticated access and actor scopes
 apply. The [operations runbook](RUNBOOK.md) covers API access and diagnostics.
 
 ## Operate and recover
@@ -58,6 +62,9 @@ apply. The [operations runbook](RUNBOOK.md) covers API access and diagnostics.
 - Live evidence: [Mail](mail-live-evidence.md), [Drive](drive-live-evidence.md), [Chat](chat-live-evidence.md), [agents](agent-live-evidence.md), [failure recovery](failure-recovery-evidence.md), and [DAST](dast-evidence.md).
 
 ## Maintainer records
+
+- [Workspace quality and optional AI roadmap — 2026-10-14](plans/2026-10-14-workspace-quality-and-optional-ai.md).
+- [System quality review — 2026-10-14](reviews/2026-10-14-system-quality-review.md).
 
 [Implementation status](release/implementation-status.md) records prior verification;
 it is not a substitute for current checks. [Archived plans](archive/README.md) are

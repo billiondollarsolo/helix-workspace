@@ -1,0 +1,66 @@
+{
+  "date": "2026-10-15",
+  "scope": "Mail body backfill index recovery follow-up",
+  "problem": "Moving HTML mail to external storage can replace indexed HTML with canonical plain text. Backfill did not queue a refresh, leaving stale keyword content or AI passage offsets until a manual rebuild.",
+  "change": "Queue body-free mailbox references in the same transaction as each converted message. Current message-level authorization determines the mailbox projections. Resuming a completed conversion creates no duplicate jobs.",
+  "deployment": {
+    "deployed": true,
+    "apiImage": "helix/workspace-development:mail-storage-r16",
+    "ready": true,
+    "rollbackConfig": "/srv/helix/config/development-compose.pre-mail-storage-r16-20261015T195235Z.json"
+  },
+  "liveIndexRefresh": {
+    "mailboxProjectionsRefreshed": 25,
+    "jobs": 1,
+    "completed": true,
+    "bodyCopiesQueued": false
+  },
+  "agentClients": {
+    "atlasPersisted": true,
+    "discoveredTools": 137,
+    "checks": [
+      "mail.thread.get",
+      "mail.search",
+      "mail.threads.list",
+      "resources/read bounded thread",
+      "CLI thread-get",
+      "CLI search",
+      "CLI list"
+    ],
+    "externalEmailSent": false
+  },
+  "humanReads": {
+    "humanMailboxReads": 11,
+    "allMatchedCanonicalBodies": true,
+    "copies": {
+      "full_mail_mutations": 0,
+      "redundant_vector_passages": 0
+    }
+  },
+  "checks": {
+    "format": "passed",
+    "typecheck": "passed",
+    "lint": "passed",
+    "build": "passed",
+    "boundaries": "passed",
+    "fullSuite": {
+      "passed": 5615,
+      "gatedSkipped": 407
+    },
+    "multiTenantDatabasePassed": 6,
+    "singleTenantDatabasePassed": 6,
+    "focusedStorageAndDurabilityPassed": 8,
+    "regressions": [
+      "A migrated message queues exactly one body-free refresh on resumable backfill.",
+      "Thread membership without message access cannot create a private mailbox search projection.",
+      "A storage-read failure retries indexing without acknowledging completion or writing an empty document."
+    ]
+  },
+  "deploymentPreflight": "Initial copied build files had restrictive permissions. The offline image import check rejected them before the live configuration changed. Artifact permissions were corrected and the same preflight passed before deployment.",
+  "limits": [
+    "No UI changes; no new browser or accessibility run.",
+    "No long-duration load test or full recovery onto a different host.",
+    "Development-only deployment and previous production acceptance gaps remain.",
+    "Search remains asynchronous with the documented candidate limit."
+  ]
+}

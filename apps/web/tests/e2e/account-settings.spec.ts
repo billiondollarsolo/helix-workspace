@@ -1,5 +1,6 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 import axe from "axe-core";
+import type { AccountEmailFactorStatus } from "@helix/contracts";
 import { fulfillCoreAppsRoute } from "./support/api-fixtures";
 import { isLiveBackend, seedBrowserSession } from "./support/backend-mode";
 
@@ -17,9 +18,28 @@ interface Backend {
   readonly calls: { path: string; body: unknown }[];
 }
 
-async function mockAccountBackend(page: Page): Promise<Backend> {
+async function mockAccountBackend(page: Page, emailReady = false): Promise<Backend> {
   await seedBrowserSession(page, "account-settings-session");
   const calls: Backend["calls"] = [];
+  let presence = {
+    actorId,
+    availability: "available",
+    text: "",
+    emoji: "",
+    expiresAt: null,
+    connected: true,
+    state: "active",
+    lastSeenAt: now,
+  };
+  let twoFactorEnabled = false;
+  let emailFactor: AccountEmailFactorStatus = {
+    outboundReady: emailReady,
+    email: null,
+    verified: false,
+    enabled: false,
+    totpEnabled: false,
+    pendingEmail: null,
+  };
   let sessions = [
     session("this", true, "Chrome", "Linux", "desktop"),
     session("phone", false, "Safari", "iOS", "mobile"),
@@ -89,13 +109,44 @@ async function mockAccountBackend(page: Page): Promise<Backend> {
     const request = route.request();
     const path = new URL(request.url()).pathname.replace(/^\/v1/u, "");
     const body = parseBody(request.postData());
-    if (request.method() === "POST") calls.push({ path, body });
+    if (["POST", "PATCH"].includes(request.method())) calls.push({ path, body });
     if (path === "/api/auth/get-session") {
       return json(route, {
-        user: { id: "login-1", actorId, email: "lea@example.test", name: "Léa Nguyen" },
+        user: {
+          id: "login-1",
+          actorId,
+          email: "lea@example.test",
+          name: "Léa Nguyen",
+          twoFactorEnabled: twoFactorEnabled || emailFactor.enabled,
+          totpEnabled: twoFactorEnabled,
+          emailOtpEnabled: emailFactor.enabled,
+        },
       });
     }
+    if (path === "/api/auth/passkey/list-user-passkeys") return json(route, []);
+    if (path === "/api/auth/two-factor/enable") {
+      return json(route, {
+        totpURI: "otpauth://totp/Helix:lea@example.test?secret=JBSWY3DPEHPK3PXP&issuer=Helix",
+        backupCodes: ["test-recovery-code"],
+      });
+    }
+    if (path === "/api/auth/two-factor/verify-totp") {
+      twoFactorEnabled = true;
+      return json(route, { user: { id: "login-1", twoFactorEnabled } });
+    }
+    if (path === "/api/auth/two-factor/disable") {
+      twoFactorEnabled = false;
+      return json(route, {});
+    }
     if (path === "/api/auth/csrf-token") return json(route, { csrfToken: "e2e-csrf-token" });
+    if (path === "/api/presence/heartbeat") return json(route, { ok: true });
+    if (path === "/api/presence") {
+      if (route.request().method() === "PATCH") {
+        presence = { ...presence, ...body };
+        return json(route, { presence });
+      }
+      return json(route, { items: [presence] });
+    }
     if (path === "/api/profile") {
       return json(route, {
         profile: {
@@ -111,6 +162,27 @@ async function mockAccountBackend(page: Page): Promise<Backend> {
       });
     }
     if (path === "/api/account/sessions") return json(route, { sessions });
+    if (path === "/api/account/email-mfa")
+      return json(route, { ...emailFactor, totpEnabled: twoFactorEnabled });
+    if (path === "/api/account/email-mfa/verification") {
+      emailFactor = { ...emailFactor, pendingEmail: String(body.email) };
+      return json(route, { sent: true });
+    }
+    if (path === "/api/account/email-mfa/verification/confirm") {
+      if (body.code !== "123456")
+        return json(route, { error: { message: "That code is incorrect." } }, 400);
+      emailFactor = {
+        ...emailFactor,
+        email: emailFactor.pendingEmail,
+        verified: true,
+        pendingEmail: null,
+      };
+      return json(route, emailFactor);
+    }
+    if (path === "/api/account/email-mfa/enabled") {
+      emailFactor = { ...emailFactor, enabled: body.enabled === true };
+      return json(route, emailFactor);
+    }
     if (path === "/api/account/sessions/revoke-others") {
       const revoked = sessions.filter((entry) => !entry.current).length;
       sessions = sessions.filter((entry) => entry.current);
@@ -247,6 +319,71 @@ test("signs out one device, then every other device after confirming", async ({ 
   );
 });
 
+for (const colorScheme of ["light", "dark"] as const) {
+  test(`authenticator setup shows a QR code and stays optional in ${colorScheme} mode`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
+    const backend = await mockAccountBackend(page);
+    await page.goto("/mail?settings=security");
+    const settings = settingsDialog(page);
+    await settings.getByLabel("Confirm with your current password").fill("current-password");
+    await settings.getByRole("button", { name: "Set up", exact: true }).click();
+
+    const qr = settings.getByRole("img", { name: "Scan to set up your authenticator app" });
+    await expect(qr).toBeVisible();
+    await expect(qr.locator("path")).not.toHaveCount(0);
+    await settings.getByText("Can’t scan? Enter a setup key").click();
+    await expect(settings.locator("details code")).toHaveText("JBSWY3DPEHPK3PXP");
+    await expect(settings.getByRole("button", { name: "Turn off", exact: true })).toHaveCount(0);
+    await expectNoAxeViolations(page);
+
+    await settings.getByLabel("6-digit code from your authenticator app").fill("123456");
+    await settings.getByRole("button", { name: "Verify", exact: true }).click();
+    await expect(qr).toHaveCount(0);
+    await expect(settings.getByText("Authenticator app turned on.")).toBeVisible();
+    expect(
+      backend.calls.find((call) => call.path === "/api/auth/two-factor/verify-totp")?.body,
+    ).toEqual({ code: "123456", trustDevice: false });
+
+    await settings.getByLabel("Confirm with your current password").fill("current-password");
+    await settings.getByRole("button", { name: "Turn off", exact: true }).click();
+    await expect(settings.getByText("Authenticator app turned off.")).toBeVisible();
+    await expect(settings.getByRole("button", { name: "Set up", exact: true })).toBeVisible();
+  });
+}
+
+test("verifies an external inbox before separately enabling optional email codes", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const backend = await mockAccountBackend(page, true);
+  await page.goto("/mail?settings=security");
+  const settings = settingsDialog(page);
+  await settings.getByLabel("External email address", { exact: true }).fill("lea@gmail.com");
+  await settings.getByLabel("Confirm email settings with your password").fill("current-password");
+  await settings.getByRole("button", { name: "Send verification code" }).click();
+  await expect(settings.getByText("Check lea@gmail.com for your verification code.")).toBeVisible();
+  await settings.getByLabel("External email verification code").fill("999999");
+  await settings.getByRole("button", { name: "Verify external email" }).click();
+  await expect(settings.getByRole("alert")).toContainText("incorrect");
+  await settings.getByLabel("External email verification code").fill("123456");
+  await settings.getByRole("button", { name: "Verify external email" }).click();
+  await expect(settings.getByText(/Email codes are off/u)).toBeVisible();
+  await settings.getByLabel("Confirm email settings with your password").fill("current-password");
+  await settings.getByRole("button", { name: "Turn on email codes" }).click();
+  await expect(settings.getByText("Email codes turned on.")).toBeVisible();
+  await expect(settings.getByRole("button", { name: "Set up", exact: true })).toBeVisible();
+  await expectNoAxeViolations(page);
+  expect(
+    backend.calls.find((call) => call.path === "/api/account/email-mfa/verification")?.body,
+  ).toEqual({ email: "lea@gmail.com", password: "current-password" });
+  await settings.getByLabel("Confirm email settings with your password").fill("current-password");
+  await settings.getByRole("button", { name: "Turn off email codes" }).click();
+  await expect(settings.getByText("Email codes turned off.")).toBeVisible();
+});
+
 test("creates an app password, shows it once, and revokes it", async ({ page }) => {
   const backend = await mockAccountBackend(page);
   await page.goto("/mail?settings=app-passwords");
@@ -291,7 +428,7 @@ test("offers an S3 key only the Drive scopes the person holds", async ({ page })
   await expect(settings.getByText("Delete (move to trash)")).toHaveCount(0);
 
   await settings.getByLabel("New key").fill("Home NAS");
-  await settings.getByRole("button", { name: "Create access key" }).click();
+  await settings.getByRole("button", { name: "Add access key" }).click();
   await expect(settings.getByRole("region", { name: "New S3 access key" })).toContainText(
     "e2e-s3-secret",
   );
@@ -401,4 +538,38 @@ test("on a phone, settings open on the section list and each section has a back 
   await expect(nav).toBeVisible();
   await settings.getByRole("button", { name: "Close settings" }).click();
   await expect(settings).toHaveCount(0);
+});
+
+test("status editor preserves drafts during refresh and saves availability with expiry", async ({
+  page,
+}) => {
+  const backend = await mockAccountBackend(page);
+  await page.goto("/chat?settings=profile");
+  const settings = settingsDialog(page);
+  await settings.getByLabel("Availability", { exact: true }).selectOption("dnd");
+  await settings.getByLabel("Status", { exact: true }).fill("Reviewing agent approvals");
+  await settings.getByLabel("Emoji", { exact: true }).fill("🧪");
+  await settings.getByLabel("Clear status", { exact: true }).selectOption("60");
+  await expectNoAxeViolations(page);
+  await settings.getByRole("button", { name: "Save status", exact: true }).click();
+  await expect(settings.getByText("Status saved.", { exact: true })).toBeVisible();
+  expect(
+    backend.calls.find(
+      (call) =>
+        call.path === "/api/presence" &&
+        typeof call.body === "object" &&
+        call.body !== null &&
+        "availability" in call.body,
+    )?.body,
+  ).toMatchObject({
+    availability: "dnd",
+    text: "Reviewing agent approvals",
+    emoji: "🧪",
+    expiresAt: expect.any(String),
+  });
+  await expect(settings.getByLabel("Status", { exact: true })).toHaveValue(
+    "Reviewing agent approvals",
+  );
+  await page.reload();
+  await expect(settingsDialog(page).getByLabel("Availability", { exact: true })).toHaveValue("dnd");
 });

@@ -220,8 +220,15 @@ export class SemanticSearchEngine implements SearchEngine {
 
 function semanticMetadata(document: IndexDocument): SemanticMetadata {
   const orgId = stringAttribute(document.attributes, "orgId");
+  const mailMetadata = document.attributes?.metadata;
+  const externalMail =
+    document.type === "mail" &&
+    isJsonObject(mailMetadata) &&
+    mailMetadata.bodyStorage === "object-v1";
+  // Mail passages are hydrated from their authorized source; pgvector keeps only offsets and identity.
+  const { body: _body, ...reference } = document;
   return {
-    document: toJsonObject(document),
+    document: toJsonObject(externalMail ? reference : document),
     type: document.type,
     ...(orgId === undefined ? {} : { orgId }),
   };

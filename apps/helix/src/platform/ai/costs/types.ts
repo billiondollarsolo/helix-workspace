@@ -16,11 +16,13 @@ interface AICostScope {
 }
 
 export interface AICostLimitCheckInput extends AICostScope {
+  readonly reservationId?: string;
   readonly estimatedCostUsdMicros?: number | undefined;
   readonly at?: Date | undefined;
 }
 
 export interface AICostRecordInput extends AICostScope {
+  readonly reservationId?: string;
   readonly providerId: string;
   readonly model: string;
   readonly costUsdMicros: number;

@@ -74,12 +74,12 @@ describe("AppPasswordsManagement", () => {
       return Promise.resolve(Response.json({ error: "unexpected" }, { status: 500 }));
     });
 
-    renderAppPasswords();
+    await renderAppPasswords();
 
     await waitForText("Calendar sync");
-    expect(container.querySelector('table[aria-label="App passwords"]')).not.toBeNull();
-    expect(container.textContent).toContain("calendar.read");
-    expect(container.textContent).not.toContain("Old calendar sync");
+    expect(document.querySelector('table[aria-label="App passwords"]')).not.toBeNull();
+    expect(document.body.textContent).toContain("calendar.read");
+    expect(document.body.textContent).not.toContain("Old calendar sync");
 
     clickIncludeRevoked();
 
@@ -101,11 +101,11 @@ describe("AppPasswordsManagement", () => {
       return Promise.resolve(Response.json({ error: "unexpected" }, { status: 500 }));
     });
 
-    renderAppPasswords();
+    await renderAppPasswords();
     await waitForText("Create app password");
 
     expect(headingTexts("h1")).toEqual(["App passwords"]);
-    expect(headingTexts("h2")).toEqual(["Create app password", "Issued app passwords"]);
+    expect(headingTexts("h2")).toEqual(["Issued app passwords", "Create app password"]);
     expect(headingTexts("h3")).toEqual([]);
   });
 
@@ -120,7 +120,7 @@ describe("AppPasswordsManagement", () => {
       return Promise.resolve(Response.json({ error: "unexpected" }, { status: 500 }));
     });
 
-    renderAppPasswords();
+    await renderAppPasswords();
     await waitFor(() => {
       expect(optionValues("app-password-actor-id")).toEqual([
         "",
@@ -137,10 +137,10 @@ describe("AppPasswordsManagement", () => {
       "Mina Okafor (mina@example.com)",
     ]);
     // The picker replaced a free-text UUID field; no input should ask for one.
-    expect(container.querySelector('input[placeholder*="0000-4000"]')).toBeNull();
+    expect(document.querySelector('input[placeholder*="0000-4000"]')).toBeNull();
     // The table resolves the actor id it lists against the same directory page.
-    expect(container.textContent).toContain("Mina Okafor");
-    expect(container.textContent).not.toContain(firstAdminUser().id);
+    expect(document.body.textContent).toContain("Mina Okafor");
+    expect(document.body.textContent).not.toContain(firstAdminUser().id);
   });
 
   it("creates an app password through the pending tool approval flow and shows the one-time password", async () => {
@@ -173,7 +173,7 @@ describe("AppPasswordsManagement", () => {
       return Promise.resolve(Response.json({ error: "unexpected" }, { status: 500 }));
     });
 
-    renderAppPasswords();
+    await renderAppPasswords();
     await waitForText("No active app passwords.");
     await waitFor(() => {
       expect(optionValues("app-password-actor-id")).toContain(firstAdminUser().id);
@@ -211,13 +211,13 @@ describe("AppPasswordsManagement", () => {
       return Promise.resolve(Response.json({ error: "unexpected" }, { status: 500 }));
     });
 
-    renderAppPasswords();
+    await renderAppPasswords();
     await waitForText("Create app password");
 
     const submit = findButton("Create app password");
     expect(submit.dataset.variant).toBe("default");
     expect(
-      Array.from(container.querySelectorAll("button")).filter(
+      Array.from(submit.closest("form")!.querySelectorAll("button")).filter(
         (button) => button.dataset.variant === "default",
       ),
     ).toEqual([submit]);
@@ -234,7 +234,7 @@ describe("AppPasswordsManagement", () => {
       return Promise.resolve(Response.json({ error: "unexpected" }, { status: 500 }));
     });
 
-    renderAppPasswords();
+    await renderAppPasswords();
     await waitForText("Create app password");
 
     const preset = findButton("Desktop sync (WebDAV)");
@@ -260,14 +260,14 @@ describe("AppPasswordsManagement", () => {
       return Promise.resolve(Response.json({ error: "unexpected" }, { status: 500 }));
     });
 
-    renderAppPasswords();
+    await renderAppPasswords();
     await waitForText("Admin users permission denied.");
 
     const picker = selectElement("app-password-actor-id");
     expect(picker.disabled).toBe(true);
     expect(picker.options[0]?.textContent).toBe("Actors unavailable");
     expect(findButton("Create app password").disabled).toBe(true);
-    expect(container.querySelector('[role="alert"][data-slot="inline-error"]')).not.toBeNull();
+    expect(document.querySelector('[role="alert"][data-slot="inline-error"]')).not.toBeNull();
     // The error is recoverable without a reload.
     expect(findButton("Retry")).toBeInstanceOf(HTMLButtonElement);
   });
@@ -283,10 +283,10 @@ describe("AppPasswordsManagement", () => {
       return Promise.resolve(Response.json({ error: "unexpected" }, { status: 500 }));
     });
 
-    renderAppPasswords();
+    await renderAppPasswords();
 
     await waitForText("No active app passwords.");
-    expect(container.querySelector("tbody .admin-empty-row")).not.toBeNull();
+    expect(document.querySelector("tbody .admin-empty-row")).not.toBeNull();
   });
 
   it("keeps the issued-passwords panel top-aligned in its column", async () => {
@@ -300,7 +300,7 @@ describe("AppPasswordsManagement", () => {
       return Promise.resolve(Response.json({ error: "unexpected" }, { status: 500 }));
     });
 
-    renderAppPasswords();
+    await renderAppPasswords();
     await waitForText("Issued app passwords");
 
     /* jsdom has no layout, so the guard is on the alignment classes: a
@@ -340,10 +340,10 @@ describe("AppPasswordsManagement", () => {
       return Promise.resolve(Response.json({ error: "unexpected" }, { status: 500 }));
     });
 
-    renderAppPasswords();
+    await renderAppPasswords();
     await waitForText("Calendar sync");
-    await waitForText("Mina Okafor (mina@example.com)", container);
-    clickButton("Revoke", container);
+    await waitForText("Mina Okafor (mina@example.com)", document.body);
+    clickButton("Revoke", document.body);
     await waitForText("Revoke app password", document.body);
 
     /* The shared ConfirmDestructive, so the console's destructive-action policy
@@ -384,9 +384,9 @@ describe("AppPasswordsManagement", () => {
       return Promise.resolve(Response.json({ error: "unexpected" }, { status: 500 }));
     });
 
-    renderAppPasswords();
+    await renderAppPasswords();
     await waitForText("Calendar sync");
-    clickButton("Revoke", container);
+    clickButton("Revoke", document.body);
     await waitForText("Revoke app password", document.body);
     clickButton("Cancel", document.body);
 
@@ -401,7 +401,7 @@ describe("AppPasswordsManagement", () => {
     expect(document.body.style.pointerEvents).not.toBe("none");
   });
 
-  function renderAppPasswords() {
+  async function renderAppPasswords() {
     act(() => {
       root.render(
         createElement(
@@ -411,16 +411,16 @@ describe("AppPasswordsManagement", () => {
         ),
       );
     });
+    await waitFor(() => expect(findButton("Add app password")).toBeDefined());
+    clickButton("Add app password");
   }
 
   function headingTexts(tag: "h1" | "h2" | "h3") {
-    return Array.from(container.querySelectorAll(tag)).map((heading) =>
-      heading.textContent?.trim(),
-    );
+    return Array.from(document.querySelectorAll(tag)).map((heading) => heading.textContent?.trim());
   }
 
   function findByText(tag: string, text: string) {
-    return Array.from(container.querySelectorAll(tag)).find(
+    return Array.from(document.querySelectorAll(tag)).find(
       (element) => element.textContent?.trim() === text,
     );
   }

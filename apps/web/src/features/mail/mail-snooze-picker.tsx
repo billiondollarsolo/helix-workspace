@@ -132,7 +132,7 @@ export function SnoozeDateDialog({
   readonly onClose: () => void;
 }) {
   return (
-    <Dialog title="Pick date & time" onClose={onClose} width="min(560px, 100%)">
+    <Dialog modal={false} title="Pick date & time" onClose={onClose} width="min(560px, 100%)">
       <SnoozeCustomPicker
         onSnooze={(until) => {
           onClose();

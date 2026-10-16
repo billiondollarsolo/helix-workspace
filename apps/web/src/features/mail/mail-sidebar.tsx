@@ -48,6 +48,8 @@ interface MailSidebarProps {
   readonly onCategory: (tab: MailTabId) => void;
   readonly onLabel: (slug: string) => void;
   readonly onCompose: () => void;
+  readonly onFollowUp?: (query: string) => void;
+  readonly onAssistance?: () => void;
   readonly onDrop: (ids: readonly string[], target: MailDropTarget) => void;
 }
 
@@ -200,6 +202,8 @@ export function MailSidebar({
   onCategory,
   onLabel,
   onCompose,
+  onFollowUp,
+  onAssistance,
   onDrop,
 }: MailSidebarProps) {
   const summaries = new Map(folders.map((folder) => [folder.id, folder]));
@@ -233,6 +237,29 @@ export function MailSidebar({
       </button>
       <nav className="mail-nav" aria-label="Folders">
         {PRIMARY_FOLDERS.map(folderRow)}
+        {onFollowUp ? (
+          <>
+            {[
+              ["Needs reply", "is:needs-reply"],
+              ["Waiting on", "is:waiting-on"],
+              ["Overdue", "is:overdue"],
+            ].map(([label, query]) => (
+              <button
+                key={query}
+                type="button"
+                className="surf-nav-row mail-nav-row"
+                onClick={() => onFollowUp(query ?? "")}
+              >
+                <span className="label">{label}</span>
+              </button>
+            ))}
+          </>
+        ) : null}
+        {onAssistance ? (
+          <button type="button" className="surf-nav-row mail-nav-row" onClick={onAssistance}>
+            <span className="label">Mail assistance</span>
+          </button>
+        ) : null}
         <button
           type="button"
           className="surf-nav-row mail-nav-row"

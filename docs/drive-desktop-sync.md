@@ -47,7 +47,7 @@ The script asks for:
 2. **Email** — your Helix account
 3. **App password** — typing is hidden
 4. **Mode**
-   - **1) Mirror folder** (recommended) — normal folder that stays in sync
+   - **1) Mirror folder** (recommended) — normal folder updated each time the sync helper runs
    - **2) Virtual drive** — mount like a network drive
 5. **Local path** — default `~/HelixDrive` or `~/HelixMount` (Windows mount default `X:`). `~` is
    expanded and relative paths are made absolute. Setup refuses `/`, your home folder itself, and
@@ -55,8 +55,9 @@ The script asks for:
 
 It then writes a dedicated rclone config, checks that it can list, create, and delete (using a
 temporary `.helix-sync-check-…` folder, which ends up in your Drive trash), and runs the first sync
-(mirror) or tells you how to start the mount. The working config is only replaced after the new
-one passes these checks.
+(mirror) or tells you how to start the mount. The working config is only replaced after these checks, any required confirmation, and a
+successful initial sync. Cancelling a server/account/folder change preserves the previous config
+and sync state.
 
 ### 4. Day-to-day
 
@@ -69,9 +70,17 @@ Everything is written to `~/.helix/drive-sync/` (Windows: `%USERPROFILE%\.helix\
 | `status.sh` / `status.cmd`     | List top-level folders on the server                  |
 | `rclone.conf` (mode 0600)      | Connection settings; password stored rclone-obscured  |
 | `config.json`                  | What setup configured (server, account, folder, mode) |
-| `bisync/`                      | Two-way sync state (listings of both sides)           |
+| `bisync/` or `bisync-…/`       | Two-way sync state (listings of both sides)           |
 
-Schedule **sync-now** every few minutes (Task Scheduler / cron / launchd) if you want continuous mirror updates.
+Mirror mode runs once; setup does not install a background service. Run **sync-now** manually,
+or schedule it every few minutes with Task Scheduler / cron / launchd. Do not run overlapping
+copies. The helper reports connection and sync errors through its exit code.
+
+Sync compares file contents, including edits that leave the size unchanged. Plain WebDAV
+does not supply a checksum rclone can use, so this downloads files to compute hashes on each
+run. This is reliable but can use substantial bandwidth for large mirrors. Interrupted runs
+use rclone recovery; unrecoverable errors stop rather than silently rebuilding the baseline.
+Conflicts keep both versions with conflict suffixes; resolve them deliberately.
 
 ### Re-running setup
 
@@ -81,6 +90,7 @@ on their own**:
 - Same server, account, and folder, with sync state present → a normal two-way sync.
 - First setup → an initial `--resync` to build the baseline. If the folder is not empty you are
   warned first.
+- Upgrading an older size/modtime baseline to content checking also requires an explicit resync.
 - Different server, account, or folder, or missing sync state → setup stops and asks. A resync can
   bring back files that were deleted on one side, so it only runs after an interactive "yes",
   `--resync`, or `HELIX_SYNC_RESYNC=1`.
@@ -90,7 +100,9 @@ on their own**:
 WebDAV uploads are capped by the server's `HELIX_DRIVE_AV_MAX_FILE_BYTES` (default **128 MiB**).
 Setup passes `--max-size 128M` to rclone so larger files are skipped instead of failing over and
 over. If your admin changed the server limit, set `HELIX_SYNC_MAX_SIZE` (e.g. `512M`) before
-running setup. Upload larger files through the Helix web app.
+running setup. Reverse proxies can impose a lower request limit. For this Cloudflare-proxied
+development deployment, use `HELIX_SYNC_MAX_SIZE=95M` for headroom. Larger files need an
+admin-reviewed limit and upload path; the web app does not bypass antivirus limits.
 
 ## Modes (what to pick)
 
@@ -137,6 +149,10 @@ WebDAV; they appear once they are available.
   `HELIX_TRUSTED_PROXIES` to the proxy addresses or CIDRs (for example
   `HELIX_TRUSTED_PROXIES=10.0.0.0/8`) so Helix uses the forwarded client IP. Otherwise every user
   shares the proxy's address, and one user's failed logins can lock out the others for a minute.
+- Reverse proxies must preserve strong DAV ETags; disable response compression for `/v1/dav/*`
+  (and legacy `/dav/*`). Otherwise a valid conditional edit can fail with 412.
+- Cloudflare: bypass caching for the workspace hostname and `/v1/*`; browser-oriented security
+  rules must also allow your authenticated sync clients.
 - The upload limit is `HELIX_DRIVE_AV_MAX_FILE_BYTES`; tell users if you change it so they can set
   `HELIX_SYNC_MAX_SIZE`.
 

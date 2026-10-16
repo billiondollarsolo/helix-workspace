@@ -1,3 +1,4 @@
+import { ProductivityPanel } from "./productivity/panel";
 /* Mail: sidebar, conversation list and conversation view, with the reading
    pane layout the person picked (no split, right of the list, below it).
    Searching looks across All Mail with Gmail-style operators. Every action
@@ -35,7 +36,6 @@ import {
   mailThreadsQueryOptions,
 } from "./queries";
 import { useMailActions } from "./use-mail-actions";
-import { useMailRealtime } from "./use-mail-realtime";
 import { useMailShortcuts } from "./use-mail-shortcuts";
 import { useMailUrlState } from "./use-mail-url-state";
 
@@ -107,7 +107,7 @@ function moveAction(folder: MailFolderKey, target: MoveTarget): MailAction {
 
 export function MailShell() {
   const queryClient = useQueryClient();
-  useMailRealtime(true);
+  const [assistanceOpen, setAssistanceOpen] = useState(false);
   const [view, setView] = useMailUrlState();
   const { folder, tab, label, query, thread } = view;
   const [searchDraft, setSearchDraft] = useState(query);
@@ -419,6 +419,7 @@ export function MailShell() {
         }
       >
         <h1 className="sr-only">Mail</h1>
+        {assistanceOpen ? <ProductivityPanel onClose={() => setAssistanceOpen(false)} /> : null}
         <MailSidebar
           activeFolder={query === "" && label === null ? folder : null}
           activeTab={tab}
@@ -426,6 +427,8 @@ export function MailShell() {
           folders={foldersQuery.data ?? []}
           labels={labels}
           onFolder={(next) => goTo({ folder: next })}
+          onFollowUp={(query) => setView({ query, thread: null, label: null })}
+          onAssistance={() => setAssistanceOpen(true)}
           onCategory={(next) => goTo({ tab: next })}
           onLabel={(slug) => goTo({ label: slug })}
           onCompose={() => openCompose()}

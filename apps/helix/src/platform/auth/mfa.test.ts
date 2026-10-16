@@ -179,7 +179,21 @@ describe("server-side MFA assurance", () => {
     expect(recording.calls).toHaveLength(0);
   });
 
-  it("recognizes only successful passkey, TOTP, or recovery-code verification responses", () => {
+  it("recognizes only successful passkey, TOTP, email-code, or recovery-code verification responses", () => {
+    expect(
+      verifiedMfaSessionToken(
+        "/api/auth/two-factor/verify-otp",
+        200,
+        JSON.stringify({ token: "email-code-session" }),
+      ),
+    ).toBe("email-code-session");
+    expect(
+      verifiedMfaSessionToken(
+        "/api/auth/two-factor/send-otp",
+        200,
+        JSON.stringify({ token: "not-verification" }),
+      ),
+    ).toBeNull();
     expect(
       verifiedMfaSessionToken(
         "/api/auth/passkey/verify-authentication",

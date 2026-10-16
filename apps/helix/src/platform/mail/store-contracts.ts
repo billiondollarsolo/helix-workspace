@@ -1,3 +1,4 @@
+import type { SearchEngine } from "../search/types.js";
 import type { MailLabelColorName } from "@helix/contracts";
 import type { JsonObject } from "@helix/sdk-types";
 import type { TenantStorageResolver } from "../storage/tenant-resolver.js";
@@ -84,6 +85,7 @@ export interface CreateOutboundMailInput {
 }
 
 export type MarkOutboundSentInput = MailOutboundDeliveryResult & {
+  readonly loadedEnvelope?: MailOutboundEnvelope;
   readonly id: string;
   readonly leaseToken: string;
   readonly sentAt?: Date | undefined;
@@ -124,12 +126,14 @@ export interface OutboundMailQueueStore {
   }): Promise<ClaimedOutboundMail | null>;
   markOutboundSent(input: MarkOutboundSentInput): Promise<MailOutboundRecord | null>;
   markOutboundRetry(input: {
+    readonly loadedEnvelope?: MailOutboundEnvelope;
     readonly id: string;
     readonly leaseToken: string;
     readonly nextAttemptAt: Date;
     readonly lastError: string;
   }): Promise<MailOutboundRecord | null>;
   markOutboundDeadLettered(input: {
+    readonly loadedEnvelope?: MailOutboundEnvelope;
     readonly id: string;
     readonly leaseToken: string;
     readonly lastError: string;
@@ -346,6 +350,7 @@ export interface MailRawSourceStore {
 }
 
 export interface PostgresMailStoreOptions {
+  readonly searchEngine?: SearchEngine | undefined;
   readonly storageResolver?: TenantStorageResolver | undefined;
   readonly attachmentIngestor?:
     Pick<PostgresMailAttachmentIngestor, "stage" | "release"> | undefined;

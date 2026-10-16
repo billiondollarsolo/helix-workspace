@@ -70,6 +70,9 @@ export interface AIProviderConfig {
   readonly tags?: readonly string[];
   readonly config?: {
     readonly baseUrl?: string;
+    readonly realtimeTranscription?: boolean;
+    readonly region?: string;
+    readonly location?: string;
     readonly defaultModel?: string;
     readonly model?: string;
     readonly models?: readonly string[];

@@ -5,7 +5,11 @@ import type {
   PendingActionPreview,
   ToolDefinition,
 } from "@helix/sdk-types";
-import type { AgentAutomationPolicy, AgentAutomationPolicyRule } from "../auth/credentials.js";
+import type {
+  AgentAutomationPolicy,
+  AgentAutomationPolicyRule,
+  ConfirmationOverride,
+} from "../auth/credentials.js";
 import { getCryptoProvider } from "../crypto/index.js";
 
 const pendingPolicySnapshotVersion = "1";
@@ -17,11 +21,13 @@ export type AutomationPolicyDecision =
       readonly ruleId: string;
       readonly requestsPerMinute: number;
       readonly requestsPerDay: number;
+      readonly internalCommunicationOnly?: true;
     }
   | {
       readonly allowed: false;
       readonly reason:
         | "missing_policy"
+        | "explicit_confirmation_required"
         | "policy_incomplete"
         | "policy_self_modification"
         | "policy_expired"
@@ -44,7 +50,11 @@ interface ExtractedActionBounds {
 }
 
 const resourceKeys = new Set([
+  "resourceId",
   "attachmentId",
+  "attachmentObjectIds",
+  "commentId",
+  "parentCommentId",
   "conversationId",
   "documentId",
   "draftId",
@@ -99,6 +109,7 @@ async function withStandingAuthorization(
         ruleId: standing.id,
         requestsPerMinute: standing.requestsPerMinute,
         requestsPerDay: standing.requestsPerDay,
+        ...(standing.internalCommunicationOnly ? { internalCommunicationOnly: true } : {}),
       };
 }
 
@@ -348,7 +359,11 @@ export async function resolveAutomationDecision(input: {
   readonly parsedInput: unknown;
   readonly credentialId: string | undefined;
   readonly credentialPolicy:
-    { readonly automationPolicy?: AgentAutomationPolicy | null | undefined } | undefined;
+    | {
+        readonly automationPolicy?: AgentAutomationPolicy | null | undefined;
+        readonly confirmationOverride?: ConfirmationOverride;
+      }
+    | undefined;
 }): Promise<AutomationPolicyDecision | null> {
   if (input.actor.type !== "agent" || input.tool.sideEffects === "read") {
     return null;
@@ -357,5 +372,9 @@ export async function resolveAutomationDecision(input: {
   // No authenticating credential, no policy to honor, whatever the caller sent.
   const policy = input.credentialId === undefined ? null : input.credentialPolicy?.automationPolicy;
   const decision = evaluateAutomationPolicy({ policy, tool, parsedInput });
+  if (!decision.allowed && decision.reason === "policy_self_modification") return decision;
+  if (input.credentialPolicy?.confirmationOverride === "always") {
+    return { allowed: false, reason: "explicit_confirmation_required" };
+  }
   return withStandingAuthorization(decision, tool, parsedInput, input.actor);
 }

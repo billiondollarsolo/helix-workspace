@@ -90,6 +90,7 @@ function ScheduleDialog({
   const valid = value !== null && value.getTime() > Date.now();
   return createPortal(
     <Dialog
+      modal={false}
       title="Pick date & time"
       onClose={onClose}
       width={360}

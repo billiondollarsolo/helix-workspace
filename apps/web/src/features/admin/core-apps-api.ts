@@ -33,6 +33,7 @@ interface PasswordsStatus {
   readonly enabled: boolean;
   /** Where to open it; null unless it is both installed and turned on. */
   readonly url: string | null;
+  readonly native?: boolean;
 }
 
 export interface CoreAppShellStatus {
@@ -91,6 +92,7 @@ const passwordsStatusSchema = z.object({
   installed: z.boolean(),
   enabled: z.boolean(),
   url: z.string().nullable(),
+  native: z.boolean().optional(),
 });
 
 const coreAppShellStatusSchema = z.object({

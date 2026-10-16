@@ -1,3 +1,4 @@
+import { actorHasScope, requireActorScope } from "../../api/scopes.js";
 import {
   chatInboundFrameSchema,
   type ChatInboundFrame,
@@ -30,6 +31,7 @@ import {
   CHAT_WEBSOCKET_AUDIENCE,
   CHAT_WEBSOCKET_PATH,
   chatWebSocketTicketFromProtocols,
+  requireChatSocketSession,
   type ChatWebSocketTicketStore,
 } from "./websocket-tickets.js";
 
@@ -105,22 +107,8 @@ export interface RegisterChatRoutesOptions {
   readonly maxConnectionsPerMember?: number | undefined;
 }
 
-type ChatSocketOptions = {
-  readonly trustedOrigins: readonly string[];
-  readonly store: ChatStore;
-  readonly tickets: ChatWebSocketTicketStore;
-  readonly bus: ChatRoomBus;
-  readonly presence: ChatPresenceStore;
-  readonly onError?: ((error: unknown) => void) | undefined;
-  readonly metrics?: WebsocketConnectionMetrics | undefined;
-  readonly classifyResource?: ResourceClassifier | undefined;
-  readonly dlp?: DlpGuard;
+type ChatSocketOptions = Omit<RegisterChatRoutesOptions, "attachments"> & {
   readonly connections?: Set<ChatSocket> | undefined;
-  readonly rateLimit?: TokenBucketConfig | undefined;
-  readonly maxPayloadBytes?: number | undefined;
-  readonly maxPendingFrames?: number | undefined;
-  readonly frameDeadlineMs?: number | undefined;
-  readonly maxConnectionsPerMember?: number | undefined;
 };
 
 export interface ChatRoutesHandle {
@@ -149,6 +137,7 @@ export async function registerChatRoutes(
       throw new UnauthorizedError("A browser session is required to open Chat realtime.");
     }
     const { roomId } = chatWebSocketTicketRequestSchema.parse(request.body);
+    requireActorScope(actor, "chat.read");
     await requireSocketRoomAccess(options.store, actor, roomId);
     const issued = await options.tickets.issue({
       actor,
@@ -167,6 +156,7 @@ export async function registerChatRoutes(
     }
     const { roomId } = chatEventParamsSchema.parse(request.params);
     const query = chatEventQuerySchema.parse(request.query);
+    requireActorScope(actor, "chat.read");
     await requireSocketRoomAccess(options.store, actor, roomId);
     const replay = await bus.replay({
       orgId: actor.orgId,
@@ -189,7 +179,7 @@ export async function registerChatRoutes(
   });
 
   app.get("/ws/chat", { websocket: true }, async (socket, request) => {
-    await handleChatSocket(socket as ChatSocket, request, {
+    await handleChatSocket(socket, request, {
       ...options,
       bus,
       presence,
@@ -280,6 +270,19 @@ export async function handleChatSocket(
     return;
   }
   const { actor, roomId: authorizedRoomId } = redeemed;
+  const assertSession = () =>
+    requireChatSocketSession(request, actor, authorizedRoomId, options.actorFromRequest);
+  try {
+    await assertSession();
+  } catch {
+    rejectSocket(
+      "unauthenticated",
+      "Sign in again to use Chat.",
+      CHAT_AUTH_CLOSE_CODE,
+      "auth required",
+    );
+    return;
+  }
   const room = await withSocketActorContext(options.store, actor, (store) =>
     store.getRoomForActor({
       orgId: actor.orgId,
@@ -405,6 +408,7 @@ export async function handleChatSocket(
               socket,
               actor,
               authorizedRoomId,
+              assertSession,
               raw: data,
               subscriptions,
               options,
@@ -478,6 +482,7 @@ async function handleInboundMessage(input: {
   readonly socket: ChatSocket;
   readonly actor: Actor;
   readonly authorizedRoomId: string;
+  readonly assertSession: () => Promise<Actor>;
   readonly raw: Buffer | ArrayBuffer | string;
   readonly subscriptions: Map<string, ChatSubscription>;
   readonly options: ChatSocketOptions;
@@ -493,6 +498,9 @@ async function handleInboundMessage(input: {
   if ("roomId" in message && message.roomId !== input.authorizedRoomId) {
     throw new ChatRoomAccessError(message.roomId);
   }
+  const current = await input.assertSession();
+  if (message.type === "send" && !actorHasScope(current, "chat.post"))
+    throw new ChatRoomAccessError(input.authorizedRoomId);
   await withSocketActorContext(input.options.store, input.actor, (store) =>
     requireSocketRoomAccess(store, input.actor, input.authorizedRoomId),
   );
@@ -549,8 +557,8 @@ async function handleInboundMessage(input: {
     if (!input.subscriptions.has(message.roomId)) {
       const subscription: ChatSubscription = {
         unsubscribe: () => undefined,
-        cursor: subscribeCursor(message),
-        desiredCursor: subscribeCursor(message),
+        cursor: message.cursor ?? 0,
+        desiredCursor: message.cursor ?? 0,
         catchUp: undefined,
         closed: false,
       };
@@ -566,6 +574,7 @@ async function handleInboundMessage(input: {
             return;
           }
           try {
+            await input.assertSession();
             await withSocketActorContext(input.options.store, input.actor, (store) =>
               requireSocketRoomAccess(store, input.actor, message.roomId),
             );
@@ -912,12 +921,6 @@ function isEventCursor(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 
-function subscribeCursor(
-  message: Extract<ChatInboundFrame, { readonly type: "subscribe" }>,
-): number {
-  return message.cursor ?? 0;
-}
-
 async function listRoomReadReceipts(
   store: ChatStore,
   actor: Actor,
@@ -985,12 +988,7 @@ function sendSocket(socket: ChatSocket, payload: ChatRoomEvent | Record<string, 
 }
 
 function rawToString(raw: Buffer | ArrayBuffer | string): string {
-  if (typeof raw === "string") {
-    return raw;
-  }
-  if (Buffer.isBuffer(raw)) {
-    return raw.toString("utf8");
-  }
+  if (typeof raw === "string" || Buffer.isBuffer(raw)) return raw.toString();
   return Buffer.from(raw).toString("utf8");
 }
 

@@ -5,6 +5,7 @@ import {
   driveEntryPageSchema,
   driveSearchHitSchema,
   mailSearchHitSchema,
+  mailAiSuggestionResultSchema,
   mailThreadsListResultSchema,
 } from "@helix/contracts";
 import { isJsonObject } from "@helix/sdk-types";
@@ -201,6 +202,10 @@ function sourcesFor(toolId: string, output: unknown): Source[] | null {
             refs: mailRefs(hit.threadId, hit.messageId),
           }))
         : null;
+    }
+    case "mail.ai.suggest": {
+      const result = mailAiSuggestionResultSchema.safeParse(output);
+      return result.success ? [{ data: result.data, refs: [] }] : null;
     }
     case "mail.thread.get": {
       const result = mailThreadSchema.safeParse(output);

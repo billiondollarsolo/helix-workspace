@@ -1,5 +1,6 @@
 import type { SecureVersion } from "node:tls";
-import type { SMTPServerOptions } from "smtp-server";
+import { isIP } from "node:net";
+import type { SMTPServerOptions, SMTPServerSession } from "smtp-server";
 
 export type SmtpTransportSecurity =
   | {
@@ -9,6 +10,8 @@ export type SmtpTransportSecurity =
       readonly cert: string | Buffer;
       readonly ca?: string | Buffer | (string | Buffer)[] | undefined;
       readonly minVersion?: SecureVersion | undefined;
+      /** Restrict a private Postfix handoff that forwards the original SMTP client. */
+      readonly trustedForwarderIps?: readonly string[] | undefined;
     }
   | {
       /** Private listener behind an attested TLS-terminating SMTP proxy. */
@@ -25,16 +28,32 @@ export function smtpTransportSecurityOptions(
   security: SmtpTransportSecurity,
 ): Pick<
   SMTPServerOptions,
-  "secure" | "secured" | "hideSTARTTLS" | "useProxy" | "key" | "cert" | "ca" | "minVersion"
+  | "secure"
+  | "secured"
+  | "hideSTARTTLS"
+  | "useProxy"
+  | "useXForward"
+  | "key"
+  | "cert"
+  | "ca"
+  | "minVersion"
 > {
   switch (security.mode) {
     case "starttls":
+      if (
+        security.trustedForwarderIps !== undefined &&
+        (security.trustedForwarderIps.length === 0 ||
+          security.trustedForwarderIps.some((ip) => isIP(ip) === 0))
+      ) {
+        throw new Error("SMTP client forwarding requires an explicit forwarder IP allowlist.");
+      }
       assertTlsMaterial(security.key, "key");
       assertTlsMaterial(security.cert, "certificate");
       return {
         secure: false,
         secured: false,
         hideSTARTTLS: false,
+        useXForward: security.trustedForwarderIps !== undefined,
         key: security.key,
         cert: security.cert,
         ...(security.ca === undefined ? {} : { ca: security.ca }),
@@ -80,8 +99,48 @@ export function smtpDisabledCommands(
   return [...commands];
 }
 
+export function takeSmtpClientIdentity(
+  session: SMTPServerSession,
+  security: SmtpTransportSecurity,
+  connectionAddress: string,
+) {
+  // XFORWARD changes the connection first; session fields refresh only on RSET.
+  const forwardedHandoff =
+    security.mode === "starttls" && security.trustedForwarderIps !== undefined;
+  const forwarded: unknown =
+    forwardedHandoff && "xForward" in session ? session.xForward : undefined;
+  const address: unknown = forwarded instanceof Map ? forwarded.get("ADDR") : undefined;
+  const helo: unknown = forwarded instanceof Map ? forwarded.get("HELO") : undefined;
+  // Each message on a pooled edge connection needs a fresh forwarded identity.
+  if (forwarded instanceof Map) forwarded.clear();
+  return {
+    remoteAddress: typeof address === "string" && isIP(address) !== 0 ? address : connectionAddress,
+    helo:
+      typeof helo === "string" && helo !== "[UNAVAILABLE]"
+        ? helo
+        : forwardedHandoff
+          ? undefined
+          : session.hostNameAppearsAs,
+  };
+}
+
 function assertTlsMaterial(value: string | Buffer, label: string): void {
   if ((typeof value === "string" ? Buffer.byteLength(value, "utf8") : value.byteLength) === 0) {
     throw new Error(`SMTP TLS ${label} must not be empty.`);
   }
+}
+
+export function smtpError(responseCode: number, message: string): Error {
+  return Object.assign(new Error(message), { responseCode });
+}
+
+export function asSmtpError(error: unknown, fallbackCode: number, fallbackMessage: string): Error {
+  if (
+    error instanceof Error &&
+    "responseCode" in error &&
+    typeof (error as { readonly responseCode?: unknown }).responseCode === "number"
+  ) {
+    return error;
+  }
+  return smtpError(fallbackCode, fallbackMessage);
 }

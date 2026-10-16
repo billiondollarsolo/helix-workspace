@@ -13,6 +13,7 @@ function Example() {
         Details
       </button>
       <SideSheet
+        modal
         open={open}
         onOpenChange={setOpen}
         title="File details"

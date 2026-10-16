@@ -1,0 +1,114 @@
+{
+  "date": "2026-10-15",
+  "scope": "Mail body storage development implementation and deployment",
+  "deployment": {
+    "host": "workspace.helixapps.si",
+    "apiImage": "helix/workspace-development:mail-storage-r15",
+    "migrations": ["0231_mail_body_storage.sql", "0232_mail_body_lifecycle.sql"],
+    "ready": true,
+    "runningContainers": 17,
+    "unhealthyContainers": 0,
+    "incident": "An initial rollout preceded migration installation; the startup migration guard blocked the API. Migrations were applied through the runner and the API recovered before final validation."
+  },
+  "migration": {
+    "originalMessages": 24,
+    "originalCanonicalHashesVerified": 24,
+    "originalInlineBodyBytesBefore": 38432,
+    "inlineBodyBytesAfter": 0,
+    "queueBodyBytesBefore": 777,
+    "queueBodyBytesAfter": 0,
+    "storedBodiesIncludingPrivateTestFixture": 25,
+    "compressedBodyBytes": 11969,
+    "logicalBodyBytes": 400677,
+    "compressionNote": "Includes a repetitive synthetic test message; ratio is not representative of real mail.",
+    "rerunMigrated": 0,
+    "fullBodySearchMutationsRemaining": 0,
+    "redundantVectorPassagesRemaining": 0,
+    "humanMailboxReadsVerified": 11,
+    "serverSideEncryption": "aws:kms"
+  },
+  "agentClients": {
+    "atlasPersisted": true,
+    "discoveredTools": 137,
+    "checks": [
+      "mail.thread.get",
+      "mail.search",
+      "mail.threads.list",
+      "resources/read bounded thread",
+      "CLI thread-get",
+      "CLI search",
+      "CLI list"
+    ],
+    "externalEmailSent": false
+  },
+  "validation": {
+    "requiredChecks": [
+      "pnpm format:check",
+      "pnpm typecheck",
+      "pnpm lint",
+      "pnpm test",
+      "pnpm build",
+      "pnpm quality:boundaries"
+    ],
+    "fullSuite": {
+      "passed": 5614,
+      "gatedSkipped": 407
+    },
+    "configuredDatabaseSuite": {
+      "passed": 434,
+      "skipped": 1
+    },
+    "singleTenantFocusedPassed": 22,
+    "latestMailStorageIntegrationPassed": 6,
+    "parserAndBodyUnitPassed": 6,
+    "backupManifestPassed": 6,
+    "coverage": [
+      "Canonical text and HTML round trips and corruption failures",
+      "Actor authorization and tenant RLS before object reads",
+      "Durable cleanup after rollback and stale-worker fencing",
+      "Scheduled delivery and SMTP acknowledgement during a subsequent storage outage",
+      "Spam decision and AI source hydration",
+      "Body-only search through Meilisearch and current SQL authorization",
+      "Legal hold, journal, eDiscovery and retention integration",
+      "Resumable backfill and body inventories"
+    ],
+    "web": "No web source changes; no new browser or accessibility run for this storage change."
+  },
+  "backups": {
+    "fullPreMigration": {
+      "archive": "development-daily-20261015T190859Z.tar.gz.age",
+      "bytes": 2161602292,
+      "sha256": "46ca3ea53e1e5f8f87c63ddecc4948e41e19dc73e0c1b5fc373275074c8ee414",
+      "encryptedOffServer": true,
+      "authenticated": true
+    },
+    "postMigrationCheckpoint": {
+      "archive": "mail-storage-checkpoint-20261015T193414Z.tar.gz.age",
+      "bytes": 1599456,
+      "sha256": "2a2615a64d7e167a85eaa7830db4b06df47adaa6f6c3ccad84f3691005e6a870",
+      "encryptedOffServer": true,
+      "authenticated": true,
+      "checkpointHashesVerified": true,
+      "scope": "Full logical database plus mail body objects; use pre-migration full archive for other objects"
+    },
+    "restore": {
+      "isolatedDatabase": true,
+      "copiedBodiesVerified": 25,
+      "logicalBytesVerified": 400677,
+      "liveObjectStoreUsed": false,
+      "missingObjectFailsClosed": true,
+      "temporaryDatabaseAndPlaintextCheckpointRemoved": true,
+      "scope": "Logical database and all mail body objects restored and verified; not a full new-host application recovery."
+    }
+  },
+  "limits": [
+    "Development deployment remains development-only; existing production acceptance gaps and upstream vulnerabilities are not closed by this change.",
+    "PostgreSQL metadata, drafts, embeddings and retained evidence still grow. Object storage and PostgreSQL share the development host.",
+    "Search uses asynchronous token/phrase matching and an explicit 10000-candidate limit per term.",
+    "Compressed and expanded bodies are limited to 50 MiB.",
+    "Existing journal/review evidence and tenants with active legal holds are conservatively retained inline by backfill.",
+    "Rollback requires a body-aware reader or a matched database/object restore; an old inline-only reader is unsafe.",
+    "No long-duration load test or full new-host recovery was performed.",
+    "Off-server backups currently depend on the operator machine."
+  ]
+}

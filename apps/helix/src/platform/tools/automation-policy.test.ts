@@ -42,6 +42,56 @@ const parsedInput = {
 };
 
 describe("evaluateAutomationPolicy", () => {
+  it("requires the exact chat attachment IDs in an automation grant", () => {
+    const attachmentRule = {
+      ...rule,
+      recipients: [],
+      targets: [],
+      resourceIds: ["file-1", "room-1"],
+    };
+    const policy = { version: "9", rules: [attachmentRule] };
+    const input = { roomId: "room-1", attachmentObjectIds: ["file-1"] };
+    const at = new Date("2026-07-28T12:00:00.000Z");
+    expect(evaluateAutomationPolicy({ policy, tool, parsedInput: input, at })).toMatchObject({
+      allowed: true,
+    });
+    expect(
+      evaluateAutomationPolicy({
+        policy,
+        tool,
+        parsedInput: { ...input, attachmentObjectIds: ["other-file"] },
+        at,
+      }),
+    ).toMatchObject({ allowed: false, reason: "resource_mismatch" });
+  });
+  it.each([
+    ["drive.comment.update", { commentId: "comment-1" }, ["comment-1"]],
+    [
+      "drive.comment.create",
+      { objectId: "file-1", parentCommentId: "comment-1" },
+      ["comment-1", "file-1"],
+    ],
+  ])("bounds %s to the exact comment identifiers", (id, input, resourceIds) => {
+    const commentTool = { ...tool, id, permission: "drive.read" };
+    const policy = {
+      version: "9",
+      rules: [
+        { ...rule, toolId: id, action: "drive.read", resourceIds, recipients: [], targets: [] },
+      ],
+    };
+    const at = new Date("2026-07-28T12:00:00.000Z");
+    expect(
+      evaluateAutomationPolicy({ policy, tool: commentTool, parsedInput: input, at }),
+    ).toMatchObject({ allowed: true });
+    expect(
+      evaluateAutomationPolicy({
+        policy,
+        tool: commentTool,
+        parsedInput: { ...input, commentId: "other-comment" },
+        at,
+      }),
+    ).toMatchObject({ allowed: false, reason: "resource_mismatch" });
+  });
   it("allows only a fully bounded exact action", () => {
     expect(
       evaluateAutomationPolicy({

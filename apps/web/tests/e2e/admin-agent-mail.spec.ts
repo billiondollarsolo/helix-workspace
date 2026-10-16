@@ -271,11 +271,13 @@ test("lets the organization ask for a person to confirm every draft an agent sav
   await expect(unattended).toBeChecked();
   await unattended.click();
   await expect(unattended).not.toBeChecked();
-  expect(desk.settingUpdates).toEqual([
-    {
-      features: { agent_mail_drafts_unattended: false },
-      reason: "admin settings update: agent_mail_drafts_unattended",
-    },
-  ]);
+  await expect
+    .poll(() => desk.settingUpdates)
+    .toEqual([
+      {
+        features: { agent_mail_drafts_unattended: false },
+        reason: "admin settings update: agent_mail_drafts_unattended",
+      },
+    ]);
   await audit(page);
 });

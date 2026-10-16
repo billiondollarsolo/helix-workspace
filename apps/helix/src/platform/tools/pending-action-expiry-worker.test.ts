@@ -28,6 +28,44 @@ const testTool: ToolDefinition = {
 };
 
 describe("InMemoryPendingActionStore.expireStale", () => {
+  it("requires both tenant enumeration and scoped execution", () => {
+    expect(
+      () =>
+        new PendingActionExpiryWorker({
+          store: new InMemoryPendingActionStore(),
+          listOrgIds: async () => [],
+        }),
+    ).toThrow("both tenant enumeration");
+  });
+
+  it("sweeps each tenant in context while keeping the overall batch bound", async () => {
+    let active = "";
+    const calls: string[] = [];
+    const store = new InMemoryPendingActionStore();
+    const first = await store.create({ ...pendingInput(), id: "first", expiresAt: new Date(0) });
+    const expireStale = vi.spyOn(store, "expireStale").mockImplementation(async ({ limit }) => {
+      calls.push(active + ":" + String(limit));
+      return active === "a" ? [first] : [];
+    });
+    const recover = vi.spyOn(store, "recoverStaleExecutions").mockImplementation(async () => {
+      calls.push(active + ":recover");
+      return [];
+    });
+    const result = await new PendingActionExpiryWorker({
+      store,
+      batchSize: 1,
+      listOrgIds: async () => ["a", "b"],
+      runForOrg: async (orgId, work) => {
+        active = orgId;
+        await work();
+        active = "";
+      },
+    }).runOnce();
+    expect(result.expiredCount).toBe(1);
+    expect(calls).toEqual(["a:1", "a:recover", "b:0", "b:recover"]);
+    expect(expireStale).toHaveBeenCalledTimes(2);
+    expect(recover).toHaveBeenCalledTimes(2);
+  });
   it("fails an expired execution lease without re-claiming an unknown side effect", async () => {
     const store = new InMemoryPendingActionStore();
     const action = await store.create({

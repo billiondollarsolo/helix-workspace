@@ -17,6 +17,7 @@ import { type ToolInvocationPrincipal } from "../platform/auth/tool-invocation-p
 import { type TenantApiRpsLimiter } from "../platform/limits/index.js";
 import {
   assertActorMatchesRequestTenant,
+  isLongLivedTenantRequest,
   setTenantPostgresActorId,
 } from "../platform/tenancy/index.js";
 
@@ -112,6 +113,8 @@ export function cacheSessionActorResolver(resolver: SessionActorResolver): Sessi
   const requests = new WeakMap<FastifyRequest, Promise<Actor | null>>();
   return {
     resolve(request) {
+      // Streams must observe revocation instead of retaining the upgrade session.
+      if (isLongLivedTenantRequest(request)) return resolver.resolve(request);
       let actor = requests.get(request);
       if (actor === undefined) {
         actor = resolver.resolve(request);

@@ -22,6 +22,8 @@ export interface RateLimitSpec {
 
 export interface ToolContext {
   readonly actor: Actor;
+  /** Server-authorized communication must remain inside this tenant at delivery. */
+  readonly internalCommunicationOnly?: true;
   readonly request?: RequestContext;
   readonly traceId?: string;
   /**
@@ -78,6 +80,8 @@ export interface StandingAuthorization {
   readonly version: string;
   readonly requestsPerMinute: number;
   readonly requestsPerDay: number;
+  /** Only set after resolving every recipient locally; handler must pin local delivery. */
+  readonly internalCommunicationOnly?: true;
 }
 
 export interface ToolDefinition<Input = unknown, Output = unknown> {
@@ -110,8 +114,8 @@ export interface ToolDefinition<Input = unknown, Output = unknown> {
   /**
    * Resolves an administrator's standing authorization for an agent to make
    * this exact call without a person confirming it, or null when there is
-   * none and the call waits like any other agent action. Only for tools whose
-   * every use an administrator has already granted, resource by resource.
+   * none and the call waits like any other agent action. The handler must enforce
+   * the granted scope and resource ACLs, including ownership for sharing.
    */
   standingAuthorization?(input: Input, actor: Actor): Promise<StandingAuthorization | null>;
   handler(input: Input, ctx: ToolContext): Promise<Output>;
@@ -160,4 +164,6 @@ export interface PendingToolInvocation {
   readonly approvalUrl?: string;
   /** Absolute URL that returns this action's current status (authenticated `GET`). */
   readonly statusUrl?: string;
+  /** Browser page where an authorized person reviews the concrete action. */
+  readonly reviewUrl?: string;
 }

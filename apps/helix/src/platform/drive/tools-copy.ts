@@ -1,3 +1,4 @@
+import { collaborationAuthorization } from "../tools/collaboration-authorization.js";
 import { z } from "zod";
 import { BadRequestError, ForbiddenError } from "../../api/api-error.js";
 import { actorHasScope } from "../../api/scopes.js";
@@ -67,6 +68,7 @@ export function registerDriveCopyTool(
         "Make a copy of a Drive file you can open. The copy is yours and is scanned and counted against storage like an upload.",
       permission: "drive.write",
       sideEffects: "write",
+      standingAuthorization: collaborationAuthorization("drive.write"),
       confirmationRequired: false,
       inputSchema: zodToolSchema(copySchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(copiedSchema, genericObjectJsonSchema),

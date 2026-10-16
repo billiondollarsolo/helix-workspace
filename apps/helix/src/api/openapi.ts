@@ -5,6 +5,13 @@ import { HELIX_API_VERSION_PREFIX, HELIX_SERVER_VERSION } from "./version.js";
 
 type MutableOpenApiObject = Record<string, unknown>;
 
+export const sessionCookieSecurityScheme = {
+  type: "apiKey",
+  in: "cookie",
+  name: "helix_session",
+  description: "Browser session cookie for first-party SPA users.",
+} as const;
+
 /**
  * Human-friendly descriptions for the per-feature tag groups (P1-10).
  * Tools are grouped under `feature:<area>` derived from their tool-id prefix
@@ -176,10 +183,7 @@ export function buildOpenApiDocument(
   };
   securitySchemes.sessionCookie = {
     ...asSecurityScheme(securitySchemes.sessionCookie),
-    type: "apiKey",
-    in: "cookie",
-    name: "helix_session",
-    description: "Browser session cookie for first-party SPA users.",
+    ...sessionCookieSecurityScheme,
   };
   securitySchemes.appPasswordBasic = {
     ...asSecurityScheme(securitySchemes.appPasswordBasic),

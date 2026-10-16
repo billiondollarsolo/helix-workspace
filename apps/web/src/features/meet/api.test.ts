@@ -59,7 +59,7 @@ describe("meet API", () => {
       expiresAt: "2026-05-20T13:00:00.000Z",
       recordingAvailable: true,
       canStartRecording: true,
-      recordingNoticeVersion: "2026-09-02",
+      recordingNoticeVersion: "2026-10-15",
       recordingActive: false,
     };
     const fetchImpl = vi
@@ -72,7 +72,7 @@ describe("meet API", () => {
         {
           roomId: room.id,
           recordingNoticeAccepted: true,
-          recordingNoticeVersion: "2026-09-02",
+          recordingNoticeVersion: "2026-10-15",
           deviceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
           joinGrantId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
         },
@@ -88,7 +88,7 @@ describe("meet API", () => {
         roomId: room.id,
         expiresInSeconds: 300,
         recordingNoticeAccepted: true,
-        recordingNoticeVersion: "2026-09-02",
+        recordingNoticeVersion: "2026-10-15",
         deviceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         joinGrantId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
       }),

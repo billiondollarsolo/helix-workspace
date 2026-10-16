@@ -24,10 +24,6 @@ import {
  * admin route tests run without a database.
  */
 
-// ===========================================================================
-// Records
-// ===========================================================================
-
 type MailDkimKeyStatus = "pending" | "active" | "retiring" | "retired";
 type MailRoutingActionKind = "forward" | "alias" | "drop" | "tag" | "mailbox";
 
@@ -603,6 +599,7 @@ export class PostgresMailDkimKeyStore implements MailDkimKeyStore, MailDkimSigni
   async resolveSigningKey(
     orgId: string,
     fromAddress: string,
+    requireTenantKey = true,
   ): Promise<{
     readonly domainName: string;
     readonly keySelector: string;
@@ -639,6 +636,8 @@ export class PostgresMailDkimKeyStore implements MailDkimKeyStore, MailDkimSigni
     const key = rows[0];
     if (key === undefined) return null;
     if (key.selector === null || key.private_key_ciphertext === null || key.kms_key_id === null) {
+      // Provider signing needs no local key; active tenant keys still take precedence.
+      if (!requireTenantKey) return null;
       throw new TypeError(`Verified sending domain ${domain} has no active DKIM key.`);
     }
     return {

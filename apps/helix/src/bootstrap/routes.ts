@@ -1,3 +1,6 @@
+import { installMeetCapture } from "./meet-capture.js";
+import { registerAgentRuntimeRoutes } from "../platform/agent-runtime/admin-routes.js";
+import { AgentRuntimeStore } from "../platform/agent-runtime/store.js";
 import { runtimeEnvironment } from "../config/env.js";
 import { installDriveRoutes } from "./drive-routes.js";
 import cookie from "@fastify/cookie";
@@ -11,6 +14,7 @@ import { join } from "node:path";
 import { unauthenticatedActor } from "../api/actor.js";
 import { buildErrorEnvelope } from "../api/error-envelope.js";
 import { installHttpMetrics } from "../api/metrics.js";
+import { sessionCookieSecurityScheme } from "../api/openapi.js";
 import { WEBSOCKET_MAX_PAYLOAD_BYTES } from "../api/request-body.js";
 import { createRequestContext } from "../api/trace.js";
 import { HELIX_SERVER_VERSION } from "../api/version.js";
@@ -131,6 +135,7 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
     authorizationCodeService,
     betterAuthConfig,
     betterAuthRuntime,
+    externalEmailMfa,
     betterAuthSessionIssuer,
     orgStore,
     domainsStore,
@@ -265,6 +270,7 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
     recoveryCodes,
     betterAuthRuntime?.sessionVerifier,
     sessionActorResolver,
+    externalEmailMfa,
   );
 
   await app.register(websocket, { options: { maxPayload: WEBSOCKET_MAX_PAYLOAD_BYTES } });
@@ -276,6 +282,7 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
         version: HELIX_SERVER_VERSION,
       },
       openapi: "3.1.0",
+      components: { securitySchemes: { sessionCookie: sessionCookieSecurityScheme } },
     },
   });
 
@@ -502,7 +509,6 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
   });
 
-  // P0-7: admin API for per-user AI cost limits.
   registerAICostLimitAdminRoutes(app, {
     store: aiCostLimitStore,
     securityTier,
@@ -546,6 +552,12 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
     hasOtherAdministrator: (actor) => securityPoliciesStore.hasOtherAdministrator(actor),
   });
 
+  registerAgentRuntimeRoutes(app, {
+    store: new AgentRuntimeStore(sql),
+    auditSink: auditStore,
+    actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+    models: () => context.assistantOrchestrator.listModels(),
+  });
   installAgentSecretAdministration({
     app,
     sql,
@@ -765,6 +777,7 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
   await installDriveRoutes(context);
 
   if (configuredMeetSecrets !== null) {
+    await installMeetCapture(context, configuredMeetSecrets.webhookSecret);
     await registerMeetRoutes(app, {
       store: meetStore,
       webhookSecret: configuredMeetSecrets.webhookSecret,

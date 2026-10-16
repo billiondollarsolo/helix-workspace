@@ -2,6 +2,7 @@ import type { OutboundMailMessage } from "@helix/sdk-types";
 import type SMTPTransport from "nodemailer/lib/smtp-transport/index.js";
 import type { DkimOptionsResolver } from "./outbound.js";
 import type { MailOutboundEnvelope } from "./types.js";
+import { normalizeMessageIds, outboundThreadReferences } from "./threading.js";
 
 /**
  * Wire formatting shared by every outbound transport.
@@ -116,7 +117,15 @@ export function outboundMessageHeaders(
 export function toNodemailerMail(
   message: HelixOutboundMailMessage,
   dkim?: Awaited<ReturnType<DkimOptionsResolver>>,
+  providerRewritesMessageId = false,
 ): SMTPTransport.MailOptions {
+  const references = outboundThreadReferences(
+    {
+      messageId: message.headers?.["Message-ID"],
+      references: normalizeMessageIds(message.headers?.References),
+    },
+    providerRewritesMessageId,
+  );
   return {
     from: nodemailerMailbox(message.from),
     to: message.to.map(nodemailerMailbox),
@@ -127,7 +136,16 @@ export function toNodemailerMail(
     ...(message.html === undefined ? {} : { html: message.html }),
     ...(dkim === undefined || dkim === null ? {} : { dkim }),
     ...(message.replyTo === undefined ? {} : { replyTo: message.replyTo }),
-    ...(message.headers === undefined ? {} : { headers: { ...message.headers } }),
+    ...(message.headers === undefined
+      ? {}
+      : {
+          headers: {
+            ...message.headers,
+            ...(providerRewritesMessageId && references !== undefined
+              ? { References: references.join(" ") }
+              : {}),
+          },
+        }),
     ...(message.envelopeRecipients === undefined
       ? {}
       : {

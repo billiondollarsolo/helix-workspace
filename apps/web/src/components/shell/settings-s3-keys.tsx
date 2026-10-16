@@ -1,3 +1,5 @@
+import { Plus } from "lucide-react";
+import { AdminTable, type AdminColumn } from "@/features/admin/console/table";
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react";
 import {
   awsCliExample,
@@ -87,6 +89,50 @@ export function S3KeysSection() {
     );
   }
 
+  const columns: AdminColumn<S3AccessKey>[] = [
+    { id: "name", header: "Name", sortValue: (key) => key.label, cell: (key) => key.label },
+    {
+      id: "id",
+      header: "Access key ID",
+      sortValue: (key) => key.accessKeyId,
+      cell: (key) => <code>{key.accessKeyId}</code>,
+    },
+    {
+      id: "scopes",
+      header: "Scopes",
+      sortValue: (key) => key.scopes.join(", "),
+      cell: (key) => key.scopes.join(", "),
+    },
+    {
+      id: "used",
+      header: "Last used",
+      sortValue: (key) => (key.lastUsedAt === null ? null : new Date(key.lastUsedAt).getTime()),
+      cell: (key) => formatDate(key.lastUsedAt),
+    },
+    {
+      id: "actions",
+      header: "Actions",
+      headerHidden: true,
+      cell: (key) => (
+        <button
+          className="btn sm"
+          type="button"
+          disabled={busy}
+          aria-label={`Revoke S3 access key ${key.label}`}
+          onClick={() =>
+            void run(async () => {
+              await revokeS3AccessKey(key.id);
+              setKeys((await listS3AccessKeys()).accessKeys);
+              setMessage(`Revoked ${key.label}.`);
+            })
+          }
+        >
+          Revoke
+        </button>
+      ),
+    },
+  ];
+
   return (
     <>
       <SettingsHeader
@@ -137,7 +183,7 @@ export function S3KeysSection() {
                 type="submit"
                 disabled={busy || label.trim().length === 0 || scopes.length === 0}
               >
-                Create access key
+                <Plus size={14} aria-hidden="true" /> Add access key
               </button>
             </div>
           </form>
@@ -186,57 +232,13 @@ export function S3KeysSection() {
           {keys.length === 0 ? (
             <div className="text-muted-foreground">No S3 access keys yet.</div>
           ) : (
-            <table className="w-full type-body-sm">
-              <caption className="sr-only">Your S3 access keys</caption>
-              <thead>
-                <tr>
-                  <th scope="col" className="text-left">
-                    Name
-                  </th>
-                  <th scope="col" className="text-left">
-                    Access key ID
-                  </th>
-                  <th scope="col" className="text-left">
-                    Scopes
-                  </th>
-                  <th scope="col" className="text-left">
-                    Last used
-                  </th>
-                  <th scope="col">
-                    <span className="sr-only">Actions</span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {keys.map((key) => (
-                  <tr key={key.id}>
-                    <td>{key.label}</td>
-                    <td>
-                      <code>{key.accessKeyId}</code>
-                    </td>
-                    <td>{key.scopes.join(", ")}</td>
-                    <td>{formatDate(key.lastUsedAt)}</td>
-                    <td>
-                      <button
-                        className="btn sm"
-                        type="button"
-                        disabled={busy}
-                        aria-label={`Revoke S3 access key ${key.label}`}
-                        onClick={() =>
-                          void run(async () => {
-                            await revokeS3AccessKey(key.id);
-                            setKeys((await listS3AccessKeys()).accessKeys);
-                            setMessage(`Revoked ${key.label}.`);
-                          })
-                        }
-                      >
-                        Revoke
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <AdminTable
+              label="Your S3 access keys"
+              columns={columns}
+              rows={keys}
+              rowKey={(key) => key.id}
+              searchText={(key) => [key.label, key.accessKeyId, key.scopes.join(" ")].join(" ")}
+            />
           )}
         </SettingsField>
       </SettingsCard>

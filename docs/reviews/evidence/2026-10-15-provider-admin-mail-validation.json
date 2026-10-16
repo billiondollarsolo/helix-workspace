@@ -1,0 +1,221 @@
+{
+  "date": "2026-10-15",
+  "environment": "development",
+  "deployment": {
+    "deployed": true,
+    "apiImage": "helix/workspace-development:admin-mail-r7",
+    "webImage": "helix/workspace-web-development:admin-mail-r7",
+    "imageIds": {
+      "helix": "sha256:3abbae41ec1e55fef9a8b12c81817fbcdd3c548bbf352d09381a0b170644ceaf",
+      "caddy": "sha256:fb91cdaca1775c643d000c2fb399b1db7ad1972aaa3dc1eabe09d8278e2a5eb7"
+    },
+    "previousImages": {
+      "helix": "helix/workspace-development:defects-r6",
+      "helix-migrate": "helix/workspace-development:defects-r6",
+      "caddy": "helix/workspace-web-development:defects-r6"
+    },
+    "ready": true,
+    "rollbackConfig": "/srv/helix/config/development-compose.pre-admin-mail-r7-20261015T140409Z.json"
+  },
+  "validation": {
+    "repositoryTests": {
+      "passed": 5559,
+      "skipped": 398
+    },
+    "databaseBackedMailTests": {
+      "passed": 572,
+      "skipped": 0
+    },
+    "browserSuite": {
+      "passed": 214,
+      "skipped": 1,
+      "skipReason": "Live SMTP/Mailpit browser case requires its optional infrastructure."
+    },
+    "additionalResponsiveProviderCases": 12,
+    "accessibility": "Provider table/panel flows and 390/768/1440 light/dark cases passed axe WCAG A/AA checks.",
+    "focusedFinalConfigTests": 101,
+    "requiredCommands": [
+      "pnpm format:check",
+      "pnpm typecheck",
+      "pnpm lint",
+      "pnpm test",
+      "pnpm build",
+      "pnpm quality:boundaries"
+    ]
+  },
+  "liveAgent": {
+    "checks": [
+      {
+        "name": "live MCP initialize",
+        "passed": true
+      },
+      {
+        "name": "tools/list",
+        "passed": true,
+        "count": 135
+      },
+      {
+        "name": "resources/list",
+        "passed": true,
+        "count": 5
+      },
+      {
+        "name": "prompts/list",
+        "passed": true,
+        "count": 3
+      },
+      {
+        "name": "MCP platform.ping",
+        "passed": true,
+        "status": 200,
+        "error": null
+      },
+      {
+        "name": "drive content resource through shared policy",
+        "passed": true
+      },
+      {
+        "name": "encrypted file exact readback",
+        "passed": true
+      },
+      {
+        "name": "chat content resource through shared policy",
+        "passed": true
+      },
+      {
+        "name": "owner mail content isolated",
+        "passed": true
+      },
+      {
+        "name": "quarantined resource blocked",
+        "passed": true
+      },
+      {
+        "name": "anonymous/invalid credential denied",
+        "passed": true,
+        "status": 401
+      },
+      {
+        "name": "anonymous/invalid credential denied",
+        "passed": true,
+        "status": 401
+      },
+      {
+        "name": "agent admin access denied with canonical error",
+        "passed": true,
+        "status": 403
+      },
+      {
+        "name": "malformed REST error is canonical",
+        "passed": true
+      },
+      {
+        "name": "MCP mail.send",
+        "passed": true,
+        "status": 200,
+        "error": null
+      },
+      {
+        "name": "external mail always requires human approval",
+        "passed": true
+      },
+      {
+        "name": "browser review link returned",
+        "passed": true
+      },
+      {
+        "name": "MCP mail.send",
+        "passed": true,
+        "status": 200,
+        "error": null
+      },
+      {
+        "name": "idempotent retry preserves one pending action",
+        "passed": true
+      },
+      {
+        "name": "agent self approval denied",
+        "passed": true,
+        "status": 404
+      },
+      {
+        "name": "self approval leaves action pending",
+        "passed": true
+      },
+      {
+        "name": "human review requires person",
+        "passed": true,
+        "status": 403
+      },
+      {
+        "name": "CLI mcp discovery",
+        "passed": true,
+        "exitCode": 0
+      },
+      {
+        "name": "CLI api discovery",
+        "passed": true,
+        "exitCode": 0
+      },
+      {
+        "name": "CLI openapi discovery",
+        "passed": true,
+        "exitCode": 0
+      },
+      {
+        "name": "request cancelled without sending",
+        "passed": true,
+        "status": 200
+      }
+    ],
+    "pendingId": "17fabba6-3a07-4f90-9c73-9e9e540dd5a6",
+    "externalMessageSent": false,
+    "atlasPreserved": true
+  },
+  "inboundSmtp": {
+    "checks": [
+      {
+        "name": "public SMTP greeting",
+        "passed": true
+      },
+      {
+        "name": "SMTP STARTTLS certificate verified",
+        "passed": true,
+        "tls": "TLSv1.3"
+      },
+      {
+        "name": "Atlas recipient accepted",
+        "passed": true,
+        "status": 250,
+        "response": "2.1.5 Ok"
+      },
+      {
+        "name": "unauthenticated external relay denied",
+        "passed": true,
+        "status": 554
+      }
+    ],
+    "messageDataSent": false
+  },
+  "sesAuthentication": {
+    "authenticated": true,
+    "tlsRequired": true,
+    "messageSent": false
+  },
+  "scope": [
+    "Shared AdminTable uses TanStack sorting while retaining virtualization and existing callers.",
+    "Searchable provider tables and nonblocking model/provider forms.",
+    "Resend and SendGrid SMTP presets; existing SES, SMTP, Mailgun and Postmark transports retained.",
+    "Dedicated LLM spam controls; strict response parsing, bounded hardened outbound requests and classified-content protection.",
+    "Atomic tenant decision-provider quota reservations prevent concurrent cap overruns and duplicate inference calls."
+  ],
+  "limits": [
+    "Clef/Jev are disabled on the live tenant with no configured credential. Contract, error-path and database tests do not establish live provider accuracy.",
+    "Existing live SES uses deployment environment fallback; no tenant-managed provider or SNS feedback wiring was configured.",
+    "Resend/SendGrid presets support SMTP sending only; provider delivery webhooks are not imported.",
+    "Native Anthropic supports text chat; tool parity is pending. Cloud-managed provider configuration is preserved but not editable in this form.",
+    "This pass verifies SMTP auth and recipient/relay handling without DATA; it does not claim a fresh Gmail round trip.",
+    "A direct port-25 check from the local workstation timed out. Server-side public-hostname STARTTLS, recipient and relay checks passed.",
+    "This is development validation, not production acceptance."
+  ]
+}

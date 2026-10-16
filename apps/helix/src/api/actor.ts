@@ -312,6 +312,8 @@ function credentialPrincipalForActor(
 function credentialPrincipal(credential: {
   readonly id: string;
   readonly actorId: string;
+  readonly actorDisplayName?: string;
+  readonly actorEmail?: string;
   readonly orgId: string;
   readonly scopes: readonly string[];
   readonly roleBindings?: Actor["roleBindings"];
@@ -321,6 +323,10 @@ function credentialPrincipal(credential: {
   return credentialPrincipalForActor(
     {
       id: credential.actorId,
+      ...(credential.actorDisplayName === undefined
+        ? {}
+        : { displayName: credential.actorDisplayName }),
+      ...(credential.actorEmail === undefined ? {} : { email: credential.actorEmail }),
       orgId: credential.orgId,
       type: "agent",
       scopes: validatedPermissions(credential.scopes),

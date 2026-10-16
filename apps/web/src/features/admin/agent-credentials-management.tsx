@@ -1,19 +1,14 @@
+import { BotAccountRequests } from "./bot-account-requests";
+import { AgentRuntimes } from "./agent-runtimes";
+import { FormPanel } from "@/components/ui/form-panel";
 import { ScopeChips } from "@/features/admin/console/widgets";
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from "@tanstack/react-table";
-import { Check, KeyRound, Plus, RotateCcw, Trash2 } from "lucide-react";
+import { AdminTable, type AdminColumn } from "./console/table";
+import { Check, Plus, RotateCcw, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import {
   adminAgentsQueryKey,
   adminAgentsQueryOptions,
@@ -136,6 +131,7 @@ const actorPlaceholders: Record<ActorStatus, string> = {
 
 export function AgentCredentialsManagement() {
   const queryClient = useQueryClient();
+  const [creating, setCreating] = useState(false);
   const [includeRevoked, setIncludeRevoked] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [createdCredential, setCreatedCredential] = useState<AgentCredentialCreateResult | null>(
@@ -217,32 +213,33 @@ export function AgentCredentialsManagement() {
   }, [actorStatus, actorsQuery.error]);
 
   const credentials = credentialsQuery.data ?? [];
-  const tableData = useMemo(() => [...credentials], [credentials]);
-  const columns = useMemo<ColumnDef<AgentCredential>[]>(
+  const columns = useMemo<AdminColumn<AgentCredential>[]>(
     () => [
       {
-        accessorKey: "label",
+        id: "label",
         header: "Credential",
-        cell: ({ row }) => (
+        sortValue: (row) => row.label,
+        cell: (row) => (
           <div className="grid max-w-[10rem] min-w-[7rem] gap-0.5">
-            <span className="truncate font-medium">{row.original.label}</span>
+            <span className="truncate font-medium">{row.label}</span>
             <span className="truncate type-caption text-muted-foreground">
-              {credentialTypeLabel(row.original.credentialType)}
-              {row.original.clientId === null ? "" : ` · ${row.original.clientId}`}
+              {credentialTypeLabel(row.credentialType)}
+              {row.clientId === null ? "" : ` · ${row.clientId}`}
             </span>
           </div>
         ),
       },
       {
-        accessorKey: "actorId",
+        id: "actorId",
         header: "Agent",
-        cell: ({ row }) => {
+        sortValue: (row) => actorsById.get(row.actorId)?.displayName ?? row.actorId,
+        cell: (row) => {
           /* Not in the list means it is not one of this organization's agents
              or service accounts: show the id rather than inventing a name. */
-          const actor = actorsById.get(row.original.actorId);
+          const actor = actorsById.get(row.actorId);
           return actor === undefined ? (
             <code className="block max-w-[6rem] truncate type-caption text-muted-foreground">
-              {row.original.actorId}
+              {row.actorId}
             </code>
           ) : (
             <span className="block max-w-[8rem] min-w-[5rem] truncate font-medium">
@@ -253,27 +250,29 @@ export function AgentCredentialsManagement() {
         },
       },
       {
-        accessorKey: "scopes",
+        id: "scopes",
         header: "Scopes",
-        cell: ({ row }) => <ScopeChips scopes={row.original.scopes} />,
+        sortValue: (row) => row.scopes.join(" "),
+        cell: (row) => <ScopeChips scopes={row.scopes} />,
       },
       {
         /* One column for both: a credential is active until it expires or is
            revoked, and the table has no room to say so twice. */
         id: "status",
         header: "Status",
-        cell: ({ row }) =>
-          row.original.revokedAt !== null ? (
+        sortValue: (row) => (row.revokedAt === null ? "Active" : "Revoked"),
+        cell: (row) =>
+          row.revokedAt !== null ? (
             <span className="text-muted-foreground">
-              Revoked {expiryDate.format(new Date(row.original.revokedAt))}
+              Revoked {expiryDate.format(new Date(row.revokedAt))}
             </span>
           ) : (
             <div className="grid justify-items-start gap-1">
               <StatusChip tone="success" label="Active" />
               <span className="whitespace-nowrap type-caption text-muted-foreground">
-                {row.original.expiresAt === null
+                {row.expiresAt === null
                   ? "Does not expire"
-                  : `Until ${expiryDate.format(new Date(row.original.expiresAt))}`}
+                  : `Until ${expiryDate.format(new Date(row.expiresAt))}`}
               </span>
             </div>
           ),
@@ -283,12 +282,13 @@ export function AgentCredentialsManagement() {
         /* Not `""`: an empty <th> gives screen readers an unnamed column.
            Visually hidden text names it without adding a visible caption to a
            column of icon buttons. */
-        header: () => <span className="sr-only">Credential actions</span>,
-        cell: ({ row }) => (
+        header: "Credential actions",
+        headerHidden: true,
+        cell: (row) => (
           <Button
-            aria-label={`Revoke credential ${row.original.label}`}
-            disabled={row.original.revokedAt !== null || revokeMutation.isPending}
-            onClick={() => setCredentialToRevoke(row.original)}
+            aria-label={`Revoke credential ${row.label}`}
+            disabled={row.revokedAt !== null || revokeMutation.isPending}
+            onClick={() => setCredentialToRevoke(row)}
             size="sm"
             title="Revoke"
             type="button"
@@ -303,11 +303,6 @@ export function AgentCredentialsManagement() {
     ],
     [actorsById, revokeMutation.isPending],
   );
-  const table = useReactTable({
-    data: tableData,
-    columns,
-    getCoreRowModel: getCoreRowModel(),
-  });
 
   const credentialForm = useForm({
     defaultValues: defaultFormValues(),
@@ -331,220 +326,238 @@ export function AgentCredentialsManagement() {
        `withPageScroll` in admin-console.tsx, which already supplies it. */
     <section className="grid gap-4">
       <PageHeading
+        actions={
+          <Button type="button" onClick={() => setCreating(true)}>
+            <Plus aria-hidden="true" /> Add credential
+          </Button>
+        }
         title="Agent credentials"
         subtitle="Agents, and the API keys and OAuth clients that let them call the API with limited scopes."
       />
 
-      <div className="grid items-start gap-4 lg:grid-cols-[minmax(20rem,0.8fr)_minmax(0,1.2fr)]">
-        <form
-          className="grid content-start gap-4 rounded-lg border border-border bg-card p-4"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void credentialForm.handleSubmit();
-          }}
-        >
-          <div className="flex items-center gap-2">
-            <KeyRound className="size-4 text-muted-foreground" />
-            <h2 className="text-sm font-medium">Create credential</h2>
-          </div>
-
-          {actorNotice !== null ? (
-            <ActorNoticeBanner
-              id={ACTOR_STATUS_ID}
-              kind={actorNotice.kind}
-              message={actorNotice.message}
-              /* Only the failed-directory notice has a way back to offer; the
-                 empty and truncated ones are answers, not faults. */
-              retryable={actorNotice.kind === "error"}
-              onRetry={() => {
-                void queryClient.invalidateQueries({ queryKey: adminAgentsQueryKey });
+      <BotAccountRequests />
+      <AgentRuntimes actors={allActors} credentials={credentialsQuery.data ?? []} />
+      <div className="grid items-start gap-4">
+        {creating ? (
+          <FormPanel
+            title="Create credential"
+            onClose={() => {
+              if (!createMutation.isPending) {
+                setCreating(false);
+                setCreatedCredential(null);
+              }
+            }}
+          >
+            <form
+              className="grid content-start gap-4"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void credentialForm.handleSubmit();
               }}
-            />
-          ) : null}
+            >
+              {actorNotice !== null ? (
+                <ActorNoticeBanner
+                  id={ACTOR_STATUS_ID}
+                  kind={actorNotice.kind}
+                  message={actorNotice.message}
+                  /* Only the failed-directory notice has a way back to offer; the
+                 empty and truncated ones are answers, not faults. */
+                  retryable={actorNotice.kind === "error"}
+                  onRetry={() => {
+                    void queryClient.invalidateQueries({ queryKey: adminAgentsQueryKey });
+                  }}
+                />
+              ) : null}
 
-          <credentialForm.Field name="actorId">
-            {(field) => (
-              <ActorSelectField
-                id="agent-actor-id"
-                describedBy={actorNotice === null ? undefined : ACTOR_STATUS_ID}
-                disabled={!canPickActor}
-                placeholder={actorPlaceholders[actorStatus]}
-                value={field.state.value}
-                onBlur={field.handleBlur}
-                onChange={(value) => field.handleChange(value)}
-              >
-                {actorGroups.map((group) => (
-                  <optgroup key={group.type} label={group.label}>
-                    {group.actors.map((actor) => (
-                      <option key={actor.id} value={actor.id}>
-                        {actor.displayName}
-                      </option>
+              <credentialForm.Field name="actorId">
+                {(field) => (
+                  <ActorSelectField
+                    id="agent-actor-id"
+                    describedBy={actorNotice === null ? undefined : ACTOR_STATUS_ID}
+                    disabled={!canPickActor}
+                    placeholder={actorPlaceholders[actorStatus]}
+                    value={field.state.value}
+                    onBlur={field.handleBlur}
+                    onChange={(value) => field.handleChange(value)}
+                  >
+                    {actorGroups.map((group) => (
+                      <optgroup key={group.type} label={group.label}>
+                        {group.actors.map((actor) => (
+                          <option key={actor.id} value={actor.id}>
+                            {actor.displayName}
+                          </option>
+                        ))}
+                      </optgroup>
                     ))}
-                  </optgroup>
-                ))}
-              </ActorSelectField>
-            )}
-          </credentialForm.Field>
+                  </ActorSelectField>
+                )}
+              </credentialForm.Field>
 
-          {/* An agent is only a name until it holds a credential, so adding one
+              {/* An agent is only a name until it holds a credential, so adding one
               belongs beside issuing its first credential. Not a nested form:
               Enter in this box must not submit the credential. */}
-          <div className="grid gap-1.5">
-            <AdminField label="New agent name">
-              <AdminInput
-                maxLength={120}
-                onChange={(event) => setNewAgentName(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key !== "Enter") return;
-                  event.preventDefault();
-                  if (newAgentName.trim() !== "") addAgentMutation.mutate(newAgentName.trim());
-                }}
-                placeholder="Release bot"
-                value={newAgentName}
-              />
-            </AdminField>
-            <Button
-              className="justify-self-start"
-              disabled={addAgentMutation.isPending || newAgentName.trim() === ""}
-              onClick={() => addAgentMutation.mutate(newAgentName.trim())}
-              size="sm"
-              type="button"
-              variant="outline"
-            >
-              <Plus />
-              {addAgentMutation.isPending ? "Adding" : "Add agent"}
-            </Button>
-            {addAgentMutation.isError ? (
-              <ErrorNotice>
-                {errorMessage(addAgentMutation.error, "Could not add the agent.")}
-              </ErrorNotice>
-            ) : null}
-          </div>
-
-          <credentialForm.Field name="credentialType">
-            {(field) => (
-              <AdminField label="Type">
-                <AdminSelect
-                  onBlur={field.handleBlur}
-                  onChange={(event) =>
-                    field.handleChange(event.target.value as AgentCredentialType)
-                  }
-                  value={field.state.value}
+              <div className="grid gap-1.5">
+                <AdminField label="New agent name">
+                  <AdminInput
+                    maxLength={120}
+                    onChange={(event) => setNewAgentName(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter") return;
+                      event.preventDefault();
+                      if (newAgentName.trim() !== "") addAgentMutation.mutate(newAgentName.trim());
+                    }}
+                    placeholder="Release bot"
+                    value={newAgentName}
+                  />
+                </AdminField>
+                <Button
+                  className="justify-self-start"
+                  disabled={addAgentMutation.isPending || newAgentName.trim() === ""}
+                  onClick={() => addAgentMutation.mutate(newAgentName.trim())}
+                  size="sm"
+                  type="button"
+                  variant="outline"
                 >
-                  {credentialTypes.map((option) => (
-                    <option key={option.type} value={option.type}>
-                      {option.label}
-                    </option>
-                  ))}
-                </AdminSelect>
-              </AdminField>
-            )}
-          </credentialForm.Field>
-
-          <credentialForm.Field name="label">
-            {(field) => (
-              <AdminField label="Label">
-                <AdminInput
-                  maxLength={200}
-                  onBlur={field.handleBlur}
-                  onChange={(event) => field.handleChange(event.target.value)}
-                  placeholder="Release pipeline key"
-                  required
-                  value={field.state.value}
-                />
-              </AdminField>
-            )}
-          </credentialForm.Field>
-
-          <credentialForm.Field name="purpose">
-            {(field) => (
-              <AdminField label="What it is for">
-                <AdminInput
-                  maxLength={500}
-                  onBlur={field.handleBlur}
-                  onChange={(event) => field.handleChange(event.target.value)}
-                  placeholder="Publishes release notes from CI"
-                  required
-                  value={field.state.value}
-                />
-              </AdminField>
-            )}
-          </credentialForm.Field>
-
-          <credentialForm.Field name="scopes">
-            {(field) => (
-              <ScopesField
-                id="agent-scopes"
-                scopes={commonScopes}
-                scopesLabel="Common scopes"
-                value={field.state.value}
-                onBlur={field.handleBlur}
-                onChange={(value) => field.handleChange(value)}
-              />
-            )}
-          </credentialForm.Field>
-
-          <credentialForm.Field name="expiresAt">
-            {(field) => (
-              <ExpiresAtField
-                id="agent-expires-at"
-                value={field.state.value}
-                onBlur={field.handleBlur}
-                onChange={(value) => field.handleChange(value)}
-              />
-            )}
-          </credentialForm.Field>
-
-          {formError !== null ? <ErrorNotice>{formError}</ErrorNotice> : null}
-          {createMutation.isError ? (
-            <ErrorNotice>
-              {errorMessage(createMutation.error, "Could not create the agent credential.")}
-            </ErrorNotice>
-          ) : null}
-
-          <Button
-            aria-describedby={canPickActor ? undefined : ACTOR_STATUS_ID}
-            disabled={createMutation.isPending || !canPickActor}
-            type="submit"
-          >
-            <Plus />
-            {createMutation.isPending ? "Creating" : "Create credential"}
-          </Button>
-
-          {createdCredential !== null ? (
-            <section
-              aria-label="Created credential secret"
-              className="grid gap-2 rounded-md border border-[var(--success)] p-3 text-xs"
-            >
-              <div className="flex items-center gap-2 font-medium text-[var(--success)]">
-                <Check className="size-3.5" />
-                Created
+                  <Plus />
+                  {addAgentMutation.isPending ? "Adding" : "Add agent"}
+                </Button>
+                {addAgentMutation.isError ? (
+                  <ErrorNotice>
+                    {errorMessage(addAgentMutation.error, "Could not add the agent.")}
+                  </ErrorNotice>
+                ) : null}
               </div>
-              <label className="grid gap-1 font-medium" htmlFor="agent-client-secret">
-                {createdCredential.credential.credentialType === "api_key"
-                  ? "API key"
-                  : "Client secret"}
-                <Input id="agent-client-secret" readOnly value={createdCredential.secret ?? ""} />
-              </label>
-              <p className="text-muted-foreground">
-                Copy it now. It cannot be shown again.
-                {createdCredential.credential.credentialType === "api_key"
-                  ? " Send it in the x-api-key header."
-                  : ""}
-              </p>
-              {createdCredential.credential.clientId === null ? null : (
-                <p className="text-muted-foreground">
-                  Client ID: <code>{createdCredential.credential.clientId}</code>
-                </p>
-              )}
-              {createdCredential.tokenEndpoint === undefined ? null : (
-                <p className="text-muted-foreground">
-                  Token endpoint: <code>{createdCredential.tokenEndpoint}</code>
-                </p>
-              )}
-            </section>
-          ) : null}
-        </form>
+
+              <credentialForm.Field name="credentialType">
+                {(field) => (
+                  <AdminField label="Type">
+                    <AdminSelect
+                      onBlur={field.handleBlur}
+                      onChange={(event) =>
+                        field.handleChange(event.target.value as AgentCredentialType)
+                      }
+                      value={field.state.value}
+                    >
+                      {credentialTypes.map((option) => (
+                        <option key={option.type} value={option.type}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </AdminSelect>
+                  </AdminField>
+                )}
+              </credentialForm.Field>
+
+              <credentialForm.Field name="label">
+                {(field) => (
+                  <AdminField label="Label">
+                    <AdminInput
+                      maxLength={200}
+                      onBlur={field.handleBlur}
+                      onChange={(event) => field.handleChange(event.target.value)}
+                      placeholder="Release pipeline key"
+                      required
+                      value={field.state.value}
+                    />
+                  </AdminField>
+                )}
+              </credentialForm.Field>
+
+              <credentialForm.Field name="purpose">
+                {(field) => (
+                  <AdminField label="What it is for">
+                    <AdminInput
+                      maxLength={500}
+                      onBlur={field.handleBlur}
+                      onChange={(event) => field.handleChange(event.target.value)}
+                      placeholder="Publishes release notes from CI"
+                      required
+                      value={field.state.value}
+                    />
+                  </AdminField>
+                )}
+              </credentialForm.Field>
+
+              <credentialForm.Field name="scopes">
+                {(field) => (
+                  <ScopesField
+                    id="agent-scopes"
+                    scopes={commonScopes}
+                    scopesLabel="Common scopes"
+                    value={field.state.value}
+                    onBlur={field.handleBlur}
+                    onChange={(value) => field.handleChange(value)}
+                  />
+                )}
+              </credentialForm.Field>
+
+              <credentialForm.Field name="expiresAt">
+                {(field) => (
+                  <ExpiresAtField
+                    id="agent-expires-at"
+                    value={field.state.value}
+                    onBlur={field.handleBlur}
+                    onChange={(value) => field.handleChange(value)}
+                  />
+                )}
+              </credentialForm.Field>
+
+              {formError !== null ? <ErrorNotice>{formError}</ErrorNotice> : null}
+              {createMutation.isError ? (
+                <ErrorNotice>
+                  {errorMessage(createMutation.error, "Could not create the agent credential.")}
+                </ErrorNotice>
+              ) : null}
+
+              <Button
+                aria-describedby={canPickActor ? undefined : ACTOR_STATUS_ID}
+                disabled={createMutation.isPending || !canPickActor}
+                type="submit"
+              >
+                <Plus />
+                {createMutation.isPending ? "Creating" : "Create credential"}
+              </Button>
+
+              {createdCredential !== null ? (
+                <section
+                  aria-label="Created credential secret"
+                  className="grid gap-2 rounded-md border border-[var(--success)] p-3 text-xs"
+                >
+                  <div className="flex items-center gap-2 font-medium text-[var(--success)]">
+                    <Check className="size-3.5" />
+                    Created
+                  </div>
+                  <label className="grid gap-1 font-medium" htmlFor="agent-client-secret">
+                    {createdCredential.credential.credentialType === "api_key"
+                      ? "API key"
+                      : "Client secret"}
+                    <Input
+                      id="agent-client-secret"
+                      readOnly
+                      value={createdCredential.secret ?? ""}
+                    />
+                  </label>
+                  <p className="text-muted-foreground">
+                    Copy it now. It cannot be shown again.
+                    {createdCredential.credential.credentialType === "api_key"
+                      ? " Send it in the x-api-key header."
+                      : ""}
+                  </p>
+                  {createdCredential.credential.clientId === null ? null : (
+                    <p className="text-muted-foreground">
+                      Client ID: <code>{createdCredential.credential.clientId}</code>
+                    </p>
+                  )}
+                  {createdCredential.tokenEndpoint === undefined ? null : (
+                    <p className="text-muted-foreground">
+                      Token endpoint: <code>{createdCredential.tokenEndpoint}</code>
+                    </p>
+                  )}
+                </section>
+              ) : null}
+            </form>
+          </FormPanel>
+        ) : null}
 
         <section className="grid min-w-0 content-start gap-3 rounded-lg border border-border bg-card p-4">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -588,60 +601,33 @@ export function AgentCredentialsManagement() {
             </ErrorNotice>
           ) : null}
 
-          <Table aria-label="Agent credentials">
-            <TableHeader>
-              {table.getHeaderGroups().map((headerGroup) => (
-                <TableRow key={headerGroup.id}>
-                  {headerGroup.headers.map((header) => (
-                    <TableHead key={header.id}>
-                      {header.isPlaceholder
-                        ? null
-                        : flexRender(header.column.columnDef.header, header.getContext())}
-                    </TableHead>
-                  ))}
-                </TableRow>
-              ))}
-            </TableHeader>
-            <TableBody>
-              {credentialsQuery.isLoading ? (
-                <TableRow>
-                  <TableCell colSpan={columns.length}>
-                    <EmptyRow>Loading credentials…</EmptyRow>
-                  </TableCell>
-                </TableRow>
-              ) : credentialsQuery.isError ? (
-                /* `credentials` falls back to [] on failure, so without this
-                   branch a failed request rendered the same sentence as a
-                   genuinely empty workspace — a positive claim about state we
-                   could not read. */
-                <TableRow>
-                  <TableCell colSpan={columns.length}>
-                    <EmptyRow>Could not load credentials.</EmptyRow>
-                  </TableCell>
-                </TableRow>
-              ) : table.getRowModel().rows.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={columns.length}>
-                    <EmptyRow>
-                      {includeRevoked
-                        ? "No credentials have been issued in this workspace yet."
-                        : "No active credentials. Select “Include revoked” to see credentials that were already revoked."}
-                    </EmptyRow>
-                  </TableCell>
-                </TableRow>
-              ) : (
-                table.getRowModel().rows.map((row) => (
-                  <TableRow key={row.id}>
-                    {row.getVisibleCells().map((cell) => (
-                      <TableCell key={cell.id}>
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
+          <AdminTable
+            label="Agent credentials"
+            columns={columns}
+            rows={credentialsQuery.isLoading || credentialsQuery.isError ? [] : credentials}
+            rowKey={(row) => row.id}
+            searchText={(row) =>
+              [
+                row.label,
+                row.clientId,
+                row.actorId,
+                actorsById.get(row.actorId)?.displayName,
+                row.scopes.join(" "),
+              ].join(" ")
+            }
+            partialNote="Search and sorting apply to the returned credentials."
+            empty={
+              <EmptyRow>
+                {credentialsQuery.isLoading
+                  ? "Loading credentials…"
+                  : credentialsQuery.isError
+                    ? "Could not load credentials."
+                    : includeRevoked
+                      ? "No credentials have been issued in this workspace yet."
+                      : "No active credentials. Select “Include revoked” to see credentials that were already revoked."}
+              </EmptyRow>
+            }
+          />
         </section>
       </div>
 

@@ -15,7 +15,12 @@ import type {
   SearchReindexType,
 } from "./reindex.js";
 import { searchReindexTypes } from "./reindex.js";
-import type { SearchEngine, SearchIndexMutation } from "./types.js";
+import type {
+  SearchEngine,
+  SearchIndexMutation,
+  MailIndexReference,
+  IndexDocument,
+} from "./types.js";
 
 export interface SearchMutationQueue {
   enqueue(input: {
@@ -120,7 +125,7 @@ export class PostgresSearchDurabilityStore implements SearchMutationQueue {
     await this.sql`
       select helix_enqueue_search_index_mutation(
         ${input.orgId}, ${input.indexerId},
-        ${this.sql.json(toSqlJson(input.mutation))},
+        ${this.sql.json(toSqlJson(compactMailMutation(input.mutation)))},
         ${input.occurredAt}
       )
     `;
@@ -415,6 +420,8 @@ export class SearchMutationWorker {
     private readonly options: {
       readonly store: PostgresSearchDurabilityStore;
       readonly engine: SearchEngine;
+      readonly loadMail?:
+        ((reference: MailIndexReference) => Promise<IndexDocument | null>) | undefined;
       readonly shadowEngine: (uid: string) => SearchEngine & { ensureIndex(): Promise<void> };
       readonly intervalMs?: number | undefined;
       readonly maxAttempts?: number | undefined;
@@ -444,9 +451,19 @@ export class SearchMutationWorker {
       try {
         await this.options.store.withTenant(item.orgId, async () => {
           await this.options.store.withMutationSwapLock(async () => {
-            await applyMutation(this.options.engine, item.mutation, item.orgId);
+            await applyMutation(
+              this.options.engine,
+              item.mutation,
+              item.orgId,
+              this.options.loadMail,
+            );
             for (const uid of await this.options.store.activeShadowIndexUids()) {
-              await applyMutation(await this.shadowIndex(uid), item.mutation, item.orgId);
+              await applyMutation(
+                await this.shadowIndex(uid),
+                item.mutation,
+                item.orgId,
+                this.options.loadMail,
+              );
             }
           });
         });
@@ -500,6 +517,8 @@ export class SearchShadowReindexWorker {
 
   constructor(
     private readonly options: {
+      readonly loadMail?:
+        ((reference: MailIndexReference) => Promise<IndexDocument | null>) | undefined;
       readonly store: PostgresSearchDurabilityStore;
       readonly sources: readonly SearchReindexSource[];
       readonly shadowEngine: (uid: string) => SearchEngine & { ensureIndex(): Promise<void> };
@@ -584,7 +603,8 @@ export class SearchShadowReindexWorker {
     }
     if (job.phase === "replay") {
       const page = await this.options.store.replayPage(job.replayMutationId, job.batchSize);
-      for (const item of page.mutations) await applyMutation(engine, item.mutation);
+      for (const item of page.mutations)
+        await applyMutation(engine, item.mutation, undefined, this.options.loadMail);
       const last = page.mutations.at(-1)?.id ?? job.replayMutationId;
       await this.options.store.checkpointJob({
         job,
@@ -618,11 +638,46 @@ export class SearchShadowReindexWorker {
   }
 }
 
+/** Keep durable replay useful without retaining another full copy of each email. */
+export function compactMailMutation(mutation: SearchIndexMutation): SearchIndexMutation {
+  const reloadMail = [...(mutation.reloadMail ?? [])];
+  const upsert = [];
+  for (const document of mutation.upsert ?? []) {
+    if (document.type !== "mail") {
+      upsert.push(document);
+      continue;
+    }
+    const { orgId, ragOwnerActorId: actorId, messageId } = document.attributes ?? {};
+    if (
+      typeof orgId !== "string" ||
+      typeof actorId !== "string" ||
+      typeof messageId !== "string" ||
+      document.id !== `mail:${actorId}:${messageId}`
+    )
+      throw new Error("Mail search mutation has no valid source identity.");
+    reloadMail.push({ orgId, actorId, messageId });
+  }
+  return {
+    ...mutation,
+    ...(mutation.upsert === undefined ? {} : { upsert }),
+    ...(reloadMail.length === 0 ? {} : { reloadMail }),
+  };
+}
+
 export async function applyMutation(
   engine: SearchEngine,
   mutation: SearchIndexMutation,
   orgId?: string,
+  loadMail?: (reference: MailIndexReference) => Promise<IndexDocument | null>,
 ): Promise<void> {
+  for (const reference of mutation.reloadMail ?? []) {
+    if (loadMail === undefined || (orgId !== undefined && orgId !== reference.orgId))
+      throw new Error("Mail search source resolution is unavailable or has a different tenant.");
+    const document = await loadMail(reference);
+    if (document === null)
+      await engine.delete([`mail:${reference.actorId}:${reference.messageId}`], reference.orgId);
+    else await engine.upsert([document]);
+  }
   if (mutation.upsert !== undefined && mutation.upsert.length > 0)
     await engine.upsert(mutation.upsert);
   if (mutation.delete !== undefined && mutation.delete.length > 0) {

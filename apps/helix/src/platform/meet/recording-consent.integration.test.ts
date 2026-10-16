@@ -191,7 +191,7 @@ describe("Meet recording consent", { skip: process.env.DATABASE_URL === undefine
         expect.objectContaining({
           consent_policy: "explicit-all-parties",
           jurisdiction: "global",
-          notice_version: "2026-09-02",
+          notice_version: "2026-10-15",
         }),
       ]),
     );

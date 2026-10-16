@@ -1,10 +1,23 @@
 import { readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
-import { buildMailHtmlDocument } from "../../src/features/mail/mail-html-body";
+import { installCoreAppsRoutes } from "./support/api-fixtures";
 
 test("production CSP permits the isolated mail bridge and configured Jitsi origin", async ({
   page,
 }) => {
+  // Load the renderer through Vite so its inline stylesheet uses the same module
+  // pipeline as the app, rather than importing browser assets in the test runner.
+  await installCoreAppsRoutes(page);
+  await page.goto("/passwords");
+  await expect(page.getByRole("heading", { name: "Passwords", exact: true })).toBeVisible();
+  const mailDocument = await page.evaluate(async () => {
+    const modulePath = "/src/features/mail/mail-html-body.tsx";
+    const { buildMailHtmlDocument } = await import(modulePath);
+    return buildMailHtmlDocument(
+      '<h1>Email</h1><blockquote>Quoted text</blockquote><a data-helix-href="https://outside.example/">External link</a>',
+      "csp-test",
+    );
+  });
   const edge = readFileSync("../../infra/caddy/Caddyfile.production", "utf8");
   const csp = /Content-Security-Policy "([^"]+)"/u
     .exec(edge)?.[1]
@@ -39,23 +52,17 @@ test("production CSP permits the isolated mail bridge and configured Jitsi origi
   const height = page.waitForEvent("console", {
     predicate: (message) => message.text().includes('"kind":"height"'),
   });
-  await page.evaluate(
-    (srcdoc) => {
-      const iframe = document.createElement("iframe");
-      iframe.title = "Email";
-      iframe.sandbox.add("allow-scripts");
-      iframe.srcdoc = srcdoc;
-      document.body.appendChild(iframe);
-    },
-    buildMailHtmlDocument(
-      '<h1>Email</h1><blockquote>Quoted text</blockquote><a data-helix-href="https://outside.example/">External link</a>',
-      "csp-test",
-    ),
-  );
+  await page.evaluate((srcdoc) => {
+    const iframe = document.createElement("iframe");
+    iframe.title = "Email";
+    iframe.sandbox.add("allow-scripts");
+    iframe.srcdoc = srcdoc;
+    document.body.appendChild(iframe);
+  }, mailDocument);
   expect((await height).text()).toContain('"channel":"csp-test"');
   const frame = page.frameLocator('iframe[title="Email"]');
   await expect(frame.getByRole("heading", { name: "Email" })).toBeVisible();
-  await frame.getByText("Show quoted text").click();
+  await frame.getByLabel("Show quoted text").click();
   await expect(frame.getByText("Quoted text", { exact: true })).toBeVisible();
   const link = page.waitForEvent("console", {
     predicate: (message) => message.text().includes('"kind":"link"'),

@@ -17,6 +17,7 @@ import { Route as SignupInviteRouteImport } from './routes/signup_.invite'
 import { Route as SignupVerifyEmailRouteImport } from './routes/signup_.verify-email'
 import { Route as ShellAdminIndexRouteImport } from './routes/_shell/admin/index'
 import { Route as ShellAdminSectionRouteImport } from './routes/_shell/admin/$section'
+import { Route as ShellApprovalsPendingIdRouteImport } from './routes/_shell/approvals/$pendingId'
 import { Route as ShellAssistantIndexRouteImport } from './routes/_shell/assistant/index'
 import { Route as ShellCalendarIndexRouteImport } from './routes/_shell/calendar/index'
 import { Route as ShellChatIndexRouteImport } from './routes/_shell/chat/index'
@@ -66,6 +67,11 @@ const ShellAdminIndexRoute = ShellAdminIndexRouteImport.update({
 const ShellAdminSectionRoute = ShellAdminSectionRouteImport.update({
   id: '/admin/$section',
   path: '/admin/$section',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellApprovalsPendingIdRoute = ShellApprovalsPendingIdRouteImport.update({
+  id: '/approvals/$pendingId',
+  path: '/approvals/$pendingId',
   getParentRoute: () => ShellRoute,
 } as any)
 const ShellAssistantIndexRoute = ShellAssistantIndexRouteImport.update({
@@ -131,6 +137,7 @@ export interface FileRoutesByFullPath {
   '/signup/invite': typeof SignupInviteRoute
   '/signup/verify-email': typeof SignupVerifyEmailRoute
   '/admin/$section': typeof ShellAdminSectionRoute
+  '/approvals/$pendingId': typeof ShellApprovalsPendingIdRoute
   '/contacts/$contactId': typeof ShellContactsContactIdRoute
   '/contacts/new': typeof ShellContactsNewRoute
   '/admin/': typeof ShellAdminIndexRoute
@@ -151,6 +158,7 @@ export interface FileRoutesByTo {
   '/signup/invite': typeof SignupInviteRoute
   '/signup/verify-email': typeof SignupVerifyEmailRoute
   '/admin/$section': typeof ShellAdminSectionRoute
+  '/approvals/$pendingId': typeof ShellApprovalsPendingIdRoute
   '/contacts/$contactId': typeof ShellContactsContactIdRoute
   '/contacts/new': typeof ShellContactsNewRoute
   '/admin': typeof ShellAdminIndexRoute
@@ -173,6 +181,7 @@ export interface FileRoutesById {
   '/signup_/invite': typeof SignupInviteRoute
   '/signup_/verify-email': typeof SignupVerifyEmailRoute
   '/_shell/admin/$section': typeof ShellAdminSectionRoute
+  '/_shell/approvals/$pendingId': typeof ShellApprovalsPendingIdRoute
   '/_shell/contacts/$contactId': typeof ShellContactsContactIdRoute
   '/_shell/contacts/new': typeof ShellContactsNewRoute
   '/_shell/admin/': typeof ShellAdminIndexRoute
@@ -195,6 +204,7 @@ export interface FileRouteTypes {
     | '/signup/invite'
     | '/signup/verify-email'
     | '/admin/$section'
+    | '/approvals/$pendingId'
     | '/contacts/$contactId'
     | '/contacts/new'
     | '/admin/'
@@ -215,6 +225,7 @@ export interface FileRouteTypes {
     | '/signup/invite'
     | '/signup/verify-email'
     | '/admin/$section'
+    | '/approvals/$pendingId'
     | '/contacts/$contactId'
     | '/contacts/new'
     | '/admin'
@@ -236,6 +247,7 @@ export interface FileRouteTypes {
     | '/signup_/invite'
     | '/signup_/verify-email'
     | '/_shell/admin/$section'
+    | '/_shell/approvals/$pendingId'
     | '/_shell/contacts/$contactId'
     | '/_shell/contacts/new'
     | '/_shell/admin/'
@@ -315,6 +327,13 @@ declare module '@tanstack/react-router' {
       path: '/admin/$section'
       fullPath: '/admin/$section'
       preLoaderRoute: typeof ShellAdminSectionRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/approvals/$pendingId': {
+      id: '/_shell/approvals/$pendingId'
+      path: '/approvals/$pendingId'
+      fullPath: '/approvals/$pendingId'
+      preLoaderRoute: typeof ShellApprovalsPendingIdRouteImport
       parentRoute: typeof ShellRoute
     }
     '/_shell/assistant/': {
@@ -399,6 +418,7 @@ declare module '@tanstack/react-router' {
 
 interface ShellRouteChildren {
   ShellAdminSectionRoute: typeof ShellAdminSectionRoute
+  ShellApprovalsPendingIdRoute: typeof ShellApprovalsPendingIdRoute
   ShellContactsContactIdRoute: typeof ShellContactsContactIdRoute
   ShellContactsNewRoute: typeof ShellContactsNewRoute
   ShellAdminIndexRoute: typeof ShellAdminIndexRoute
@@ -415,6 +435,7 @@ interface ShellRouteChildren {
 
 const ShellRouteChildren: ShellRouteChildren = {
   ShellAdminSectionRoute: ShellAdminSectionRoute,
+  ShellApprovalsPendingIdRoute: ShellApprovalsPendingIdRoute,
   ShellContactsContactIdRoute: ShellContactsContactIdRoute,
   ShellContactsNewRoute: ShellContactsNewRoute,
   ShellAdminIndexRoute: ShellAdminIndexRoute,

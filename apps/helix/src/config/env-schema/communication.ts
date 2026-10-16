@@ -14,6 +14,8 @@ export const communicationEnv = {
   MEET_JITSI_JWT_AUDIENCE: optionalString,
   MEET_JITSI_WEBHOOK_SHARED_SECRET: optionalString,
   MEET_JIBRI_HEALTH_URL: optionalUrl,
+  MEET_TRANSCRIPTION_ALLOWED_HOSTS: optionalString,
+  MEET_TRANSCRIPTION_PROXY_URL: optionalUrl,
   MEET_JITSI_REGION: optionalString,
   HELIX_PASSWORDS_URL: optionalUrl,
 };

@@ -24,6 +24,7 @@ export type JsonRpcResponse =
       readonly error: {
         readonly code: number;
         readonly message: string;
+        readonly data?: unknown;
       };
     };
 
@@ -37,8 +38,13 @@ export function jsonRpcError(
   id: JsonRpcId | undefined,
   code: number,
   message: string,
+  data?: unknown,
 ): JsonRpcErrorResponse {
-  return { jsonrpc: "2.0", id: id ?? null, error: { code, message } };
+  return {
+    jsonrpc: "2.0",
+    id: id ?? null,
+    error: { code, message, ...(data === undefined ? {} : { data }) },
+  };
 }
 
 function isJsonRpcId(value: unknown): value is JsonRpcId {

@@ -28,6 +28,7 @@ export const tenantFeatureFlagsSchema = z
   .object({
     assistant_retrieval: z.boolean(),
     mail_outbound: z.boolean(),
+    mail_ai_assistance: z.boolean().optional(),
     calendar_import_invitations: z.boolean(),
     drive_s3_api: z.boolean(),
     chat_admin_private_rooms: z.boolean(),
@@ -82,11 +83,13 @@ export const OPT_IN_TENANT_FEATURE_FLAGS: readonly string[] = [
   "calendar_import_invitations",
   "chat_admin_private_rooms",
   "passwords_app",
+  "mail_ai_assistance",
 ];
 
 export const SYSTEM_TENANT_FEATURE_FLAGS = {
   assistant_retrieval: true,
   mail_outbound: true,
+  mail_ai_assistance: false,
   calendar_import_invitations: false,
   drive_s3_api: true,
   chat_admin_private_rooms: false,

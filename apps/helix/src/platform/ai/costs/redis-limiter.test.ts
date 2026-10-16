@@ -216,12 +216,8 @@ class FakeRedisAICostClient implements RedisAICostClient {
     const keys = args.slice(0, numberOfKeys).map(String);
     this.keysSeen.push(...keys);
     const argv = args.slice(numberOfKeys);
-    if (script.includes("INCRBY")) {
-      return this.record(keys, argv);
-    }
-    if (script.includes("estimated")) {
-      return this.check(keys, argv);
-    }
+    if (script.includes("estimated")) return this.check(keys, argv);
+    if (script.includes("INCRBY")) return this.record(keys, argv);
     return this.usage(keys);
   }
 

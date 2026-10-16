@@ -1,4 +1,7 @@
 import { readFileSync } from "node:fs";
+import { Readable } from "node:stream";
+import type { SMTPServerDataStream } from "smtp-server";
+import { createTestCertificateAuthority } from "../../test-support/tls-fixtures.js";
 import { createTransport } from "nodemailer";
 import { describe, expect, it, vi } from "vitest";
 import { createRecordingSql as sharedRecordingSql } from "../../test-support/recording-sql.js";
@@ -23,6 +26,109 @@ const actorB = "44444444-4444-4444-8444-444444444444";
 const actorC = "55555555-5555-4555-8555-555555555555";
 
 describe("inbound SMTP tenant routing", () => {
+  it("limits XFORWARD to the trusted TLS handoff and keeps the original connection count", async () => {
+    const authority = createTestCertificateAuthority();
+    const certificate = authority.issue(["mail.test"]);
+    const messages: MailMessageInput[] = [];
+    const authenticate = vi.fn(passingAuthenticator.authenticate);
+    const receiver = new SmtpMailReceiver({
+      transportSecurity: {
+        mode: "starttls",
+        key: certificate.privateKeyPem,
+        cert: certificate.certificatePem,
+        trustedForwarderIps: ["127.0.0.1"],
+      },
+      limits: { maxConcurrentConnectionsPerIp: 1 },
+      store: mailStore(messages),
+      resolveRecipient: async (address) => ({ orgId: orgA, actorId: actorA, address }),
+      authenticator: { authenticate },
+    });
+    try {
+      const untrusted = { remoteAddress: "192.0.2.30" } as SMTPServerSession;
+      await expect(
+        new Promise<void>((resolve, reject) => {
+          receiver.nodeServer.onConnect(untrusted, (error) => {
+            if (error) reject(error);
+            else resolve();
+          });
+        }),
+      ).rejects.toMatchObject({ responseCode: 421 });
+      const session = await openEnvelope(receiver);
+      // XFORWARD's map is current before the library refreshes session fields.
+      Object.assign(session, {
+        xForward: new Map([
+          ["ADDR", "203.0.113.44"],
+          ["HELO", "smtp.example.net"],
+        ]),
+      });
+      await new Promise<void>((resolve, reject) => {
+        receiver.nodeServer.onRcptTo({ address: "ada@alpha.test", args: {} }, session, (error) => {
+          if (error) reject(error);
+          else resolve();
+        });
+      });
+      const raw = Readable.from([
+        Buffer.from(
+          "From: sender@example.net\r\nTo: ada@alpha.test\r\nSubject: Forwarded peer\r\n\r\nBody\r\n",
+        ),
+      ]) as SMTPServerDataStream;
+      await new Promise<void>((resolve, reject) => {
+        receiver.nodeServer.onData(raw, session, (error) => {
+          if (error) reject(error);
+          else resolve();
+        });
+      });
+      expect("xForward" in session ? session.xForward : undefined).toEqual(new Map());
+      expect(authenticate.mock.calls[0]?.[0]).toMatchObject({
+        remoteAddress: "203.0.113.44",
+        helo: "smtp.example.net",
+      });
+      Object.assign(session, {
+        remoteAddress: "203.0.113.44",
+        hostNameAppearsAs: "smtp.example.net",
+        xForward: new Map([
+          ["ADDR", "[UNAVAILABLE]"],
+          ["HELO", "[UNAVAILABLE]"],
+        ]),
+      });
+      await new Promise<void>((resolve, reject) => {
+        receiver.nodeServer.onData(
+          Readable.from([
+            Buffer.from(
+              "From: sender@example.net\r\nTo: ada@alpha.test\r\nSubject: Unknown peer\r\n\r\nSecond\r\n",
+            ),
+          ]) as SMTPServerDataStream,
+          session,
+          (error) => {
+            if (error) reject(error);
+            else resolve();
+          },
+        );
+      });
+      expect(authenticate.mock.calls[1]?.[0]).toMatchObject({ remoteAddress: "127.0.0.1" });
+      expect(authenticate.mock.calls[1]?.[0].helo).toBeUndefined();
+      receiver.nodeServer.onClose(session, () => undefined);
+      const next = await openEnvelope(receiver);
+      receiver.nodeServer.onClose(next, () => undefined);
+      expect(messages).toHaveLength(2);
+    } finally {
+      authority.dispose();
+    }
+  });
+
+  it.each([{ trustedForwarderIps: [] }, { trustedForwarderIps: ["*"] }])(
+    "rejects an invalid SMTP forwarding allowlist $trustedForwarderIps",
+    ({ trustedForwarderIps }) => {
+      expect(
+        () =>
+          new SmtpMailReceiver({
+            transportSecurity: { mode: "starttls", key: "key", cert: "cert", trustedForwarderIps },
+            store: mailStore([]),
+            resolveRecipient: async () => null,
+          }),
+      ).toThrow("explicit forwarder IP allowlist");
+    },
+  );
   it("resolves only active mailboxes under an active verified domain", async () => {
     const recording = recordingSql([
       [

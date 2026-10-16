@@ -18,7 +18,7 @@ export function ManageLabelsPage() {
   const createButton = (
     <Button type="button" size="sm" onClick={() => openLabelDialog({ mode: "create" })}>
       <Plus aria-hidden="true" />
-      Create new label
+      Add label
     </Button>
   );
 

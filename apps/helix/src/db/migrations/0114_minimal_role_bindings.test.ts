@@ -34,6 +34,7 @@ describe("0114 minimal role bindings migration", () => {
       mergeMigration,
       contactsMigration,
       agentSecretsMigration,
+      await readFile(new URL("./0239_trusted_bot_installations.sql", import.meta.url), "utf8"),
     ];
     for (const permission of ALL_SCOPES) {
       expect(catalogSources.join("\n")).toContain(`('${permission}',`);

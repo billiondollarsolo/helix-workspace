@@ -20,25 +20,28 @@ minimumReleaseAgeStrict: true
 nodeVersion: 24.18.0
 
 overrides:
+  "kdbxweb>@xmldom/xmldom": "0.8.15"
+  "kdbxweb>fflate": "0.8.3"
   # 1.2.1 restored emnapi v1 compatibility; 1.2.2 retains that upstream fix.
   "@napi-rs/wasm-runtime@1.2.0": "1.2.2"
   "@xmldom/xmldom@0.8": "0.8.15"
   "nanoid@3": "3.3.18"
   "@esbuild-kit/core-utils>esbuild": "0.28.1"
   "@grpc/grpc-js": "1.14.5"
-  "brace-expansion": "5.0.11"
+  "brace-expansion": "5.0.12"
   # minimatch 9 imports brace-expansion 2.x's default export; 10.x uses the 5.x API.
   "minimatch@9": "10.2.6"
-  "fast-uri@3": "3.1.7"
-  "fast-uri@4": "4.1.4"
+  "fast-uri@3": "3.1.8"
+  "fast-uri@4": "4.1.5"
   "find-my-way": "9.7.0"
-  "joi@18": "18.2.6"
+  "joi@18": "18.2.9"
   "linkify-it": "5.0.2"
   "next": "16.2.11"
-  "nodemailer": "10.0.6"
+  "nodemailer": "10.0.9"
   "postcss": "8.5.24"
   "protobufjs": "7.6.5"
   "seroval": "1.6.3"
+  "smol-toml": "1.9.1"
   "source-map-js": "1.2.2"
   "tmp": "0.2.7"
   "undici": "7.29.1"

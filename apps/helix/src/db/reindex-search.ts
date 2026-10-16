@@ -10,6 +10,7 @@ import {
   type SearchReindexResult,
   type SearchReindexType,
 } from "../platform/search/index.js";
+import { createOperatorStorageResolver } from "./storage-runtime.js";
 import { createSqlClient } from "./client.js";
 
 export interface ReindexSearchCommandOptions extends SearchReindexRequest {
@@ -89,7 +90,9 @@ export async function reindexSearch(
 
   const service = new SearchReindexService({
     engine,
-    sources: createPostgresSearchReindexSources(sql),
+    sources: createPostgresSearchReindexSources(sql, {
+      storageResolver: createOperatorStorageResolver(sql),
+    }),
     ...(options.batchSize === undefined ? {} : { batchSize: options.batchSize }),
   });
   const result = await service.reindex({

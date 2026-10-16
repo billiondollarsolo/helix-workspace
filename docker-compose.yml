@@ -391,6 +391,8 @@ services:
     volumes:
       - jitsi-web-config:/config
       - ./infra/meet/custom-config.js:/config/custom-config.js:ro
+      - ./infra/meet/custom-interface_config.js:/run/helix-jitsi-config/custom-interface_config.js:ro
+      - ./infra/meet/init/02-helix-config:/etc/cont-init.d/02-helix-config:ro
       - ./infra/meet/config/transcripts:/usr/share/jitsi-meet/transcripts
     networks: [meet-control]
     depends_on:
@@ -411,7 +413,10 @@ services:
       ENABLE_AV_MODERATION: "1"
       ENABLE_END_CONFERENCE: "1"
       PROSODY_ENABLE_FILTER_MESSAGES: "1"
-      XMPP_MUC_MODULES: token_affiliation
+      XMPP_MUC_MODULES: token_affiliation,helix_lifecycle,helix_capture
+      HELIX_LIFECYCLE_URL: http://helix:3000/webhook/jitsi
+      HELIX_CAPTURE_STATE_URL: http://helix:3000/internal/meet/capture-state
+      HELIX_JITSI_WEBHOOK_SECRET: ${MEET_JITSI_WEBHOOK_SHARED_SECRET:-helix_dev_jitsi_webhook_secret_change_me}
       STUN_HOST: ${JITSI_TURN_HOST:-turn.localhost}
       STUN_PORT: ${JITSI_TURN_PORT:-3478}
       TURN_HOST: ${JITSI_TURN_HOST:-turn.localhost}
@@ -452,26 +457,17 @@ services:
       - "127.0.0.1:${JITSI_PROSODY_HTTP_PORT:-28455}:5280"
     volumes:
       - jitsi-prosody-config:/config
+      - ./infra/meet/init/01-helix-secrets:/etc/cont-init.d/01-helix-secrets:ro
       - ./infra/meet/prosody/05-turn-secret:/etc/cont-init.d/05-turn-secret:ro
+      - ./infra/meet/prosody/mod_helix_lifecycle.lua:/prosody-plugins-custom/mod_helix_lifecycle.lua:ro
+      - ./infra/meet/prosody/mod_helix_capture.lua:/prosody-plugins-custom/mod_helix_capture.lua:ro
     secrets:
       - source: jitsi_turn_shared_secret
         target: jitsi_turn_shared_secret
       - source: jitsi_xmpp_cert
-        target: /config/certs/${JITSI_XMPP_DOMAIN:-meet.jitsi}.crt
+        target: /run/secrets/jitsi_xmpp_cert
       - source: jitsi_xmpp_key
-        target: /config/certs/${JITSI_XMPP_DOMAIN:-meet.jitsi}.key
-      - source: jitsi_xmpp_cert
-        target: /config/certs/${JITSI_XMPP_AUTH_DOMAIN:-auth.meet.jitsi}.crt
-      - source: jitsi_xmpp_key
-        target: /config/certs/${JITSI_XMPP_AUTH_DOMAIN:-auth.meet.jitsi}.key
-      - source: jitsi_xmpp_cert
-        target: /config/certs/${JITSI_XMPP_MUC_DOMAIN:-muc.meet.jitsi}.crt
-      - source: jitsi_xmpp_key
-        target: /config/certs/${JITSI_XMPP_MUC_DOMAIN:-muc.meet.jitsi}.key
-      - source: jitsi_xmpp_cert
-        target: /config/certs/${JITSI_XMPP_INTERNAL_MUC_DOMAIN:-internal-muc.meet.jitsi}.crt
-      - source: jitsi_xmpp_key
-        target: /config/certs/${JITSI_XMPP_INTERNAL_MUC_DOMAIN:-internal-muc.meet.jitsi}.key
+        target: /run/secrets/jitsi_xmpp_key
     networks: [meet-control]
     restart: unless-stopped
 

@@ -61,7 +61,7 @@ export type DriveActivityPayload = JsonObject & {
   readonly objectId?: string | undefined;
   readonly fileId?: string | undefined;
 };
-interface DriveMultipartUploadInfo {
+export interface DriveMultipartUploadInfo {
   readonly uploadId: string;
   readonly partSize: number;
   readonly partCount: number;

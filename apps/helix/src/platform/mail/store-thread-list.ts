@@ -1,3 +1,5 @@
+import { mailBodyMatches } from "./body-search.js";
+import type { SearchEngine } from "../search/types.js";
 import type postgres from "postgres";
 import type { MailDraftStore } from "./store-drafts.js";
 import { clampLimit, parseMailSearchQuery } from "./store-search-query.js";
@@ -21,6 +23,8 @@ export async function listMailThreads(
   sql: postgres.Sql,
   drafts: MailDraftStore,
   input: MailThreadListRequest,
+  searchEngine?: SearchEngine,
+  externalBodies = false,
 ): Promise<MailThreadListResult> {
   const now = input.now ?? new Date();
   const limit = clampLimit(input.limit, 50);
@@ -67,12 +71,13 @@ export async function listMailThreads(
     pm: mailboxMessage(sql`pm.id`, sql`pm.actor_id`),
     counted: mailboxMessage(sql`counted.id`, sql`counted.actor_id`),
   };
+  const bodyMatches = await mailBodyMatches(searchEngine, input, query.terms, externalBodies);
   const messageMatch = hasMessageOperators(query)
     ? sql`exists (
         select 1 from messages mm
         where mm.thread_id = latest.thread_id and mm.org_id = ${input.orgId}
           and mm.kind = 'mail' and mm.deleted_at is null and ${visible.mm}
-          and ${mailMessageMatchSql(sql, query, mailbox)}
+          and ${mailMessageMatchSql(sql, query, mailbox, bodyMatches)}
       )`
     : sql`true`;
   const stateMatch = mailThreadStateMatchSql(sql, query, mailbox, {
@@ -82,6 +87,7 @@ export async function listMailThreads(
     starred: sql`latest.starred`,
     category: sql`latest.category`,
   });
+  const followUpOnly = query.followUp !== undefined || query.overdue === true;
   const rows = await sql<(MailThreadListRow & { readonly total: number })[]>`
     with latest as (
       select distinct on (m.thread_id)
@@ -100,7 +106,15 @@ export async function listMailThreads(
         mts.read_at,
         mts.starred,
         mts.spam_at,
-        mts.category
+        mts.category,
+        case when mts.follow_up_message_id = m.id and mts.follow_up_state <> 'automatic'
+          then mts.follow_up_state
+          when helix_mailbox_sent_message(m.org_id,m.id,${input.actorId}) then 'waiting_on'
+          when m.metadata->'decision'->>'needsReply' = 'false' then 'done'
+          when lower(coalesce(m.metadata->'from'->>'address','')) ~ '(no-?reply|mailer-daemon)@' then 'done'
+          when coalesce(mts.category,'primary') in ('promotions','social','updates')
+            and m.metadata->'decision'->>'needsReply' is distinct from 'true' then 'done'
+          else 'needs_reply' end as follow_up
       from messages m
       join threads t on t.id = m.thread_id
       join mail_thread_state mts
@@ -112,6 +126,10 @@ export async function listMailThreads(
         and m.deleted_at is null
         and t.kind = 'mail'
         and ${visible.m}
+        and (not ${followUpOnly} or not exists (
+          select 1 from mail_outbound_messages pending
+          where pending.org_id=m.org_id and pending.message_id=m.id and pending.status not in ('accepted','delivered')
+        ))
       order by m.thread_id, m.sent_at desc, m.id desc
     ),
     filtered as (
@@ -139,6 +157,14 @@ export async function listMailThreads(
       where (${tab}::text is null or coalesce(latest.category, 'primary') = ${tab})
         and ${stateMatch}
         and ${messageMatch}
+        and (${query.followUp ?? null}::text is null or latest.follow_up=${query.followUp ?? null})
+        and (not ${followUpOnly} or (latest.deleted_at is null and latest.spam_at is null
+          and (latest.snoozed_until is null or latest.snoozed_until <= ${now})))
+        and (not ${query.overdue === true} or (latest.follow_up in ('needs_reply','waiting_on')
+          and latest.sent_at <= ${now} - make_interval(days => coalesce((
+            select (settings->>'overdueDays')::integer from mail_productivity_preferences
+            where org_id=${input.orgId} and actor_id=${input.actorId}
+          ),3))))
     ),
     in_folder as (
       select * from filtered
@@ -163,7 +189,7 @@ export async function listMailThreads(
     )
     select
       thread_id, subject, message_id, body, body_format, metadata, sent_at, labels, read_at, starred,
-      category, snoozed_until,
+      category, snoozed_until, follow_up,
       (
         select count(*)::int from messages counted
         where counted.thread_id = in_folder.thread_id and counted.org_id = ${input.orgId}
@@ -222,12 +248,18 @@ export async function listMailThreads(
     (offset === 0
       ? 0
       : (
-          await listMailThreads(sql, drafts, {
-            ...input,
-            folder,
-            offset: 0,
-            limit: 1,
-          })
+          await listMailThreads(
+            sql,
+            drafts,
+            {
+              ...input,
+              folder,
+              offset: 0,
+              limit: 1,
+            },
+            searchEngine,
+            externalBodies,
+          )
         ).total);
   return {
     threads: rows.map((row) => mapThreadRow(row, folder)),

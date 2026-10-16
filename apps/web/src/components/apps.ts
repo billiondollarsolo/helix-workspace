@@ -85,7 +85,7 @@ export const APPS: readonly HelixApp[] = [
     icon: "Key",
     color: "var(--label-green)",
     route: "/passwords",
-    pinned: false,
+    pinned: true,
   },
   {
     id: "assistant",
@@ -94,7 +94,7 @@ export const APPS: readonly HelixApp[] = [
     icon: "Sparkles",
     color: "var(--label-purple)",
     route: "/assistant",
-    pinned: false,
+    pinned: true,
   },
   {
     id: "admin",

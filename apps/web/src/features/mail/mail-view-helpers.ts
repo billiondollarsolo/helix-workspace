@@ -103,7 +103,10 @@ export function formatBytes(bytes: number): string {
 
 /** Chip colours for a label: the tinted `--label-<name>-soft` fill keeps contrast with body text. */
 export function labelChipStyle(label: Pick<MailLabelSummary, "colorName">): CSSProperties {
-  return { background: `var(--label-${label.colorName}-soft)`, color: "var(--text)" };
+  return {
+    background: `color-mix(in srgb, var(--label-${label.colorName}) 12%, var(--surface))`,
+    color: "var(--text)",
+  };
 }
 
 export function labelDotStyle(label: Pick<MailLabelSummary, "colorName">): CSSProperties {

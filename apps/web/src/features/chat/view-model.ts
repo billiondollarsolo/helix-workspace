@@ -35,6 +35,7 @@ export interface ChatConversationView {
   /** A one-to-one conversation's other person; null for spaces and groups. */
   readonly peer: ChatRoomMemberRecord | null;
   readonly active: boolean;
+  readonly presenceLabel?: string;
 }
 
 /** A presentation-ready message row. */

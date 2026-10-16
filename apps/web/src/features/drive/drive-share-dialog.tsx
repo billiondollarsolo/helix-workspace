@@ -167,6 +167,7 @@ export function DriveShareDialog({
 
   return (
     <Dialog
+      modal={false}
       title={<h2 className="type-h3 m-0 truncate">Share “{target.name}”</h2>}
       onClose={onClose}
       width="min(560px, calc(100vw - 32px))"

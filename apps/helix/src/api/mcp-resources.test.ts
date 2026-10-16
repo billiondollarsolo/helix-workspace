@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import type { Actor } from "@helix/sdk-types";
 import { describe, expect, it } from "vitest";
 import type { CalendarEventRecord } from "../platform/calendar/types.js";
@@ -113,6 +114,49 @@ describe("createStoreBackedMcpResourceProvider", () => {
       { orgId: "org-mcp", actorId: "agent-mcp", objectId: "file-text" },
       { orgId: "org-mcp", actorId: "agent-mcp", objectId: "file-binary" },
     ]);
+  });
+  it("bounds Unicode Mail output and exposes an authorized continuation URI", async () => {
+    const mail = new FakeMailStore();
+    const base = await mail.getThread({
+      orgId: agentActor.orgId,
+      actorId: agentActor.id,
+      threadId: "thread-1",
+    });
+    assert(base);
+    const firstMessage = base.messages[0];
+    assert(firstMessage);
+    const cursor = "12345678-1234-4234-8234-123456789012";
+    const getThread = async (input: MailThreadGetRequest) => {
+      mail.threadReads.push(input);
+      return {
+        ...base,
+        bodyTruncated: true,
+        nextCursor: cursor,
+        messages: Array.from({ length: 20 }, (_, i) => ({
+          ...firstMessage,
+          id: String(i),
+          body: "📧".repeat(10000),
+        })),
+      };
+    };
+    const provider = createStoreBackedMcpResourceProvider({
+      mail: { search: (input) => mail.search(input), getThread },
+    });
+    const result = await provider.read(agentActor, "helix://mail/thread/thread-1");
+    assert(result);
+    expect(Buffer.byteLength(result.text)).toBeLessThan(1024 * 1024);
+    expect(result._meta).toMatchObject({
+      truncated: true,
+      nextUri: `helix://mail/thread/thread-1?after=${cursor}`,
+    });
+    const nextUri = result._meta?.nextUri;
+    assert(nextUri);
+    await provider.read(agentActor, nextUri);
+    expect(mail.threadReads.at(-1)?.resourcePage).toEqual({ limit: 20, after: cursor });
+    expect(
+      await provider.read(agentActor, "helix://mail/thread/thread-1?after=invalid"),
+    ).toBeNull();
+    expect(await provider.read(agentActor, "helix://mail/thread/%invalid")).toBeNull();
   });
   it("uses the store-backed provider through MCP resources/read", async () => {
     const tools = createToolRegistry({ accessPolicy: new AllowAllToolAccessPolicy() });

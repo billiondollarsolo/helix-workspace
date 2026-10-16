@@ -32,6 +32,7 @@ describe("chat tools", () => {
     ).toEqual(
       [
         "chat.create_room",
+        "chat.dm.open",
         "chat.delete",
         "chat.edit",
         "chat.export",

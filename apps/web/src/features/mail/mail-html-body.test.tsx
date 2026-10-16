@@ -55,7 +55,7 @@ describe("MailHtmlBody", () => {
     }
   });
 
-  it("keeps raw source inert and offers plain text without inserting either into the app DOM", () => {
+  it("keeps hostile markup inside an opaque no-network frame without body-view controls", () => {
     const container = document.createElement("div");
     document.body.append(container);
     containers.push(container);
@@ -64,14 +64,7 @@ describe("MailHtmlBody", () => {
     const source = '<img src="https://tracker.test"><script>window.evil=1</script><b>Hello</b>';
 
     act(() => {
-      root.render(
-        <MailHtmlBody
-          html="<b>Hello</b><img/>"
-          source={source}
-          plainBody="Hello"
-          remoteContentBlocked
-        />,
-      );
+      root.render(<MailHtmlBody html="<b>Hello</b><img/>" remoteContentBlocked />);
     });
 
     const iframe = container.querySelector("iframe");
@@ -81,12 +74,8 @@ describe("MailHtmlBody", () => {
     expect(container.textContent).toContain("blocked to prevent sender tracking");
     expect(container.querySelector("script")).toBeNull();
 
-    click(container, "Source");
-    expect(container.querySelector('[aria-label="Email HTML source"]')?.textContent).toBe(source);
-    expect(container.querySelector("script")).toBeNull();
-
-    click(container, "Plain text");
-    expect(container.querySelector('[aria-label="Plain-text email"]')?.textContent).toBe("Hello");
+    expect(container.querySelector('[aria-label="Message body view"]')).toBeNull();
+    expect(iframe?.srcdoc).not.toContain(source);
   });
 
   it("warns before a validated external link can leave the isolated renderer", () => {
@@ -99,7 +88,6 @@ describe("MailHtmlBody", () => {
       root.render(
         <MailHtmlBody
           html={'<a href="#helix-link" data-helix-href="https://example.com/report">Report</a>'}
-          source=""
           remoteContentBlocked={false}
         />,
       );
@@ -144,15 +132,3 @@ describe("MailHtmlBody", () => {
     expect(openLink?.rel).toBe("noopener noreferrer");
   });
 });
-
-function click(container: HTMLElement, label: string): void {
-  const button = Array.from(container.querySelectorAll("button")).find(
-    (candidate) => candidate.textContent === label,
-  );
-  if (button === undefined) {
-    throw new Error(`Missing button: ${label}`);
-  }
-  act(() => {
-    button.click();
-  });
-}

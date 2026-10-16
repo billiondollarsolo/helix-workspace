@@ -532,20 +532,6 @@
   max-width: 1120px;
 }
 
-.cal-field {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface);
-  color: var(--text);
-  padding: 6px 8px;
-  min-height: 36px;
-}
-
-.cal-field:focus-visible {
-  outline: 2px solid var(--focus-ring-color, var(--accent));
-  outline-offset: 1px;
-}
-
 .cal-title-field {
   width: 100%;
   border: 0;

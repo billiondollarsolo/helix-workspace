@@ -23,6 +23,7 @@ type DecisionStore = Pick<
   | "loadCandidate"
   | "readCredential"
   | "recordVerdict"
+  | "claimProviderCall"
   | "setActionTaken"
   | "writeEvidence"
   | "markSpam"
@@ -174,10 +175,15 @@ export class MailDecisionWorker {
     }
     if (credential === null) return skip("credential_missing");
 
-    const provider = (options.createProvider ?? createDecisionModelProvider)(config, credential);
+    const claim = await options.runForTenant(orgId, () =>
+      options.store.claimProviderCall(base, config.dailyMessageCap),
+    );
+    if (claim === "daily_cap") return skip("daily_cap");
+    if (claim === "already_recorded") return { status: "ignored", reason: claim };
     const started = performance.now();
     let result;
     try {
+      const provider = (options.createProvider ?? createDecisionModelProvider)(config, credential);
       result = await provider.decide(request);
     } catch (error) {
       const reason = error instanceof DecisionModelError ? error.code : "provider_unavailable";

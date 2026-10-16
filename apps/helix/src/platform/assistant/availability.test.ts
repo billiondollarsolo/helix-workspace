@@ -33,6 +33,13 @@ function ollama(fetchImpl: typeof fetch, id = "ollama.local"): LLMProviderCapabi
 const sdkProvider = { id: "bedrock.main" } as unknown as LLMProviderCapability;
 
 describe("assistant availability check", () => {
+  it("re-probes changed provider credentials even when the provider id is unchanged", async () => {
+    let provider = ollama(async () => new Response(null, { status: 401 }));
+    const check = createAssistantAvailabilityCheck({ providers: () => [provider] });
+    await expect(check()).resolves.toMatchObject({ available: false, cause: "credentials" });
+    provider = ollama(async () => Response.json({ data: [] }));
+    await expect(check()).resolves.toEqual({ available: true });
+  });
   it("is not configured without providers", async () => {
     const check = createAssistantAvailabilityCheck({ providers: () => [] });
     await expect(check()).resolves.toEqual({ available: false, reason: "not_configured" });

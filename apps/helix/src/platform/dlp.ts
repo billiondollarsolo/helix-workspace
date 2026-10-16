@@ -60,7 +60,7 @@ export interface DlpAuditSink {
   }): Promise<unknown>;
 }
 
-const MAX_SCAN_BYTES = 256 * 1024;
+export const MAX_DLP_SCAN_BYTES = 256 * 1024;
 const classificationRank: Record<DataClassification, number> = {
   public: 0,
   standard: 1,
@@ -225,7 +225,7 @@ function boundedText(value: unknown): { readonly text: string; readonly truncate
     if (typeof candidate === "string" || candidate instanceof Uint8Array) {
       const text =
         typeof candidate === "string" ? candidate : Buffer.from(candidate).toString("utf8");
-      const remaining = MAX_SCAN_BYTES - bytes;
+      const remaining = MAX_DLP_SCAN_BYTES - bytes;
       if (Buffer.byteLength(text) > remaining) {
         chunks.push(Buffer.from(text).subarray(0, Math.max(0, remaining)).toString("utf8"));
         truncated = true;
@@ -325,6 +325,17 @@ export function dlpToolInvocation(
 }
 
 function resourceRefs(toolId: string, input: Record<string, unknown>): DlpResourceRef[] {
+  if (toolId.endsWith(".resource.read") && typeof input.resourceId === "string") {
+    const types: Record<string, string> = {
+      drive: "drive.file",
+      mail: "mail.thread",
+      chat: "chat.room",
+      calendar: "calendar.event",
+      contacts: "contacts.contact",
+    };
+    const type = types[toolId.split(".")[0] ?? ""];
+    return type === undefined ? [] : [{ resourceType: type, resourceId: input.resourceId }];
+  }
   const candidates: readonly [string, string][] = toolId.startsWith("drive.")
     ? [["drive.file", "objectId"]]
     : [];

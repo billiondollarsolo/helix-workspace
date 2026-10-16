@@ -100,7 +100,7 @@ describe("Admin user profiles", () => {
   }
 
   function button(label: string): HTMLButtonElement {
-    const match = [...container.querySelectorAll("button")].find(
+    const match = [...document.querySelectorAll("button")].find(
       (node) => (node.getAttribute("aria-label") ?? node.textContent?.trim()) === label,
     );
     if (!match) throw new Error(`Missing button: ${label}`);
@@ -136,9 +136,7 @@ describe("Admin user profiles", () => {
   }
 
   function input(name: string): HTMLInputElement | HTMLTextAreaElement {
-    const node = container.querySelector<HTMLInputElement | HTMLTextAreaElement>(
-      `[name="${name}"]`,
-    );
+    const node = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[name="${name}"]`);
     if (!node) throw new Error(`Missing profile field: ${name}`);
     return node;
   }
@@ -157,7 +155,7 @@ describe("Admin user profiles", () => {
   }
 
   async function submit(): Promise<void> {
-    const form = container.querySelector("form");
+    const form = document.querySelector("form");
     if (!form) throw new Error("Missing profile form");
     await act(() => {
       form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
@@ -213,9 +211,9 @@ describe("Admin user profiles", () => {
       return Promise.resolve();
     });
     await waitFor(() =>
-      expect(container.querySelector('input[aria-label="Select all users"]')).not.toBeNull(),
+      expect(document.querySelector('input[aria-label="Select all users"]')).not.toBeNull(),
     );
-    await waitFor(() => expect(container.textContent).toContain(actors[0]!.displayName));
+    await waitFor(() => expect(document.body.textContent).toContain(actors[0]!.displayName));
   }
 
   it("offers accessible editing only for human users and cancels without writing", async () => {
@@ -228,7 +226,7 @@ describe("Admin user profiles", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     // Only people have profiles: the agent, service, and system rows offer no edit.
     const others = [
-      ...container.querySelectorAll<HTMLButtonElement>(
+      ...document.querySelectorAll<HTMLButtonElement>(
         'button[aria-label="Actions for Taylor Quinn"]',
       ),
     ];
@@ -244,19 +242,19 @@ describe("Admin user profiles", () => {
     const opener = button("Actions for Morgan Lee");
     await editProfile("Morgan Lee");
     await waitFor(() => expect(input("displayName").value).toBe("Morgan Lee"));
-    const dialog = container.querySelector('[role="dialog"]');
-    expect(dialog?.getAttribute("aria-modal")).toBe("true");
+    const dialog = document.querySelector('[role="dialog"]');
+    expect(dialog?.getAttribute("aria-modal")).not.toBe("true");
     const title = document.getElementById(dialog?.getAttribute("aria-labelledby") ?? "");
     expect(title?.textContent).toBe("Edit profile for Morgan Lee");
     for (const name of ["displayName", "pronouns", "jobTitle", "about"]) {
-      expect(container.querySelector(`label[for="${input(name).id}"]`)).not.toBeNull();
+      expect(document.querySelector(`label[for="${input(name).id}"]`)).not.toBeNull();
     }
     expect(
-      container.querySelector('input[name="email"], input[name="scopes"], select[name="role"]'),
+      document.querySelector('input[name="email"], input[name="scopes"], select[name="role"]'),
     ).toBeNull();
     await click("Cancel");
-    expect(container.querySelector('[role="dialog"]')).toBeNull();
-    expect(document.activeElement).toBe(opener);
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(opener));
     expect(updates).toHaveLength(0);
   });
 
@@ -267,7 +265,7 @@ describe("Admin user profiles", () => {
     queryClient.setQueryData(profileQueryKeys.current, profile(user(otherId)));
     queryClient.setQueryData(sessionQueryKeys.current, { actorId: otherId, name: "Taylor Quinn" });
     await click("Load more");
-    await waitFor(() => expect(container.textContent).toContain("Taylor Quinn"));
+    await waitFor(() => expect(document.body.textContent).toContain("Taylor Quinn"));
     await editProfile("Taylor Quinn");
     await waitFor(() => expect(input("displayName").value).toBe("Taylor Quinn"));
     await change("displayName", "Taylor Rivera");
@@ -275,9 +273,9 @@ describe("Admin user profiles", () => {
     await change("jobTitle", "Team lead");
     await change("about", "");
     await submit();
-    await waitFor(() => expect(container.querySelector('[role="dialog"]')).toBeNull());
-    await waitFor(() => expect(container.textContent).toContain("Taylor Rivera"));
-    expect(container.textContent).toContain("Morgan Lee");
+    await waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
+    await waitFor(() => expect(document.body.textContent).toContain("Taylor Rivera"));
+    expect(document.body.textContent).toContain("Morgan Lee");
     expect(updates).toEqual([
       {
         path: `/v1/api/admin/users/${otherId}/profile`,
@@ -305,14 +303,14 @@ describe("Admin user profiles", () => {
     saveError = "You no longer have permission to edit this profile.";
     await submit();
     await waitFor(() =>
-      expect(container.querySelector('[role="alert"]')?.textContent).toContain(saveError),
+      expect(document.querySelector('[role="alert"]')?.textContent).toContain(saveError),
     );
     expect(input("displayName").value).toBe("Morgan Rivera");
     expect(profiles.get(humanId)?.displayName).toBe("Morgan Lee");
     saveError = undefined;
     await submit();
-    await waitFor(() => expect(container.querySelector('[role="dialog"]')).toBeNull());
-    await waitFor(() => expect(container.textContent).toContain("Morgan Rivera"));
+    await waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
+    await waitFor(() => expect(document.body.textContent).toContain("Morgan Rivera"));
   });
 
   it("reports a profile load error and retries before allowing changes", async () => {
@@ -320,11 +318,11 @@ describe("Admin user profiles", () => {
     loadError = "Profile access was refused.";
     await editProfile("Morgan Lee");
     await waitFor(() =>
-      expect(container.querySelector('[role="alert"]')?.textContent).toContain(loadError),
+      expect(document.querySelector('[role="alert"]')?.textContent).toContain(loadError),
     );
-    expect(container.querySelector("form")).toBeNull();
+    expect(document.querySelector("form")).toBeNull();
     loadError = undefined;
-    const retry = [...container.querySelectorAll<HTMLButtonElement>("button")].find((node) =>
+    const retry = [...document.querySelectorAll<HTMLButtonElement>("button")].find((node) =>
       node.textContent?.includes("Retry"),
     );
     expect(retry).toBeDefined();

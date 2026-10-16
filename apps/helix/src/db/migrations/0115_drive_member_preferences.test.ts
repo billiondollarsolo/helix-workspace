@@ -34,6 +34,7 @@ describe.skipIf(sql === null)("0115 live two-member Drive preference isolation",
   const orgId = "d7160000-0000-4000-8000-000000000001";
   const actorA = "d7160000-0000-4000-8000-000000000011";
   const actorB = "d7160000-0000-4000-8000-000000000012";
+  const agentId = "d7160000-0000-4000-8000-000000000013";
   const objectId = "d7160000-0000-4000-8000-000000000021";
   let membershipA = "";
   let membershipB = "";
@@ -48,7 +49,8 @@ describe.skipIf(sql === null)("0115 live two-member Drive preference isolation",
       insert into actors (id, org_id, type, display_name)
       values
         (${actorA}, ${orgId}, 'user', 'DRV 16 A'),
-        (${actorB}, ${orgId}, 'user', 'DRV 16 B')
+        (${actorB}, ${orgId}, 'user', 'DRV 16 B'),
+        (${agentId}, ${orgId}, 'agent', 'DRV 16 agent')
     `;
     const memberships = await database<{ id: string; actor_id: string }[]>`
       select id, actor_id
@@ -152,5 +154,17 @@ describe.skipIf(sql === null)("0115 live two-member Drive preference isolation",
       `;
     });
     expect(forgedPreference).toEqual([]);
+  });
+
+  it("explains why agents cannot change human membership preferences", async () => {
+    const store = new PostgresDriveStore(database);
+    for (const starred of [true, false]) {
+      await expect(
+        store.setStarred({ orgId, actorId: agentId, objectId, starred }),
+      ).rejects.toMatchObject({
+        statusCode: 403,
+        message: expect.stringContaining("human organization membership"),
+      });
+    }
   });
 });

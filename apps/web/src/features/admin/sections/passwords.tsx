@@ -21,7 +21,7 @@ const PASSWORDS_FLAGS = [
     key: "passwords_app",
     label: "Passwords is on for everyone",
     description:
-      "Adds Passwords to the app launcher. People create their own vault account with their work email. Off by default.",
+      "Adds Passwords to the sidebar. People unlock their own encrypted vault after signing in to Helix. Off by default.",
   },
 ] as const;
 
@@ -42,7 +42,11 @@ export function PasswordsAdminSection() {
           <PanelHeading
             id="passwords-server-heading"
             title="Password manager"
-            subtitle="An optional service, installed with the server. Its accounts are separate from workspace accounts."
+            subtitle={
+              passwords?.native
+                ? "KeePass-compatible personal vaults are built into Helix. Encryption and vault unlock happen in the browser."
+                : "An optional service, installed with the server. Its accounts are separate from workspace accounts."
+            }
           />
           {failure !== null ? (
             <QueryFailureBanner

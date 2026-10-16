@@ -64,6 +64,7 @@ export interface MailLabelRecord {
 
 /** A single row in the UI thread list — sender/subject/preview/time + flags. */
 export interface MailThreadRowRecord {
+  readonly followUp?: "needs_reply" | "waiting_on" | "done";
   readonly threadId: string;
   /** Most-recent message in the thread. */
   readonly messageId: string;
@@ -253,6 +254,8 @@ export type MailOutboundStatus =
   | "failed";
 
 export interface MailOutboundEnvelope {
+  /** Internal-only authorization must never fall back to an SMTP/provider delivery. */
+  readonly localOnly?: boolean;
   readonly from: MailEnvelopeAddress;
   readonly to: readonly MailEnvelopeAddress[];
   readonly cc: readonly MailEnvelopeAddress[];
@@ -441,6 +444,7 @@ export interface MailThreadGetRequest {
   readonly orgId: string;
   readonly actorId: string;
   readonly threadId: string;
+  readonly resourcePage?: { readonly limit: number; readonly after?: string };
 }
 
 export interface MailThreadMessage {
@@ -480,6 +484,8 @@ export interface MailThreadDetail {
   readonly preview: string;
   readonly participants: readonly MailEnvelopeAddress[];
   readonly messages: readonly MailThreadMessage[];
+  readonly nextCursor?: string;
+  readonly bodyTruncated?: boolean;
   readonly labels: readonly string[];
   readonly archivedAt: Date | null;
   readonly deletedAt: Date | null;
@@ -512,6 +518,7 @@ export interface MailSearchRecord {
 }
 
 export interface MailSearchProjectionStore {
+  getMailSearchRecordForIndexing?(input: MailProjectionRequest): Promise<MailSearchRecord | null>;
   getMailSearchRecord(input: MailProjectionRequest): Promise<MailSearchRecord | null>;
 }
 

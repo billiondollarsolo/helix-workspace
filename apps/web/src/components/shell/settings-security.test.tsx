@@ -61,6 +61,14 @@ function routes(extra: Record<string, unknown> = {}) {
     "/api/account/sessions/s-2/revoke": { revoked: true },
     "/api/account/sessions/revoke-others": { revoked: 1 },
     "/api/account/password": { changed: true },
+    "/api/account/email-mfa": {
+      outboundReady: false,
+      email: null,
+      verified: false,
+      enabled: false,
+      totpEnabled: false,
+      pendingEmail: null,
+    },
     "/api/tools/account.preferences.get": {
       language: null,
       timeZone: "UTC",
@@ -194,6 +202,25 @@ describe("2-step verification", () => {
     await settle();
     expect(control("6-digit code from your authenticator app")).not.toBeNull();
     expect(document.body.textContent).toContain("otpauth://totp/helix");
+  });
+
+  it("shows an accessible QR code and a manual setup key without sending it to an image service", async () => {
+    routes();
+    vi.mocked(enableTotp).mockResolvedValueOnce({
+      totpURI: "otpauth://totp/Helix:lea@example.test?secret=JBSWY3DPEHPK3PXP&issuer=Helix",
+      backupCodes: ["recovery-code"],
+    });
+    await renderSection();
+    typeInto(control("Confirm with your current password"), "current-password");
+    buttonNamed("Set up")?.click();
+    await settle();
+
+    const qr = document.querySelector('svg[role="img"]');
+    expect(qr?.querySelector("title")?.textContent).toBe("Scan to set up your authenticator app");
+    expect(qr?.querySelectorAll("path").length).toBeGreaterThan(0);
+    expect(document.querySelector("details code")?.textContent).toBe("JBSWY3DPEHPK3PXP");
+    expect(document.querySelector('img[src*="otpauth"], image')).toBeNull();
+    expect(await axeViolations()).toEqual([]);
   });
 
   it("shows a passkey list failure instead of an empty list, and retries", async () => {

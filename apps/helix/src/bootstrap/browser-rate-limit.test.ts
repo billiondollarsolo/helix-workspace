@@ -155,3 +155,18 @@ it("rejects forged identity headers before applying any browser allowance", asyn
   expect(response.statusCode).toBe(401);
   expect(verify).not.toHaveBeenCalled();
 });
+
+it.each([
+  { method: "GET", url: "/v1/sse/mail" },
+  { method: "GET", url: "/v1/events/ws", ws: true },
+  { method: "GET", url: "/v1/ws/chat", ws: true },
+])("does not retain a revoked session on a long-lived request: $url", async (request) => {
+  let valid = true;
+  const resolver = cacheSessionActorResolver({
+    resolve: async () => (valid ? { id: "alice", orgId, type: "user" } : null),
+  });
+  const stream = request as FastifyRequest;
+  expect(await resolver.resolve(stream)).toMatchObject({ id: "alice" });
+  valid = false;
+  expect(await resolver.resolve(stream)).toBeNull();
+});

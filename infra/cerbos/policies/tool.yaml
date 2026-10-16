@@ -19,6 +19,13 @@ resourcePolicy:
         match:
           expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "platform.read" && P.attr.scopes.exists(scope, scope == "platform.read")
 
+    - actions: ["agent.accounts.request"]
+      effect: EFFECT_ALLOW
+      roles: ["agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "agent.accounts.request" && P.attr.scopes.exists(scope, scope == "agent.accounts.request")
+
     - actions: ["tools:read"]
       effect: EFFECT_ALLOW
       roles: ["user", "agent", "service_account"]

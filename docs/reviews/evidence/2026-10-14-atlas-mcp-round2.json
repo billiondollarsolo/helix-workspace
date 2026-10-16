@@ -1,0 +1,172 @@
+{
+  "recordedAt": "2026-10-14T20:47:06.329563+00:00",
+  "environment": "development",
+  "endpoint": "https://workspace.helixapps.si/v1/mcp",
+  "agentName": "Atlas",
+  "agentId": "5e91dc16-c5bb-44c6-9c4d-7d49532a36c4",
+  "deployment": {
+    "api": "helix/workspace-development:atlas-round2",
+    "web": "helix/workspace-web-development:atlas-review-badges-final"
+  },
+  "distinctRound2Checks": 31,
+  "checks": [
+    {
+      "name": "R2 binary MCP resource describes its size without pretending to be text",
+      "passed": true
+    },
+    {
+      "name": "R2 authenticated binary download preserves all 512 bytes",
+      "passed": true
+    },
+    {
+      "name": "R2 byte-range download returns exact requested bytes",
+      "passed": true
+    },
+    {
+      "name": "R2 conditional download returns 304 with no bytes",
+      "passed": true
+    },
+    {
+      "name": "R2 invalid byte range returns 416",
+      "passed": true
+    },
+    {
+      "name": "R2 HEAD provides size without file bytes",
+      "passed": true
+    },
+    {
+      "name": "R2 finalize retry does not create another file version",
+      "passed": true
+    },
+    {
+      "name": "R2 Drive listing respects its requested page limit",
+      "passed": true
+    },
+    {
+      "name": "R2 Drive cursor advances without repeating the first file",
+      "passed": true
+    },
+    {
+      "name": "R2 incorrect checksum cannot publish a file",
+      "passed": true
+    },
+    {
+      "name": "R2 checksum mismatch returns an actionable integrity error",
+      "passed": true
+    },
+    {
+      "name": "R2 rejects malformed drive.list",
+      "passed": true
+    },
+    {
+      "name": "R2 rejects malformed chat.message.list",
+      "passed": true
+    },
+    {
+      "name": "R2 rejects malformed mail.send",
+      "passed": true
+    },
+    {
+      "name": "R2 rejects malformed drive.rename",
+      "passed": true
+    },
+    {
+      "name": "R2 create a file comment as Atlas",
+      "passed": true
+    },
+    {
+      "name": "R2 update a file comment through a bounded grant",
+      "passed": true
+    },
+    {
+      "name": "R2 resolve a comment",
+      "passed": true
+    },
+    {
+      "name": "R2 reopen a comment",
+      "passed": true
+    },
+    {
+      "name": "R2 create a threaded file comment",
+      "passed": true
+    },
+    {
+      "name": "R2 comments page respects limit",
+      "passed": true
+    },
+    {
+      "name": "R2 comment cursor does not repeat the first result",
+      "passed": true
+    },
+    {
+      "name": "R2 immutable comment history contains the original and edited text",
+      "passed": true
+    },
+    {
+      "name": "R2 edit only the Atlas fixture message",
+      "passed": true
+    },
+    {
+      "name": "R2 idempotent edit retry returns the same revision",
+      "passed": true
+    },
+    {
+      "name": "R2 changed input under the same idempotency key is rejected",
+      "passed": true
+    },
+    {
+      "name": "R2 a rejected retry leaves the original edit intact",
+      "passed": true
+    },
+    {
+      "name": "R2 chat attachment remains present after message edit",
+      "passed": true
+    },
+    {
+      "name": "R2 expired human approval is reported as expired",
+      "passed": true
+    },
+    {
+      "name": "R2 Atlas still cannot approve an expired human action",
+      "passed": true
+    },
+    {
+      "name": "R2 Atlas remains authenticated after the exercise",
+      "passed": true
+    }
+  ],
+  "headDownload": {
+    "status": 200,
+    "contentLength": "512",
+    "bytes": 0
+  },
+  "emailApproval": {
+    "pendingId": "d59032a6-b1f2-4017-ac94-492e12427221",
+    "status": "expired",
+    "outboundMessageCount": 0
+  },
+  "resolvedFailures": [
+    "File HEAD returned Content-Length 0 before the shared streaming fix. It now returns 512 with no body.",
+    "The expiry worker lacked tenant context and could not see pending actions through row-level security. The existing request now reports expired.",
+    "Automation bounds did not include comment identifiers or chat attachment object identifiers. Exact-resource regression and live collaboration checks now pass."
+  ],
+  "verification": {
+    "unitPassed": 5494,
+    "defaultIntegrationSkipped": 391,
+    "focusedRealPostgresPassed": 1,
+    "playwrightPassed": 22,
+    "reviewNavigationAxe": "passed in desktop/phone light/dark configurations",
+    "format": "passed",
+    "typecheck": "passed",
+    "lint": "passed",
+    "build": "passed",
+    "qualityBoundaries": "passed"
+  },
+  "limitations": [
+    "General Action required queue and persistent sidebar count are planned, not implemented.",
+    "No configured AI generation or live Meet media was tested.",
+    "No new external email was sent or human decision fabricated.",
+    "Atlas is retained, but no autonomous background runner was installed.",
+    "The prior encrypted off-server archive predates this round; no new restore drill was performed."
+  ]
+}

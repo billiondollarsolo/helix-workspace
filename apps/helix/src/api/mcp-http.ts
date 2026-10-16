@@ -1,3 +1,4 @@
+import { actorHasScope } from "./scopes.js";
 import type { JsonObject, ToolDefinition } from "@helix/sdk-types";
 import { randomUUID } from "node:crypto";
 import {
@@ -12,14 +13,21 @@ import {
   isJsonRpcNotificationOrResponse,
   jsonRpcError,
   parseJsonRpcRequest,
+  requestMeta,
 } from "./mcp-jsonrpc.js";
-import { versionedApiPath } from "./version.js";
+import {
+  validateModernMcpRequest,
+  MCP_VERSION_META,
+  mcpSubscriptionParamsSchema,
+} from "./mcp-modern.js";
+import { MCP_PROTOCOL_VERSION, versionedApiPath } from "./version.js";
 
 /**
  * Streamable HTTP transport rules for `/mcp` (MC5 / MC6), kept free of
  * Fastify so they can be tested directly.
  */
 export type McpHttpOutcome =
+  | { readonly kind: "listen" }
   | {
       readonly kind: "json";
       readonly statusCode: number;
@@ -143,18 +151,72 @@ export function handleMcpHttpPost(
   if (!isAuthenticatedMcpPrincipal(input.principal)) {
     return mcpUnauthorizedOutcome(input.publicBaseUrl);
   }
+  const request = parseJsonRpcRequest(input.body);
+  const origin = input.headers.origin;
+  if (origin !== undefined && origin !== new URL(input.publicBaseUrl).origin)
+    return {
+      kind: "json",
+      statusCode: 403,
+      headers: {},
+      body: jsonRpcError(request.id, -32003, "MCP origin is not allowed."),
+    };
   const protocolVersion = headerValue(input.headers[MCP_PROTOCOL_VERSION_HEADER]);
-  if (protocolVersion !== undefined && !MCP_SUPPORTED_PROTOCOL_VERSIONS.includes(protocolVersion)) {
+  const bodyVersion = requestMeta(request.params)?.[MCP_VERSION_META];
+  const requested = protocolVersion ?? (typeof bodyVersion === "string" ? bodyVersion : undefined);
+  if (requested !== undefined && !MCP_SUPPORTED_PROTOCOL_VERSIONS.includes(requested)) {
     return {
       kind: "json",
       statusCode: 400,
       headers: {},
-      body: jsonRpcError(
-        parseJsonRpcRequest(input.body).id,
-        -32600,
-        `Unsupported MCP-Protocol-Version "${protocolVersion}". Supported: ${MCP_SUPPORTED_PROTOCOL_VERSIONS.join(", ")}.`,
-      ),
+      body: jsonRpcError(request.id, -32022, "Unsupported MCP protocol version.", {
+        supported: MCP_SUPPORTED_PROTOCOL_VERSIONS,
+        requested,
+      }),
     };
+  }
+  const modern = protocolVersion === MCP_PROTOCOL_VERSION || bodyVersion !== undefined;
+  if (modern) {
+    const error = validateModernMcpRequest(input.body, input.headers);
+    if (error) return { kind: "json", statusCode: 400, headers: {}, body: error };
+    if (request.method === "subscriptions/listen" && input.live !== undefined) {
+      if (!actorHasScope(input.principal.actor, "notifications.read"))
+        return {
+          kind: "json",
+          statusCode: 403,
+          headers: {},
+          body: jsonRpcError(request.id, -32003, "Live subscriptions require notifications.read."),
+        };
+      if (!mcpSubscriptionParamsSchema.safeParse(request.params).success)
+        return {
+          kind: "json",
+          statusCode: 400,
+          headers: {},
+          body: jsonRpcError(
+            request.id,
+            -32602,
+            "subscriptions/listen requires a valid notifications filter.",
+          ),
+        };
+      if (!input.acceptsEventStream)
+        return {
+          kind: "json",
+          statusCode: 406,
+          headers: {},
+          body: jsonRpcError(
+            request.id,
+            -32600,
+            "subscriptions/listen requires Accept: text/event-stream.",
+          ),
+        };
+      return { kind: "listen" };
+    }
+    // Ordinary requests can return JSON even when the client also accepts SSE.
+    return handleMcpJsonRpcRequest({ ...input }).then((body) => ({
+      kind: "json" as const,
+      statusCode: "error" in body && body.error.code === -32601 ? 404 : 200,
+      headers: { "cache-control": "no-store" },
+      body,
+    }));
   }
   if (isJsonRpcNotificationOrResponse(input.body)) {
     // Notifications (e.g. notifications/initialized) and client responses
@@ -162,7 +224,6 @@ export function handleMcpHttpPost(
     return { kind: "json", statusCode: 202, headers: {} };
   }
 
-  const request = parseJsonRpcRequest(input.body);
   const clientSession = headerValue(input.headers[MCP_SESSION_HEADER]);
   const sessionId =
     clientSession !== undefined && MCP_SESSION_ID_PATTERN.test(clientSession)

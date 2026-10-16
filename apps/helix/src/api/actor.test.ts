@@ -256,6 +256,8 @@ describe("resolveCredentialAuthenticatedActor", () => {
     const store = storeWith([
       agentCredential({
         apiKeyHash,
+        actorDisplayName: "Juniper",
+        actorEmail: "juniper@helix.local",
         policy: { ...EMPTY_CREDENTIAL_POLICY, confirmationOverride: "always" },
       }),
     ]);
@@ -265,7 +267,12 @@ describe("resolveCredentialAuthenticatedActor", () => {
     );
     expect(result?.ok).toBe(true);
     if (result?.ok === true) {
-      expect(result.principal.actor).toMatchObject({ id: "agent-7", type: "agent" });
+      expect(result.principal.actor).toMatchObject({
+        id: "agent-7",
+        type: "agent",
+        displayName: "Juniper",
+        email: "juniper@helix.local",
+      });
       expect(result.principal.credentialId).toBe("cred-1");
       expect(credentialPolicyOf(result.principal.actor)?.confirmationOverride).toBe("always");
       expect(JSON.stringify(result.principal)).not.toContain("confirmationOverride");

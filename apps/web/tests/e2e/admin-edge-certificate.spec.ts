@@ -199,9 +199,15 @@ for (const width of [390, 1440])
       const dialog = page.getByRole("dialog", { name: "Use your own certificate" });
       await expect(dialog).toBeVisible();
       await audit(page);
+      await expect
+        .poll(async () => {
+          const box = await dialog.boundingBox();
+          return Math.round((box?.x ?? 0) + (box?.width ?? 0));
+        })
+        .toBeLessThanOrEqual(width);
       const bounds = await dialog.boundingBox();
       expect(bounds?.x).toBeGreaterThanOrEqual(0);
-      expect((bounds?.x ?? 0) + (bounds?.width ?? 0)).toBeLessThanOrEqual(width);
+      expect(Math.round((bounds?.x ?? 0) + (bounds?.width ?? 0))).toBeLessThanOrEqual(width);
       await page.screenshot({
         path: `/tmp/helix-release-work/edge-certificate-${width}-${theme}.png`,
         fullPage: true,

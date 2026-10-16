@@ -116,7 +116,7 @@ export function revokeMyAppPassword(
   return callTool("app.passwords.revoke", { passwordId }, { fetchImpl });
 }
 
-async function accountRequest(
+export async function accountRequest(
   path: string,
   method: "GET" | "POST",
   body: unknown,

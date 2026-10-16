@@ -20,6 +20,7 @@
  *
  * Re-runs never resync automatically; see --help.
  */
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
@@ -57,6 +58,7 @@ import {
   REMOTE_NAME,
   resolveLocalPath,
   resolveMaxSize,
+  sameSyncTarget,
 } from "./helix-drive-sync-lib.mjs";
 
 export * from "./helix-drive-sync-lib.mjs";
@@ -146,7 +148,7 @@ function probeConnection(runRclone, configPath, log) {
   log("Testing connection…");
   const list = runRclone(["lsd", remote(), "--config", configPath]);
   if (list.status !== 0) throw probeError(list, "list");
-  log("Checking upload and delete permissions…");
+  log("Checking folder creation and deletion…");
   // MKCOL + DELETE exercise drive.write and drive.delete without an upload
   // that would sit in the malware-scan queue.
   const canary = remote(canaryName());
@@ -223,7 +225,7 @@ function writeHelpers({ homeDir, mode, localPath, commandOptions, os }) {
   } else {
     writeShellHelper(
       join(homeDir, "status.sh"),
-      `#!/usr/bin/env bash\nset -euo pipefail\necho "Remote ${REMOTE_NAME}:"\nrclone lsd ${shellQuote(`${REMOTE_NAME}:`)} --config ${shellQuote(configPath)} || true\n`,
+      `#!/usr/bin/env bash\nset -euo pipefail\necho "Remote ${REMOTE_NAME}:"\nrclone lsd ${shellQuote(`${REMOTE_NAME}:`)} --config ${shellQuote(configPath)}\n`,
     );
   }
 }
@@ -284,6 +286,7 @@ export async function runSetup(options = {}) {
   }
 
   const prompter = options.prompter ?? (interactive ? createPrompter() : silentPrompter);
+  let candidatePath;
   try {
     const urlRaw =
       env.HELIX_SYNC_URL ??
@@ -305,7 +308,7 @@ export async function runSetup(options = {}) {
 
     log("");
     log("  How should files appear on this computer?");
-    log("    1) Mirror folder  — a normal folder that stays in sync (recommended)");
+    log("    1) Mirror folder  — sync now, then run or schedule the helper (recommended)");
     log("    2) Virtual drive  — mount Helix like a network drive");
     log("");
     const mode = parseMode(
@@ -326,8 +329,17 @@ export async function runSetup(options = {}) {
 
     mkdirSync(homeDir, { recursive: true, mode: 0o700 });
     const configPath = join(homeDir, "rclone.conf");
-    const candidatePath = join(homeDir, "rclone.conf.new");
-    const workdir = join(homeDir, "bisync");
+    candidatePath = join(homeDir, "rclone.conf.new");
+    const previous = readPreviousConfig(homeDir);
+    const current = { mode, url, user, localPath };
+    const workdir =
+      previous === null || sameSyncTarget(previous, current)
+        ? (previous?.workdir ?? join(homeDir, "bisync"))
+        : join(
+            homeDir,
+            "bisync-" +
+              createHash("sha256").update(JSON.stringify(current)).digest("hex").slice(0, 16),
+          );
     const commandOptions = { configPath, workdir, maxSize };
 
     log("");
@@ -340,18 +352,17 @@ export async function runSetup(options = {}) {
       rmSync(candidatePath, { force: true });
       throw error;
     }
-    // Swap in only after the new remote proved it can list, create, and delete.
-    renameSync(candidatePath, configPath);
-    chmodSync(configPath, 0o600);
-
-    const previous = readPreviousConfig(homeDir);
-    const current = { mode, url, user, localPath };
     const saveConfig = (extra = {}) =>
       writeFileSync(
         join(homeDir, "config.json"),
         `${JSON.stringify({ version: CONFIG_VERSION, remoteName: REMOTE_NAME, ...current, maxSize, configPath, workdir, updatedAt: new Date().toISOString(), ...extra }, null, 2)}\n`,
       );
-    writeHelpers({ homeDir, mode, localPath, commandOptions, os });
+    const commitConfig = (extra) => {
+      renameSync(candidatePath, configPath);
+      chmodSync(configPath, 0o600);
+      writeHelpers({ homeDir, mode, localPath, commandOptions, os });
+      saveConfig(extra);
+    };
 
     if (mode === "mirror") {
       ensureDir(localPath);
@@ -373,7 +384,9 @@ export async function runSetup(options = {}) {
           log(
             decision.reason === "baseline_missing"
               ? "  The previous sync state for this folder is missing."
-              : "  This changes the server, account, or folder of an existing sync.",
+              : decision.reason === "comparison_upgrade"
+                ? "  Sync now checks file contents to detect same-size edits; the old baseline needs rebuilding."
+                : "  This changes the server, account, or folder of an existing sync.",
           );
           log("  A resync can bring back files you deleted on one side since the last sync.");
           if (!(await confirm(prompter, interactive, "Rebuild the sync baseline now?"))) {
@@ -395,8 +408,8 @@ export async function runSetup(options = {}) {
       );
       const command =
         decision.action === "resync"
-          ? buildMirrorResyncCommand(localPath, commandOptions)
-          : buildMirrorCommand(localPath, commandOptions);
+          ? buildMirrorResyncCommand(localPath, { ...commandOptions, configPath: candidatePath })
+          : buildMirrorCommand(localPath, { ...commandOptions, configPath: candidatePath });
       const run = runRclone(command.args, { inherit: true });
       if (run.status !== 0) {
         throw new Error(
@@ -405,7 +418,7 @@ export async function runSetup(options = {}) {
             : "Sync failed. Fix the error above and re-run. If rclone reports missing prior listings, re-run with --resync.",
         );
       }
-      saveConfig({
+      commitConfig({
         baselineAt: decision.action === "resync" ? new Date().toISOString() : previous?.baselineAt,
       });
       log("");
@@ -419,7 +432,7 @@ export async function runSetup(options = {}) {
     }
 
     if (os !== "win32") ensureDir(localPath);
-    saveConfig();
+    commitConfig();
     log("");
     log("  ✓ Helix Drive is configured.");
     log(`  Start mount:  ${join(homeDir, os === "win32" ? "mount.cmd" : "mount.sh")}`);
@@ -440,6 +453,7 @@ export async function runSetup(options = {}) {
     log("");
     return { ok: true, mode, localPath, homeDir, url, action: "mount" };
   } finally {
+    if (candidatePath !== undefined) rmSync(candidatePath, { force: true });
     prompter.close?.();
   }
 }

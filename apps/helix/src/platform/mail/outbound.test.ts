@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import nodemailer from "nodemailer";
 import { MailDeliveryError } from "./errors.js";
 import {
   MailSendService,
@@ -68,9 +69,17 @@ class MemoryQueue implements OutboundMailQueueStore {
     const claimedAt = input.now ?? now;
     const nextAttemptAt = this.record.nextAttemptAt;
     const leaseExpiresAt = this.record.leaseExpiresAt;
+    if (this.record.status === "sending" && leaseExpiresAt != null && leaseExpiresAt <= claimedAt) {
+      this.record = {
+        ...this.record,
+        status: "failed",
+        deadLetteredAt: claimedAt,
+        lastError: "Delivery outcome unknown; review before replay",
+      };
+      return null;
+    }
     const due =
-      (this.record.status === "queued" && nextAttemptAt != null && nextAttemptAt <= claimedAt) ||
-      (this.record.status === "sending" && leaseExpiresAt != null && leaseExpiresAt <= claimedAt);
+      this.record.status === "queued" && nextAttemptAt != null && nextAttemptAt <= claimedAt;
     if (!due) return null;
     const attemptCount = (this.record.attemptCount ?? 0) + 1;
     this.record = {
@@ -215,14 +224,12 @@ describe("resolveOutboundAttachments", () => {
 });
 
 describe("durable outbound dispatch", () => {
-  it("recovers a stale lease after a post-handoff crash without a duplicate visible send", async () => {
+  it("holds an uncertain delivery after a post-handoff crash instead of sending again", async () => {
     const store = new MemoryQueue();
-    const visible = new Set<string>();
     const handoffs: string[] = [];
     const transport: OutboundMailTransport = {
       async send(_message, handoff) {
         handoffs.push(handoff.idempotencyKey);
-        visible.add(handoff.idempotencyKey);
         return { providerMessageId: "provider-1", deliveryMetadata: {} };
       },
     };
@@ -243,14 +250,14 @@ describe("durable outbound dispatch", () => {
       leaseMs: 1_000,
     });
     await expect(worker2.drainOnce(new Date(now.getTime() + 999))).resolves.toBe(0);
-    await expect(worker2.drainOnce(new Date(now.getTime() + 1_000))).resolves.toBe(1);
-    expect(store.record.status).toBe("accepted");
-    expect(store.record.attemptCount).toBe(2);
-    expect(handoffs).toEqual(["handoff-1", "handoff-1"]);
-    expect(visible).toEqual(new Set(["handoff-1"]));
+    await expect(worker2.drainOnce(new Date(now.getTime() + 1_000))).resolves.toBe(0);
+    expect(store.record.status).toBe("failed");
+    expect(store.record.deadLetteredAt).toBeTruthy();
+    expect(store.record.attemptCount).toBe(1);
+    expect(handoffs).toEqual(["handoff-1"]);
   });
 
-  it("reclaims a crash after claim but before provider handoff", async () => {
+  it("requires review after a lost lease even when handoff was not observed", async () => {
     const store = new MemoryQueue();
     await store.claimDueOutbound({ owner: "dead-process", leaseMs: 1_000, now });
     const send = vi.fn(async () => ({ providerMessageId: "provider-1", deliveryMetadata: {} }));
@@ -261,9 +268,9 @@ describe("durable outbound dispatch", () => {
     });
 
     await expect(worker.drainOnce(new Date(now.getTime() + 999))).resolves.toBe(0);
-    await expect(worker.drainOnce(new Date(now.getTime() + 1_000))).resolves.toBe(1);
-    expect(send).toHaveBeenCalledOnce();
-    expect(store.record.status).toBe("accepted");
+    await expect(worker.drainOnce(new Date(now.getTime() + 1_000))).resolves.toBe(0);
+    expect(send).not.toHaveBeenCalled();
+    expect(store.record.status).toBe("failed");
   });
 
   it("persists retry timing across restart and never runs early or busy-loops", async () => {
@@ -420,6 +427,29 @@ describe("MailSendService.cancel", () => {
 });
 
 describe("NodemailerMailTransport attachment content", () => {
+  it("keeps the local message reference through a Mail Manager environment relay", async () => {
+    const sendMail = vi.fn(async () => ({ messageId: "<local@helix.test>" }));
+    const createTransport = vi
+      .spyOn(nodemailer, "createTransport")
+      .mockReturnValue({ sendMail } as never);
+    try {
+      const transport = new NodemailerMailTransport({
+        host: "ingress.fips.region.mail-manager-smtp.amazonaws.com",
+      });
+      await transport.send(envelope({ messageId: "<local@helix.test>" }), {
+        idempotencyKey: "handoff-test",
+      });
+      expect(sendMail).toHaveBeenCalledWith(
+        expect.objectContaining({
+          messageId: "<local@helix.test>",
+          references: ["<local@helix.test>"],
+        }),
+      );
+    } finally {
+      createTransport.mockRestore();
+    }
+  });
+
   it("accepts Buffer content", async () => {
     // Smoke: constructor accepts config shape (no live SMTP).
     expect(

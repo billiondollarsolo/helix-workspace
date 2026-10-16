@@ -13,7 +13,7 @@ export const DEFAULT_MIRROR_DIR_NAME = "HelixDrive";
 export const MIN_RCLONE_VERSION = Object.freeze({ major: 1, minor: 66 });
 /** Matches the server default HELIX_DRIVE_AV_MAX_FILE_BYTES (128 MiB). rclone "M" is MiB. */
 export const DEFAULT_MAX_SIZE = "128M";
-export const CONFIG_VERSION = 2;
+export const CONFIG_VERSION = 3;
 
 export function helixHomeDir(home = homedir(), os = platform()) {
   return pathFor(os).join(home, ".helix", "drive-sync");
@@ -203,7 +203,23 @@ function filterArgs(maxSize) {
 
 export function buildMirrorCommand(localPath, options = {}) {
   const { remoteName = REMOTE_NAME, configPath, workdir, maxSize = DEFAULT_MAX_SIZE } = options;
-  const args = ["bisync", localPath, `${remoteName}:`, "--create-empty-src-dirs", "--resilient"];
+  // Plain WebDAV exposes no usable hash/modtime; compare downloaded hashes to catch same-size edits.
+  const args = [
+    "bisync",
+    localPath,
+    `${remoteName}:`,
+    "--create-empty-src-dirs",
+    "--resilient",
+    "--recover",
+    "--max-lock",
+    "2m",
+    "--checksum",
+    "--compare",
+    "size,checksum",
+    "--download-hash",
+    "--disable",
+    "Move,Copy,DirMove",
+  ];
   if (workdir !== undefined) args.push("--workdir", workdir);
   args.push(...filterArgs(maxSize));
   if (configPath !== undefined) args.push("--config", configPath);
@@ -231,6 +247,8 @@ export function buildMountCommand(localPath, options = {}) {
     "full",
     "--dir-cache-time",
     "30s",
+    "--disable",
+    "Move,Copy,DirMove",
     ...filterArgs(maxSize),
   ];
   if (os === "win32") args.push("--network-mode");
@@ -265,6 +283,14 @@ export function decideMirrorRun({ previous, current, hasBaseline, localNonEmpty,
     return { action: "resync", reason: "forced", confirm: "none", warnNonEmpty: localNonEmpty };
   }
   if (sameSyncTarget(previous, current) && hasBaseline) {
+    if (previous.version !== CONFIG_VERSION) {
+      return {
+        action: "resync",
+        reason: "comparison_upgrade",
+        confirm: "explicit",
+        warnNonEmpty: false,
+      };
+    }
     return { action: "bisync", reason: "unchanged", confirm: "none", warnNonEmpty: false };
   }
   if (previous === null) {

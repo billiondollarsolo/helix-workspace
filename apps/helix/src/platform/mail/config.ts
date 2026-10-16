@@ -158,6 +158,11 @@ function buildReceiverTransportSecurity(env: Env): SmtpTransportSecurity {
         mode,
         key,
         cert,
+        ...(env.MAIL_SMTP_RECEIVER_TRUSTED_PROXY_IPS === undefined
+          ? {}
+          : {
+              trustedForwarderIps: parseTrustedProxyIps(env.MAIL_SMTP_RECEIVER_TRUSTED_PROXY_IPS),
+            }),
         ...(env.MAIL_SMTP_RECEIVER_TLS_CA === undefined
           ? {}
           : { ca: env.MAIL_SMTP_RECEIVER_TLS_CA }),

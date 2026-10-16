@@ -86,6 +86,16 @@ describe("useMailRealtime", () => {
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["mail"] });
   });
 
+  it("catches up after reconnection even when no new mail frame arrives", () => {
+    const connection = source();
+    connection.listeners.get("open")?.(new MessageEvent("open"));
+    invalidate.mockClear();
+    // Mail can arrive during a connection gap, without reaching this listener.
+    connection.listeners.get("open")?.(new MessageEvent("open"));
+    expect(invalidate).toHaveBeenCalledOnce();
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["mail"] });
+  });
+
   it("refreshes the changed thread, the lists, folder counts and search on mail.updated", () => {
     source().emit({ type: "mail.updated", threadId: "t-42", orgId: "o1" });
     const keys = invalidate.mock.calls.map(([filters]) => filters?.queryKey);

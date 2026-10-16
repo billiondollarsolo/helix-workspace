@@ -62,7 +62,7 @@ async function setup(tool: ToolDefinition, configure?: (app: FastifyInstance) =>
       headers: { authorization: "Bearer idem-token", "idempotency-key": key },
       payload: { subject: "hello" },
     });
-  return { app, post };
+  return { app, post, tokenStore };
 }
 
 describe("tool REST bearer authentication (CA4)", () => {
@@ -178,4 +178,28 @@ describe("tool REST idempotency claims (CA3)", () => {
     expect(calls).toBe(1);
     await app.close();
   });
+});
+
+it("refuses cached results after the current token loses its scope", async () => {
+  let calls = 0;
+  const { app, post, tokenStore } = await setup(
+    writeTool("auth.replay", async () => ({ privateResult: ++calls })),
+  );
+  try {
+    expect((await post("scope-replay")).statusCode).toBe(200);
+    await tokenStore.saveToken({
+      token: "idem-token",
+      clientId: "client-1",
+      actorId: "user-idem",
+      orgId: "org-idem",
+      actorType: "user",
+      scopes: [],
+      issuedAt: new Date(),
+      expiresAt: new Date("2099-01-01"),
+    });
+    expect((await post("scope-replay")).statusCode).toBe(403);
+    expect(calls).toBe(1);
+  } finally {
+    await app.close();
+  }
 });

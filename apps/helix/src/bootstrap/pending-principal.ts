@@ -15,7 +15,13 @@ type PendingPrincipalResolver = NonNullable<ToolRegistryOptions["resolvePendingP
 export function createPendingPrincipalResolver(
   sql: postgres.Sql,
   agentCredentialStore: Pick<PostgresAgentCredentialStore, "findById">,
-): PendingPrincipalResolver {
+): (
+  record: Pick<
+    Parameters<PendingPrincipalResolver>[0],
+    "requesterCredentialId" | "requesterActorId" | "orgId" | "requesterIp"
+  >,
+  context?: Parameters<PendingPrincipalResolver>[1],
+) => ReturnType<PendingPrincipalResolver> {
   return async (record) => {
     if (record.requesterCredentialId === null) {
       // Role bindings authorize a person as much as their own scopes do;

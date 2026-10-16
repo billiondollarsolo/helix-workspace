@@ -79,6 +79,9 @@ export async function installMailWorkers(context: Awaited<ReturnType<typeof inst
   const mailAppRegistered = coreApps.shouldRegister("mail");
 
   const outboundMailConfig = mailAppRegistered ? mailCfg.outbound : undefined;
+  const environmentProvidesDkim =
+    bootEnv.MAIL_PROVIDER === "ses" ||
+    (bootEnv.MAIL_SMTP_HOST === undefined && bootEnv.SES_SMTP_HOST !== undefined);
 
   const mailDkimKeyStore = new PostgresMailDkimKeyStore(
     sql,
@@ -116,9 +119,9 @@ export async function installMailWorkers(context: Awaited<ReturnType<typeof inst
         providerStore: outboundProviderStore,
         domainStore: sendingDomainStore,
         secrets: mailSecretProvider,
-        dkimResolver: (orgId) => (from) =>
+        dkimResolver: (orgId, providerKind) => (from) =>
           withTenantPostgresContext(sql, { orgId }, () =>
-            mailDkimKeyStore.resolveSigningKey(orgId, from),
+            mailDkimKeyStore.resolveSigningKey(orgId, from, providerKind !== "ses"),
           ),
         cacheTtlMs: 0,
         ...(outboundMailConfig === undefined
@@ -170,7 +173,11 @@ export async function installMailWorkers(context: Awaited<ReturnType<typeof inst
               return decision.source === "environment" && outboundMailConfig !== undefined
                 ? new NodemailerMailTransport(outboundMailConfig, (from) =>
                     withTenantPostgresContext(sql, { orgId: outbound.orgId }, () =>
-                      mailDkimKeyStore.resolveSigningKey(outbound.orgId, from),
+                      mailDkimKeyStore.resolveSigningKey(
+                        outbound.orgId,
+                        from,
+                        !environmentProvidesDkim,
+                      ),
                     ),
                   )
                 : decision.transport;
@@ -321,7 +328,11 @@ export async function installMailWorkers(context: Awaited<ReturnType<typeof inst
         });
 
   // Post-storage AI decision model (per-org opt-in; fail-open; never blocks SMTP).
-  const mailDecisionStore = new PostgresMailDecisionStore(sql, tenantSecretCipher);
+  const mailDecisionStore = new PostgresMailDecisionStore(
+    sql,
+    tenantSecretCipher,
+    context.driveStorageResolver,
+  );
   const mailDecisionWorker = !mailAppRegistered
     ? undefined
     : new MailDecisionWorker({

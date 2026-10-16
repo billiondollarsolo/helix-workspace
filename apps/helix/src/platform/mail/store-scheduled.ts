@@ -1,4 +1,6 @@
 import type { JsonObject } from "@helix/sdk-types";
+import { readMailBody } from "./body-storage.js";
+import type { TenantStorageResolver } from "../storage/tenant-resolver.js";
 import type postgres from "postgres";
 import { mailAddressArray } from "./store-addresses.js";
 import type { MailScheduledSendRecord } from "./types.js";
@@ -39,7 +41,24 @@ function mapScheduled(row: ScheduledRow): MailScheduledSendRecord {
 
 /** Sends the actor scheduled for later that have not been handed off yet. */
 export class MailScheduledStore {
-  constructor(private readonly sql: postgres.Sql) {}
+  constructor(
+    private readonly sql: postgres.Sql,
+    private readonly storageResolver?: TenantStorageResolver,
+  ) {}
+
+  private async hydrate(orgId: string, row: ScheduledRow): Promise<MailScheduledSendRecord> {
+    if (row.envelope.bodyStorage !== "object-v1") return mapScheduled(row);
+    const body = await readMailBody(this.sql, this.storageResolver, orgId, row.message_id);
+    const { bodyStorage: _marker, ...envelope } = row.envelope;
+    return mapScheduled({
+      ...row,
+      envelope: {
+        ...envelope,
+        text: body.text,
+        ...(body.html === undefined ? {} : { html: body.html }),
+      },
+    });
+  }
 
   async listScheduledSends(
     input: Mailbox & { readonly limit: number; readonly offset: number },
@@ -53,7 +72,9 @@ export class MailScheduledStore {
       order by scheduled_for asc, id asc
       limit ${input.limit} offset ${input.offset}
     `;
-    return { scheduled: rows.map(mapScheduled), total: rows[0]?.total ?? 0 };
+    const scheduled: MailScheduledSendRecord[] = [];
+    for (const row of rows) scheduled.push(await this.hydrate(input.orgId, row));
+    return { scheduled, total: rows[0]?.total ?? 0 };
   }
 
   /** Move a scheduled send that has not started sending; null when it is gone. */
@@ -75,6 +96,6 @@ export class MailScheduledStore {
       select id, thread_id, message_id, envelope, scheduled_for, created_at, 1 as total
       from moved
     `;
-    return rows[0] === undefined ? null : mapScheduled(rows[0]);
+    return rows[0] === undefined ? null : this.hydrate(input.orgId, rows[0]);
   }
 }

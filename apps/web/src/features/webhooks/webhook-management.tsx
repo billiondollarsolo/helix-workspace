@@ -473,22 +473,24 @@ export function WebhookManagement() {
         <div className="webhooks-secret-banner" role="status">
           <span>Rotated inbound secret</span>
           <code>{rotatedSecret}</code>
-          <button
-            className="icon-button"
+          <Button
+            variant="ghost"
+            size="icon-sm"
             onClick={() => void copyText(rotatedSecret)}
             title="Copy secret"
             type="button"
           >
             <Copy aria-hidden="true" size={16} />
-          </button>
-          <button
-            className="icon-button"
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
             onClick={() => setRotatedSecret(null)}
             title="Dismiss"
             type="button"
           >
             <X aria-hidden="true" size={16} />
-          </button>
+          </Button>
         </div>
       ) : null}
 

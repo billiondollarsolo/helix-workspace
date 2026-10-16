@@ -1,3 +1,4 @@
+import { createSearchEngine } from "./search.js";
 import { runtimeEnvironment } from "../config/env.js";
 import { envFlag, parseS3ServerSideEncryption } from "../bootstrap/env.js";
 import { PostgresChatAttachmentStore } from "../platform/chat/index.js";
@@ -223,7 +224,9 @@ export async function installStorage(context: Awaited<ReturnType<typeof installA
     },
   );
 
+  const searchEngine = await createSearchEngine(bootEnv.HELIX_REGION);
   const mailStore = new PostgresMailStore(sql, {
+    searchEngine,
     storageResolver: driveStorageResolver,
     attachmentIngestor: mailAttachmentIngestor,
   });
@@ -324,6 +327,7 @@ export async function installStorage(context: Awaited<ReturnType<typeof installA
     inboundMailScanners,
     driveStorage,
     driveStorageResolver,
+    searchEngine,
     tenantStorageMigrationJobStore,
     tenantStorageMigrationWorker,
     byoStorageHealthWorker,

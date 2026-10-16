@@ -1,31 +1,13 @@
-/* The admin console's one table.
- *
- * Before this file the console rendered tabular data two incompatible ways:
- * eleven real `<table>` elements (eight through the shadcn primitive, three raw
- * in webhooks) alongside ten hand-built CSS-grid pseudo-tables. The grid ones
- * carried twenty separate `grid-template-columns` definitions, five different
- * row heights across five sections, four different last-row border strategies,
- * and — because a div is not a row — gave assistive technology a stack of
- * anonymous boxes where the semantics said "table".
- *
- * This wraps the shadcn `Table` rather than replacing it, because the eight
- * sections already using it are the ones that are right. What it adds is what
- * every grid pseudo-table was hand-rolling, plus the two capabilities no admin
- * list had at all:
- *
- *   1. the density token — one `--rd-list-row-h`, so a row is the same height
- *      in Users as in Domains and both tighten under `[data-density="compact"]`
- *   2. the uppercase caption treatment, as a class rather than the exported
- *      `HEADER_CELL` CSSProperties object (an inline style cannot carry a focus
- *      ring, a media query, or a theme)
- *   3. a required accessible name — three raw tables in webhooks had none, so a
- *      screen reader announced "table" and nothing else
- *   4. sorting (§SORTING) — no column anywhere in this console could be sorted
- *   5. virtualization (§VIRTUALIZATION) — no admin list was virtualized, on a
- *      directory that pages to 250 rows at a time
- */
+/** Shared Admin table: TanStack ordering, shared styles, and windowed large lists. */
 
 import { useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useReactTable,
+  getCoreRowModel,
+  getSortedRowModel,
+  type ColumnDef,
+  type SortingState,
+} from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Table,
@@ -62,47 +44,6 @@ export interface AdminColumn<TRow> {
 }
 
 type SortDirection = "asc" | "desc";
-
-interface SortState {
-  readonly columnId: string;
-  readonly direction: SortDirection;
-}
-
-/* ------------------------------------------------------------------ */
-/* SORTING                                                             */
-/* ------------------------------------------------------------------ */
-
-/* Three states, not two: none → ascending → descending → none.
- *
- * The un-sorted state has to be reachable, because for several of these lists
- * the server's own order is information — the audit log is newest-first, the
- * directory is newest-first. A two-state toggle would make that order
- * unrecoverable without a reload. */
-function nextSort(current: SortState | null, columnId: string): SortState | null {
-  if (current === null || current.columnId !== columnId) {
-    return { columnId, direction: "asc" };
-  }
-  return current.direction === "asc" ? { columnId, direction: "desc" } : null;
-}
-
-/** Compare two values *including* the direction, because "unknown sorts last"
- *  cannot be expressed by a comparator whose result is later multiplied by the
- *  direction — that flips the nulls to the front on the descending pass. They
- *  are placed here, outside the flip.
- *
- *  Unknown last both ways: treating `null` as less-than files every unnamed
- *  actor at the top of an A-Z sort and invites the reader to think those are
- *  the As. */
-function compare(left: AdminSortValue, right: AdminSortValue, direction: SortDirection): number {
-  if (left === null && right === null) return 0;
-  if (left === null) return 1;
-  if (right === null) return -1;
-  const order =
-    typeof left === "number" && typeof right === "number"
-      ? left - right
-      : String(left).localeCompare(String(right), undefined, { numeric: true });
-  return direction === "asc" ? order : -order;
-}
 
 const ARIA_SORT: Record<SortDirection, "ascending" | "descending"> = {
   asc: "ascending",
@@ -143,6 +84,7 @@ export function AdminTable<TRow>({
   partialNote,
   /** Cap for the scroll container once virtualization kicks in. */
   maxHeight = "60vh",
+  searchText,
 }: {
   readonly label: string;
   readonly columns: readonly AdminColumn<TRow>[];
@@ -151,25 +93,61 @@ export function AdminTable<TRow>({
   readonly empty?: ReactNode;
   readonly partialNote?: string;
   readonly maxHeight?: string;
+  /** Explicit searchable display fields; never pass a credential or secret. */
+  readonly searchText?: (row: TRow) => string;
 }) {
-  const [sort, setSort] = useState<SortState | null>(null);
+  const [search, setSearch] = useState("");
+  const [sorting, setSorting] = useState<SortingState>([]);
   const scrollRef = useRef<HTMLDivElement | null>(null);
-
-  const sortedRows = useMemo(() => {
-    if (sort === null) {
-      return rows;
-    }
-    const column = columns.find((candidate) => candidate.id === sort.columnId);
-    if (column?.sortValue === undefined) {
-      return rows;
-    }
-    const sortValue = column.sortValue;
-    /* Copy before sorting: `rows` belongs to the caller (usually straight off a
-       query cache) and sorting in place would mutate it. */
-    return [...rows].sort((left, right) =>
-      compare(sortValue(left), sortValue(right), sort.direction),
+  const definitions = useMemo<ColumnDef<TRow>[]>(
+    () =>
+      columns.map((column) => ({
+        id: column.id,
+        accessorFn:
+          column.sortValue === undefined
+            ? undefined
+            : (row: TRow) => column.sortValue?.(row) ?? undefined,
+        enableSorting: column.sortValue !== undefined,
+        sortDescFirst: false,
+        sortUndefined: "last",
+        sortingFn: (left, right, id) => {
+          const a = left.getValue<AdminSortValue>(id);
+          const b = right.getValue<AdminSortValue>(id);
+          return typeof a === "number" && typeof b === "number"
+            ? a - b
+            : String(a).localeCompare(String(b), undefined, { numeric: true });
+        },
+      })),
+    [columns],
+  );
+  const data = useMemo(() => {
+    const query = search.trim().toLocaleLowerCase();
+    return searchText && query
+      ? rows.filter((row) => searchText(row).toLocaleLowerCase().includes(query))
+      : [...rows];
+  }, [rows, search, searchText]);
+  const table = useReactTable({
+    data,
+    columns: definitions,
+    getRowId: rowKey,
+    state: { sorting },
+    onSortingChange: setSorting,
+    enableMultiSort: false,
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+  });
+  const sortedRows = table.getRowModel().rows.map((row) => row.original);
+  const sort = sorting[0];
+  const sortOptions = columns
+    .filter((column) => column.sortValue)
+    .flatMap((column) =>
+      [false, true].map((desc) => ({
+        id: column.id,
+        desc,
+        value: `${column.id}:${String(desc)}`,
+        label: `${typeof column.header === "string" ? column.header : column.id} (${desc ? "descending" : "ascending"})`,
+      })),
     );
-  }, [columns, rows, sort]);
 
   const virtualized = sortedRows.length > VIRTUALIZE_ABOVE;
   const virtualizer = useVirtualizer({
@@ -180,7 +158,15 @@ export function AdminTable<TRow>({
     enabled: virtualized,
   });
 
-  const virtualRows = virtualized ? virtualizer.getVirtualItems() : [];
+  const measuredRows = virtualized ? virtualizer.getVirtualItems() : [];
+  const virtualRows =
+    measuredRows.length || !virtualized
+      ? measuredRows
+      : sortedRows.slice(0, 20).map((_, index) => ({
+          index,
+          start: index * ESTIMATED_ROW_HEIGHT,
+          end: (index + 1) * ESTIMATED_ROW_HEIGHT,
+        }));
   const paddingTop = virtualRows[0]?.start ?? 0;
   const lastRow = virtualRows[virtualRows.length - 1];
   const paddingBottom = lastRow === undefined ? 0 : virtualizer.getTotalSize() - lastRow.end;
@@ -194,7 +180,7 @@ export function AdminTable<TRow>({
         <TableRow>
           {columns.map((column) => {
             const sortable = column.sortValue !== undefined;
-            const active = sort?.columnId === column.id;
+            const active = sort?.id === column.id;
             const caption =
               column.headerHidden === true ? (
                 <span className="sr-only">{column.header}</span>
@@ -211,27 +197,37 @@ export function AdminTable<TRow>({
                 /* `none` on a sortable column, absent on one that cannot sort —
                    announcing "not sorted" for a column that never sorts is
                    noise, not information. */
-                aria-sort={sortable ? (active ? ARIA_SORT[sort.direction] : "none") : undefined}
+                aria-sort={
+                  sortable ? (active ? ARIA_SORT[sort?.desc ? "desc" : "asc"] : "none") : undefined
+                }
               >
                 {sortable ? (
-                  <button
-                    type="button"
-                    className="admin-table-sort"
-                    onClick={() => {
-                      setSort((current) => nextSort(current, column.id));
-                    }}
-                  >
-                    {caption}
-                    {/* The direction indicator is drawn by CSS from `aria-sort`
+                  <>
+                    <span className="admin-table-mobile-caption">{caption}</span>
+                    <button
+                      type="button"
+                      className="admin-table-sort"
+                      aria-label={
+                        typeof column.header === "string"
+                          ? `${column.header}${active && partialNote ? `. ${partialNote}` : ""}`
+                          : undefined
+                      }
+                      onClick={() => {
+                        table.getColumn(column.id)?.toggleSorting();
+                      }}
+                    >
+                      {caption}
+                      {/* The direction indicator is drawn by CSS from `aria-sort`
                         on the header — decorative by construction, so it stays
                         out of the cell's text content and out of the accessible
                         name, which is just the caption. */}
-                    {active && partialNote !== undefined ? (
-                      /* Read out with the column name, so the scope of the sort
+                      {active && partialNote !== undefined ? (
+                        /* Read out with the column name, so the scope of the sort
                          travels with the claim that it is sorted. */
-                      <span className="sr-only">{partialNote}</span>
-                    ) : null}
-                  </button>
+                        <span className="sr-only">{partialNote}</span>
+                      ) : null}
+                    </button>
+                  </>
                 ) : (
                   caption
                 )}
@@ -241,11 +237,13 @@ export function AdminTable<TRow>({
         </TableRow>
       </TableHeader>
       <TableBody>
-        {sortedRows.length === 0 && empty !== undefined ? (
+        {sortedRows.length === 0 && (empty !== undefined || search.trim()) ? (
           <TableRow>
             {/* One cell spanning the table, so the explanation sits under the
                 headings rather than squeezed into the first column. */}
-            <TableCell colSpan={columns.length}>{empty}</TableCell>
+            <TableCell colSpan={columns.length}>
+              {search.trim() ? "No matching results. Clear or change your search." : empty}
+            </TableCell>
           </TableRow>
         ) : (
           <>
@@ -282,23 +280,59 @@ export function AdminTable<TRow>({
     </Table>
   );
 
-  if (!virtualized) {
-    return body;
-  }
   return (
-    /* The scroll container has to be outside the table for the virtualizer to
-       measure against it. `tabIndex` because a scrollable region must be
-       reachable from the keyboard — axe's `scrollable-region-focusable`, and
-       the reason someone who cannot use a pointer can still read row 300. */
-    <div
-      className="admin-table-scroll"
-      ref={scrollRef}
-      style={{ maxHeight }}
-      tabIndex={0}
-      role="group"
-      aria-label={label}
-    >
-      {body}
-    </div>
+    <>
+      {searchText ? (
+        <label className="admin-field">
+          <span className="admin-field-label">Search {label.toLocaleLowerCase()}</span>
+          <input
+            className="input"
+            type="search"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+          {partialNote ? (
+            <span className="type-caption text-muted-foreground">{partialNote}</span>
+          ) : null}
+        </label>
+      ) : null}
+      {sortOptions.length ? (
+        <label className="admin-table-mobile-sort admin-field">
+          <span className="admin-field-label">Sort {label.toLocaleLowerCase()}</span>
+          <select
+            className="select"
+            value={sort ? `${sort.id}:${String(sort.desc)}` : ""}
+            onChange={(event) => {
+              const choice = sortOptions.find((option) => option.value === event.target.value);
+              setSorting(choice ? [{ id: choice.id, desc: choice.desc }] : []);
+            }}
+          >
+            <option value="">Original order</option>
+            {sortOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          {sort && partialNote && !searchText ? (
+            <span className="type-caption text-muted-foreground">{partialNote}</span>
+          ) : null}
+        </label>
+      ) : null}
+      {virtualized ? (
+        <div
+          className="admin-table-scroll"
+          ref={scrollRef}
+          style={{ maxHeight }}
+          tabIndex={0}
+          role="group"
+          aria-label={label}
+        >
+          {body}
+        </div>
+      ) : (
+        body
+      )}
+    </>
   );
 }

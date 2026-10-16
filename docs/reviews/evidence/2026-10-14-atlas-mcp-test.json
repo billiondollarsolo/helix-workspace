@@ -1,0 +1,540 @@
+{
+  "type": "helix.development-atlas-mcp-exercise.v1",
+  "date": "2026-10-14",
+  "releaseGateSatisfied": false,
+  "agent": {
+    "agentId": "5e91dc16-c5bb-44c6-9c4d-7d49532a36c4",
+    "ownerId": "0ee03541-4417-42af-b38b-8e69dbea9316",
+    "mailAddress": "atlas@workspace.helixapps.si",
+    "folderId": "45751ee1-7358-497f-910b-7743c9edb14d",
+    "roomId": "b4a51c63-f818-400b-a3c9-9eb918a2c84d",
+    "expiresAt": "2026-11-13T16:56:52.000Z",
+    "automationExpiresAt": "2026-10-21T16:56:52.000Z",
+    "scopes": [
+      "platform.read",
+      "tools:read",
+      "mail.read",
+      "mail.write",
+      "mail.send",
+      "mail.external",
+      "drive.read",
+      "drive.write",
+      "chat.read",
+      "chat.post",
+      "contacts.read",
+      "calendar.read",
+      "meet.read",
+      "assistant.read"
+    ]
+  },
+  "credentialRetainedPrivately": true,
+  "continuousRunnerInstalled": false,
+  "mcp": {
+    "advertisedTools": 126,
+    "promptsRendered": 3,
+    "distinctChecksPassed": 108,
+    "checks": [
+      {
+        "name": "Atlas can list messages and identify Mike responses",
+        "passed": true
+      },
+      {
+        "name": "Atlas cannot self-approve external email",
+        "passed": true
+      },
+      {
+        "name": "Atlas indicator chat message 2",
+        "passed": true
+      },
+      {
+        "name": "Atlas indicator chat message 3",
+        "passed": true
+      },
+      {
+        "name": "DELETE MCP is explicitly unsupported",
+        "passed": true
+      },
+      {
+        "name": "GET MCP is explicitly unsupported",
+        "passed": true
+      },
+      {
+        "name": "MCP ping",
+        "passed": true
+      },
+      {
+        "name": "MCP polls the pending email",
+        "passed": true
+      },
+      {
+        "name": "TLS-verified public signed file upload",
+        "passed": true
+      },
+      {
+        "name": "add a chat reaction as Atlas",
+        "passed": true
+      },
+      {
+        "name": "agent cannot administer identities",
+        "passed": true
+      },
+      {
+        "name": "agent cannot issue its own credential",
+        "passed": true
+      },
+      {
+        "name": "agent cannot read Mike private mail thread",
+        "passed": true
+      },
+      {
+        "name": "agent receives an actionable human-preference boundary for stars",
+        "passed": true
+      },
+      {
+        "name": "anonymous MCP rejected",
+        "passed": true
+      },
+      {
+        "name": "authorize bounded Atlas test resources",
+        "passed": true
+      },
+      {
+        "name": "cancellation notification accepted without a response body",
+        "passed": true
+      },
+      {
+        "name": "create a folder through MCP",
+        "passed": true
+      },
+      {
+        "name": "credential exposes scoped tools",
+        "passed": true
+      },
+      {
+        "name": "deliver the review link as a real Atlas chat message",
+        "passed": true
+      },
+      {
+        "name": "drive.star.set",
+        "passed": true
+      },
+      {
+        "name": "email body review is restricted to the human owner",
+        "passed": true
+      },
+      {
+        "name": "export authorized chat history through MCP",
+        "passed": true
+      },
+      {
+        "name": "external email waits for human approval",
+        "passed": true
+      },
+      {
+        "name": "finalize file through MCP with matching checksum",
+        "passed": true
+      },
+      {
+        "name": "grant Mike read access to the agent file",
+        "passed": true
+      },
+      {
+        "name": "idempotent chat retry returns the same message",
+        "passed": true
+      },
+      {
+        "name": "immutable file version is available",
+        "passed": true
+      },
+      {
+        "name": "initialized notification",
+        "passed": true
+      },
+      {
+        "name": "invalid MCP key rejected",
+        "passed": true
+      },
+      {
+        "name": "mail resource preserves Mike mailbox isolation",
+        "passed": true
+      },
+      {
+        "name": "move file into MCP-created folder",
+        "passed": true
+      },
+      {
+        "name": "moved file appears in child-folder listing",
+        "passed": true
+      },
+      {
+        "name": "pin an Atlas message and list pins",
+        "passed": true
+      },
+      {
+        "name": "prepare a file write through MCP",
+        "passed": true
+      },
+      {
+        "name": "primary Atlas credential remains active",
+        "passed": true
+      },
+      {
+        "name": "probe credential scope ceiling denies Mail reads",
+        "passed": true
+      },
+      {
+        "name": "prompts/list",
+        "passed": true
+      },
+      {
+        "name": "public HTTPS MCP initialize",
+        "passed": true
+      },
+      {
+        "name": "quarantined bytes cannot be read through MCP",
+        "passed": true
+      },
+      {
+        "name": "read Atlas message back through MCP",
+        "passed": true
+      },
+      {
+        "name": "read Atlas/Mike chat resource",
+        "passed": true
+      },
+      {
+        "name": "read UTF-8 file bytes through MCP resource",
+        "passed": true
+      },
+      {
+        "name": "read a real human reply through MCP",
+        "passed": true
+      },
+      {
+        "name": "read back an Atlas thread reply",
+        "passed": true
+      },
+      {
+        "name": "read chat resource after human and agent updates",
+        "passed": true
+      },
+      {
+        "name": "read file scan and upload state through MCP",
+        "passed": true
+      },
+      {
+        "name": "read sharing state through MCP",
+        "passed": true
+      },
+      {
+        "name": "read tool assistant.conversations.list",
+        "passed": true
+      },
+      {
+        "name": "read tool assistant.models.list",
+        "passed": true
+      },
+      {
+        "name": "read tool assistant.status",
+        "passed": true
+      },
+      {
+        "name": "read tool assistant.tools.list",
+        "passed": true
+      },
+      {
+        "name": "read tool chat.mentions.list",
+        "passed": true
+      },
+      {
+        "name": "read tool chat.room.list",
+        "passed": true
+      },
+      {
+        "name": "read tool chat.unread.list",
+        "passed": true
+      },
+      {
+        "name": "read tool contacts.directory.list",
+        "passed": true
+      },
+      {
+        "name": "read tool contacts.labels.list",
+        "passed": true
+      },
+      {
+        "name": "read tool contacts.list",
+        "passed": true
+      },
+      {
+        "name": "read tool drive.list",
+        "passed": true
+      },
+      {
+        "name": "read tool drive.search",
+        "passed": true
+      },
+      {
+        "name": "read tool drive.storage.usage",
+        "passed": true
+      },
+      {
+        "name": "read tool mail.alias.list",
+        "passed": true
+      },
+      {
+        "name": "read tool mail.draft.list",
+        "passed": true
+      },
+      {
+        "name": "read tool mail.filter.list",
+        "passed": true
+      },
+      {
+        "name": "read tool mail.folders.list",
+        "passed": true
+      },
+      {
+        "name": "read tool mail.scheduled.list",
+        "passed": true
+      },
+      {
+        "name": "read tool mail.settings.get",
+        "passed": true
+      },
+      {
+        "name": "read tool mail.threads.list",
+        "passed": true
+      },
+      {
+        "name": "read tool mail.vacation.get",
+        "passed": true
+      },
+      {
+        "name": "read tool memory.list",
+        "passed": true
+      },
+      {
+        "name": "read tool memory.search",
+        "passed": true
+      },
+      {
+        "name": "read tool platform.ping",
+        "passed": true
+      },
+      {
+        "name": "read tool routines.list",
+        "passed": true
+      },
+      {
+        "name": "read tool search.query",
+        "passed": true
+      },
+      {
+        "name": "real CLI MCP call chat.message.list",
+        "passed": true
+      },
+      {
+        "name": "real CLI MCP call drive.list",
+        "passed": true
+      },
+      {
+        "name": "real CLI MCP call platform.ping",
+        "passed": true
+      },
+      {
+        "name": "real CLI discovers MCP tools over HTTPS",
+        "passed": true
+      },
+      {
+        "name": "real malware scanner quarantines the harmless EICAR fixture",
+        "passed": true
+      },
+      {
+        "name": "reject prompts/get summarize-thread",
+        "passed": true
+      },
+      {
+        "name": "reject prompts/get unknown.atlas.prompt",
+        "passed": true
+      },
+      {
+        "name": "reject resources/read helix://drive/file/e852d15b-3411-4dd5-978e-b98ea378c23c",
+        "passed": true
+      },
+      {
+        "name": "reject resources/read helix://drive/file/f442e75c-01eb-495a-b802-c39ce8fd523e",
+        "passed": true
+      },
+      {
+        "name": "reject tools/call chat.send",
+        "passed": true
+      },
+      {
+        "name": "reject tools/call unknown.atlas.tool",
+        "passed": true
+      },
+      {
+        "name": "reject unknown.atlas.test ",
+        "passed": true
+      },
+      {
+        "name": "remove only the Atlas reaction",
+        "passed": true
+      },
+      {
+        "name": "remove the test pin",
+        "passed": true
+      },
+      {
+        "name": "rename owned test file",
+        "passed": true
+      },
+      {
+        "name": "render prompt find-file",
+        "passed": true
+      },
+      {
+        "name": "render prompt summarize-thread",
+        "passed": true
+      },
+      {
+        "name": "render prompt triage-inbox",
+        "passed": true
+      },
+      {
+        "name": "requester cancels its own test proposal without human approval",
+        "passed": true
+      },
+      {
+        "name": "resources/list",
+        "passed": true
+      },
+      {
+        "name": "resources/subscribe optional extension is explicitly unsupported",
+        "passed": true
+      },
+      {
+        "name": "resources/templates/list optional extension is explicitly unsupported",
+        "passed": true
+      },
+      {
+        "name": "restore the same test file",
+        "passed": true
+      },
+      {
+        "name": "restored file retains exact bytes",
+        "passed": true
+      },
+      {
+        "name": "retry does not create duplicate chat messages",
+        "passed": true
+      },
+      {
+        "name": "revoke only the disposable probe credential",
+        "passed": true
+      },
+      {
+        "name": "revoked credential loses MCP access",
+        "passed": true
+      },
+      {
+        "name": "search authorized room history through MCP",
+        "passed": true
+      },
+      {
+        "name": "self-approval denial leaves the email pending",
+        "passed": true
+      },
+      {
+        "name": "send Atlas chat to Mike without impersonating Mike",
+        "passed": true
+      },
+      {
+        "name": "short-lived probe authenticates through MCP",
+        "passed": true
+      },
+      {
+        "name": "tools/list",
+        "passed": true
+      },
+      {
+        "name": "trash only the Atlas test file",
+        "passed": true
+      },
+      {
+        "name": "trashed file cannot be read as an active MCP resource",
+        "passed": true
+      }
+    ],
+    "knownToolRestrictions": [
+      {
+        "tool": "tasks.list",
+        "httpStatus": 200,
+        "code": "bad_request",
+        "message": "tasks.list is only available inside Assistant."
+      }
+    ],
+    "allAdvertisedToolsInvoked": false,
+    "unavailableSurfaces": {
+      "calendar": "not registered in current MVP deployment",
+      "meet": "not registered; Jitsi dependency gate retained"
+    }
+  },
+  "quality": {
+    "formatCheck": "passed",
+    "typecheck": "passed",
+    "lint": "passed",
+    "unitTests": {
+      "passed": 5488,
+      "skipped": 390
+    },
+    "realPostgresPreferenceTests": {
+      "passed": 4
+    },
+    "build": "passed",
+    "boundaries": "passed",
+    "playwright": {
+      "passed": 22
+    },
+    "axeReviewConfigurations": 4,
+    "publicAssetChecks": {
+      "assets": 207,
+      "failed": [],
+      "passed": true
+    }
+  },
+  "externalEmail": {
+    "pendingId": "d59032a6-b1f2-4017-ac94-492e12427221",
+    "reviewUrl": "https://workspace.helixapps.si/approvals/d59032a6-b1f2-4017-ac94-492e12427221",
+    "expiresAt": "2026-10-14T18:19:01.131Z",
+    "status": "pending_confirmation",
+    "agentSelfApprovalDenied": true,
+    "approvalOwnerReviewOnly": true,
+    "deliveryClaimed": false,
+    "outboundMessagesBeforeHumanDecision": 0
+  },
+  "recoveryCopy": {
+    "type": "development_cold_recovery_copy",
+    "encrypted": true,
+    "offServer": true,
+    "archive": "development-final-20261014T180507Z.tar.gz.age",
+    "bytes": 146673277,
+    "sha256": "5a34cc5f39e2c3fca25d962b4b2d111b24dcc4754a0dca250dac4bea4726adb0",
+    "entries": 7354,
+    "applicationAndMailEdgeStopped": true,
+    "ageAuthenticationPassed": true,
+    "archiveInspectionPassed": true,
+    "requiredCurrentRuntimeAndAtlasMarkersPassed": true,
+    "latestArchiveRestoreDrillPerformed": false,
+    "businessBackupGateSatisfied": false
+  },
+  "implemented": [
+    "Cross-page Mail and Chat unread badges",
+    "Unconfirmed apps hidden during startup",
+    "Human-only email review with explicit approve/deny",
+    "Actionable agent Drive preference denial"
+  ],
+  "planned": ["Shared actor-scoped workspace event stream"],
+  "liveAIOrMeetTested": false
+}

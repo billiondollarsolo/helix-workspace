@@ -344,6 +344,9 @@ export type AssistantStreamEvent =
     };
 
 export interface AssistantSendMessageInput {
+  /** Trusted runtime controls; never accepted from request bodies. */
+  readonly beforeStep?: () => Promise<void>;
+  readonly maxToolRounds?: number;
   readonly toolGroups?: readonly string[];
   readonly webSearch?: boolean;
   readonly classification?: AIClassification;

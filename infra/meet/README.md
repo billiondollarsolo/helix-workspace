@@ -12,7 +12,8 @@ The stock images take ownership of `/config` when they start, so checked-in
 overrides are mounted under `/run/helix-jitsi-config` and copied into place by
 [`init/02-helix-config`](init/02-helix-config). In the production file,
 [`init/01-helix-secrets`](init/01-helix-secrets) loads each credential from a
-mounted secret file.
+mounted secret file. It copies the root-owned XMPP certificate and key into
+Prosody's writable configuration volume, with the key readable only by Prosody.
 
 This directory holds local/dev infrastructure notes for `com.helix.core.meet-jitsi`.
 

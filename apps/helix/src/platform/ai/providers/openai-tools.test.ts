@@ -36,6 +36,104 @@ const provider = (fetchImpl: typeof fetch) =>
   });
 
 describe("native OpenAI-compatible tools", () => {
+  it.each(["gpt-6-luna", "gpt-6-sol", "gpt-6-luna-2026-09-29"])(
+    "uses non-reasoning Chat Completions mode for %s in both provider paths",
+    async (model) => {
+      const bodies: Record<string, unknown>[] = [];
+      const llm = createOpenAICompatibleProvider({
+        id: "openai",
+        models: [{ id: model }],
+        fetch: async (_url, init) => {
+          assert(typeof init?.body === "string");
+          const body = JSON.parse(init.body) as Record<string, unknown>;
+          bodies.push(body);
+          return body.stream
+            ? new Response(
+                'data: {"choices":[{"delta":{"content":"Hello"}}]}\n\ndata: [DONE]\n\n',
+                {
+                  headers: { "content-type": "text/event-stream" },
+                },
+              )
+            : Response.json({ choices: [{ message: { content: "Hello" } }] });
+        },
+      });
+      await llm.chat(request, context);
+      assert(llm.chatStream);
+      for await (const _chunk of llm.chatStream(request, context)) {
+        /* drain */
+      }
+      expect(bodies).toHaveLength(2);
+      for (const body of bodies) expect(body).toMatchObject({ model, reasoning_effort: "none" });
+      expect(openAIRequest({ ...request, model: "other-provider-model" }).body).not.toHaveProperty(
+        "reasoning_effort",
+      );
+    },
+  );
+
+  it("omits tool_choice when no native tools are supplied in either provider path", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const llm = provider(async (_url, init) => {
+      assert(typeof init?.body === "string");
+      const body = JSON.parse(init.body) as Record<string, unknown>;
+      bodies.push(body);
+      if ("tool_choice" in body && !("tools" in body))
+        return Response.json({ error: { code: "invalid_request_error" } }, { status: 400 });
+      return body.stream
+        ? new Response('data: {"choices":[{"delta":{"content":"Hello"}}]}\n\ndata: [DONE]\n\n', {
+            headers: { "content-type": "text/event-stream" },
+          })
+        : Response.json({ choices: [{ message: { content: "Hello" } }] });
+    });
+    expect(await llm.chat({ ...request, tools: [] }, context)).toMatchObject({ message: "Hello" });
+    assert(llm.chatStream);
+    for await (const _chunk of llm.chatStream({ ...request, tools: [] }, context)) {
+      /* drain */
+    }
+    expect(bodies).toHaveLength(2);
+    for (const body of bodies) {
+      expect(body).not.toHaveProperty("tools");
+      expect(body).not.toHaveProperty("tool_choice");
+    }
+  });
+
+  it.each(["insufficient_quota", "credit_balance_exhausted", "project_spend_limit_exceeded"])(
+    "distinguishes %s from temporary HTTP 429 throttling without exposing provider messages",
+    async (code) => {
+      const llm = provider(async () =>
+        Response.json({ error: { code, message: "private secret" } }, { status: 429 }),
+      );
+      for (const send of [
+        () => llm.chat(request, context),
+        async () => {
+          assert(llm.chatStream);
+          for await (const _chunk of llm.chatStream(request, context)) {
+            /* drain */
+          }
+        },
+      ]) {
+        await expect(send()).rejects.toMatchObject({
+          statusCode: 429,
+          providerCode: code,
+          message: expect.stringContaining("billing"),
+        });
+      }
+    },
+  );
+
+  it("bounds error-body reads and retains the safe throttle fallback for malformed or oversized errors", async () => {
+    for (const body of [
+      "not JSON",
+      JSON.stringify({ error: { code: "rate_limit_exceeded", message: "private secret" } }),
+      JSON.stringify({ error: { code: "insufficient_quota" }, padding: "x".repeat(20_000) }),
+    ]) {
+      const llm = provider(async () => new Response(body, { status: 429 }));
+      await expect(llm.chat(request, context)).rejects.toMatchObject({
+        message: expect.stringContaining("request limit"),
+        providerCode: undefined,
+      });
+    }
+  });
+
   it.each([400, 401, 403, 404, 429])(
     "returns actionable HTTP %s errors without exposing upstream response contents",
     async (status) => {
@@ -193,7 +291,7 @@ describe("native OpenAI-compatible tools", () => {
     expect(result.body.messages.every((message) => !("name" in message))).toBe(true);
   });
 
-  it("preserves completed native history while explicitly disabling new calls for the final answer", () => {
+  it("preserves completed native history without offering tools for the final answer", () => {
     const built = openAIRequest({
       ...request,
       tools: [],
@@ -214,7 +312,7 @@ describe("native OpenAI-compatible tools", () => {
       ],
     });
     expect(built.body).not.toHaveProperty("tools");
-    expect(built.body.tool_choice).toBe("none");
+    expect(built.body).not.toHaveProperty("tool_choice");
     expect(built.toolIds.get("drive_list")).toBe("drive.list");
     expect(built.body.messages).toEqual([
       { role: "system", content: "Give the final answer from the results already obtained." },

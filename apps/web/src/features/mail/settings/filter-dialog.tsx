@@ -27,14 +27,17 @@ import { errorText, useRetry, useSaveFilter } from "./mutations";
 
 type FilterDialogProps = {
   readonly onClose: () => void;
+  readonly initialDraft?: FilterDraft;
 } & (
   | { readonly prefill: MailFilterPrefill; readonly filter?: undefined }
   | { readonly filter: MailFilterRecord; readonly prefill?: undefined }
 );
 
-export function FilterDialog({ prefill, filter, onClose }: FilterDialogProps) {
-  const [draft, setDraft] = useState<FilterDraft>(() =>
-    filter === undefined ? filterDraftFromPrefill(prefill) : filterDraftFromRecord(filter),
+export function FilterDialog({ prefill, filter, onClose, initialDraft }: FilterDialogProps) {
+  const [draft, setDraft] = useState<FilterDraft>(
+    () =>
+      initialDraft ??
+      (filter === undefined ? filterDraftFromPrefill(prefill) : filterDraftFromRecord(filter)),
   );
   const [step, setStep] = useState<"criteria" | "actions">("criteria");
   const [error, setError] = useState<string | null>(null);

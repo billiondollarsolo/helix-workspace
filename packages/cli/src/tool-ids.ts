@@ -31,6 +31,7 @@ export const CLI_TOOL_IDS = [
   "calendar.event.update",
   "calendar.find-time",
   "chat.create_room",
+  "chat.dm.open",
   "chat.delete",
   "chat.edit",
   "chat.invite",

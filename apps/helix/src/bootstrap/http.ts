@@ -1,13 +1,14 @@
-import { ContractValidationError } from "@helix/contracts";
+import { ContractValidationError, errorEnvelopeSchema } from "@helix/contracts";
 import type { FastifyInstance } from "fastify";
 import fastify from "fastify";
 import { ZodError } from "zod";
 import { ApiError } from "../api/api-error.js";
 import { trustedProxyAddresses } from "../api/client-ip.js";
 import { buildErrorEnvelope } from "../api/error-envelope.js";
+import { isRecord } from "../platform/util/json.js";
 import { createPlatformMetrics } from "../api/metrics.js";
 import { API_BODY_LIMIT_BYTES, API_REQUEST_TIMEOUT_MS } from "../api/request-body.js";
-import { HELIX_API_VERSION_HEADER_VALUE } from "../api/version.js";
+import { HELIX_API_VERSION_HEADER_VALUE, internalApiUrl } from "../api/version.js";
 import { env } from "../config/env.js";
 import { browserSecurityHeaders } from "../platform/auth/browser-security.js";
 import { helixLoggerOptions } from "../platform/security/logger-redaction.js";
@@ -58,13 +59,55 @@ export async function installHttp() {
 
   // P1-10: advertise the API version on every response so clients can detect
   // the contract they are talking to without parsing the OpenAPI document.
-  app.addHook("onSend", async (_request, reply) => {
+  app.addHook("onSend", async (request, reply, payload) => {
     if (!reply.hasHeader("api-version")) {
       reply.header("api-version", HELIX_API_VERSION_HEADER_VALUE);
     }
     for (const [name, value] of Object.entries(responseSecurityHeaders)) {
       if (!reply.hasHeader(name)) reply.header(name, value);
     }
+    const path = internalApiUrl(request.url).split("?")[0] ?? "";
+    // DAV edits require stable strong ETags; signed S3 clients require unchanged bytes.
+    if (path.startsWith("/dav/") || path === "/s3" || path.startsWith("/s3/")) {
+      reply.header("cache-control", "private, no-store, no-transform");
+    }
+    if (
+      reply.statusCode >= 400 &&
+      ((path.startsWith("/api/") && !path.startsWith("/api/auth/")) ||
+        path.startsWith("/actions/") ||
+        path.startsWith("/internal/mail/")) &&
+      typeof payload === "string"
+    ) {
+      let body: unknown;
+      try {
+        body = JSON.parse(payload);
+      } catch {
+        return payload;
+      }
+      if (errorEnvelopeSchema.safeParse(body).success) return payload;
+      const record = isRecord(body) ? body : {};
+      const error = isRecord(record.error) ? record.error : record;
+      const message =
+        typeof record.error === "string"
+          ? record.error
+          : typeof error.message === "string"
+            ? error.message
+            : "Request failed.";
+      const { error: _error, message: _message, code: _code, ...details } = record;
+      reply.header("content-type", "application/json; charset=utf-8");
+      return JSON.stringify(
+        buildErrorEnvelope({
+          statusCode: reply.statusCode,
+          message: reply.statusCode >= 500 ? "Internal server error." : message,
+          traceId: traceIdForRequest(request),
+          ...(typeof error.code === "string" ? { code: error.code } : {}),
+          ...(reply.statusCode < 500
+            ? { details: { ...(isRecord(error.details) ? error.details : {}), ...details } }
+            : {}),
+        }),
+      );
+    }
+    return payload;
   });
 
   installUntrustedIdentityHeaderGuard(app);
@@ -148,7 +191,30 @@ export async function installHttp() {
         }),
       );
     }
-    throw error;
+    const statusCode =
+      isRecord(error) &&
+      typeof error.statusCode === "number" &&
+      error.statusCode >= 400 &&
+      error.statusCode <= 599
+        ? error.statusCode
+        : 500;
+    if (statusCode >= 500)
+      request.log.error(
+        { errorType: error instanceof Error ? error.name : typeof error },
+        "HTTP request failed",
+      );
+    return reply.code(statusCode).send(
+      buildErrorEnvelope({
+        statusCode,
+        message:
+          statusCode >= 500
+            ? "Internal server error."
+            : error instanceof Error
+              ? error.message
+              : "Request failed.",
+        traceId,
+      }),
+    );
   });
 
   app.setNotFoundHandler((request, reply) => {

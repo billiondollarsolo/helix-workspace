@@ -77,6 +77,7 @@ export function assistantStatusQueryOptions() {
     queryKey: [ASSISTANT_QUERY_ROOT, "status"],
     queryFn: fetchAssistantStatus,
     staleTime: 60_000,
+    refetchInterval: 60_000,
     throwOnError: false,
   });
 }

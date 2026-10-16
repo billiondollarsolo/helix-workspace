@@ -52,6 +52,45 @@ export function threadReferenceIds(input: {
   return [...new Set([...parentIds, ...ancestry])];
 }
 
+/** SES replaces Message-ID; keep our persisted ID in the ancestry of replies. */
+export function outboundThreadReferences(
+  envelope: Pick<MailOutboundEnvelope, "messageId" | "references">,
+  providerRewritesMessageId: boolean,
+): readonly string[] | undefined {
+  if (!providerRewritesMessageId) return envelope.references;
+  const anchor = normalizeMessageId(envelope.messageId);
+  if (anchor === null || Buffer.byteLength(anchor) > MAX_MESSAGE_ID_HEADER_LENGTH)
+    return envelope.references;
+  const references = [
+    ...normalizeMessageIds(envelope.references).filter((id) => id !== anchor),
+    anchor,
+  ];
+  // Keep the nearest ancestry and anchor within the inbound parser's bound.
+  while (
+    references.length > MAX_THREAD_REFERENCES ||
+    Buffer.byteLength(references.join(" ")) > MAX_MESSAGE_ID_HEADER_LENGTH
+  )
+    references.shift();
+  return references;
+}
+
+export function isSesSmtpHost(host: string): boolean {
+  return /^(?:email-smtp(?:-fips)?\.[a-z0-9-]+\.amazonaws\.com(?:\.cn)?|[a-z0-9.-]+\.mail-manager-smtp\.amazonaws\.com(?:\.cn)?)$/u.test(
+    host.toLowerCase(),
+  );
+}
+
+/** SES acknowledges its delivery ID separately from Nodemailer's RFC Message-ID. */
+export function smtpDeliveryMessageId(
+  info: { readonly messageId: string; readonly response?: string | undefined },
+  ses: boolean,
+): string {
+  return (
+    (ses ? /^250\s+Ok\s+([A-Za-z0-9-]{10,200})\s*$/iu.exec(info.response ?? "")?.[1] : undefined) ??
+    info.messageId
+  );
+}
+
 /** Prepare the immutable RFC threading headers persisted with an outbound queue record. */
 export function prepareOutboundEnvelope(envelope: MailOutboundEnvelope): MailOutboundEnvelope {
   const messageId =

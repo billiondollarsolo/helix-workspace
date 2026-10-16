@@ -49,7 +49,10 @@ interface ManagedEnvironmentMailProvider {
 export interface DispatchTimeTransportResolverOptions {
   readonly providerStore: OutboundProviderStore;
   readonly domainStore: Pick<SendingDomainStore, "listDomains">;
-  readonly dkimResolver?: (orgId: string) => DkimOptionsResolver;
+  readonly dkimResolver?: (
+    orgId: string,
+    providerKind: OutboundMailProviderKind,
+  ) => DkimOptionsResolver;
   readonly secrets: MailSecretProvider;
   readonly environmentFallback?: ManagedEnvironmentMailProvider;
   readonly fetch?: FetchLike;
@@ -176,14 +179,14 @@ export class DispatchTimeTransportResolver {
         ...(this.options.fetch === undefined ? {} : { fetch: this.options.fetch }),
         ...(this.options.dkimResolver === undefined
           ? {}
-          : { dkimResolver: this.options.dkimResolver(config.orgId) }),
+          : { dkimResolver: this.options.dkimResolver(config.orgId, config.kind) }),
       },
     );
     return {
       transport: new ProviderMailTransport(
         provider,
         config.id,
-        this.options.dkimResolver?.(config.orgId),
+        this.options.dkimResolver?.(config.orgId, config.kind),
       ),
       providerId: config.id,
       providerKind: config.kind,

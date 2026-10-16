@@ -181,7 +181,7 @@ describe(
     });
 
     afterAll(async () => {
-      for (const socket of app.websocketServer?.clients ?? []) socket.terminate();
+      for (const socket of app.websocketServer.clients) socket.terminate();
       await app.close();
       await sql.end({ timeout: 1 });
       await cleanupTestTenants(admin, [orgId, foreignOrgId]);
@@ -301,13 +301,13 @@ describe(
     it("releases event socket authentication locks while the subscription remains open", async () => {
       const before = resolvedActors;
       const socket = new WebSocket(
-        `${baseUrl.replace("http:", "ws:")}/v1/events/ws?subject=activity.mail.received`,
+        `${baseUrl.replace("http:", "ws:")}/v1/events/ws?subject=platform.health.changed`,
       );
       try {
         await expect.poll(() => resolvedActors).toBe(before + 1);
         await assertReleased();
-        const delivered = nextFrame(socket, "activity.mail.received", "subject");
-        await events.publish("activity.mail.received", { orgId, actorId: actor.id });
+        const delivered = nextFrame(socket, "platform.health.changed", "subject");
+        await events.publish("platform.health.changed", { orgId, actorId: actor.id });
         await delivered;
       } finally {
         socket.close();

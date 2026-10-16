@@ -9,6 +9,9 @@ import { AppShell } from "./app-shell";
 import { useShellOverlays, type SettingsSectionId } from "./overlay-context";
 
 const navigate = vi.fn();
+vi.mock("@/features/apps/use-enabled-apps", () => ({
+  useEnabledApps: () => ({ isLoading: false, isEnabled: () => false }),
+}));
 let routeSearch: Record<string, unknown> = {};
 
 vi.mock("@/lib/auth", async (importOriginal) => ({

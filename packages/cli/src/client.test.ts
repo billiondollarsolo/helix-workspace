@@ -11,6 +11,19 @@ import {
 } from "./client.js";
 
 describe("buildHelixRequest", () => {
+  it.each(["http://helix:3000", "http://helix.workspace.svc.cluster.local"])(
+    "uses a private HTTP service address with authentication: %s",
+    (base) => {
+      const env = { HELIX_BASE_URL: base, HELIX_API_KEY: "installation-test-key" };
+      const rest = buildHelixRequest({ kind: "tool-list" }, env);
+      expect(rest.url).toBe(`${base}/v1/api/tools`);
+      expect(rest.init.headers).toMatchObject({ authorization: "Bearer installation-test-key" });
+      const mcp = buildMcpToolCallRequest(env, "agent.account.requests.list", {});
+      expect(mcp.url).toBe(`${base}/v1/mcp`);
+      expect(mcp.init.headers).toMatchObject({ authorization: "Bearer installation-test-key" });
+    },
+  );
+
   it("builds an authenticated tool list request", () => {
     expect(
       buildHelixRequest(
@@ -394,11 +407,13 @@ describe("buildHelixRequest", () => {
       init: {
         method: "POST",
         headers: {
-          accept: "application/json",
+          accept: "application/json, text/event-stream",
+          "mcp-protocol-version": "2026-07-28",
+          "mcp-method": "tools/list",
           authorization: "Bearer token-1",
           "content-type": "application/json",
         },
-        body: '{"jsonrpc":"2.0","id":1,"method":"tools/list"}',
+        body: '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"helix-cli","version":"1.0.0"},"io.modelcontextprotocol/clientCapabilities":{}}}}',
       },
     });
   });
@@ -413,7 +428,7 @@ describe("buildHelixRequest", () => {
       url: "https://helix.example/v1/mcp",
       init: {
         method: "POST",
-        body: '{"jsonrpc":"2.0","id":"helix-tool-list","method":"tools/list"}',
+        body: '{"jsonrpc":"2.0","id":"helix-tool-list","method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"helix-cli","version":"1.0.0"},"io.modelcontextprotocol/clientCapabilities":{}}}}',
       },
     });
 
@@ -425,7 +440,7 @@ describe("buildHelixRequest", () => {
       url: "https://helix.example/v1/mcp",
       init: {
         method: "POST",
-        body: '{"jsonrpc":"2.0","id":"helix-tool-call","method":"tools/call","params":{"name":"platform.ping","arguments":{"ok":true}}}',
+        body: '{"jsonrpc":"2.0","id":"helix-tool-call","method":"tools/call","params":{"name":"platform.ping","arguments":{"ok":true},"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"helix-cli","version":"1.0.0"},"io.modelcontextprotocol/clientCapabilities":{}}}}',
       },
     });
   });
@@ -440,7 +455,7 @@ describe("buildHelixRequest", () => {
       url: "https://helix.example/v1/mcp",
       init: {
         method: "POST",
-        body: '{"jsonrpc":"2.0","id":"helix-resource-list","method":"resources/list"}',
+        body: '{"jsonrpc":"2.0","id":"helix-resource-list","method":"resources/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"helix-cli","version":"1.0.0"},"io.modelcontextprotocol/clientCapabilities":{}}}}',
       },
     });
 
@@ -453,7 +468,7 @@ describe("buildHelixRequest", () => {
       url: "https://helix.example/v1/mcp",
       init: {
         method: "POST",
-        body: '{"jsonrpc":"2.0","id":"helix-resource-read","method":"resources/read","params":{"uri":"helix://chat/room/room-1"}}',
+        body: '{"jsonrpc":"2.0","id":"helix-resource-read","method":"resources/read","params":{"uri":"helix://chat/room/room-1","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"helix-cli","version":"1.0.0"},"io.modelcontextprotocol/clientCapabilities":{}}}}',
       },
     });
   });

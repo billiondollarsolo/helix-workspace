@@ -18,6 +18,7 @@ export type ToolFetch = AuthFetch;
 
 export interface CallToolOptions {
   readonly fetchImpl?: ToolFetch;
+  readonly signal?: AbortSignal;
   /** When true (default), automatically POSTs to
    *  `/api/tools/pending/<id>/approve` and returns the executed output. */
   readonly autoApprove?: boolean;
@@ -35,6 +36,7 @@ export async function callTool<Output = unknown>(
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
   const output: unknown = await response.json().catch(() => ({}));
 

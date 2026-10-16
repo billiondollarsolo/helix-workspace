@@ -252,9 +252,11 @@ export class MailDraftStore {
       select
         coalesce(ob.thread_id, ob.id) as thread_id,
         coalesce(ob.message_id, ob.id) as message_id,
-        ob.envelope,
+        ob.envelope || case when ob.envelope->>'bodyStorage' = 'object-v1'
+          then jsonb_build_object('text', message.metadata->>'preview') else '{}'::jsonb end as envelope,
         ob.updated_at
       from mail_outbound_messages ob
+      join messages message on message.org_id = ob.org_id and message.id = ob.message_id
       where ob.org_id = ${input.orgId}
         and ob.actor_id = ${input.actorId}
         and ob.status = 'queued'

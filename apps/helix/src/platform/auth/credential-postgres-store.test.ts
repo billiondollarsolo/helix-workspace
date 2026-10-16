@@ -13,6 +13,8 @@ describe("PostgresAgentCredentialStore", () => {
           id: "cred-1",
           credential_type: "api_key",
           actor_id: "actor-1",
+          actor_display_name: "Juniper",
+          actor_email: "juniper@helix.local",
           org_id: "org-1",
           scopes: ["mail.read"],
           client_id: null,
@@ -34,6 +36,8 @@ describe("PostgresAgentCredentialStore", () => {
 
     expect(credential).not.toBeNull();
     expect(credential?.credentialType).toBe("api_key");
+    expect(credential?.actorDisplayName).toBe("Juniper");
+    expect(credential?.actorEmail).toBe("juniper@helix.local");
     expect(credential?.policy.ipAllowlist).toEqual(["10.0.0.0/8"]);
     expect(credential?.policy.allowedHours).toEqual({ startHour: 9, endHour: 17 });
     expect(credential?.policy.confirmationOverride).toBe("always");

@@ -1,0 +1,462 @@
+{
+  "date": "2026-10-15",
+  "environment": "workspace.helixapps.si development; isolated test identities and own files",
+  "apiImage": "helix/workspace-development:review-fixes-r11",
+  "webImage": "helix/workspace-web-development:review-fixes-r9",
+  "fixes": [
+    "WebDAV accepts untyped PROPFIND and preserves arbitrary binary upload bytes",
+    "Sync configuration switches only after confirmation and successful setup; separate state for changed targets",
+    "Content hashes detect same-size edits; disabled unsupported server MOVE/COPY operations so conflicts preserve both copies",
+    "Interrupted sync recovers with stale-lock protection; older comparison baselines require explicit resync",
+    "Cloudflare cache bypass for workspace /v1/* preserves signed HEAD requests",
+    "DAV compression excluded; private no-store no-transform responses preserve strong validators",
+    "Parenthesized CardDAV default/shared address-book predicates preserve href and deletion filters",
+    "AI budget denials return actionable rate-limit errors"
+  ],
+  "live": {
+    "s3": [
+      {
+        "name": "ListBuckets and HeadBucket",
+        "passed": true
+      },
+      {
+        "name": "PUT GET SHA256 0 bytes",
+        "passed": true,
+        "bytes": 0
+      },
+      {
+        "name": "PUT GET SHA256 1 bytes",
+        "passed": true,
+        "bytes": 1
+      },
+      {
+        "name": "PUT GET SHA256 1024 bytes",
+        "passed": true,
+        "bytes": 1024
+      },
+      {
+        "name": "PUT GET SHA256 1048576 bytes",
+        "passed": true,
+        "bytes": 1048576
+      },
+      {
+        "name": "PUT GET SHA256 10485760 bytes",
+        "passed": true,
+        "bytes": 10485760
+      },
+      {
+        "name": "Unicode, spaces and JSON bytes",
+        "passed": true
+      },
+      {
+        "name": "Overwrite and range",
+        "passed": true
+      },
+      {
+        "name": "CopyObject",
+        "passed": true
+      },
+      {
+        "name": "Paginated listing and delimiter",
+        "passed": true,
+        "listedObjects": 7
+      },
+      {
+        "name": "Presigned GET",
+        "passed": true
+      },
+      {
+        "name": "Multipart complete and content integrity",
+        "passed": true
+      },
+      {
+        "name": "Multipart abort",
+        "passed": true
+      },
+      {
+        "name": "Wrong signature rejected",
+        "passed": true
+      },
+      {
+        "name": "Read-only key cannot write or delete",
+        "passed": true
+      },
+      {
+        "name": "Foreign tenant bucket rejected",
+        "passed": true
+      },
+      {
+        "name": "Shared root is read only",
+        "passed": true
+      },
+      {
+        "name": "DeleteObjects removes test objects",
+        "passed": true
+      }
+    ],
+    "s3ObjectSizeBoundaries": [
+      {
+        "name": "128 MiB multipart roundtrip and delete",
+        "passed": true,
+        "bytes": 134217728
+      },
+      {
+        "name": "129 MiB multipart object rejected during UploadPart",
+        "passed": true,
+        "error": "EntityTooLarge",
+        "message": "This multipart upload would exceed the 134217728-byte object limit.",
+        "reason": "Expected cumulative size rejection before completion"
+      }
+    ],
+    "caldavAndCarddav": [
+      {
+        "name": "CalDAV discovery",
+        "passed": true,
+        "status": 207
+      },
+      {
+        "name": "CalDAV create",
+        "passed": true,
+        "status": 201,
+        "error": null
+      },
+      {
+        "name": "CalDAV read content",
+        "passed": true,
+        "status": 200,
+        "etag": "\"8bbbc700-1703-4686-9374-d24b4b862823-0\""
+      },
+      {
+        "name": "CalDAV ETag supplied",
+        "passed": true
+      },
+      {
+        "name": "CalDAV stale write rejected",
+        "passed": true,
+        "status": 412
+      },
+      {
+        "name": "CalDAV conditional edit",
+        "passed": true,
+        "status": 204,
+        "etag": "\"8bbbc700-1703-4686-9374-d24b4b862823-0\"",
+        "error": ""
+      },
+      {
+        "name": "CalDAV updated content",
+        "passed": true
+      },
+      {
+        "name": "CalDAV incremental sync",
+        "passed": true,
+        "status": 207
+      },
+      {
+        "name": "CalDAV delete",
+        "passed": true,
+        "status": 204
+      },
+      {
+        "name": "CalDAV deleted resource unavailable",
+        "passed": true
+      },
+      {
+        "name": "CardDAV discovery",
+        "passed": true,
+        "status": 207
+      },
+      {
+        "name": "CardDAV create",
+        "passed": true,
+        "status": 204,
+        "error": null
+      },
+      {
+        "name": "CardDAV read content",
+        "passed": true,
+        "status": 200,
+        "etag": "\"contact-76d99d3ff37bc62ea537e0138828bc6c1f0355fe95d212c73d3965bb9a63a1aa\""
+      },
+      {
+        "name": "CardDAV ETag supplied",
+        "passed": true
+      },
+      {
+        "name": "CardDAV stale write rejected",
+        "passed": true,
+        "status": 412
+      },
+      {
+        "name": "CardDAV conditional edit",
+        "passed": true,
+        "status": 204,
+        "etag": "\"contact-76d99d3ff37bc62ea537e0138828bc6c1f0355fe95d212c73d3965bb9a63a1aa\"",
+        "error": ""
+      },
+      {
+        "name": "CardDAV updated content",
+        "passed": true
+      },
+      {
+        "name": "CardDAV incremental sync",
+        "passed": true,
+        "status": 207
+      },
+      {
+        "name": "CardDAV delete",
+        "passed": true,
+        "status": 204
+      },
+      {
+        "name": "CardDAV deleted resource unavailable",
+        "passed": true
+      },
+      {
+        "name": "Foreign address book inaccessible",
+        "passed": true,
+        "status": 404
+      }
+    ],
+    "websocketAndSse": [
+      {
+        "name": "authenticated WebSocket ping/pong",
+        "passed": true
+      },
+      {
+        "name": "private chat subscription rejected",
+        "passed": true
+      },
+      {
+        "name": "anonymous WebSocket rejected",
+        "passed": true
+      },
+      {
+        "name": "authenticated mailbox SSE opens and closes",
+        "passed": true
+      },
+      {
+        "name": "Assistant real provider SSE deltas and final",
+        "passed": true
+      }
+    ],
+    "httpMcpRestUpload": [
+      {
+        "name": "HTTP presigned PUT",
+        "passed": true
+      },
+      {
+        "name": "MCP finalizes upload",
+        "passed": true,
+        "shape": [
+          "id",
+          "orgId",
+          "objectId",
+          "versionNumber",
+          "storageKey",
+          "mimeType",
+          "byteSize",
+          "sha256",
+          "metadata",
+          "createdByActorId",
+          "createdAt"
+        ]
+      },
+      {
+        "name": "MCP reads uploaded file",
+        "passed": true
+      },
+      {
+        "name": "REST lists same MCP upload",
+        "passed": true
+      },
+      {
+        "name": "MCP trashes test upload",
+        "passed": true,
+        "shape": [
+          "id",
+          "type",
+          "name",
+          "folderId",
+          "ownerActorId",
+          "mimeType",
+          "byteSize",
+          "sha256",
+          "storageKey",
+          "versionNumber",
+          "uploadState",
+          "uploadStatusLabel",
+          "available",
+          "metadata",
+          "deletedAt",
+          "createdAt",
+          "updatedAt"
+        ]
+      }
+    ],
+    "antivirus": [
+      {
+        "protocol": "webdav",
+        "uploadStatus": 409,
+        "downloadStatus": 404,
+        "error": "WebDAV file content is not available.",
+        "passed": true
+      },
+      {
+        "protocol": "s3",
+        "uploadStatus": 403,
+        "downloadStatus": 403,
+        "error": "ObjectQuarantined",
+        "passed": true
+      }
+    ],
+    "antivirusDatabaseEvidence": {
+      "bothProtocols": "infected",
+      "signature": "Eicar-Test-Signature",
+      "quarantined": true
+    },
+    "smtp": {
+      "ehlo": true,
+      "startTlsAdvertised": true,
+      "tlsCertificateVerified": true,
+      "postTlsEhlo": true,
+      "externalRelayDenied": true,
+      "messageSent": false,
+      "submission465Reachable": false
+    },
+    "mcpLoad": {
+      "durationSeconds": 300.0,
+      "initialConcurrentRequests": 25,
+      "sustainedRequestsPerSecond": 5,
+      "requests": 1525,
+      "successful": 1525,
+      "statusCounts": {
+        "200": 1525
+      },
+      "errors": {},
+      "p50Ms": 240.9,
+      "p95Ms": 324.0,
+      "maxMs": 2918.3,
+      "scope": "authenticated public HTTPS MCP reads on development server; synthetic own resources"
+    },
+    "syncRecovery": {
+      "forcedTermination": true,
+      "oldVersionPreservedDuringUpload": true,
+      "overlapPrevented": true,
+      "staleLockRecovered": true,
+      "recoveredAsConflict": true,
+      "checks": [
+        {
+          "name": "recovered conflict copy matches local interrupted.bin.conflict2",
+          "passed": true,
+          "bytes": 26
+        },
+        {
+          "name": "recovered conflict copy matches local interrupted.bin.conflict1",
+          "passed": true,
+          "bytes": 20971520
+        },
+        {
+          "name": "recovery preserved original and edited versions",
+          "passed": true
+        },
+        {
+          "name": "sync exits successfully",
+          "passed": true,
+          "exitCode": 0
+        },
+        {
+          "name": "recovered test files delete cleanly",
+          "passed": true
+        }
+      ]
+    },
+    "syncConflicts": [
+      {
+        "name": "recovery setup",
+        "passed": true
+      },
+      {
+        "name": "remote conflict accepted",
+        "passed": true
+      },
+      {
+        "name": "sync exits successfully",
+        "passed": true,
+        "exitCode": 0
+      },
+      {
+        "name": "conflict preserves both edits",
+        "passed": true,
+        "files": ["notes.md.conflict1", "notes.md.conflict2", "notes.md.conflict3"]
+      }
+    ],
+    "webdavSizeBytes": {
+      "zeroAndOneBytePassed": true,
+      "oneKiBViaS3Passed": true,
+      "oneMiBPassed": true,
+      "twentyMiBPassed": true,
+      "ninetyFiveMiBPassed": true,
+      "ninetySixMiBPassed": true,
+      "oneHundredMiBPassed": true,
+      "oneHundredOneMiBRejectedByCloudflare": true
+    },
+    "cleanup": {
+      "filesTrashed": 0,
+      "pendingCancelled": 2,
+      "appPasswordsRevoked": 2,
+      "s3KeysRevoked": 2,
+      "credentialsRevoked": 1,
+      "fixturesDisabled": 2,
+      "atlasPreserved": true,
+      "testFilesMovedToTrashBeforeCredentialCleanup": true
+    },
+    "revocation": {
+      "temporaryMcpCredentialRejected": true,
+      "temporaryAppPasswordRejected": true,
+      "atlasStillAuthenticates": true,
+      "disposableRestoreDatabaseRemoved": true,
+      "temporaryS3KeyRejected": true
+    }
+  },
+  "checks": {
+    "format": "passed",
+    "typecheck": "passed",
+    "lint": "passed",
+    "build": "passed",
+    "boundaries": "passed",
+    "defaultTestsPassed": 5583,
+    "defaultTestsSkipped": 400,
+    "browserPassed": 251,
+    "browserSkipped": 1,
+    "focusedSyncWebDavHttpTests": 26,
+    "realCardDavDatabaseTests": 2,
+    "realSmtpCrashRecovery": "passed: accepted once, uncertain delivery is not automatically resent",
+    "realRedisReservation": "passed: shared atomic budget and single settlement",
+    "encryptedBackupRestore": {
+      "encryptedArchiveAuthenticated": true,
+      "isolatedPostgresStarted": true,
+      "objectsRestoredAndRead": 11,
+      "storedHashesVerified": 11,
+      "snapshot": "development-final-20261014T180507Z.tar.gz.age",
+      "mailRawSources": 7,
+      "driveFiles": 4,
+      "databaseActors": 6,
+      "databaseMessages": 17,
+      "databaseObjects": 12,
+      "malwareQuarantinedObjectsExcluded": 1,
+      "isolatedEncryptionKeysRestored": true,
+      "fullApplicationFailoverTested": false
+    }
+  },
+  "limits": [
+    "Linux rclone 1.75.2 mirror mode tested; Windows/macOS mounts and desktop client families not exercised.",
+    "Plain WebDAV hash comparison downloads content and uses bandwidth on each sync.",
+    "Forced interruption can produce conflict copies requiring human resolution.",
+    "SMTP submission port 465 is not exposed on this deployment; its 5 authenticated implicit-TLS tests passed against a real local socket.",
+    "IMAP, POP3 and JMAP are not implemented; no compatibility claim.",
+    "Generic WebSocket and mailbox SSE authentication were tested live; private-event filtering and room isolation are additionally covered by automated tests.",
+    "Backup evidence validates restored database and encrypted object bytes, not full application failover or production disaster recovery.",
+    "No 24-hour soak or real multi-participant Meet recording in this pass.",
+    "Inline autocomplete/Tab completion remains unimplemented; explicit AI compose, rewrite, reply and summary are tested."
+  ]
+}

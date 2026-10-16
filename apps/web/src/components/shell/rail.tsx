@@ -6,6 +6,7 @@ import { iconMap as Icons } from "@/components/icon-map";
 import { APPS, appForRoute } from "@/components/apps";
 import { HelixLogo } from "@/components/shell/helix-logo";
 import { HelpMenu } from "@/components/shell/help-menu";
+import { UnreadBadge, type AppUnreadCounts } from "@/components/shell/unread-badge";
 import { useEnabledApps } from "@/features/apps/use-enabled-apps";
 import { Link, useLocation } from "@tanstack/react-router";
 import type { ReactNode } from "react";
@@ -17,9 +18,10 @@ export interface RailProps {
   launcherOpen: boolean;
   /** The app launcher, rendered inside the navigation landmark. */
   children?: ReactNode;
+  unread?: AppUnreadCounts;
 }
 
-export function Rail({ onOpenLauncher, launcherOpen, children }: RailProps) {
+export function Rail({ onOpenLauncher, launcherOpen, children, unread }: RailProps) {
   const location = useLocation();
   const activeApp = appForRoute(location.pathname);
   const enabled = useEnabledApps();
@@ -46,6 +48,9 @@ export function Rail({ onOpenLauncher, launcherOpen, children }: RailProps) {
       {APPS.filter((app) => app.pinned && enabled.isEnabled(app.id)).map((app) => {
         const Icon = Icons[app.icon];
         const active = activeApp?.id === app.id;
+        const count =
+          app.id === "mail" ? (unread?.mail ?? 0) : app.id === "chat" ? (unread?.chat ?? 0) : 0;
+        const badgeId = `rail-${app.id}-unread`;
         return (
           <Link
             key={app.id}
@@ -53,8 +58,10 @@ export function Rail({ onOpenLauncher, launcherOpen, children }: RailProps) {
             className={active ? "rail-item active" : "rail-item"}
             aria-label={app.name}
             aria-current={active ? "page" : undefined}
+            aria-describedby={count > 0 ? badgeId : undefined}
           >
             <Icon size={16} aria-hidden="true" />
+            <UnreadBadge count={count} id={badgeId} />
             <span className="rail-tip" aria-hidden="true">
               {app.name}
             </span>

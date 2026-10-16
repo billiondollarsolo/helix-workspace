@@ -69,7 +69,7 @@ class OpenAICompatibleProvider implements ProbeableLLMProvider {
 
   async chat(req: ChatRequest): Promise<ChatResponse> {
     const model = modelForRequest(req.model, this.#defaultModel);
-    const request = openAIRequest(req);
+    const request = openAIRequest({ ...req, model });
     const payload = await postJson(
       joinUrl(this.#baseUrl, "chat/completions"),
       {
@@ -85,7 +85,7 @@ class OpenAICompatibleProvider implements ProbeableLLMProvider {
 
   async *chatStream(req: ChatRequest): AsyncGenerator<ChatChunk> {
     const model = modelForRequest(req.model, this.#defaultModel);
-    const request = openAIRequest(req);
+    const request = openAIRequest({ ...req, model });
     const events = await postSse(
       joinUrl(this.#baseUrl, "chat/completions"),
       {

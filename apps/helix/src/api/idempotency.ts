@@ -1,3 +1,8 @@
+import {
+  toolInvocationOptions,
+  type ToolInvocationPrincipal,
+} from "../platform/auth/tool-invocation-principal.js";
+import type { RuntimeToolRegistry } from "../platform/tool-registry.js";
 import type { Redis } from "ioredis";
 import { randomUUID } from "node:crypto";
 import { sha256Hex } from "../platform/crypto/index.js";
@@ -16,6 +21,7 @@ import type { ToolInvokeResult } from "../platform/tool-registry.js";
 export interface IdempotencyRecord {
   /** Serialized tool-invocation result captured on the first execution. */
   readonly result: ToolInvokeResult;
+  readonly principalFingerprint?: string;
   /** HTTP status code that was returned for the first execution. */
   readonly statusCode: number;
   /** Fingerprint of the original request payload. */
@@ -39,6 +45,47 @@ export type IdempotencyClaimOutcome =
   | { readonly kind: "in_progress" }
   | { readonly kind: "replay"; readonly record: IdempotencyRecord }
   | { readonly kind: "conflict" };
+
+export function idempotencyPrincipalFingerprint(principal: ToolInvocationPrincipal): string {
+  return sha256Hex(
+    JSON.stringify({
+      actor: principal.actor,
+      credentialId: principal.credentialId,
+      credentialPolicy: principal.credentialPolicy,
+      owner: principal.credentialOwnerActorId,
+    }),
+  );
+}
+
+export function isPersistableIdempotentResult(result: ToolInvokeResult): boolean {
+  return (
+    result.ok || (result.statusCode < 500 && ![401, 403, 408, 429].includes(result.statusCode))
+  );
+}
+
+export async function authorizeIdempotentReplay(
+  tools: RuntimeToolRegistry,
+  principal: ToolInvocationPrincipal,
+  toolId: string,
+  input: unknown,
+  record: IdempotencyRecord,
+): Promise<ToolInvokeResult> {
+  const policy = await tools.explainPolicy(toolId, input, toolInvocationOptions(principal));
+  if (policy.decision.outcome === "deny")
+    return {
+      ok: false,
+      statusCode: 403,
+      error: "Current permissions do not allow this tool result.",
+    };
+  if (record.principalFingerprint !== idempotencyPrincipalFingerprint(principal))
+    return {
+      ok: false,
+      statusCode: 403,
+      error:
+        "This request belongs to a different credential or permission set. The operation was not repeated.",
+    };
+  return record.result;
+}
 
 /** Builds the namespaced storage key for an idempotency entry. */
 export function idempotencyStorageKey(input: {
@@ -282,6 +329,9 @@ function parseStoredRecord(serialized: string): IdempotencyRecord {
   }
   return {
     result: record.result as ToolInvokeResult,
+    ...(typeof record.principalFingerprint === "string"
+      ? { principalFingerprint: record.principalFingerprint }
+      : {}),
     statusCode: record.statusCode,
     requestHash: record.requestHash,
     expiresAt: record.expiresAt,

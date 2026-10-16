@@ -479,4 +479,47 @@ describe.skipIf(skip)("mail decision model (live database)", () => {
     );
     expect(otherReport.totals.recorded).toBe(0);
   });
+  it("reserves the daily cap atomically across concurrent calls and duplicate events", async () => {
+    await setFlags({ mode: "off", provider: "typesafe" });
+    const first = await receive("Quota one", "Meeting", "<quota-one@sender.example>");
+    const second = await receive("Quota two", "Meeting", "<quota-two@sender.example>");
+    const before = await inTenant(
+      orgId,
+      () =>
+        app<
+          { count: number }[]
+        >`select count(*)::int as count from mail_decision_verdicts where org_id = ${orgId} and outcome in ('decided', 'error') and created_at >= date_trunc('day', statement_timestamp(), 'UTC')`,
+    );
+    const cap = (before[0]?.count ?? 0) + 1;
+    const inputs = [first, second].map((stored) => ({
+      orgId,
+      messageId: stored.messageId,
+      threadId: stored.threadId,
+      provider: "typesafe" as const,
+      model: "jev-latest",
+      mode: "shadow" as const,
+      configVersion: "quota-test",
+      spamAssassin: null,
+      senderDomain: "sender.example",
+    }));
+    const claims = await Promise.all(
+      inputs.map((input) => inTenant(orgId, () => decisionStore.claimProviderCall(input, cap))),
+    );
+    expect([...claims].sort()).toEqual(["claimed", "daily_cap"]);
+    const claimed = inputs[claims.indexOf("claimed")];
+    if (!claimed) throw new Error("Expected a claimed message");
+    await expect(
+      inTenant(orgId, () => decisionStore.claimProviderCall(claimed, cap)),
+    ).resolves.toBe("already_recorded");
+    await expect(
+      inTenant(orgId, () =>
+        decisionStore.recordVerdict({ ...claimed, outcome: "error", reason: "test_failure" }),
+      ),
+    ).resolves.toBe(true);
+    await expect(
+      inTenant(orgId, () =>
+        decisionStore.recordVerdict({ ...claimed, outcome: "error", reason: "duplicate" }),
+      ),
+    ).resolves.toBe(false);
+  });
 });

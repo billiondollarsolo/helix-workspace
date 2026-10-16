@@ -1,11 +1,8 @@
-/* Dialog — lightweight modal. Ported from the design handoff (components.jsx).
-   Backdrop click and Escape both close. Focus is trapped inside the dialog.
-
-   This is the Helix design-system dialog and is distinct from the Radix-based
-   `ui/dialog.tsx`. Surface agents should import this one for handoff-faithful
-   modals (Share dialog, event editor, etc.). */
+/* Blocking dialogs are for confirmations and concrete review decisions.
+   Creation, editing and reference content use modal={false} (the shared FormPanel). */
 
 import { useEffect, useId, useRef, type CSSProperties, type ReactNode } from "react";
+import { FormPanel } from "./form-panel";
 
 export interface DialogProps {
   /** Header title. */
@@ -18,12 +15,23 @@ export interface DialogProps {
   footer?: ReactNode;
   /** Override the default 480px width. */
   width?: number | string;
+  modal?: boolean;
 }
 
 const FOCUSABLE =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-export function Dialog({ title, children, onClose, footer, width }: DialogProps) {
+export function Dialog(props: DialogProps) {
+  if (props.modal === false)
+    return (
+      <FormPanel title={props.title} onClose={() => props.onClose?.()} footer={props.footer}>
+        {props.children}
+      </FormPanel>
+    );
+  return <ModalDialog {...props} />;
+}
+
+function ModalDialog({ title, children, onClose, footer, width }: DialogProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const onCloseRef = useRef(onClose);

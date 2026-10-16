@@ -22,6 +22,8 @@ export interface SessionUser {
   readonly name: string;
   readonly actorId: string | null;
   readonly twoFactorEnabled?: boolean;
+  readonly totpEnabled?: boolean;
+  readonly emailOtpEnabled?: boolean;
   /** The actor's org-wide scopes, for deciding which entry points to show.
    *  The API authorizes every request on its own. */
   readonly scopes?: readonly string[];
@@ -229,6 +231,17 @@ export async function verifyRecoveryCode(code: string): Promise<SessionUser> {
   });
 }
 
+export async function sendEmailMfaCode(): Promise<void> {
+  await authJson(authenticatedFetch, "/api/auth/two-factor/send-otp", {
+    method: "POST",
+    body: "{}",
+  });
+}
+
+export async function verifyEmailMfaCode(code: string): Promise<SessionUser> {
+  return authUserMutation("/api/auth/two-factor/verify-otp", { code, trustDevice: false });
+}
+
 export async function addPasskey(name?: string): Promise<void> {
   const result = await browserAuthClient.passkey.addPasskey({ name });
   if (result.error !== null) throw new Error(result.error.message ?? "Passkey enrollment failed.");
@@ -417,6 +430,8 @@ function sessionUserFromOutput(output: unknown): SessionUser | null {
           ? user.actor_id
           : null,
     twoFactorEnabled: user.twoFactorEnabled === true,
+    ...(typeof user.totpEnabled === "boolean" ? { totpEnabled: user.totpEnabled } : {}),
+    ...(typeof user.emailOtpEnabled === "boolean" ? { emailOtpEnabled: user.emailOtpEnabled } : {}),
     ...(Array.isArray(user.scopes)
       ? {
           scopes: user.scopes.filter((scope): scope is string => typeof scope === "string"),

@@ -159,13 +159,50 @@ export function buildHelixRequest(
     case "tool-describe":
     case "mcp-resource-list":
     case "mcp-resource-read":
+    case "events-watch":
     case "mcp-serve":
       throw new Error(`Command does not map to an HTTP request: ${command.kind}`);
   }
 }
 
-export function buildMcpRequest(env: HelixCliEnv, body: string): HelixRequest {
-  return createRawJsonRequest(env, "/mcp", body);
+export function buildMcpRequest(env: HelixCliEnv, body: string, addMetadata = true): HelixRequest {
+  const message = JSON.parse(body) as { method?: string; params?: Record<string, unknown> };
+  const params = message.params ?? {};
+  const previous = params._meta;
+  const meta =
+    typeof previous === "object" && previous !== null ? (previous as Record<string, unknown>) : {};
+  if (addMetadata)
+    message.params = {
+      ...params,
+      _meta: {
+        ...meta,
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientInfo": { name: "helix-cli", version: "1.0.0" },
+        "io.modelcontextprotocol/clientCapabilities": {},
+      },
+    };
+  const request = createRawJsonRequest(env, "/mcp", JSON.stringify(message));
+  const metadata = message.params?._meta as Record<string, unknown> | undefined;
+  const version = metadata?.["io.modelcontextprotocol/protocolVersion"];
+  if (typeof version === "string") {
+    request.init.headers["mcp-protocol-version"] = version;
+    request.init.headers["mcp-method"] = message.method ?? "";
+    request.init.headers.accept = "application/json, text/event-stream";
+    const name =
+      message.method === "resources/read"
+        ? params.uri
+        : ["tools/call", "prompts/get"].includes(message.method ?? "")
+          ? params.name
+          : undefined;
+    if (typeof name === "string")
+      request.init.headers["mcp-name"] =
+        /^[\x20-\x7e]*$/u.test(name) &&
+        name.trim() === name &&
+        !(name.startsWith("=?base64?") && name.endsWith("?="))
+          ? name
+          : `=?base64?${Buffer.from(name).toString("base64")}?=`;
+  }
+  return request;
 }
 
 export function buildMcpToolListRequest(env: HelixCliEnv): HelixRequest {

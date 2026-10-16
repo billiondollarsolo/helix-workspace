@@ -1,3 +1,10 @@
+import {
+  serializeUpload,
+  serializeVersion,
+  serializeUploadStatus,
+  serializeEntry,
+} from "./tool-serialization.js";
+import { collaborationAuthorization } from "../tools/collaboration-authorization.js";
 import { defineTool } from "../tools/define-tool.js";
 import { toJsonObject } from "../util/json.js";
 // ponytail: tool surface registry >400 LOC; split by domain (upload/access/comments/links) when next feature lands.
@@ -47,11 +54,7 @@ import type {
   DriveCommentListItem,
   DriveCommentRecord,
   DriveCommentRevisionRecord,
-  DriveEntryRecord,
   DriveSearchHit,
-  DriveUploadRecord,
-  DriveUploadStatusRecord,
-  DriveVersionRecord,
 } from "./types.js";
 import {
   driveWorkflowKinds,
@@ -313,6 +316,7 @@ export function createDriveToolDefinitions(
       description: `Create a new Drive ${allowedCreateKinds.join(", ")}.`,
       permission: "drive.write",
       sideEffects: "write",
+      standingAuthorization: collaborationAuthorization("drive.write"),
       inputSchema: zodToolSchema(createSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(driveCreateOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
@@ -333,6 +337,7 @@ export function createDriveToolDefinitions(
         "Prepare a Drive file upload and return the target storage key and presigned upload URL when available.",
       permission: "drive.write",
       sideEffects: "write",
+      standingAuthorization: collaborationAuthorization("drive.write"),
       inputSchema: zodToolSchema(uploadSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(driveUploadOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
@@ -360,6 +365,7 @@ export function createDriveToolDefinitions(
       description: "Finalize a Drive upload by recording immutable version metadata.",
       permission: "drive.write",
       sideEffects: "write",
+      standingAuthorization: collaborationAuthorization("drive.write"),
       inputSchema: zodToolSchema(finalizeSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(driveFinalizeOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) =>
@@ -405,6 +411,7 @@ export function createDriveToolDefinitions(
         "Complete a multipart Drive upload (after PUTting all part URLs) and record the immutable version.",
       permission: "drive.write",
       sideEffects: "write",
+      standingAuthorization: collaborationAuthorization("drive.write"),
       inputSchema: zodToolSchema(uploadCompleteSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(driveFinalizeOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
@@ -480,6 +487,7 @@ export function createDriveToolDefinitions(
       description: "Share a Drive file or folder with actors; folder grants cover its contents.",
       permission: "drive.write",
       sideEffects: "write",
+      standingAuthorization: collaborationAuthorization("drive.write"),
       confirmationRequired: true,
       inputSchema: zodToolSchema(shareSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(driveShareOutputSchema, genericObjectJsonSchema),
@@ -531,6 +539,7 @@ export function createDriveToolDefinitions(
       description: "Remove an actor's access grant on a Drive file or folder.",
       permission: "drive.write",
       sideEffects: "write",
+      standingAuthorization: collaborationAuthorization("drive.write"),
       inputSchema: zodToolSchema(removeAccessSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(driveAccessRemoveOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
@@ -554,6 +563,7 @@ export function createDriveToolDefinitions(
       description: "Change an actor's access role on a Drive file or folder.",
       permission: "drive.write",
       sideEffects: "write",
+      standingAuthorization: collaborationAuthorization("drive.write"),
       inputSchema: zodToolSchema(updateAccessSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(driveAccessUpdateOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
@@ -580,6 +590,7 @@ export function createDriveToolDefinitions(
       description: "Move a Drive file into another folder.",
       permission: "drive.write",
       sideEffects: "write",
+      standingAuthorization: collaborationAuthorization("drive.write"),
       inputSchema: zodToolSchema(moveSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(driveEntryOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
@@ -600,6 +611,7 @@ export function createDriveToolDefinitions(
       description: "Move a Drive folder and its descendants.",
       permission: "drive.write",
       sideEffects: "write",
+      standingAuthorization: collaborationAuthorization("drive.write"),
       inputSchema: zodToolSchema(moveFolderSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(driveEntryOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
@@ -621,6 +633,7 @@ export function createDriveToolDefinitions(
       description: "Star or unstar a Drive file for filtered Drive and app-list views.",
       permission: "drive.read",
       sideEffects: "write",
+      standingAuthorization: collaborationAuthorization("drive.read"),
       inputSchema: zodToolSchema(starSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(driveEntryOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
@@ -663,6 +676,7 @@ export function createDriveToolDefinitions(
       description: "Set the current member's shared Drive and editor-list layout.",
       permission: "drive.read",
       sideEffects: "write",
+      standingAuthorization: collaborationAuthorization("drive.read"),
       inputSchema: zodToolSchema(setDocumentSurfaceViewSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(driveDocumentSurfaceViewOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
@@ -683,6 +697,7 @@ export function createDriveToolDefinitions(
       description: "Move a Drive file to trash.",
       permission: "drive.write",
       sideEffects: "write",
+      standingAuthorization: collaborationAuthorization("drive.write"),
       inputSchema: zodToolSchema(objectIdSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(driveEntryOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
@@ -702,6 +717,7 @@ export function createDriveToolDefinitions(
       description: "Restore a Drive file from trash.",
       permission: "drive.write",
       sideEffects: "write",
+      standingAuthorization: collaborationAuthorization("drive.write"),
       inputSchema: zodToolSchema(restoreSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(driveEntryOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
@@ -757,6 +773,7 @@ export function createDriveToolDefinitions(
       description: "Create a page or object anchored comment on a Drive object.",
       permission: "drive.read",
       sideEffects: "write",
+      standingAuthorization: collaborationAuthorization("drive.read"),
       inputSchema: zodToolSchema(createCommentSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(driveCommentOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
@@ -829,6 +846,7 @@ export function createDriveToolDefinitions(
       description: "Resolve a comment on a Drive object.",
       permission: "drive.read",
       sideEffects: "write",
+      standingAuthorization: collaborationAuthorization("drive.read"),
       inputSchema: zodToolSchema(resolveCommentSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(driveCommentOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
@@ -851,6 +869,7 @@ export function createDriveToolDefinitions(
       description: "Reopen a resolved comment on a Drive object.",
       permission: "drive.read",
       sideEffects: "write",
+      standingAuthorization: collaborationAuthorization("drive.read"),
       inputSchema: zodToolSchema(resolveCommentSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(driveCommentOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
@@ -873,6 +892,7 @@ export function createDriveToolDefinitions(
       description: "Update a Drive object comment body.",
       permission: "drive.read",
       sideEffects: "write",
+      standingAuthorization: collaborationAuthorization("drive.read"),
       inputSchema: zodToolSchema(updateCommentSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(driveCommentOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
@@ -919,6 +939,7 @@ export function createDriveToolDefinitions(
       description: "Rename a Drive file or folder.",
       permission: "drive.write",
       sideEffects: "write",
+      standingAuthorization: collaborationAuthorization("drive.write"),
       inputSchema: zodToolSchema(renameSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(driveEntryOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
@@ -1263,36 +1284,6 @@ async function resolveDriveWorkflowActorRef(
     throw new BadRequestError("Drive workflow assignee must identify exactly one workspace user.");
   }
   return actorId;
-}
-function serializeUpload(record: DriveUploadRecord) {
-  return {
-    ...record,
-    createdAt: record.createdAt.toISOString(),
-    updatedAt: record.updatedAt.toISOString(),
-  };
-}
-function serializeVersion(version: DriveVersionRecord) {
-  return {
-    ...version,
-    createdAt: version.createdAt.toISOString(),
-  };
-}
-function serializeUploadStatus(status: DriveUploadStatusRecord) {
-  return {
-    ...status,
-    updatedAt: status.updatedAt.toISOString(),
-  };
-}
-function serializeEntry({ trashPurgeAfter, ...entry }: DriveEntryRecord) {
-  return {
-    ...entry,
-    deletedAt: entry.deletedAt?.toISOString() ?? null,
-    ...(trashPurgeAfter === undefined
-      ? {}
-      : { trashPurgeAfter: trashPurgeAfter?.toISOString() ?? null }),
-    createdAt: entry.createdAt.toISOString(),
-    updatedAt: entry.updatedAt.toISOString(),
-  };
 }
 function serializeAccessGrant(grant: DriveAccessGrantRecord) {
   return {

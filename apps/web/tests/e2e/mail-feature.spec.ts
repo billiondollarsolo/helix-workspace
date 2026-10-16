@@ -26,6 +26,9 @@ interface MailboxState {
   readonly calls: BackendCall[];
   readonly archived: Set<string>;
   readingPane: "none" | "right" | "below";
+  htmlThread?: boolean;
+  incoming?: boolean;
+  chatUnread?: number;
 }
 
 const THREAD_ID = "00000000-0000-4000-8000-000000000301";
@@ -129,6 +132,115 @@ test.describe("/mail feature flow", () => {
 
 test.describe("/mail list and conversation", () => {
   test.skip(isLiveBackend(), "These flows need the mocked mailbox.");
+
+  test("shows new Chat unread counts while keeping the Mail draft focused", async ({ page }) => {
+    await page.clock.install();
+    const state = await openMail(page, "cross-app-chat-test");
+    await page.getByRole("button", { name: "Compose", exact: true }).last().click();
+    const subject = page.getByRole("textbox", { name: "Subject", exact: true });
+    await subject.fill("Keep this draft while Atlas chats");
+    state.chatUnread = 3;
+    await page.clock.runFor(30_100);
+    await expect(page.locator(".rail #rail-chat-unread")).toHaveText("3 unread messages");
+    await expect(subject).toHaveValue("Keep this draft while Atlas chats");
+    await expect(subject).toBeFocused();
+    expect(page.url()).toContain("/mail");
+  });
+
+  for (const eventType of ["message", "open"] as const) {
+    test(`updates the inbox without reloading on a mail stream ${eventType}`, async ({ page }) => {
+      await page.addInitScript(() => {
+        const NativeEventSource = window.EventSource;
+        window.EventSource = class extends NativeEventSource {
+          constructor(url: string | URL, init?: EventSourceInit) {
+            super(url, init);
+            if (new URL(url, location.href).pathname === "/v1/sse/mail")
+              (window as unknown as { mailTestSource: EventSource }).mailTestSource = this;
+          }
+        };
+      });
+      const state = await openMail(page, "realtime-mail-test");
+      await page.getByRole("button", { name: "Compose", exact: true }).last().click();
+      const subject = page.getByRole("textbox", { name: "Subject", exact: true });
+      await subject.fill("Keep this draft while mail arrives");
+      await subject.evaluate((input: HTMLInputElement) => input.setSelectionRange(5, 15));
+      await page.evaluate(() => {
+        (window as unknown as { mailPageMarker: string }).mailPageMarker = "same-page";
+      });
+      await expect(page.getByRole("row", { name: /New realtime message/u })).toHaveCount(0);
+      state.incoming = true;
+      await page.evaluate((type) => {
+        const source = (window as unknown as { mailTestSource: EventSource }).mailTestSource;
+        source.dispatchEvent(
+          type === "open"
+            ? new Event("open")
+            : new MessageEvent("message", {
+                data: JSON.stringify({
+                  type: "mail.received",
+                  threadId: "00000000-0000-4000-8000-000000000303",
+                }),
+              }),
+        );
+      }, eventType);
+      await expect(page.getByRole("row", { name: /New realtime message/u })).toBeVisible();
+      await expect(page.locator(".rail #rail-mail-unread")).toHaveText("2 unread messages");
+      await expect(subject).toHaveValue("Keep this draft while mail arrives");
+      await expect(subject).toBeFocused();
+      expect(
+        await subject.evaluate((input: HTMLInputElement) => [
+          input.selectionStart,
+          input.selectionEnd,
+        ]),
+      ).toEqual([5, 15]);
+      expect(
+        await page.evaluate(() => (window as unknown as { mailPageMarker: string }).mailPageMarker),
+      ).toBe("same-page");
+    });
+  }
+
+  for (const mode of ["light", "dark", "phone"] as const) {
+    test(`renders a Gmail reply on a white reading canvas in ${mode} mode`, async ({ page }) => {
+      await page.emulateMedia({ colorScheme: mode === "dark" ? "dark" : "light" });
+      if (mode === "phone") await page.setViewportSize({ width: 390, height: 844 });
+      const state = await openMail(page, `html-message-${mode}`);
+      state.htmlThread = true;
+      await page.getByRole("row", { name: /Backend launch thread/u }).click();
+      const canvas = page.locator(".mail-conversation-body");
+      await expect(canvas).toHaveCSS("background-color", "rgb(255, 255, 255)");
+      await expect(canvas).toHaveCSS("color", "rgb(32, 33, 36)");
+      await expect(page.getByRole("group", { name: "Message body view" })).toHaveCount(0);
+      const frame = page.frameLocator('iframe[title="HTML email content"]');
+      await expect(frame.getByText("Hi there")).toBeVisible();
+      await expect(frame.getByText("Earlier reply")).toBeHidden();
+      await expect(frame.getByText(/^On Wed/u)).toBeHidden();
+      const iframe = page.locator('iframe[title="HTML email content"]');
+      await expect.poll(async () => (await iframe.boundingBox())?.height ?? 999).toBeLessThan(120);
+      const collapsedHeight = (await iframe.boundingBox())?.height ?? 0;
+      await frame.locator("summary").focus();
+      await frame.locator("summary").press("Enter");
+      await expect(frame.getByText("Earlier reply")).toBeVisible();
+      await expect
+        .poll(async () => (await iframe.boundingBox())?.height ?? 0)
+        .toBeGreaterThan(collapsedHeight);
+      await frame.locator("summary").press("Enter");
+      await expect
+        .poll(async () => (await iframe.boundingBox())?.height ?? 999)
+        .toBeLessThanOrEqual(collapsedHeight);
+      expect(await axeViolations(page, "main")).toEqual([]);
+      if (mode === "phone") {
+        expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+          390,
+        );
+      }
+      await frame.getByRole("link", { name: "Report" }).click();
+      await expect(page.getByRole("alert")).toContainText("opens outside Helix");
+      await page.getByRole("button", { name: "Cancel", exact: true }).click();
+      await page.getByRole("button", { name: "More message actions" }).click();
+      await page.getByRole("menuitem", { name: "Show plain text" }).click();
+      await expect(iframe).toHaveCount(0);
+      await expect(canvas).toContainText("Hi there — readable plain alternative");
+    });
+  }
 
   test("searches all mail with operators and the search options form", async ({ page }) => {
     const state = await openMail(page, "e2e-mail-search");
@@ -317,18 +429,37 @@ async function mockMailBackend(route: Route, state: MailboxState, accessToken: s
   const threadId = typeof body.threadId === "string" ? body.threadId : "";
   switch (pathname) {
     case "/v1/api/tools/mail.threads.list": {
-      const threads = THREADS.filter((thread) => !state.archived.has(thread.threadId));
+      const threads = [
+        ...THREADS,
+        ...(state.incoming
+          ? [
+              {
+                ...THREADS[1],
+                threadId: "00000000-0000-4000-8000-000000000303",
+                messageId: "00000000-0000-4000-8000-000000000403",
+                subject: "New realtime message",
+              },
+            ]
+          : []),
+      ].filter((thread) => !state.archived.has(thread.threadId));
       await fulfillJson(route, { threads, total: threads.length, limit: 50, offset: 0 });
       return;
     }
     case "/v1/api/tools/mail.folders.list":
-      await fulfillJson(route, { folders: FOLDERS });
+      await fulfillJson(route, {
+        folders: FOLDERS.map((folder) =>
+          folder.id === "inbox" && state.incoming ? { ...folder, unread: 2, total: 3 } : folder,
+        ),
+      });
+      return;
+    case "/v1/api/tools/chat.unread.list":
+      await fulfillJson(route, { rooms: [], totalUnread: state.chatUnread ?? 0, totalMentions: 0 });
       return;
     case "/v1/api/tools/mail.labels.list":
       await fulfillJson(route, { labels: LABELS });
       return;
     case "/v1/api/tools/mail.thread.get":
-      await fulfillJson(route, { thread: threadDetail() });
+      await fulfillJson(route, { thread: threadDetail(state.htmlThread) });
       return;
     case "/v1/api/tools/mail.archive":
     case "/v1/api/tools/mail.snooze":
@@ -369,7 +500,7 @@ function preferences(state: MailboxState) {
   };
 }
 
-function threadDetail() {
+function threadDetail(html = false) {
   const [thread] = THREADS;
   return {
     id: THREAD_ID,
@@ -392,8 +523,11 @@ function threadDetail() {
         cc: [],
         bcc: [],
         sentAt: "2026-05-20T12:00:00.000Z",
-        body: "Launch plan attached.",
-        bodyFormat: "plain",
+        body: html
+          ? '<div>Hi there <a href="#helix-link" data-helix-href="https://example.com/report">Report</a></div><br/><div><div>On Wed, Oct 14, Mike wrote:</div><blockquote>Earlier reply<br/>A second line</blockquote></div>'
+          : "Launch plan attached.",
+        bodyFormat: html ? "html" : "plain",
+        ...(html ? { plainBody: "Hi there — readable plain alternative" } : {}),
         hasAttachment: true,
         attachments: [
           {

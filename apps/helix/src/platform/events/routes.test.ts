@@ -19,24 +19,24 @@ describe("events websocket routes", () => {
 
     await handleEventSocket(
       socket,
-      requestFor({ subject: "mail.thread.created", token: "token-1" }),
+      requestFor({ subject: "platform.health.changed", token: "token-1" }),
       {
         bus,
         actorFromRequest: (request) => actorFromRequestWithAccessToken(request, tokenStore),
       },
     );
 
-    expect(bus.subjects).toEqual(["mail.thread.created"]);
+    expect(bus.subjects).toEqual(["platform.health.changed"]);
 
     await bus.emit({
-      subject: "mail.thread.created",
+      subject: "platform.health.changed",
       payload: { orgId, threadId: "thread-1" },
       occurredAt: "2026-05-20T12:00:00.000Z",
     });
 
     expect(socket.messages).toEqual([
       {
-        subject: "mail.thread.created",
+        subject: "platform.health.changed",
         payload: { orgId, threadId: "thread-1" },
         occurredAt: "2026-05-20T12:00:00.000Z",
       },
@@ -70,6 +70,48 @@ describe("events websocket routes", () => {
       code: 1013,
       reason: "Event bus unavailable",
     });
+  });
+
+  it("does not subscribe when the socket closes during authentication", async () => {
+    const socket = new FakeSocket();
+    const bus = new FakeEventBus();
+    const tokens = await tokenStoreWithAccessToken("closing-auth");
+    const limiter = new EventStreamLimiter();
+    await handleEventSocket(socket, requestFor({ subject: "platform.>", token: "closing-auth" }), {
+      bus,
+      streamLimiter: limiter,
+      actorFromRequest: async (request) => {
+        const actor = await actorFromRequestWithAccessToken(request, tokens);
+        socket.close();
+        return actor;
+      },
+    });
+    expect(bus.subjects).toEqual([]);
+    expect(limiter.activeFor(orgId)).toBe(0);
+  });
+
+  it("unsubscribes when the socket closes during subscription setup", async () => {
+    const socket = new FakeSocket();
+    const bus = new FakeEventBus();
+    const tokens = await tokenStoreWithAccessToken("closing-subscribe");
+    const limiter = new EventStreamLimiter();
+    const subscribe = bus.subscribe.bind(bus);
+    bus.subscribe = async (...args) => {
+      const unsubscribe = await subscribe(...args);
+      socket.close();
+      return unsubscribe;
+    };
+    await handleEventSocket(
+      socket,
+      requestFor({ subject: "platform.>", token: "closing-subscribe" }),
+      {
+        bus,
+        streamLimiter: limiter,
+        actorFromRequest: (request) => actorFromRequestWithAccessToken(request, tokens),
+      },
+    );
+    expect(bus.unsubscribeCount).toBe(1);
+    expect(limiter.activeFor(orgId)).toBe(0);
   });
 
   it("rejects missing bearer authentication before subscribing", async () => {
@@ -422,3 +464,69 @@ function settle(): Promise<void> {
     setImmediate(resolve);
   });
 }
+
+describe("private resource events", () => {
+  it.each([
+    "activity.mail.received",
+    "activity.drive.created",
+    "mail.thread.created",
+    "activity.calendar.event.created",
+    "activity.calendar.invitation.sent",
+    "com.helix.core.calendar.event.created",
+    "calendar.event.updated",
+    "contacts.created",
+    "assistant.message.created",
+    "meet.recording.created",
+    "passwords.updated",
+  ])("does not leak %s through a wildcard subscription", async (subject) => {
+    const { socket, bus } = await connect({ token: "private-events", subject: "activity.>" });
+    await bus.emit({
+      subject,
+      payload: {
+        orgId,
+        actorId: "another-person",
+        subject: "Private personnel matter",
+        from: "boss@example.com",
+      },
+      occurredAt: new Date().toISOString(),
+    });
+    expect(socket.messages).toEqual([]);
+  });
+});
+
+describe("stream credential revocation", () => {
+  it.each(["revoked", "identity-changed", "verifier-failed"])(
+    "closes without delivering after %s",
+    async (failure) => {
+      const socket = new FakeSocket();
+      const bus = new FakeEventBus();
+      const tokens = await tokenStoreWithAccessToken("revocation-test");
+      let valid = true;
+      const limiter = new EventStreamLimiter();
+      await handleEventSocket(
+        socket,
+        requestFor({ subject: "platform.health.changed", token: "revocation-test" }),
+        {
+          bus,
+          streamLimiter: limiter,
+          actorFromRequest: async (request) => {
+            const actor = await actorFromRequestWithAccessToken(request, tokens);
+            if (valid) return actor;
+            if (failure === "verifier-failed") throw new Error("Verifier unavailable");
+            return { ...actor, id: failure === "revoked" ? "anonymous" : "another-person" };
+          },
+        },
+      );
+      valid = false;
+      await bus.emit({
+        subject: "platform.health.changed",
+        payload: { orgId },
+        occurredAt: new Date().toISOString(),
+      });
+      expect(socket.messages).toEqual([]);
+      expect(socket.closed?.code).toBe(1008);
+      expect(bus.unsubscribeCount).toBe(1);
+      expect(limiter.activeFor(orgId)).toBe(0);
+    },
+  );
+});

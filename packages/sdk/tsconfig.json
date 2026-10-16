@@ -17,5 +17,12 @@
     "verbatimModuleSyntax": true
   },
   "include": ["src/**/*.ts"],
-  "references": [{ "path": "../sdk-types" }]
+  "references": [
+    {
+      "path": "../sdk-types"
+    },
+    {
+      "path": "../contracts"
+    }
+  ]
 }

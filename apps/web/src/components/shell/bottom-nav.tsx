@@ -6,6 +6,7 @@ import { iconMap as Icons } from "@/components/icon-map";
 import { APPS, appForRoute, type HelixApp } from "@/components/apps";
 import { useShellOverlays } from "@/components/shell/overlay-context";
 import { useEnabledApps } from "@/features/apps/use-enabled-apps";
+import { UnreadBadge, type AppUnreadCounts } from "@/components/shell/unread-badge";
 import { Link, useLocation } from "@tanstack/react-router";
 import {
   Ellipsis as MoreIcon,
@@ -20,7 +21,7 @@ import { useState } from "react";
 /** Bottom-bar slots for apps; "More" takes the fifth. */
 export const BOTTOM_NAV_APP_SLOTS = 4;
 
-export function BottomNav() {
+export function BottomNav({ unread }: { readonly unread?: AppUnreadCounts }) {
   const location = useLocation();
   const activeApp = appForRoute(location.pathname);
   const enabled = useEnabledApps();
@@ -36,7 +37,14 @@ export function BottomNav() {
   return (
     <nav className="bottom-nav" aria-label="Apps">
       {primary.map((app) => (
-        <BottomNavLink key={app.id} app={app} active={activeApp?.id === app.id} />
+        <BottomNavLink
+          key={app.id}
+          app={app}
+          active={activeApp?.id === app.id}
+          unread={
+            app.id === "mail" ? (unread?.mail ?? 0) : app.id === "chat" ? (unread?.chat ?? 0) : 0
+          }
+        />
       ))}
       <Dialog.Root open={moreOpen} onOpenChange={setMoreOpen}>
         <Dialog.Trigger className="bottom-nav-item" data-active={moreActive || undefined}>
@@ -113,19 +121,31 @@ export function BottomNav() {
   );
 }
 
-function BottomNavLink({ app, active }: { readonly app: HelixApp; readonly active: boolean }) {
+function BottomNavLink({
+  app,
+  active,
+  unread,
+}: {
+  readonly app: HelixApp;
+  readonly active: boolean;
+  readonly unread: number;
+}) {
   const Icon = Icons[app.icon];
+  const badgeId = `bottom-${app.id}-unread`;
   return (
     <Link
       to={app.route}
       className="bottom-nav-item"
+      aria-label={app.name}
       aria-current={active ? "page" : undefined}
       data-active={active || undefined}
+      aria-describedby={unread > 0 ? badgeId : undefined}
     >
       <span className="bottom-nav-pill" aria-hidden="true">
         <Icon size={18} />
       </span>
       <span className="bottom-nav-label">{app.name}</span>
+      <UnreadBadge count={unread} id={badgeId} />
     </Link>
   );
 }

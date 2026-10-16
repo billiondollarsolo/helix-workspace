@@ -102,7 +102,7 @@ export function LabelMenuItems({
       })}
       <Separator />
       <Item icon={<Plus />} onSelect={() => openLabelDialog({ mode: "create" })}>
-        Create new
+        Add label
       </Item>
       <Item icon={<Settings2 />} onSelect={() => overlays.openSettings("mail/labels")}>
         Manage labels

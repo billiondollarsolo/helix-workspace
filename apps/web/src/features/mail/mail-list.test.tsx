@@ -227,7 +227,19 @@ describe("mail sidebar", () => {
     render();
     await flush();
     const folders = all("nav[aria-label='Folders'] .label").map((node) => node.textContent);
-    expect(folders).toEqual(["Inbox", "Starred", "Snoozed", "Sent", "Drafts", "Scheduled", "More"]);
+    expect(folders).toEqual([
+      "Inbox",
+      "Starred",
+      "Snoozed",
+      "Sent",
+      "Drafts",
+      "Scheduled",
+      "Needs reply",
+      "Waiting on",
+      "Overdue",
+      "Mail assistance",
+      "More",
+    ]);
     const inbox = button("Inbox3 unread");
     expect(inbox.getAttribute("aria-current")).toBe("page");
     expect(button("Starred").querySelector(".count")).toBeNull();
@@ -645,10 +657,8 @@ describe("conversation view", () => {
     expect(toolCalls("mail.filter.create")).toEqual([]);
 
     await openMenu(button("Labels"));
-    const create = all('[role="menuitem"]').find((item) =>
-      item.textContent?.includes("Create new"),
-    );
-    if (create === undefined) throw new Error("Create new missing");
+    const create = all('[role="menuitem"]').find((item) => item.textContent?.includes("Add label"));
+    if (create === undefined) throw new Error("Add label missing");
     click(create);
     expect(dialogs.label).toHaveBeenCalledWith({ mode: "create" });
 

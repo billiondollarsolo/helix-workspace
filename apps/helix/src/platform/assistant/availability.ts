@@ -55,7 +55,7 @@ export function createAssistantAvailabilityCheck(
   const now = options.now ?? Date.now;
   let cached:
     | {
-        readonly key: string;
+        readonly providers: readonly LLMProviderCapability[];
         readonly expiresAt: number;
         readonly result: Promise<AssistantAvailability>;
       }
@@ -63,12 +63,16 @@ export function createAssistantAvailabilityCheck(
 
   return () => {
     const providers = options.providers();
-    const key = providers.map((provider) => provider.id).join("\n");
-    if (cached !== undefined && cached.key === key && cached.expiresAt > now()) {
+    if (
+      cached !== undefined &&
+      cached.providers.length === providers.length &&
+      cached.providers.every((provider, index) => provider === providers[index]) &&
+      cached.expiresAt > now()
+    ) {
       return cached.result;
     }
     const result = probeProviders(providers, timeoutMs);
-    cached = { key, expiresAt: now() + ttlMs, result };
+    cached = { providers, expiresAt: now() + ttlMs, result };
     return result;
   };
 }

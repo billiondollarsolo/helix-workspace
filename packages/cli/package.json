@@ -28,5 +28,8 @@
     "@types/node": "24.13.3",
     "typescript": "5.9.3",
     "vitest": "4.1.11"
+  },
+  "dependencies": {
+    "@helix/sdk": "workspace:*"
   }
 }

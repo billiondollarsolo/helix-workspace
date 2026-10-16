@@ -20,6 +20,33 @@ function fakeFetch(): FetchLike {
 }
 
 describe("DispatchTimeTransportResolver", () => {
+  it.each(["ses", "smtp"] as const)(
+    "passes the selected %s provider to DKIM resolution",
+    async (kind) => {
+      const providers = new InMemoryOutboundProviderStore();
+      await providers.createProvider({
+        orgId: orgA,
+        name: "selected sender",
+        kind,
+        enabled: true,
+        isDefault: true,
+        config: { host: "email-smtp.us-east-2.amazonaws.com" },
+        secretRef: null,
+        webhookSecretRef: null,
+        createdBy: actor,
+      });
+      const dkimResolver = vi.fn(() => async () => null);
+      const resolver = new DispatchTimeTransportResolver({
+        providerStore: providers,
+        domainStore: new InMemorySendingDomainStore(),
+        secrets: { resolveSecret: async () => undefined },
+        dkimResolver,
+      });
+      await resolver.transportFor(orgA, "example.com");
+      expect(dkimResolver).toHaveBeenCalledWith(orgA, kind);
+    },
+  );
+
   it("resolves different organization defaults in one worker", async () => {
     const providers = new InMemoryOutboundProviderStore();
     const domains = new InMemorySendingDomainStore();

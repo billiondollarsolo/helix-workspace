@@ -1,3 +1,4 @@
+import { parseEventsWatch, type EventsWatchCommand } from "./events.js";
 import { CliUsageError } from "./cli-error.js";
 import { parseDriveS3KeysCommand } from "./drive-s3-keys.js";
 import { parseReindexCommand } from "./reindex.js";
@@ -79,6 +80,7 @@ export type HelixCommand =
   | { readonly kind: "asyncapi-get" }
   | { readonly kind: "mcp-resource-list" }
   | { readonly kind: "mcp-resource-read"; readonly uri: string }
+  | EventsWatchCommand
   | { readonly kind: "mcp-serve" }
   | { readonly kind: "completion"; readonly shell: CompletionShell }
   | { readonly kind: "help" };
@@ -92,6 +94,7 @@ type SecurityTier = "personal" | "business" | "enterprise" | "sovereign";
 
 export function parseCliArgs(args: readonly string[]): HelixCommand {
   const [scope, action, subject, ...rest] = args;
+  if (scope === "events" && action === "watch") return parseEventsWatch(args.slice(2));
 
   if (scope === undefined || scope === "-h" || scope === "--help") {
     return { kind: "help" };
@@ -850,6 +853,8 @@ function parseChatCommand(
         toolId: "chat.create_room",
         json: parseTypedOptions(jsonArgs, chatCreateRoomOptions, chatCreateRoomUsage),
       };
+    case "dm":
+      return { kind: "tool-call", toolId: "chat.dm.open", json: parseJsonArgument(jsonArgs) };
     case "invite":
       return { kind: "tool-call", toolId: "chat.invite", json: parseJsonArgument(jsonArgs) };
     case "search":
@@ -872,7 +877,7 @@ function parseChatCommand(
 }
 
 const chatUsage =
-  "Usage: helix chat <send|react|edit|delete|create-room|invite|search|messages> [--json [JSON]]";
+  "Usage: helix chat <send|react|edit|delete|create-room|dm|invite|search|messages> [--json [JSON]]";
 const chatMessageListUsage =
   "Usage: helix chat messages [--room-id <id>] [--before <iso>] [--limit <number>] [--json [JSON]]";
 

@@ -266,6 +266,7 @@ export async function installWorkers(context: Awaited<ReturnType<typeof installR
     events: eventBus,
     reload: () => loadHelixConfig(configSources),
     onReload: (config) => {
+      context.assertRuntimeResidency(config);
       runtimeConfiguration.current = config;
       void import("../platform/ai/operator-settings.js").then(
         ({ applyOperatorAiFromHelixConfig }) => {

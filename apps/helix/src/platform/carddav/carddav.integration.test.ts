@@ -127,6 +127,31 @@ run("CardDAV PostgreSQL scalability and ACL", () => {
     });
   }, 30_000);
 
+  it("applies href and deletion filters to the default address book", async () => {
+    for (const name of ["keep", "remove"]) {
+      await store.upsertContactFromVcard({
+        orgId,
+        actorId: ownerId,
+        href: `${name}.vcf`,
+        vcard: `BEGIN:VCARD\r\nVERSION:4.0\r\nUID:${name}\r\nFN:${name}\r\nEND:VCARD\r\n`,
+      });
+    }
+    expect(
+      await store.getContactForActor({ orgId, actorId: ownerId, href: "keep.vcf" }),
+    ).toMatchObject({ href: "keep.vcf" });
+    expect(
+      await store.getContactForActor({ orgId, actorId: ownerId, href: "missing.vcf" }),
+    ).toBeNull();
+    expect(await store.deleteContact({ orgId, actorId: ownerId, href: "remove.vcf" })).toBe(true);
+    expect(
+      await store.getContactForActor({ orgId, actorId: ownerId, href: "remove.vcf" }),
+    ).toBeNull();
+    expect(
+      await store.getContactForActor({ orgId, actorId: ownerId, href: "keep.vcf" }),
+    ).toMatchObject({ href: "keep.vcf" });
+    expect(await store.deleteContact({ orgId, actorId: ownerId, href: "missing.vcf" })).toBe(false);
+  });
+
   async function cleanup(): Promise<void> {
     await sql`delete from outbox where payload->>'orgId' = ${orgId}`;
     await cleanupTestTenants(sql, [orgId]);

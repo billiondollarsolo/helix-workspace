@@ -1,27 +1,59 @@
-/* Passwords — the way in to the organization's password manager.
- *
- * The password manager is a separate service on its own address, with its own
- * accounts and a master password the workspace never sees. This page opens it
- * and gives the address its apps and browser extensions ask for. */
+/* Native personal vaults, with access to an existing external vault during migration. */
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { iconMap } from "@/components/icon-map";
 import { SurfaceFrame } from "@/components/shell";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { CopyableId } from "@/features/admin/console/widgets";
 import { coreAppsShellQueryOptions } from "@/features/admin/core-apps-api";
+import { sessionQueryKeys, sessionUserQueryOptions } from "@/lib/auth";
+import { NativeVault } from "./native-vault";
+import { InlineError } from "@/components/ui/inline-error";
 
 export function PasswordsPage() {
+  const queryClient = useQueryClient();
   const query = useQuery(coreAppsShellQueryOptions());
   const url = query.data?.passwords?.url ?? null;
+  const session = useQuery(sessionUserQueryOptions());
+  const native = query.data?.passwords?.native === true && query.data.passwords.enabled;
 
   return (
     <SurfaceFrame title="Passwords" icon={<iconMap.Key size={16} />}>
       <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto grid w-full max-w-2xl gap-6 p-6">
+        <div className="mx-auto grid w-full max-w-5xl gap-6 p-6">
           <h1 className="m-0 text-xl font-semibold">Passwords</h1>
-          <PasswordsBody loading={query.isPending} url={url} />
+          {native ? (
+            <>
+              {session.data?.actorId ? (
+                <NativeVault key={session.data.actorId} actorId={session.data.actorId} />
+              ) : session.isPending ? (
+                <p role="status">Checking your session…</p>
+              ) : (
+                <InlineError
+                  message="Couldn't resolve your workspace account. Sign in again or reload your session."
+                  onRetry={() =>
+                    void queryClient.invalidateQueries({ queryKey: sessionQueryKeys.current })
+                  }
+                />
+              )}
+              <p className="m-0 text-sm text-[var(--text-3)]">
+                Download an encrypted .kdbx copy for backup or to open in KeePassXC or another
+                compatible app. Helix retains the previous saved version. Personal vaults support
+                logins and notes; sharing and file imports are not enabled yet.
+              </p>
+              {url ? (
+                <Button asChild variant="outline">
+                  <a href={url} rel="noopener noreferrer" target="_blank">
+                    Open previous password manager
+                    <span className="sr-only"> (opens in a new tab)</span>
+                  </a>
+                </Button>
+              ) : null}
+            </>
+          ) : (
+            <PasswordsBody loading={query.isPending} url={url} />
+          )}
         </div>
       </div>
     </SurfaceFrame>

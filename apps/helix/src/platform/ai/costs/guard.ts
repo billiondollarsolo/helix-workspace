@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import type { AICostLimitStore } from "./limit-store.js";
 import type { Actor, SecurityTier } from "@helix/sdk-types";
 import type { AICostGuard } from "../routing.js";
 import { resolveAICostBudget, validateNonNegativeInteger } from "./budget.js";
@@ -23,6 +25,7 @@ export interface AICostWarningEvent {
 
 export interface AICostGuardOptions {
   readonly limiter: AICostLimiter;
+  readonly limitStore?: AICostLimitStore;
   readonly tier: SecurityTier;
   readonly budget?: Partial<AICostBudget> | undefined;
   readonly now?: (() => Date) | undefined;
@@ -35,6 +38,7 @@ export interface AICostGuardOptions {
 }
 
 export class AICostLimitExceededError extends Error {
+  readonly statusCode = 429;
   constructor(
     message: string,
     readonly reason: AICostLimitReason,
@@ -46,16 +50,34 @@ export class AICostLimitExceededError extends Error {
 }
 
 export function createAICostGuard(options: AICostGuardOptions): AICostGuard {
-  const budget = resolveAICostBudget(options.tier, options.budget);
+  async function budgetFor(actor: Actor): Promise<AICostBudget> {
+    const override =
+      actor.type === "system"
+        ? null
+        : await options.limitStore?.get({ orgId: actor.orgId, actorId: actor.id });
+    return resolveAICostBudget(options.tier, {
+      ...options.budget,
+      ...(override?.actorDailyUsdMicros == null
+        ? {}
+        : { actorDailyUsdMicros: override.actorDailyUsdMicros }),
+      ...(override?.featureDailyUsdMicros == null
+        ? {}
+        : { featureDailyUsdMicros: override.featureDailyUsdMicros }),
+    });
+  }
   // Tracks (orgId:actorId:utcDay) tuples that have already emitted a warning
   // so each actor is notified at most once per daily window.
   const warnedToday = new Set<string>();
   return {
     async reserve(input) {
+      const budget = await budgetFor(input.actor);
+      const at = options.now?.() ?? new Date();
+      const reservationId = randomUUID();
       const decision = await options.limiter.check({
         ...costScope(input.actor, input.feature, options.tier, budget),
         estimatedCostUsdMicros: aiCentsToUsdMicros(input.estimatedCostCents),
-        at: options.now?.(),
+        at,
+        reservationId,
       });
       if (!decision.allowed) {
         throw new AICostLimitExceededError(
@@ -64,14 +86,19 @@ export function createAICostGuard(options: AICostGuardOptions): AICostGuard {
           decision.retryAfterSeconds,
         );
       }
+      return { reservationId, at, estimatedCostCents: input.estimatedCostCents };
     },
     async record(input) {
-      const at = options.now?.() ?? new Date();
+      const budget = await budgetFor(input.actor);
+      const at = input.reservation?.at ?? options.now?.() ?? new Date();
       const result = await options.limiter.record({
         ...costScope(input.actor, input.feature, options.tier, budget),
         providerId: input.providerId,
         model: input.model,
         costUsdMicros: aiCentsToUsdMicros(input.costCents),
+        ...(input.reservation === undefined
+          ? {}
+          : { reservationId: input.reservation.reservationId }),
         at,
       });
 

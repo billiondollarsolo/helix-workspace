@@ -1,7 +1,9 @@
+import { BotWorkspaces } from "@/features/bots/workspaces";
 /* The settings sections in nav order, with the words people search for.
    Section ids are the `?settings=<section>[/<tab>]` values (overlay-context). */
 
 import {
+  Bot,
   CircleUserRound,
   Database,
   Globe,
@@ -45,6 +47,15 @@ export interface SettingsSectionEntry {
 }
 
 export const SETTINGS_SECTIONS: readonly SettingsSectionEntry[] = [
+  {
+    id: "bots",
+    label: "Bot workspaces",
+    group: "Apps",
+    icon: Bot,
+    settings: ["Bot mail", "Bot files", "Bot chats", "Bot activity"],
+    keywords: ["agents", "oversight", "bot"],
+    Component: BotWorkspaces,
+  },
   {
     id: "profile",
     label: "Profile",

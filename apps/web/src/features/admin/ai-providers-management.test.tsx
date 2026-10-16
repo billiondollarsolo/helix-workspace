@@ -12,12 +12,12 @@ import { act, createElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  AIProvidersManagement,
   buildMultiProviderAiPatch,
   editorStateFromAiConfig,
   emptyProviderRow,
   type AiProvidersEditorState,
-} from "./ai-providers-management";
+} from "./ai-providers-config";
+import { AIProvidersManagement } from "./ai-providers-management";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
@@ -34,6 +34,27 @@ const baselineEmpty: AiProvidersEditorState = {
 };
 
 describe("buildMultiProviderAiPatch", () => {
+  it("preserves a provider's processing region when saving its other settings", () => {
+    const baseline = editorStateFromAiConfig({
+      providers: [
+        {
+          id: "regional",
+          plugin: "openai-compat",
+          config: {
+            region: "eu-central",
+            baseUrl: "https://regional.example/v1",
+            models: ["model"],
+            defaultModel: "model",
+            apiKeyConfigured: true,
+          },
+        },
+      ],
+    });
+    const patch = buildMultiProviderAiPatch(baseline, baseline);
+    if (typeof patch === "string") throw new Error(patch);
+    expect(patch.providers?.[0]?.config).toMatchObject({ region: "eu-central" });
+    expect(patch.providers?.[0]?.config?.apiKey).toBeUndefined();
+  });
   it("loads, validates and updates the Assistant step limit without changing secrets", () => {
     const baseline = editorStateFromAiConfig({
       assistant: { maxToolRounds: 32 },
@@ -265,6 +286,7 @@ describe("AIProvidersManagement", () => {
   }
 
   it("loads the catalog and saves routing and tool limits without echoing secrets", async () => {
+    queryClient.setQueryData(["assistant", "status"], { available: false });
     let stored = {
       security: { tier: "business" as const },
       ai: {
@@ -401,72 +423,149 @@ describe("AIProvidersManagement", () => {
       expect(container.textContent).toContain("Saved.");
       expect(stored.ai.assistant.maxToolRounds).toBe(32);
       expect(steps?.value).toBe("32");
+      expect(queryClient.getQueryState(["assistant", "status"])?.isInvalidated).toBe(true);
     });
   });
 
-  it("keeps a provider row mounted while its id is edited and after a sibling is removed", async () => {
-    const provider = (id: string) => ({
-      id,
-      plugin: "com.helix.ai-provider-openai-compat@^1.0.0",
-      tags: ["assistant"],
-      enabled: true,
-      config: { baseUrl: "https://llm.example/v1", defaultModel: "m", models: ["m"] },
-    });
-    fetchMock.mockImplementation((input) => {
-      const url = requestUrl(input);
-      if (url.includes("/api/admin/platform-config")) {
-        return Promise.resolve(
-          Response.json({
+  it("edits in a panel, preserves its draft on refetch and cancels without saving", async () => {
+    const config = {
+      security: { tier: "business" },
+      ai: {
+        providers: [
+          {
+            id: "chat",
+            plugin: "openai-compat",
             config: {
-              security: { tier: "business" },
-              ai: { providers: [provider("first"), provider("second")] },
+              displayName: "Chat",
+              models: ["model-a", "model-b"],
+              defaultModel: "model-a",
+              apiKeyConfigured: true,
             },
-            readiness: { ready: true, requirements: [] },
-          }),
-        );
-      }
-      return Promise.reject(new Error(`Unexpected request: ${url}`));
-    });
-
-    await renderPage();
-    const idInput = (position: number) =>
-      container.querySelector<HTMLInputElement>(
-        `input[aria-label="Provider ${String(position)} id"]`,
-      );
-    await waitFor(() => {
-      expect(idInput(2)?.value).toBe("second");
-    });
-
-    const typeInto = async (input: HTMLInputElement, value: string) => {
-      await act(async () => {
-        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(
-          input,
-          value,
-        );
-        input.dispatchEvent(new Event("input", { bubbles: true }));
-        await Promise.resolve();
-      });
+          },
+        ],
+      },
     };
-
-    const second = idInput(2);
-    if (second === null) throw new Error("second provider id input missing");
-    second.focus();
-    await typeInto(second, "second-x");
-    // The id is not the row key, so the row (and the focused input) survive the keystroke.
-    expect(idInput(2)).toBe(second);
-    expect(second.value).toBe("second-x");
-    expect(document.activeElement).toBe(second);
-
-    const removeFirst = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Remove provider first"]',
+    fetchMock.mockResolvedValue(
+      Response.json({ config, readiness: { ready: true, requirements: [] } }),
     );
-    await act(async () => {
-      removeFirst?.click();
-      await Promise.resolve();
+    await renderPage();
+    await waitFor(() =>
+      expect(container.querySelector('table[aria-label="AI providers"]')?.textContent).toContain(
+        "Chat",
+      ),
+    );
+    expect(container.querySelector('input[type="password"]')).toBeNull();
+    act(() => {
+      container
+        .querySelector<HTMLButtonElement>('button[aria-label="Edit provider chat"]')
+        ?.click();
     });
-    // The surviving row keeps its DOM node and its edited value.
-    expect(idInput(2)).toBeNull();
-    expect(idInput(1)).toBe(second);
-    expect(second.value).toBe("second-x");
+    const dialog = document.body.querySelector('[role="dialog"]');
+    expect(dialog?.getAttribute("aria-modal")).not.toBe("true");
+    const name = [...document.body.querySelectorAll("label")]
+      .find((label) => label.textContent === "Display name")
+      ?.querySelector("input");
+    if (!name) throw new Error("Provider name missing");
+    act(() => {
+      name.focus();
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(
+        name,
+        "My draft",
+      );
+      name.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    act(() => {
+      queryClient.setQueryData(["admin", "platform-config"], {
+        config: { ...config, ai: { ...config.ai, assistant: { maxToolRounds: 64 } } },
+        readiness: { ready: true, requirements: [] },
+      });
+    });
+    expect(name.value).toBe("My draft");
+    expect(document.activeElement).toBe(name);
+    expect(dialog?.querySelector('table[aria-label="Provider models"]')?.textContent).toContain(
+      "model-b",
+    );
+    act(() => {
+      [...document.body.querySelectorAll("button")]
+        .find((button) => button.textContent === "Cancel")
+        ?.click();
+    });
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PATCH")).toBe(false);
   });
+});
+
+it("preserves native and deployment-managed provider protocols when saving", () => {
+  const baseline = editorStateFromAiConfig({
+    providers: [
+      {
+        id: "claude",
+        plugin: "anthropic-compatible",
+        config: {
+          baseUrl: "https://api.anthropic.com/v1",
+          defaultModel: "claude",
+          models: ["claude"],
+          apiKeyConfigured: true,
+        },
+      },
+      {
+        id: "bedrock",
+        plugin: "bedrock",
+        config: { region: "us-east-2", defaultModel: "cloud-model", models: ["cloud-model"] },
+      },
+    ],
+  });
+  const patch = buildMultiProviderAiPatch(baseline, baseline);
+  if (typeof patch === "string") throw new Error(patch);
+  expect(patch.providers?.map((row) => row.plugin)).toEqual(["anthropic-compatible", "bedrock"]);
+  expect(patch.providers?.[1]?.config?.region).toBe("us-east-2");
+  expect(patch.operatorLlm).toBeUndefined();
+});
+
+it("keeps meeting speech and summary routes independent across all text-provider protocols", () => {
+  const baseline = editorStateFromAiConfig({
+    providers: [
+      {
+        id: "speech",
+        plugin: "openai-compat",
+        config: { realtimeTranscription: true, models: ["speech-a"], defaultModel: "speech-a" },
+      },
+      {
+        id: "recap",
+        plugin: "anthropic-compatible",
+        config: { models: ["text-a"], defaultModel: "text-a" },
+      },
+    ],
+  });
+  expect(baseline.routes.filter((route) => route.feature.startsWith("meet."))).toEqual([
+    { feature: "meet.transcribe", providerId: "", model: "" },
+    { feature: "meet.summarize", providerId: "", model: "" },
+  ]);
+  const configured = {
+    ...baseline,
+    routes: baseline.routes.map((route) =>
+      route.feature === "meet.transcribe"
+        ? { ...route, providerId: "speech", model: "speech-a" }
+        : route.feature === "meet.summarize"
+          ? { ...route, providerId: "recap", model: "text-a" }
+          : route,
+    ),
+  };
+  const patch = buildMultiProviderAiPatch(configured, baseline);
+  if (typeof patch === "string") throw new Error(patch);
+  expect(patch.routing?.rules?.filter((route) => route.feature.startsWith("meet."))).toEqual([
+    { feature: "meet.transcribe", primary: { providerId: "speech", model: "speech-a" } },
+    { feature: "meet.summarize", primary: { providerId: "recap", model: "text-a" } },
+  ]);
+  expect(patch.providers?.[0]?.config?.realtimeTranscription).toBe(true);
+  const incompatible = {
+    ...configured,
+    providers: configured.providers.map((provider) => ({
+      ...provider,
+      realtimeTranscription: false,
+    })),
+  };
+  expect(buildMultiProviderAiPatch(incompatible, baseline)).toContain(
+    "realtime speech transcription",
+  );
 });

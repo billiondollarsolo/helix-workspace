@@ -81,6 +81,7 @@ export function CalendarManageDialog({
 
   return (
     <Dialog
+      modal={action.kind === "delete"}
       title={TITLES[action.kind]}
       onClose={onClose}
       width={420}

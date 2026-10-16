@@ -185,7 +185,7 @@ describe("WebhookManagement", () => {
     await clickTab("Deliveries");
     await waitForText("activity.webhook.0");
     expect(container.textContent).toContain("failed");
-    expect(container.querySelector(".webhooks-table-wrap.deliveries")).not.toBeNull();
+    expect(container.querySelector('table[aria-label="Webhook deliveries"]')).not.toBeNull();
     /* One request for the whole section, not three. Three separate list calls
        spent three of the tenant's five requests per second on top of the two
        the app shell always spends, so a cold load reliably rendered "Tenant API
@@ -592,7 +592,7 @@ describe("WebhookManagement", () => {
   });
 
   function tableLabel(): string | null | undefined {
-    return container.querySelector("table.webhooks-table")?.getAttribute("aria-label");
+    return container.querySelector("table.admin-table")?.getAttribute("aria-label");
   }
 
   function selectedTab(): HTMLElement | null {
@@ -673,7 +673,7 @@ describe("WebhookManagement", () => {
 
   async function clickDeliveryAction(label: string) {
     const button = Array.from(
-      container.querySelectorAll(".webhooks-table-wrap.deliveries button"),
+      container.querySelectorAll('table[aria-label="Webhook deliveries"] tbody button'),
     ).find((candidate) => candidate.textContent?.trim() === label);
     if (!(button instanceof HTMLButtonElement)) {
       throw new Error(`Delivery action not found: ${label}`);

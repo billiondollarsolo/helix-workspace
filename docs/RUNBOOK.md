@@ -260,8 +260,8 @@ For local restore drills without the app server, set `HELIX_REINDEX_COMMAND="pnp
 
 ## Drive Upload Recovery
 
-Drive upload preparation and finalization use durable, tenant-scoped states. Object-store calls,
-virus scanning, and preview conversion run between short Drive database phases, so they do not extend
+Drive upload preparation and finalization use durable, tenant-scoped states. Object-store calls
+and virus scanning run between short Drive database phases, so they do not extend
 Drive row locks. Prepared single-part and multipart uploads expire after 15 minutes. The Drive retry
 worker leases and removes expired reservations, aborts incomplete multipart uploads, and retries failed
 byte cleanup. Keep the worker enabled even when antivirus retries are disabled.

@@ -3,6 +3,23 @@ import type { JsonValue, ToolDefinition } from "@helix/sdk-types";
 /** Stored in place of a one-time secret. */
 export const REDACTED_TOOL_OUTPUT = "[redacted: shown once]";
 
+/** Human review shows the proposed arguments without credential material. */
+export function redactActionInput(input: unknown, depth = 0): unknown {
+  if (depth >= 64) return "[redacted: nesting limit]";
+  if (Array.isArray(input)) return input.map((value) => redactActionInput(value, depth + 1));
+  if (typeof input !== "object" || input === null) return input;
+  return Object.fromEntries(
+    Object.entries(input).map(([key, value]) => [
+      key,
+      /password|passphrase|secret|token|api.?key|private.?key|authorization|cookie|^metadata$/iu.test(
+        key,
+      )
+        ? "[redacted]"
+        : redactActionInput(value, depth + 1),
+    ]),
+  );
+}
+
 export function toJsonValue(value: unknown): JsonValue {
   return JSON.parse(JSON.stringify(value)) as JsonValue;
 }

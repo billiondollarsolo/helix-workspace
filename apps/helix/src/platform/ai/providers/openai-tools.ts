@@ -96,8 +96,11 @@ export function openAIRequest(request: ChatRequest) {
   return {
     body: {
       messages,
+      // GPT-6 Sol/Luna require non-reasoning mode for Chat Completions function calls.
+      ...(/^gpt-6-(?:sol|luna)(?:-|$)/u.test(request.model ?? "")
+        ? { reasoning_effort: "none" as const }
+        : {}),
       ...(tools.length ? { tools } : {}),
-      ...(request.tools?.length === 0 ? { tool_choice: "none" as const } : {}),
     },
     toolIds: new Map([...names].map(([id, name]) => [name, id])),
   };

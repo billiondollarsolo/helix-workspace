@@ -287,7 +287,7 @@ export function AssistantSurface() {
               error: controller.signal.aborted
                 ? "Response stopped."
                 : cause instanceof Error
-                  ? cause.message
+                  ? `${cause.message} Your message wasn't saved; your draft is kept below for retry.`
                   : ASSISTANT_ERROR_FALLBACK,
               ...(cause instanceof AssistantRequestError && cause.toolLimit !== undefined
                 ? { toolLimit: cause.toolLimit }
@@ -698,6 +698,7 @@ function RenameDialog({ thread, pending, onCancel, onSubmit }: RenameDialogProps
   };
   return (
     <Dialog
+      modal={false}
       title="Rename chat"
       onClose={onCancel}
       footer={

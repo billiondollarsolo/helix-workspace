@@ -1,3 +1,9 @@
+import {
+  stageMailBody,
+  releaseMailBody,
+  readMailBody,
+  type StagedMailBody,
+} from "./body-storage.js";
 import type { JsonObject } from "@helix/sdk-types";
 import { randomUUID } from "node:crypto";
 import type postgres from "postgres";
@@ -25,7 +31,7 @@ interface MailOutboundRow {
   readonly thread_id: string;
   readonly outbox_id: string | null;
   readonly status: MailOutboundStatus;
-  readonly envelope: MailOutboundEnvelope;
+  readonly envelope: MailOutboundEnvelope & { readonly bodyStorage?: string };
   readonly undo_until: Date;
   readonly sent_at: Date | null;
   readonly cancelled_at: Date | null;
@@ -112,6 +118,25 @@ export class MailOutboundStore {
     private readonly options: PostgresMailStoreOptions = {},
   ) {}
 
+  private async hydrateOutbound(row: MailOutboundRow): Promise<MailOutboundRecord> {
+    if (row.envelope.bodyStorage !== "object-v1") return mapOutbound(row);
+    const body = await readMailBody(
+      this.sql,
+      this.options.storageResolver,
+      row.org_id,
+      row.message_id,
+    );
+    const { bodyStorage: _marker, ...envelope } = row.envelope;
+    return mapOutbound({
+      ...row,
+      envelope: {
+        ...envelope,
+        text: body.text,
+        ...(body.html === undefined ? {} : { html: body.html }),
+      },
+    });
+  }
+
   async createOutbound(input: CreateOutboundMailInput): Promise<MailOutboundRecord> {
     if (input.idempotencyKey !== undefined && !/^.{1,512}$/u.test(input.idempotencyKey)) {
       throw new TypeError("idempotencyKey must contain 1 to 512 characters.");
@@ -131,6 +156,7 @@ export class MailOutboundStore {
       },
       this.options.attachmentIngestor,
     );
+    let body: StagedMailBody | undefined;
     try {
       const result = await this.sql.begin(async (tx) => {
         if (input.idempotencyKey !== undefined) {
@@ -142,8 +168,15 @@ export class MailOutboundStore {
             limit 1
           `;
           if (existing[0] !== undefined)
-            return { outbound: mapOutbound(existing[0]), created: false };
+            return { outbound: await this.hydrateOutbound(existing[0]), created: false };
         }
+        body = await stageMailBody(
+          this.sql,
+          this.options.storageResolver,
+          input.orgId,
+          { text: envelope.text, ...(envelope.html === undefined ? {} : { html: envelope.html }) },
+          input.actorId,
+        );
         const recipients = [...envelope.to, ...envelope.cc, ...envelope.bcc].map((recipient) =>
           normalizeAddress(recipient.address),
         );
@@ -157,26 +190,31 @@ export class MailOutboundStore {
         if (suppressed.length > 0) {
           throw new MailRecipientSuppressedError(suppressed.map((row) => row.address));
         }
-        const message = await insertMailMessage(tx, {
-          orgId: input.orgId,
-          actorId: input.actorId,
-          threadId: input.threadId,
-          messageId: envelope.messageId,
-          from: envelope.from,
-          to: envelope.to,
-          cc: envelope.cc,
-          bcc: envelope.bcc,
-          subject: envelope.subject,
-          bodyText: envelope.text,
-          ...(envelope.html === undefined ? {} : { bodyHtml: envelope.html }),
-          ...(envelope.inReplyTo === undefined ? {} : { inReplyTo: envelope.inReplyTo }),
-          ...(envelope.references === undefined ? {} : { references: envelope.references }),
-          attachments: staged.input.attachments,
-          metadata: {
-            direction: "outbound",
-            ...(envelope.replyTo === undefined ? {} : { replyTo: [envelope.replyTo] }),
+        const message = await insertMailMessage(
+          tx,
+          {
+            orgId: input.orgId,
+            actorId: input.actorId,
+            threadId: input.threadId,
+            messageId: envelope.messageId,
+            from: envelope.from,
+            to: envelope.to,
+            cc: envelope.cc,
+            bcc: envelope.bcc,
+            subject: envelope.subject,
+            bodyText: envelope.text,
+            ...(envelope.html === undefined ? {} : { bodyHtml: envelope.html }),
+            ...(envelope.inReplyTo === undefined ? {} : { inReplyTo: envelope.inReplyTo }),
+            ...(envelope.references === undefined ? {} : { references: envelope.references }),
+            attachments: staged.input.attachments,
+            metadata: {
+              direction: "outbound",
+              ...(envelope.replyTo === undefined ? {} : { replyTo: [envelope.replyTo] }),
+            },
           },
-        });
+          undefined,
+          body,
+        );
 
         // Pre-generate the outbound id so the outbox payload is correct on first insert
         // (avoids a race where a worker picks up the outbox row before the follow-up UPDATE).
@@ -206,7 +244,7 @@ export class MailOutboundStore {
           ${message.threadId},
           ${outboxId},
           'queued',
-          ${tx.json(toSqlJson({ ...envelope, attachments: message.authoritativeAttachments }))},
+          ${tx.json(toSqlJson({ ...envelope, ...(body === undefined ? {} : { text: "", html: undefined, bodyStorage: "object-v1" }), attachments: message.authoritativeAttachments }))},
           ${input.undoUntil},
           ${input.undoUntil},
           ${input.scheduled === true ? input.undoUntil : null},
@@ -222,14 +260,19 @@ export class MailOutboundStore {
             and org_id = ${input.orgId} and actor_id = ${input.actorId}
             and revision = ${input.draft.revision}`;
         }
-        const outbound = mapOutbound(outboundRows[0]);
+        const outbound = {
+          ...mapOutbound(outboundRows[0]),
+          envelope: { ...envelope, attachments: message.authoritativeAttachments },
+        };
         return { outbound, created: true };
       });
       if (!result.created) {
+        await releaseMailBody(this.sql, body);
         await this.options.attachmentIngestor?.release(staged.stages).catch(() => undefined);
       }
       return result.outbound;
     } catch (error) {
+      await releaseMailBody(this.sql, body).catch(() => undefined);
       await this.options.attachmentIngestor?.release(staged.stages).catch(() => undefined);
       throw error;
     }
@@ -239,7 +282,7 @@ export class MailOutboundStore {
     const rows = await this.sql<MailOutboundRow[]>`
       select * from mail_outbound_messages where id = ${id} limit 1
     `;
-    return rows[0] === undefined ? null : mapOutbound(rows[0]);
+    return rows[0] === undefined ? null : await this.hydrateOutbound(rows[0]);
   }
 
   async getOutboundDeliveryHealth(input: {
@@ -289,6 +332,16 @@ export class MailOutboundStore {
   }): Promise<ClaimedOutboundMail | null> {
     const claimedAt = input.now ?? new Date();
     const leaseExpiresAt = new Date(claimedAt.getTime() + input.leaseMs);
+    // A lost lease may have reached SMTP. Require review instead of sending twice.
+    await this.sql`
+      update mail_outbound_messages
+      set status = 'failed', dead_lettered_at = ${claimedAt}, failed_at = ${claimedAt},
+          last_error = 'Delivery outcome unknown after worker interruption. Check provider delivery evidence before replaying; replay may send a duplicate.',
+          lease_owner = null, lease_token = null, lease_expires_at = null,
+          next_attempt_at = null, updated_at = ${claimedAt}
+      where status = 'sending' and lease_expires_at <= ${claimedAt}
+        and dead_lettered_at is null
+    `;
     const rows = await this.sql<MailOutboundRow[]>`
       with due as (
         select id
@@ -296,7 +349,6 @@ export class MailOutboundStore {
         where dead_lettered_at is null
           and (
             (status = 'queued' and next_attempt_at <= ${claimedAt})
-            or (status = 'sending' and lease_expires_at <= ${claimedAt})
           )
         order by coalesce(next_attempt_at, lease_expires_at), created_at, id
         limit 1
@@ -315,7 +367,7 @@ export class MailOutboundStore {
       where outbound.id = due.id
       returning outbound.*
     `;
-    const outbound = rows[0] === undefined ? null : mapOutbound(rows[0]);
+    const outbound = rows[0] === undefined ? null : await this.hydrateOutbound(rows[0]);
     if (
       outbound === null ||
       outbound.handoffKey === undefined ||
@@ -349,7 +401,7 @@ export class MailOutboundStore {
         and (provider_id is null or provider_id = ${input.providerId})
       returning *
     `;
-    return rows[0] === undefined ? null : mapOutbound(rows[0]);
+    return rows[0] === undefined ? null : await this.hydrateOutbound(rows[0]);
   }
 
   async markOutboundSent(input: MarkOutboundSentInput): Promise<MailOutboundRecord | null> {
@@ -368,7 +420,12 @@ export class MailOutboundStore {
       where id = ${input.id} and status = 'sending' and lease_token = ${input.leaseToken}
       returning *
     `;
-    return rows[0] === undefined ? null : mapOutbound(rows[0]);
+    // A provider acknowledgement must commit even if object storage goes down.
+    return rows[0] === undefined
+      ? null
+      : input.loadedEnvelope === undefined
+        ? await this.hydrateOutbound(rows[0])
+        : { ...mapOutbound(rows[0]), envelope: input.loadedEnvelope };
   }
 
   async cancelOutbound(input: {
@@ -386,10 +443,11 @@ export class MailOutboundStore {
         and undo_until > now()
       returning *
     `;
-    return rows[0] === undefined ? null : mapOutbound(rows[0]);
+    return rows[0] === undefined ? null : await this.hydrateOutbound(rows[0]);
   }
 
   async markOutboundRetry(input: {
+    readonly loadedEnvelope?: MailOutboundEnvelope;
     readonly id: string;
     readonly leaseToken: string;
     readonly nextAttemptAt: Date;
@@ -408,10 +466,16 @@ export class MailOutboundStore {
       where id = ${input.id} and status = 'sending' and lease_token = ${input.leaseToken}
       returning *
     `;
-    return rows[0] === undefined ? null : mapOutbound(rows[0]);
+    // A provider acknowledgement must commit even if object storage goes down.
+    return rows[0] === undefined
+      ? null
+      : input.loadedEnvelope === undefined
+        ? await this.hydrateOutbound(rows[0])
+        : { ...mapOutbound(rows[0]), envelope: input.loadedEnvelope };
   }
 
   async markOutboundDeadLettered(input: {
+    readonly loadedEnvelope?: MailOutboundEnvelope;
     readonly id: string;
     readonly leaseToken: string;
     readonly lastError: string;
@@ -432,7 +496,12 @@ export class MailOutboundStore {
       where id = ${input.id} and status = 'sending' and lease_token = ${input.leaseToken}
       returning *
     `;
-    return rows[0] === undefined ? null : mapOutbound(rows[0]);
+    // A provider acknowledgement must commit even if object storage goes down.
+    return rows[0] === undefined
+      ? null
+      : input.loadedEnvelope === undefined
+        ? await this.hydrateOutbound(rows[0])
+        : { ...mapOutbound(rows[0]), envelope: input.loadedEnvelope };
   }
 
   async replayOutbound(input: {
@@ -455,7 +524,7 @@ export class MailOutboundStore {
       where org_id = ${input.orgId} and id = ${input.id} and dead_lettered_at is not null
       returning *
     `;
-    return rows[0] === undefined ? null : mapOutbound(rows[0]);
+    return rows[0] === undefined ? null : await this.hydrateOutbound(rows[0]);
   }
 
   async listDeadLetteredOutbound(
@@ -469,7 +538,9 @@ export class MailOutboundStore {
       order by dead_lettered_at desc, id
       limit ${Math.min(Math.max(limit, 1), 500)}
     `;
-    return rows.map(mapOutbound);
+    const result: MailOutboundRecord[] = [];
+    for (const row of rows) result.push(await this.hydrateOutbound(row));
+    return result;
   }
 
   async retryOutbound(input: {
@@ -485,6 +556,7 @@ export class MailOutboundStore {
           and org_id = ${input.orgId}
           and actor_id = ${input.actorId}
           and status = 'failed'
+          and dead_lettered_at is null
         for update
       `;
       if (current[0] === undefined) return null;
@@ -517,7 +589,7 @@ export class MailOutboundStore {
         where id = ${input.id} and org_id = ${input.orgId} and actor_id = ${input.actorId}
         returning *
       `;
-      return rows[0] === undefined ? null : mapOutbound(rows[0]);
+      return rows[0] === undefined ? null : await this.hydrateOutbound(rows[0]);
     });
   }
 }

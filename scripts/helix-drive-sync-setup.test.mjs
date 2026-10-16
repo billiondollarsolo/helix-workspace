@@ -127,6 +127,16 @@ describe("helix-drive-sync-setup helpers", () => {
   it("builds mirror and mount command shapes with the size cap", () => {
     const opts = { configPath: "/c/rclone.conf", workdir: "/c/bisync", maxSize: "128M" };
     const mirror = buildMirrorCommand("/data/HelixDrive", opts);
+    for (const flag of [
+      "--checksum",
+      "--download-hash",
+      "--recover",
+      "--max-lock",
+      "size,checksum",
+      "Move,Copy,DirMove",
+    ]) {
+      expect(mirror.args).toContain(flag);
+    }
     expect(mirror.args.slice(0, 3)).toEqual(["bisync", "/data/HelixDrive", "helix:"]);
     expect(mirror.args).not.toContain("--resync");
     expect(mirror.args.join(" ")).toContain("--max-size 128M");
@@ -145,7 +155,12 @@ describe("helix-drive-sync-setup helpers", () => {
   it("never resyncs a re-run automatically", () => {
     const current = { mode: "mirror", url: "u", user: "a", localPath: "/d" };
     const base = { current, hasBaseline: true, localNonEmpty: true, forceResync: false };
-    expect(decideMirrorRun({ ...base, previous: { ...current } })).toMatchObject({
+    expect(decideMirrorRun({ ...base, previous: { ...current, version: 2 } })).toMatchObject({
+      action: "resync",
+      reason: "comparison_upgrade",
+      confirm: "explicit",
+    });
+    expect(decideMirrorRun({ ...base, previous: { ...current, version: 3 } })).toMatchObject({
       action: "bisync",
     });
     expect(decideMirrorRun({ ...base, previous: null, localNonEmpty: false })).toMatchObject({
@@ -162,11 +177,11 @@ describe("helix-drive-sync-setup helpers", () => {
       decideMirrorRun({ ...base, previous: { ...current, localPath: "/other" } }),
     ).toMatchObject({ action: "resync", reason: "target_changed", confirm: "explicit" });
     expect(
-      decideMirrorRun({ ...base, previous: { ...current }, hasBaseline: false }),
+      decideMirrorRun({ ...base, previous: { ...current, version: 3 }, hasBaseline: false }),
     ).toMatchObject({ action: "resync", reason: "baseline_missing", confirm: "explicit" });
-    expect(decideMirrorRun({ ...base, previous: { ...current }, forceResync: true })).toMatchObject(
-      { action: "resync", reason: "forced", confirm: "none" },
-    );
+    expect(
+      decideMirrorRun({ ...base, previous: { ...current, version: 3 }, forceResync: true }),
+    ).toMatchObject({ action: "resync", reason: "forced", confirm: "none" });
   });
 
   it("maps HTTP failures to actionable messages", () => {
@@ -291,6 +306,30 @@ describe("runSetup", () => {
     expect(readFileSync(conf, "utf8")).toBe(before);
     expect(() => statSync(join(homeDir(), "rclone.conf.new"))).toThrow();
   });
+
+  it.each(["cancel", "failed-sync"])(
+    "preserves the working connection, helper and baseline after %s",
+    async (failure) => {
+      await setup();
+      const paths = ["rclone.conf", "config.json", "sync-now.sh"];
+      const before = paths.map((name) => readFileSync(join(homeDir(), name), "utf8"));
+      const oldWorkdir = JSON.parse(before[1]).workdir;
+      calls = [];
+      if (failure === "failed-sync") failures.bisync = "connection interrupted";
+      await expect(
+        setup({
+          HELIX_SYNC_URL: "https://other.example",
+          ...(failure === "failed-sync" ? { HELIX_SYNC_RESYNC: "1" } : {}),
+        }),
+      ).rejects.toThrow();
+      expect(paths.map((name) => readFileSync(join(homeDir(), name), "utf8"))).toEqual(before);
+      expect(() => statSync(join(homeDir(), "rclone.conf.new"))).toThrow();
+      if (failure === "failed-sync") {
+        const command = bisyncCalls()[0].args;
+        expect(command[command.indexOf("--workdir") + 1]).not.toBe(oldWorkdir);
+      } else expect(bisyncCalls()).toHaveLength(0);
+    },
+  );
 
   it("runs plain bisync on an unchanged re-run", async () => {
     await setup();

@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { axeViolations, mount, settle, unmountAll } from "@/test/ui";
 import { buttonNamed, control, typeInto } from "@/features/mail/settings/test-support";
 import { LocalLoginPanel } from "./login-panel";
+import { SecondFactorRequiredError } from "@/lib/auth";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
@@ -23,6 +24,40 @@ async function submit(): Promise<void> {
 }
 
 describe("LocalLoginPanel", () => {
+  it("uses email codes after a password challenge, without offering an unconfigured authenticator", async () => {
+    document.cookie = `helix_csrf=${"p".repeat(43)}; Path=/`;
+    const calls: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const path = input instanceof Request ? input.url : input.toString();
+      calls.push(path);
+      return Promise.resolve(
+        Response.json(path.endsWith("verify-otp") ? { user } : { status: true }),
+      );
+    });
+    const onSignedIn = vi.fn();
+    mount(
+      <LocalLoginPanel
+        discover={() => Promise.resolve("password")}
+        signIn={() => Promise.reject(new SecondFactorRequiredError(["otp"]))}
+        onSignedIn={onSignedIn}
+      />,
+    );
+    typeInto(control("Email"), "admin@helix.local");
+    await submit();
+    typeInto(control("Password"), "password");
+    await submit();
+    expect(control("Email code")).not.toBeNull();
+    expect(control("Authenticator code")).toBeNull();
+    buttonNamed("Send email code")?.click();
+    await settle();
+    typeInto(control("Email code"), "123456");
+    await submit();
+    expect(calls).toEqual([
+      "/v1/api/auth/two-factor/send-otp",
+      "/v1/api/auth/two-factor/verify-otp",
+    ]);
+    expect(onSignedIn).toHaveBeenCalledWith(expect.objectContaining({ id: user.id }));
+  });
   it("asks for the email first, then the password, and signs in", async () => {
     const signIn = vi.fn().mockResolvedValue(user);
     const discover = vi.fn().mockResolvedValue("password");

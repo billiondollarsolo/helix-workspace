@@ -87,7 +87,7 @@ test("two real browsers exchange TURN-relayed media and produce a verified recor
     roomId: room.id,
     expiresInSeconds: 300,
     recordingNoticeAccepted: true,
-    recordingNoticeVersion: "2026-09-02",
+    recordingNoticeVersion: "2026-10-15",
     deviceId: randomUUID(),
     joinGrantId: randomUUID(),
   });

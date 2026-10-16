@@ -685,6 +685,9 @@ async function mintMemberJoin(
     ttlSeconds,
     user: {
       id: actor.id,
+      helixOrgId: actor.orgId,
+      helixRoomId: room.id,
+      helixCaptureConsent: MEET_RECORDING_NOTICE_VERSION,
       name: actor.displayName ?? actor.id,
       email: actor.email ?? "",
       moderator,

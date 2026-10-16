@@ -605,7 +605,30 @@ Some components are not part of the default stack. Nothing below is started, pul
 advertised to people unless you opt in when you install, and each one can be added to a running
 deployment later.
 
-### Password manager
+### Native Passwords
+
+KeePass-compatible personal vaults are built into Helix. Apply the normal
+platform migrations, then turn on **Admin → Apps → Passwords → Passwords is on
+for everyone**. No second service, DNS hostname, email verification, or vault
+account is required. A person signs in to Helix, creates a vault master password,
+and saves logins or secure notes in `/passwords`.
+
+Encryption and decryption happen in a disposable browser worker. The API stores
+only KDBX ciphertext, scoped to the human session and tenant; API keys, agents,
+and OAuth clients cannot use the personal vault endpoint. Vaults are separate
+from Drive objects, search, and MCP. The edge CSP includes `wasm-unsafe-eval`
+for the bundled Argon2 implementation, without permitting JavaScript eval.
+
+A vault has a 1 MiB operational size limit. Helix keeps the current and previous
+saved encrypted revisions. Users can download either as `.kdbx`; configure and
+test encrypted off-server database backups for broader recovery. Every request supplies `X-Helix-Vault-Owner`, matching the verified session
+actor; this guards against an account switch while a tab has unsaved changes.
+A stale save returns a conflict instead of overwriting a different tab. Download the unsaved
+vault before discarding and reloading. Helix cannot recover a forgotten master
+password. Sharing, imports and direct external-client synchronization are not
+part of this first implementation.
+
+### Legacy password manager
 
 A bundled [Vaultwarden](https://github.com/dani-garcia/vaultwarden) server, compatible with the
 Bitwarden apps and browser extensions. It is a separate service with its own accounts and
@@ -626,8 +649,8 @@ end-to-end encrypted vaults: Helix links to it and never sees a master password 
    keeps its automatic certificate.
 4. An administrator opens **Admin → Apps → Passwords**, which shows that the server has a
    password manager installed, and turns on **Passwords is on for everyone**. People then get a
-   Passwords entry in the app launcher that opens the vault and shows the server address to enter
-   in the Bitwarden apps.
+   Passwords entry in the app launcher. The native Passwords page retains an **Open previous
+   password manager** link; the Bitwarden clients continue to use the separate vault hostname.
 
 People create their own vault account with an address in `MAIL_FROM_DOMAIN` and confirm it from
 an email the vault sends through the same mail provider as Helix, from

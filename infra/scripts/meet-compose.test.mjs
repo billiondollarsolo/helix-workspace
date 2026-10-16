@@ -82,6 +82,22 @@ const published = (compose) =>
   );
 
 describe("optional Meet install", () => {
+  it("keeps root-owned XMPP secrets outside Prosody's runtime certificate paths", () => {
+    const prosody = withMeet.services["jitsi-prosody"];
+    for (const source of ["jitsi_xmpp_cert", "jitsi_xmpp_key"]) {
+      const mounts = prosody.secrets.filter((secret) => secret.source === source);
+      expect(mounts).toHaveLength(1);
+      expect(mounts[0].target).toBe(`/run/secrets/${source}`);
+    }
+    expect(prosody.volumes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ target: "/etc/cont-init.d/01-helix-secrets", read_only: true }),
+        expect.objectContaining({ target: "/config", type: "volume" }),
+      ]),
+    );
+    execFileSync("sh", ["-n", join(root, "infra/meet/init/01-helix-secrets")]);
+  });
+
   it("deploys nothing and keeps the core packaging without its Compose file", () => {
     expect(Object.keys(withoutMeet.services).filter((name) => name.startsWith("jitsi-"))).toEqual(
       [],
@@ -149,6 +165,7 @@ describe("optional Meet install", () => {
         .map((secret) => `${secret.target.split("/").at(-1)}=${secret.source}`)
         .sort();
     expect(credentialFiles("jitsi-prosody")).toEqual([
+      "HELIX_JITSI_WEBHOOK_SECRET=meet_webhook_secret",
       "JICOFO_AUTH_PASSWORD=jitsi_jicofo_auth_password",
       "JICOFO_COMPONENT_SECRET=jitsi_jicofo_component_secret",
       "JVB_AUTH_PASSWORD=jitsi_jvb_auth_password",

@@ -1,3 +1,4 @@
+import type { AICostLimitStore } from "../costs/limit-store.js";
 import { runtimeEnvironment } from "../../../config/env.js";
 import type {
   AICallContext,
@@ -116,6 +117,7 @@ function buildAssistantAIRouter(
   provenance: Pick<PostgresAIProvenanceStore, "record">,
   options: {
     readonly costLimiter: AICostLimiter;
+    readonly costLimitStore?: AICostLimitStore;
     readonly metering?: MeteringClient;
     readonly onMeteringError?: (error: unknown) => void;
     readonly metrics: PlatformMetrics;
@@ -137,6 +139,7 @@ function buildAssistantAIRouter(
     providers: createAssistantProviders(options.aiConfig),
     costGuard: createAICostGuard({
       limiter: options.costLimiter,
+      ...(options.costLimitStore === undefined ? {} : { limitStore: options.costLimitStore }),
       tier: options.securityTier,
       ...(options.onCostWarning === undefined ? {} : { onWarning: options.onCostWarning }),
     }),

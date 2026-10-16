@@ -159,7 +159,13 @@ describe("Meilisearch HTTP client", () => {
       method: "PATCH",
       url: "http://127.0.0.1:7799/indexes/helix_search/settings",
       body: {
-        filterableAttributes: ["type", "attributes.orgId", "attributes.allowedActorIds"],
+        filterableAttributes: [
+          "type",
+          "attributes.orgId",
+          "attributes.allowedActorIds",
+          "attributes.ragOwnerActorId",
+        ],
+        pagination: { maxTotalHits: 10001 },
         searchableAttributes: ["title", "body"],
       },
     });

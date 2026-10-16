@@ -46,6 +46,27 @@ export interface LocalMailboxes {
   readonly actors: ReadonlyMap<string, string>;
 }
 
+export async function areLocalMailRecipients(
+  sql: postgres.Sql,
+  orgId: string,
+  addresses: readonly string[],
+): Promise<boolean> {
+  if (addresses.length === 0) return false;
+  return withTenantPostgresContext(sql, { orgId }, async () => {
+    const routing = new MailRoutingStore(sql);
+    for (const address of new Set(addresses.map((entry) => entry.toLowerCase()))) {
+      const resolved = await routing.resolveInboundAddress(address, true);
+      if (
+        resolved.rules.length ||
+        resolved.recipients.length === 0 ||
+        resolved.recipients.some((recipient) => recipient.orgId !== orgId)
+      )
+        return false;
+    }
+    return true;
+  });
+}
+
 /**
  * The envelope recipients that are mailboxes in the sender's tenant. Runs in
  * the caller's tenant context; addresses with routing rules stay with SMTP.
@@ -154,6 +175,12 @@ export class LocalMailTransport implements OutboundMailTransport {
       },
     );
     const { local, actors } = mailboxes;
+    if (envelope.localOnly && remoteDeliveryEnvelope(envelope, local) !== null) {
+      throw new MailDeliveryError(
+        "An internal recipient no longer resolves to a local mailbox; review the recipients and send again.",
+        false,
+      );
+    }
     if (actors.size > 0) {
       await withTenantPostgresContext(this.sql, { orgId: this.outbound.orgId }, async (tx) => {
         await this.assertLease(tx);

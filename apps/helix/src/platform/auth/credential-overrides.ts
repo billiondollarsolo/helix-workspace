@@ -1,3 +1,4 @@
+import { EMPTY_CREDENTIAL_POLICY } from "./credentials.js";
 import type { AgentLimitBudget } from "../limits/types.js";
 import type { ConfirmationOverride, RateLimitOverrides } from "./credentials.js";
 
@@ -56,4 +57,17 @@ export function resolveConfirmationWithOverride(
     case undefined:
       return tierRequiresConfirmation;
   }
+}
+
+export function parseConfirmationOverride(value: unknown): ConfirmationOverride {
+  if (value === "always" || value === "never" || value === "inherit") {
+    return value;
+  }
+  if (value !== null && typeof value === "object") {
+    const mode = (value as Record<string, unknown>).mode;
+    if (mode === "always" || mode === "never" || mode === "inherit") {
+      return mode;
+    }
+  }
+  return EMPTY_CREDENTIAL_POLICY.confirmationOverride;
 }

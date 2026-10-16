@@ -1,4 +1,7 @@
+import assert from "node:assert/strict";
 import postgres from "postgres";
+import { randomUUID } from "node:crypto";
+import { PostgresAgentSourceStore } from "../tools/agent-sources.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { cleanupTestTenants } from "../../test-support/cleanup-tenants.js";
 import { tenantAwarePostgresSql, withTenantPostgresContext } from "../tenancy/postgres-roles.js";
@@ -265,6 +268,81 @@ describe("mailbox actor RLS", { skip: !enabled }, () => {
       `,
       ),
     ).rejects.toMatchObject({ code: "42501" });
+  });
+
+  it("pages bounded Mail bodies with stable same-timestamp cursors and hides foreign cursors", async () => {
+    const threadId = randomUUID();
+    const ids = [randomUUID(), randomUUID(), randomUUID()].sort();
+    await admin`insert into threads (id,org_id,kind,subject,created_by_actor_id) values (${threadId},${orgId},'mail','Paged',${aliceId})`;
+    for (const id of ids)
+      await admin`insert into messages (id,org_id,thread_id,actor_id,kind,body,sent_at,metadata)
+      values (${id},${orgId},${threadId},${aliceId},'mail',${"📧".repeat(6000)},'2026-01-01T00:00:00Z',${admin.json({ from: { address: "alice@mailbox.test" }, to: [], cc: [], bcc: [{ address: "hidden@test.test" }] })})`;
+    await admin`insert into mail_thread_state (org_id,actor_id,thread_id) values (${orgId},${aliceId},${threadId}) on conflict do nothing`;
+    await withTenantPostgresContext(app, { orgId, actorId: aliceId }, async () => {
+      const first = await store.getThread({
+        orgId,
+        actorId: aliceId,
+        threadId,
+        resourcePage: { limit: 2 },
+      });
+      assert(first);
+      const firstMessage = first.messages[0];
+      assert(firstMessage);
+      assert(first.nextCursor);
+      expect(first.messages.map((message) => message.id)).toEqual(ids.slice(0, 2));
+      expect(first.nextCursor).toBe(ids[1]);
+      expect(first.bodyTruncated).toBe(true);
+      expect(Buffer.byteLength(firstMessage.body)).toBe(4096 * 4);
+      expect(firstMessage.bcc).toEqual([]);
+      const second = await store.getThread({
+        orgId,
+        actorId: aliceId,
+        threadId,
+        resourcePage: { limit: 2, after: first.nextCursor },
+      });
+      expect(second?.messages.map((message) => message.id)).toEqual(ids.slice(2));
+      expect(second?.nextCursor).toBeUndefined();
+      expect(
+        await store.getThread({
+          orgId,
+          actorId: aliceId,
+          threadId,
+          resourcePage: { limit: 2, after: bobMessageId },
+        }),
+      ).toBeNull();
+      const full = await store.getThread({ orgId, actorId: aliceId, threadId });
+      assert(full?.messages[0]);
+      expect(Buffer.byteLength(full.messages[0].body)).toBe(6000 * 4);
+    });
+  });
+
+  it("merges bounded agent source history atomically and isolates other actors", async () => {
+    const sources = new PostgresAgentSourceStore(app);
+    await withTenantPostgresContext(app, { orgId, actorId: aliceId }, async () => {
+      await sources.record(
+        orgId,
+        aliceId,
+        Array.from({ length: 128 }, (_, i) => `source-${String(i)}`),
+      );
+      await Promise.all([
+        sources.record(orgId, aliceId, ["new-a"]),
+        sources.record(orgId, aliceId, ["new-b"]),
+      ]);
+      const history = await sources.get(orgId, aliceId);
+      expect(history).toHaveLength(128);
+      expect(history).toContain("new-a");
+      expect(history).toContain("new-b");
+      expect(history).not.toContain("source-0");
+      expect(await sources.get(orgId, bobId)).toEqual([]);
+    });
+    await expect(
+      withTenantPostgresContext(app, { orgId, actorId: aliceId }, () =>
+        sources.record(orgId, bobId, ["forged"]),
+      ),
+    ).rejects.toMatchObject({ code: "42501" });
+    await withTenantPostgresContext(app, { orgId, actorId: bobId }, async () => {
+      expect(await sources.get(orgId, bobId)).toEqual([]);
+    });
   });
 
   async function cleanup(): Promise<void> {

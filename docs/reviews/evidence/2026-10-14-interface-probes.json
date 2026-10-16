@@ -1,0 +1,128 @@
+{
+  "schemaVersion": 1,
+  "reviewDate": "2026-10-14",
+  "baselineCommit": "aa4d2da67c37a851a3ce1a89c24fd307073f5be1",
+  "sourceScope": "baseline plus current working tree",
+  "method": "Isolated Helix handlers; memory authentication adapter and simulated MFA SQL cooldown; loopback SMTP socket. No external sends or live-user mutations.",
+  "interfaces": {
+    "malformedJson": {
+      "status": 400,
+      "body": {
+        "statusCode": 400,
+        "code": "FST_ERR_CTP_INVALID_JSON_BODY",
+        "error": "Bad Request",
+        "message": "Body is not valid JSON but content-type is set to 'application/json'"
+      },
+      "contractAccepted": false
+    },
+    "suspendedTenant": {
+      "status": 423,
+      "body": {
+        "error": {
+          "code": "tenant-suspended",
+          "message": "Suspended fixture",
+          "traceId": "req-2"
+        }
+      },
+      "contractAccepted": false
+    },
+    "resources": {
+      "limitedToolResponse": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "result": {
+          "isError": true,
+          "content": [
+            {
+              "type": "text",
+              "text": "Agent tool invocation limit exceeded: requests_per_minute Rate limited. Retry after 60 seconds."
+            }
+          ],
+          "structuredContent": {
+            "code": "rate_limited",
+            "message": "Agent tool invocation limit exceeded: requests_per_minute",
+            "retryAfterSeconds": 60,
+            "hint": "Rate limited. Retry after 60 seconds."
+          }
+        }
+      },
+      "resourceStillReadable": true,
+      "repeatedResourceStillReadable": true,
+      "auditRecordsAdded": 0,
+      "responseBytes": 2622836
+    },
+    "provenance": {
+      "executions": 1,
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"fixtureExecuted\":true}"
+            }
+          ],
+          "structuredContent": {
+            "fixtureExecuted": true
+          }
+        }
+      },
+      "auditMetadata": {
+        "orgId": "audit-org",
+        "actorType": "agent",
+        "toolId": "mail.audit-send",
+        "toolPermission": "mail.send",
+        "sideEffectClass": "external_communication",
+        "status": "executed",
+        "durationBucket": "lt_10ms",
+        "idempotencyFingerprint": "bd42ad9e1b9bee72a1f96d03c36a83cc7afda55af388379da0413fa0e6be2204",
+        "effectiveClassification": "standard",
+        "requestChannel": "mcp",
+        "sourceIds": [],
+        "containsUntrustedContext": false
+      }
+    },
+    "firewallWithProvenance": {
+      "outcome": "deny",
+      "reason": "untrusted_context_high_risk_blocked"
+    }
+  },
+  "email-resend": {
+    "memoryAdapter": true,
+    "maintainedPlugin": "better-auth 1.7.2",
+    "baselineDeliveredCodeStatus": 200,
+    "deliveredMessagesAcrossTwoFixtures": 2,
+    "resendStatus": 429,
+    "originalDeliveredCodeStatus": 401,
+    "originalDeliveredCodeError": "INVALID_CODE",
+    "pendingOtpRecords": 1
+  },
+  "smtp-reuse": {
+    "plaintextLoopbackFixture": true,
+    "physicalPeer": "127.0.0.1",
+    "identities": [
+      {
+        "remoteAddress": "203.0.113.77",
+        "helo": "audit.example.test"
+      },
+      {
+        "remoteAddress": "203.0.113.77",
+        "helo": "audit.example.test"
+      }
+    ],
+    "staleIdentityOnUnavailable": true
+  },
+  "developmentReadiness": [
+    {
+      "path": "/healthz",
+      "status": 200,
+      "ok": true
+    },
+    {
+      "path": "/readyz",
+      "status": 200,
+      "ok": true
+    }
+  ]
+}

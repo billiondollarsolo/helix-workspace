@@ -110,6 +110,7 @@ export function ImportContactsDialog({
   const preview = prepared?.preview;
   return (
     <Dialog
+      modal={false}
       title={<h2 className="type-h3 m-0">Import contacts</h2>}
       onClose={onClose}
       width="min(480px, 100%)"

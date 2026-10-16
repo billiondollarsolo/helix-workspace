@@ -96,7 +96,7 @@ describe("Manage labels", () => {
 
   it("creates a nested label with a palette color", async () => {
     renderLabels();
-    click(await waitFor(() => buttonNamed("Create new label"), "create button"));
+    click(await waitFor(() => buttonNamed("Add label"), "create button"));
     const dialog = await labelForm("New label");
     expect(await axeViolations()).toEqual([]);
 

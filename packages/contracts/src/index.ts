@@ -9,3 +9,10 @@ export * from "./security-scanning.js";
 export * from "./account.js";
 export * from "./chat-inbox.js";
 export * from "./contacts.js";
+export * from "./actions.js";
+export * from "./passwords.js";
+export * from "./live.js";
+
+export * from "./agent-runtime.js";
+export * from "./mail-productivity.js";
+export * from "./bot-accounts.js";

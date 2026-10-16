@@ -565,11 +565,7 @@ export function DriveShell() {
           initialName={renameTarget.name}
           submitLabel="OK"
           onClose={() => setRenameTarget(null)}
-          onSubmit={(name) => {
-            const target = renameTarget;
-            setRenameTarget(null);
-            void actions.rename(target, name);
-          }}
+          onSubmit={(name) => actions.rename(renameTarget, name)}
         />
       )}
       {newFolderOpen ? (
@@ -579,10 +575,7 @@ export function DriveShell() {
           initialName="Untitled folder"
           submitLabel="Create"
           onClose={() => setNewFolderOpen(false)}
-          onSubmit={(name) => {
-            setNewFolderOpen(false);
-            void actions.createFolder(name, createTarget);
-          }}
+          onSubmit={async (name) => (await actions.createFolder(name, createTarget)) !== null}
         />
       ) : null}
       {moveTargets === null ? null : (

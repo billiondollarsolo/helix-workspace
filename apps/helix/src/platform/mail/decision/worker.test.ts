@@ -83,6 +83,7 @@ function harness(input: {
   readonly decide?: DecisionModelProvider["decide"];
   readonly stored?: { readonly classification: "restricted" | "confidential" | "standard" } | null;
   readonly inserted?: boolean;
+  readonly claim?: "claimed" | "daily_cap" | "already_recorded";
 }) {
   const verdicts: DecisionVerdictWrite[] = [];
   const store = {
@@ -90,6 +91,7 @@ function harness(input: {
     readCredential: vi.fn(async () =>
       input.credential === undefined ? "cf-token-123" : input.credential,
     ),
+    claimProviderCall: vi.fn(async () => input.claim ?? ("claimed" as const)),
     recordVerdict: vi.fn(async (write: DecisionVerdictWrite) => {
       verdicts.push(write);
       return input.inserted ?? true;
@@ -371,3 +373,12 @@ describe("MailDecisionWorker events", () => {
     expect(h.store.loadCandidate).toHaveBeenCalledTimes(1);
   });
 });
+
+it.each(["daily_cap", "already_recorded"] as const)(
+  "does not call the decision provider when an atomic reservation returns %s",
+  async (claim) => {
+    const h = harness({ claim });
+    await expect(h.worker.process({ orgId, messageId })).resolves.toMatchObject({ reason: claim });
+    expect(h.decide).not.toHaveBeenCalled();
+  },
+);

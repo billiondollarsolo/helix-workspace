@@ -36,7 +36,7 @@ const liveSession: MeetCallSession = {
   joinUrl: "https://meet.localhost/atlas-sync?jwt=jwt-token",
   recordingAvailable: true,
   canStartRecording: true,
-  recordingNoticeVersion: "2026-09-02",
+  recordingNoticeVersion: "2026-10-15",
   recordingActive: false,
   controls: {
     roomId: "room-1",
@@ -68,7 +68,7 @@ const pendingSession: MeetCallSession = {
   joinUrl: null,
   recordingAvailable: false,
   canStartRecording: false,
-  recordingNoticeVersion: "2026-09-02",
+  recordingNoticeVersion: "2026-10-15",
   recordingActive: false,
   controls: {
     roomId: "",
@@ -243,7 +243,7 @@ describe("MeetCall", () => {
     // Jitsi External API mounts its iframe inside our host div asynchronously,
     // after external_api.js loads. In tests that script never loads, so we just
     // verify the host is wired and the room subject + code are present.
-    const host = container.querySelector(`[aria-label="Jitsi meeting: ${liveSession.subject}"]`);
+    const host = container.querySelector(`[aria-label="Meeting: ${liveSession.subject}"]`);
     expect(host).not.toBeNull();
     expect(container.querySelector('[aria-label="Meeting details"]')?.textContent).toContain(
       "atl-asly-snc",

@@ -29,7 +29,7 @@ export interface DriveActions {
   restore(items: readonly DriveItem[]): Promise<void>;
   deleteForever(items: readonly DriveItem[]): Promise<void>;
   move(items: readonly DriveItem[], target: DriveMoveTarget): Promise<void>;
-  rename(item: DriveItem, name: string): Promise<void>;
+  rename(item: DriveItem, name: string): Promise<boolean>;
   setStarred(items: readonly DriveItem[], starred: boolean): Promise<void>;
   /** Make the signed-in person their own copy of each file. */
   copy(items: readonly DriveItem[]): Promise<void>;
@@ -191,12 +191,13 @@ export function useDriveActions(): DriveActions {
   const rename = useCallback(
     async (item: DriveItem, name: string) => {
       const next = name.trim();
-      if (next.length === 0 || next === item.name) return;
+      if (next.length === 0) return false;
+      if (next === item.name) return true;
       const done = await run(
         () => renameDriveObject({ objectId: item.id, name: next }),
         "Couldn’t rename",
       );
-      if (done === null) return;
+      if (done === null) return false;
       notify({
         message: `Renamed to “${next}”`,
         action: {
@@ -209,6 +210,7 @@ export function useDriveActions(): DriveActions {
           },
         },
       });
+      return true;
     },
     [run],
   );

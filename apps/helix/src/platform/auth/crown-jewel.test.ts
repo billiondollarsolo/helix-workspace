@@ -34,6 +34,7 @@ describe("crown-jewel gate", () => {
     expect(action("POST", "/api/admin/users/user-id/mfa/reset")).toBe("identity.mfa.reset");
     expect(action("POST", "/api/admin/plugins/plugin.example/install")).toBeNull();
     expect(action("POST", "/api/tools/agent.credentials.create")).toBe("credential.issue");
+    expect(action("POST", "/api/tools/agent.account.approve")).toBe("credential.issue");
     expect(
       action("PUT", "/api/admin/agent-secrets/7f1f0f6e-1111-4111-8111-111111111111/grants"),
     ).toBe("agent_secret.grant");
@@ -46,6 +47,24 @@ describe("crown-jewel gate", () => {
     expect(action("GET", "/api/admin/domains")).toBeNull();
     // Restore already has a durable two-approver workflow; never double-gate it.
     expect(action("POST", "/api/admin/restores")).toBeNull();
+  });
+
+  it("applies the same sensitive-action policy to MCP tool calls", () => {
+    for (const name of ["agent.account.approve", "agent.credentials.create"]) {
+      expect(
+        crownJewelActionFor("POST", "/mcp", {
+          method: "tools/call",
+          params: { name, arguments: {} },
+        })?.id,
+      ).toBe("credential.issue");
+    }
+    expect(
+      crownJewelActionFor("POST", "/mcp", {
+        method: "tools/call",
+        params: { name: "agent.account.request" },
+      }),
+    ).toBeNull();
+    expect(crownJewelActionFor("POST", "/mcp", { method: "tools/list" })).toBeNull();
   });
 
   it("canonicalizes body keys and query ordering in the approval fingerprint", () => {

@@ -1,6 +1,6 @@
+import { LiveRoutes } from "../platform/live/routes.js";
 import { systemActor } from "../api/actor.js";
 import { buildAsyncApiDocument } from "../api/asyncapi.js";
-import { createStoreBackedMcpResourceProvider } from "../api/mcp-resources.js";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import {
   buildProtectedResourceMetadata,
@@ -19,6 +19,8 @@ import type { ToolInvocationPrincipal } from "../platform/auth/tool-invocation-p
 import { resolveCoreAppStatuses } from "../platform/apps/core-apps.js";
 import { PASSWORDS_APP_FLAG, resolvePasswordsStatus } from "../platform/passwords/status.js";
 import { loadEffectiveTenantConfig } from "../platform/tenancy/index.js";
+import { finishTenantRequestTransaction } from "../platform/tenancy/middleware.js";
+import { isRecord } from "../api/mcp-jsonrpc.js";
 import { registerAssistantStreamRoute } from "./assistant-routes.js";
 import type { installObservability } from "./observability.js";
 import { CredentialAuthError } from "./request-principal.js";
@@ -36,8 +38,6 @@ export async function installAgentApi(context: AgentApiContext) {
     idempotencyStore,
     oauthStore,
     agentCredentialStore,
-    calendarStore,
-    chatStore,
     platformConfig,
     orgStore,
     bootEnv,
@@ -45,8 +45,6 @@ export async function installAgentApi(context: AgentApiContext) {
     principalFromAuthenticatedRequest,
     actorFromAuthenticatedRequest,
     coreApps,
-    mailStore,
-    driveStore,
     eventSchemas,
     tools,
     assistantOrchestrator,
@@ -113,6 +111,7 @@ export async function installAgentApi(context: AgentApiContext) {
     app,
     {
       tools,
+      publicBaseUrl: mcpPublicBaseUrl(context),
       metrics,
       tokenStore: oauthStore,
       idempotencyStore,
@@ -140,6 +139,7 @@ export async function installAgentApi(context: AgentApiContext) {
     app,
     {
       tools,
+      publicBaseUrl: mcpPublicBaseUrl(context),
       metrics,
       tokenStore: oauthStore,
       credentialStore: agentCredentialStore,
@@ -161,14 +161,8 @@ export async function installAgentApi(context: AgentApiContext) {
 
   app.get("/asyncapi.json", async () => buildAsyncApiDocument({}, eventSchemas.list()));
 
-  const mcpResourceProvider = () =>
-    createStoreBackedMcpResourceProvider({
-      chat: chatStore,
-      calendar: calendarStore,
-      mail: mailStore,
-      drive: driveStore,
-    });
-
+  const live = new LiveRoutes(context.sql, principalFromAuthenticatedRequest);
+  await live.install(app);
   const publicBaseUrl = mcpPublicBaseUrl(context);
   app.post("/mcp", async (request, reply) => {
     let principal: ToolInvocationPrincipal;
@@ -186,15 +180,17 @@ export async function installAgentApi(context: AgentApiContext) {
       principal,
       request: createRequestContext(request),
       body: request.body,
-      resources: mcpResourceProvider(),
+      resources: context.mcpResources,
+      live: { read: (actor, uri) => live.read(actor, uri) },
       idempotencyStore,
       headers: request.headers,
       acceptsEventStream: acceptsEventStream(request),
+      finishTransaction: (commit) => finishTenantRequestTransaction(request, commit),
       publicBaseUrl,
     });
+    if (outcome.kind === "listen") return live.stream(request, reply, true);
     return sendMcpOutcome(reply, outcome);
   });
-  // MC6: no server-initiated SSE stream and no session teardown endpoint.
   app.get("/mcp", async (_request, reply) => sendMcpOutcome(reply, mcpMethodNotAllowedOutcome()));
   app.delete("/mcp", async (_request, reply) =>
     sendMcpOutcome(reply, mcpMethodNotAllowedOutcome()),
@@ -214,6 +210,7 @@ function mcpPublicBaseUrl(context: Pick<AgentApiContext, "bootEnv" | "oauthIssue
 }
 
 export async function sendMcpOutcome(reply: FastifyReply, outcome: McpHttpOutcome) {
+  if (outcome.kind === "listen") throw new Error("Subscription dispatch is required.");
   if (outcome.kind === "stream") {
     reply.raw.writeHead(outcome.statusCode, {
       ...outcome.headers,
@@ -222,8 +219,17 @@ export async function sendMcpOutcome(reply: FastifyReply, outcome: McpHttpOutcom
       connection: "keep-alive",
       "api-version": HELIX_API_VERSION_HEADER_VALUE,
     });
-    for await (const event of outcome.events) {
-      reply.raw.write(formatSseEvent(event));
+    try {
+      for await (const event of outcome.events) {
+        if (reply.raw.destroyed) throw new Error("MCP client disconnected.");
+        if (isRecord(event.data) && "id" in event.data && !("method" in event.data)) {
+          await finishTenantRequestTransaction(reply.request, true);
+        }
+        reply.raw.write(formatSseEvent(event));
+      }
+    } catch (error) {
+      await finishTenantRequestTransaction(reply.request, false);
+      throw error;
     }
     reply.raw.end();
     return reply;

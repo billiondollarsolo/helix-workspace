@@ -960,27 +960,26 @@ export class PostgresDomainsStore implements DomainsStore {
   async recordDomainVerification(
     input: RecordDomainVerificationInput,
   ): Promise<DomainRecord | null> {
-    const rows = await this.sql<DomainRow[]>`
-      select (helix_record_domain_verification(
+    return this.domainMutation(this.sql`
+      select * from helix_record_domain_verification(
         ${input.orgId}, ${input.id}, ${input.verified}, ${input.actorId}
-      )).*
-    `;
-    return rows[0] === undefined ? null : mapDomainRow(rows[0]);
+      )
+    `);
   }
 
   async setDomainCapabilities(input: SetDomainCapabilitiesInput): Promise<DomainRecord | null> {
     return this.domainMutation(this.sql`
-      select (helix_set_domain_capabilities(
+      select * from helix_set_domain_capabilities(
         ${input.orgId}, ${input.id}, ${input.identityEnabled}, ${input.mailEnabled},
         ${input.aliasesEnabled}, ${input.customHostEnabled}, ${input.federationEnabled},
         ${input.providerId}, ${input.identityMode}, ${input.aliasTargetDomainId}, ${input.actorId}
-      )).*
+      )
     `);
   }
 
   async setPrimaryDomain(orgId: string, id: string, actorId: string): Promise<DomainRecord | null> {
     return this.domainMutation(
-      this.sql`select (helix_set_primary_domain(${orgId}, ${id}, ${actorId})).*`,
+      this.sql`select * from helix_set_primary_domain(${orgId}, ${id}, ${actorId})`,
     );
   }
 
@@ -999,18 +998,18 @@ export class PostgresDomainsStore implements DomainsStore {
     actorId: string,
   ): Promise<DomainRecord | null> {
     return this.domainMutation(
-      this.sql`select (helix_rollback_primary_domain(${orgId}, ${transitionId}, ${actorId})).*`,
+      this.sql`select * from helix_rollback_primary_domain(${orgId}, ${transitionId}, ${actorId})`,
     );
   }
 
   async quarantineDomain(orgId: string, id: string, actorId: string): Promise<DomainRecord | null> {
     return this.domainMutation(
-      this.sql`select (helix_quarantine_domain(${orgId}, ${id}, ${actorId})).*`,
+      this.sql`select * from helix_quarantine_domain(${orgId}, ${id}, ${actorId})`,
     );
   }
 
   async releaseDomain(orgId: string, id: string): Promise<DomainRecord | null> {
-    return this.domainMutation(this.sql`select (helix_release_domain(${orgId}, ${id})).*`);
+    return this.domainMutation(this.sql`select * from helix_release_domain(${orgId}, ${id})`);
   }
 
   private async domainMutation(query: PromiseLike<unknown>): Promise<DomainRecord | null> {

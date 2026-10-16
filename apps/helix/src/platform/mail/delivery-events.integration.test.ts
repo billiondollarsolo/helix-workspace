@@ -1,8 +1,10 @@
+import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { tenantAwarePostgresSql, withTenantPostgresContext } from "../tenancy/postgres-roles.js";
 import { PostgresMailDeliveryEventStore } from "./delivery-events.js";
+import { normalizeSesFeedback } from "./ses-feedback.js";
 import { PostgresMailStore } from "./store.js";
 
 const databaseUrl = process.env.DATABASE_URL;
@@ -33,6 +35,7 @@ describe.skipIf(databaseUrl === undefined)("mail feedback during a leased dispat
     await sql`delete from threads where org_id = ${orgId}`;
     await sql`delete from outbox where payload->>'orgId' = ${orgId}`;
     await sql`delete from actors where org_id = ${orgId}`;
+    await sql`delete from search_index_mutations where org_id = ${orgId}`;
     await sql`delete from orgs where id = ${orgId}`;
     await sql.end();
   });
@@ -151,5 +154,58 @@ describe.skipIf(databaseUrl === undefined)("mail feedback during a leased dispat
       last_error: "550 mailbox unavailable",
     });
     expect(await sql`select id from mail_suppressions where org_id = ${orgId}`).toHaveLength(1);
+  });
+  it("correlates signed SES header handoff IDs and rejects another provider before suppression", async () => {
+    const recipient = "ses-recipient@example.test";
+    const outbound = await withTenantPostgresContext(tenantSql, { orgId, actorId }, () =>
+      store.createOutbound({
+        orgId,
+        actorId,
+        idempotencyKey: randomUUID(),
+        undoUntil: new Date(),
+        outboxSubject: "mail.outbound.queued",
+        envelope: {
+          from: { address: "sender@example.test" },
+          to: [{ address: recipient }],
+          cc: [],
+          bcc: [],
+          subject: "SES fixture",
+          text: "Body",
+          attachments: [],
+        },
+      }),
+    );
+    await sql`update mail_outbound_messages set provider_id=${providerId},provider_message_id='mail-manager-queue-id' where id=${outbound.id}`;
+    const [event] = normalizeSesFeedback(
+      {
+        notificationType: "Complaint",
+        mail: {
+          messageId: "downstream-ses-id",
+          headers: [{ name: "X-Helix-Idempotency-Key", value: outbound.handoffKey }],
+        },
+        complaint: {
+          timestamp: new Date().toISOString(),
+          complainedRecipients: [{ emailAddress: recipient }],
+        },
+      },
+      randomUUID(),
+    );
+    assert(event);
+    await expect(feedback.ingestEvent({ orgId, providerId: randomUUID(), event })).rejects.toThrow(
+      "does not match",
+    );
+    expect(await feedback.findActiveSuppressions(orgId, [recipient])).toEqual([]);
+    expect(await feedback.ingestEvent({ orgId, providerId, event })).toMatchObject({
+      outboundMatched: true,
+      suppressed: true,
+      duplicate: false,
+    });
+    expect(await feedback.ingestEvent({ orgId, providerId, event })).toMatchObject({
+      duplicate: true,
+    });
+    expect(await feedback.findActiveSuppressions(orgId, [recipient])).toHaveLength(1);
+    expect(
+      (await sql`select status from mail_outbound_messages where id=${outbound.id}`)[0]?.status,
+    ).toBe("complained");
   });
 });

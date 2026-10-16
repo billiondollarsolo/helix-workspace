@@ -17,13 +17,14 @@ import {
   UploadPartCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import type { StorageClient, StorageObject } from "@helix/sdk-types";
+import type { StorageClient } from "@helix/sdk-types";
 import fastify, { type FastifyInstance } from "fastify";
 import { createHash, randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { TenantEnvelopeCipher } from "../../secrets/envelope.js";
-import { createS3CompatibleStorage } from "../../storage/index.js";
+import { contractStorage } from "../../../test-support/s3-storage.js";
+import { registerDriveRoutes } from "../routes.js";
 import { cleanupTestTenants } from "../../../test-support/cleanup-tenants.js";
 import { skipUnlessLiveDatabase } from "../../../test-support/live-suite.js";
 import { PostgresDriveStore } from "../store.js";
@@ -42,68 +43,6 @@ const ORG_B = "5a3e0000-0000-4000-8000-00000000000b";
 const ACTOR_A = "5a3e0000-0000-4000-8000-0000000000a1";
 const ACTOR_B = "5a3e0000-0000-4000-8000-0000000000b1";
 const EICAR_MARKER = "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR";
-
-class MemoryStorage implements StorageClient {
-  readonly objects = new Map<string, Uint8Array>();
-  async put(object: StorageObject): Promise<void> {
-    const body = object.body instanceof Uint8Array ? object.body : await collect(object.body);
-    this.objects.set(object.key, body);
-  }
-  async get(key: string): Promise<StorageObject | null> {
-    const body = this.objects.get(key);
-    return body === undefined ? null : { key, body };
-  }
-  async getStream(key: string): Promise<StorageObject | null> {
-    return this.get(key);
-  }
-  async getRange(key: string, start: number, end: number): Promise<StorageObject | null> {
-    const body = this.objects.get(key);
-    return body === undefined ? null : { key, body: body.subarray(start, end + 1) };
-  }
-  async delete(key: string): Promise<void> {
-    this.objects.delete(key);
-  }
-  async copy(source: string, destination: string): Promise<void> {
-    const body = this.objects.get(source);
-    if (body !== undefined) this.objects.set(destination, body);
-  }
-}
-
-async function collect(body: AsyncIterable<Uint8Array>): Promise<Uint8Array> {
-  const chunks: Uint8Array[] = [];
-  for await (const chunk of body) chunks.push(chunk);
-  return Buffer.concat(chunks);
-}
-
-/** Uses the live RustFS contract bucket when it is reachable, memory otherwise. */
-async function contractStorage(): Promise<{ storage: StorageClient; kind: string }> {
-  const endpoint = process.env.S3_CONTRACT_ENDPOINT;
-  const accessKeyId = process.env.S3_CONTRACT_ACCESS_KEY;
-  const secretAccessKey = process.env.S3_CONTRACT_SECRET_KEY;
-  if (endpoint !== undefined && accessKeyId !== undefined && secretAccessKey !== undefined) {
-    const client = createS3CompatibleStorage({
-      endpoint,
-      region: "us-east-1",
-      bucket: process.env.S3_CONTRACT_BUCKET ?? "helix-objects",
-      credentials: { accessKeyId, secretAccessKey },
-      fetch,
-      requestTimeoutMs: 3_000,
-    });
-    // The suite stages 6 MiB multipart parts; probe that size, not just liveness.
-    const probeKey = `drive-s3-gateway-probe/${randomUUID()}`;
-    try {
-      await client.checkHealth();
-      await client.put({ key: probeKey, body: Buffer.alloc(6 * 1024 * 1024, 1) });
-      await client.delete(probeKey);
-      return { storage: client, kind: "rustfs" };
-    } catch (error) {
-      process.stderr.write(
-        `\n  Drive S3 gateway e2e: S3 contract store ${endpoint} cannot store a 6 MiB object (${error instanceof Error ? error.message : String(error)}); using in-memory storage.\n`,
-      );
-    }
-  }
-  return { storage: new MemoryStorage(), kind: "memory" };
-}
 
 /** Writes the same hash-chained `activity` rows as the platform audit store. */
 function activityAudit(sql: postgres.Sql): DriveS3AuditSink {
@@ -144,6 +83,13 @@ describe.skipIf(SKIP)("Drive S3 gateway end-to-end", () => {
   let stagingStorage: StorageClient;
   let multipartStore: PostgresDriveS3MultipartStore;
   let scannerDown = false;
+  const collaboratorId = randomUUID();
+  const collaborator = {
+    id: collaboratorId,
+    orgId: ORG_A,
+    type: "user" as const,
+    scopes: ["drive.read", "drive.write", "drive.delete"] as const,
+  };
 
   function client(credentials: { accessKeyId: string; secretAccessKey: string }): S3Client {
     return new S3Client({
@@ -186,6 +132,14 @@ describe.skipIf(SKIP)("Drive S3 gateway end-to-end", () => {
       },
     });
     app = fastify();
+    await registerDriveRoutes(app, {
+      store: driveStore,
+      requireTls: false,
+      appPasswords: {
+        authenticateAppPassword: async ({ username, password }) =>
+          username === collaboratorId && password === "test-only" ? collaborator : null,
+      },
+    });
     await registerDriveS3Gateway(app, {
       store: driveStore,
       accessKeys,
@@ -495,6 +449,90 @@ describe.skipIf(SKIP)("Drive S3 gateway end-to-end", () => {
     );
     expect(denied.name).toBe("AccessDenied");
     expect(denied.message).toContain("drive.write");
+  });
+
+  it("honors same-tenant sharing, editor permissions and revocation across S3 and WebDAV", async () => {
+    await sql`insert into actors (id, org_id, type, display_name, email, scopes)
+      values (${collaboratorId}, ${ORG_A}, 'user', 'Collaborator', 'collaborator@s3-gateway-a.test',
+        ${sql.array([...collaborator.scopes])})`;
+    const credentials = await accessKeys.create({
+      orgId: ORG_A,
+      actorId: collaboratorId,
+      label: "collaborator",
+      scopes: collaborator.scopes,
+    });
+    const other = client({
+      accessKeyId: credentials.accessKey.accessKeyId,
+      secretAccessKey: credentials.secretAccessKey,
+    });
+    const key = "ACL proof/private.txt";
+    await clientA.send(
+      new PutObjectCommand({ Bucket: "my-drive", Key: key, Body: "private content" }),
+    );
+    const get = () => other.send(new GetObjectCommand({ Bucket: "shared-with-me", Key: key }));
+    const dav = (method: "GET" | "PUT", payload?: string) =>
+      app.inject({
+        method,
+        url: "/dav/files/ACL%20proof/private.txt",
+        headers: {
+          authorization: `Basic ${Buffer.from(`${collaboratorId}:test-only`).toString("base64")}`,
+          "content-type": "text/plain",
+        },
+        ...(payload === undefined ? {} : { payload }),
+      });
+    expect((await errorOf(get())).name).toBe("NoSuchKey");
+    expect((await dav("GET")).statusCode).toBe(404);
+    const folder = (await driveStore.list({ orgId: ORG_A, actorId: ACTOR_A })).entries.find(
+      (entry) => entry.name === "ACL proof",
+    );
+    if (folder === undefined) throw new Error("Missing ACL fixture folder");
+    const share = (role: "reader" | "editor") =>
+      driveStore.share({
+        orgId: ORG_A,
+        actorId: ACTOR_A,
+        objectId: folder.id,
+        targetActorIds: [collaboratorId],
+        role,
+      });
+    await share("reader");
+    expect(await (await get()).Body?.transformToString()).toBe("private content");
+    expect((await dav("GET")).body).toBe("private content");
+    expect((await dav("PUT", "unauthorized")).statusCode).toBe(403);
+    expect(
+      (
+        await errorOf(
+          other.send(
+            new PutObjectCommand({ Bucket: "shared-with-me", Key: key, Body: "unauthorized" }),
+          ),
+        )
+      ).name,
+    ).toBe("AccessDenied");
+    await share("editor");
+    await other.send(new PutObjectCommand({ Bucket: "shared-with-me", Key: key, Body: "S3 edit" }));
+    expect((await dav("GET")).body).toBe("S3 edit");
+    expect((await dav("PUT", "DAV edit")).statusCode).toBe(204);
+    expect(await (await get()).Body?.transformToString()).toBe("DAV edit");
+    const signed = await getSignedUrl(
+      other,
+      new GetObjectCommand({ Bucket: "shared-with-me", Key: key }),
+      { expiresIn: 60 },
+    );
+    expect((await fetch(signed)).status).toBe(200);
+    await driveStore.removeAccess({
+      orgId: ORG_A,
+      actorId: ACTOR_A,
+      objectId: folder.id,
+      targetActorId: collaboratorId,
+    });
+    expect((await errorOf(get())).name).toBe("NoSuchKey");
+    expect((await fetch(signed)).status).toBe(404);
+    expect((await dav("GET")).statusCode).toBe(404);
+    expect(
+      await (
+        await clientA.send(new GetObjectCommand({ Bucket: "my-drive", Key: key }))
+      ).Body?.transformToString(),
+    ).toBe("DAV edit");
+    other.destroy();
   });
 
   it("scans uploads and refuses to serve quarantined files", async () => {

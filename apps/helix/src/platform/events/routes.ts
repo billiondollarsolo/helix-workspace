@@ -116,7 +116,7 @@ export async function registerEventRoutes(
   options: RegisterEventRoutesOptions,
 ): Promise<void> {
   app.get("/events/ws", { websocket: true }, async (socket, request) => {
-    await handleEventSocket(socket as EventSocket, request, options);
+    await handleEventSocket(socket, request, options);
   });
 }
 
@@ -129,13 +129,39 @@ export async function handleEventSocket(
   // lifetime of the socket.
   trackWebsocketConnection(socket, EVENTS_WS_ROUTE, options.metrics);
 
+  const state = { closed: false };
+  let releaseStream: () => void = () => undefined;
+  let unsubscribe: Unsubscribe | undefined;
+  socket.on("close", () => {
+    state.closed = true;
+    releaseStream();
+    if (unsubscribe !== undefined) {
+      const cleanup = unsubscribe;
+      unsubscribe = undefined;
+      void Promise.resolve()
+        .then(cleanup)
+        .catch((error: unknown) => options.onError?.(error));
+    }
+  });
+  socket.on("error", (error) => {
+    options.onError?.(error);
+    socket.close(1011, "Event connection failed");
+  });
+
   const subject = parseSubject(request.query);
   if (subject === null) {
     socket.close(1008, "Missing or invalid subject query parameter");
     return;
   }
 
-  const actor = await options.actorFromRequest(request);
+  let actor: Actor;
+  try {
+    actor = await options.actorFromRequest(request);
+  } catch {
+    socket.close(1008, "Authentication required");
+    return;
+  }
+  if (state.closed) return;
   if (isUnauthenticated(actor)) {
     socket.close(1008, "Authentication required");
     return;
@@ -155,7 +181,6 @@ export async function handleEventSocket(
      Written as an explicit branch rather than `acquire(...) ?? noop`: `null` is
      nullish, so `??` would treat "the org is at its ceiling" as "no limiter
      configured" and admit the connection anyway. */
-  let releaseStream: () => void = () => undefined;
   if (options.streamLimiter !== undefined) {
     const lease = options.streamLimiter.acquire(actor.orgId);
     if (lease === null) {
@@ -168,35 +193,34 @@ export async function handleEventSocket(
     releaseStream = lease;
   }
 
-  let closed = false;
-  let unsubscribe: Unsubscribe | undefined;
-
-  socket.on("close", () => {
-    closed = true;
-    releaseStream();
-    if (unsubscribe !== undefined) {
-      const cleanup = unsubscribe;
-      unsubscribe = undefined;
-      void Promise.resolve(cleanup()).catch((error: unknown) => {
-        options.onError?.(error);
-      });
-    }
-  });
-
-  socket.on("error", (error) => {
-    options.onError?.(error);
-  });
-
   try {
-    unsubscribe = await options.bus.subscribe(subject, async (event) => {
-      if (closed) {
+    const subscription = await options.bus.subscribe(subject, async (event) => {
+      if (state.closed) {
         return;
       }
       if (!isVisibleToActor(event, actor)) {
         return;
       }
-      sendEvent(socket, event);
+      try {
+        const current = await options.actorFromRequest(request);
+        if (
+          isUnauthenticated(current) ||
+          current.id !== actor.id ||
+          current.orgId !== actor.orgId
+        ) {
+          socket.close(1008, "Authentication required");
+          return;
+        }
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Close callbacks can run during authentication.
+        if (!state.closed && isVisibleToActor(event, current)) sendEvent(socket, event);
+      } catch {
+        socket.close(1008, "Authentication required");
+      }
     });
+    // A client can disconnect while the bus is establishing its subscription.
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Close callbacks run during subscription setup.
+    if (state.closed) await subscription();
+    else unsubscribe = subscription;
   } catch (error) {
     options.onError?.(error);
     socket.close(1011, "Event subscription failed");
@@ -239,6 +263,14 @@ function isVisibleToActor(event: EventEnvelope, actor: Actor): boolean {
   // platform's own internal identity (it has no real tenant of its own — its
   // orgId is the all-zero placeholder), and every other gate lets it through.
   // Filtering it by orgId here would silently starve internal subscribers.
+  // These resources require their own mailbox, room, calendar or object ACL.
+  if (
+    /^(?:(?:activity\.|com\.helix\.core\.)?(?:mail|drive|chat|calendar|contacts|assistant|meet|passwords))(?:\.|$)/u.test(
+      event.subject,
+    )
+  )
+    return false;
+
   if (actor.type === "system") {
     return true;
   }

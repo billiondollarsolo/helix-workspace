@@ -16,4 +16,8 @@ function Input({ className, type, ...props }: React.ComponentProps<"input">) {
   );
 }
 
-export { Input };
+function Textarea({ className, ...props }: React.ComponentProps<"textarea">) {
+  return <textarea {...props} className={cn("admin-control w-full min-h-24", className)} />;
+}
+
+export { Input, Textarea };

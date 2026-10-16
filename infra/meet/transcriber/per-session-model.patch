@@ -1,0 +1,114 @@
+--- a/src/utils.ts
++++ b/src/utils.ts
+@@ -12,6 +12,7 @@
+ 	encoding: AudioEncoding;
+ 	tags: string[];
+ 	openaiCustomUrl?: string;
++	model?: string;
+ 	deepgramMipOptOut?: boolean;
+ 	/** Per-connection xAI segmentation overrides (undefined = use config). */
+ 	xaiEndpointing?: number;
+@@ -73,6 +74,10 @@
+ 	// Parse tags as multiple tag= parameters (like Deepgram API), filter empty strings
+ 	const tags = parsedUrl.searchParams.getAll('tag').filter((t) => t);
+ 	const openaiCustomUrl = parsedUrl.searchParams.get('openaiCustomUrl');
++	const model = parsedUrl.searchParams.get('model') ?? undefined;
++	if (model !== undefined && (!model.trim() || model.length > 200 || /[\x00-\x1f\x7f]/.test(model))) {
++		throw new Error('Invalid transcription model');
++	}
+ 	// Per-connection override for Deepgram MIP opt-out. Absent = undefined (use config).
+ 	const mipOptOutParam = parsedUrl.searchParams.get('deepgram_mip_opt_out');
+ 	const deepgramMipOptOut = mipOptOutParam === null ? undefined : mipOptOutParam === 'true';
+@@ -115,6 +120,7 @@
+ 		encoding,
+ 		tags,
+ 		openaiCustomUrl: openaiCustomUrl ?? undefined,
++		model,
+ 		deepgramMipOptOut,
+ 		xaiEndpointing,
+ 		xaiSmartTurn,
+--- a/src/server.ts
++++ b/src/server.ts
+@@ -417,7 +417,7 @@
+ }
+ 
+ export function handleWebSocketConnection(ws: WebSocket, parameters: ISessionParameters, openaiCustomApiKey?: string) {
+-	const { sessionId, language, provider: requestedProvider, encoding, sendBack, sendBackInterim, tags, openaiCustomUrl, deepgramMipOptOut, xaiEndpointing, xaiSmartTurn, xaiSmartTurnTimeout, xaiGranularFinals, xaiGranularStabilityMs, xaiGranularGuardWords, textTranslationProvider: requestedTextTranslationProvider } = parameters;
++	const { sessionId, language, provider: requestedProvider, encoding, sendBack, sendBackInterim, tags, model, openaiCustomUrl, deepgramMipOptOut, xaiEndpointing, xaiSmartTurn, xaiSmartTurnTimeout, xaiGranularFinals, xaiGranularStabilityMs, xaiGranularGuardWords, textTranslationProvider: requestedTextTranslationProvider } = parameters;
+ 	const connectionId = ++wsConnectionId;
+ 
+ 	logger.info(
+@@ -532,7 +532,7 @@
+ 		// Create transcription session
+ 		// Within this session, multiple participants (tags) can send audio
+ 		// Each tag gets its own backend connection, and transcripts are shared between tags
+-		session = new TranscriberProxy(ws, { language, sessionId, provider, encoding, sendBack, sendBackInterim, tags, openaiCustomUrl, openaiCustomApiKey, deepgramMipOptOut, xaiEndpointing, xaiSmartTurn, xaiSmartTurnTimeout, xaiGranularFinals, xaiGranularStabilityMs, xaiGranularGuardWords, textTranslationProvider });
++		session = new TranscriberProxy(ws, { language, sessionId, provider, encoding, sendBack, sendBackInterim, tags, model, openaiCustomUrl, openaiCustomApiKey, deepgramMipOptOut, xaiEndpointing, xaiSmartTurn, xaiSmartTurnTimeout, xaiGranularFinals, xaiGranularStabilityMs, xaiGranularGuardWords, textTranslationProvider });
+ 
+ 		// Register the new session
+ 		sessionManager.registerSession(sessionId, session);
+--- a/src/transcriberproxy.ts
++++ b/src/transcriberproxy.ts
+@@ -68,6 +68,7 @@
+ 	sendBackInterim?: boolean;
+ 	tags?: string[];
+ 	openaiCustomUrl?: string;
++	model?: string;
+ 	openaiCustomApiKey?: string;
+ 	deepgramMipOptOut?: boolean;
+ 	/** Per-connection xAI segmentation overrides (undefined = use config). */
+--- a/src/OutgoingConnection.ts
++++ b/src/OutgoingConnection.ts
+@@ -175,7 +175,7 @@
+ 			this.setupBackendHandlers(this.backend);
+ 
+ 			// Get backend configuration
+-			const backendConfig = getBackendConfig(this.options.provider);
++			const backendConfig = { ...getBackendConfig(this.options.provider), ...(this.options.model ? { model: this.options.model } : {}) };
+ 			backendConfig.language = this.options.language;
+ 			backendConfig.tags = this.options.tags;
+ 			backendConfig.deepgramMipOptOut = this.options.deepgramMipOptOut;
+@@ -406,7 +406,7 @@
+ 		// are correctly configured before connect() is called.
+ 		newBackend.getDesiredAudioFormat(this.inputAudioFormat);
+ 
+-		const backendConfig = getBackendConfig(this.options.provider);
++		const backendConfig = { ...getBackendConfig(this.options.provider), ...(this.options.model ? { model: this.options.model } : {}) };
+ 		backendConfig.language = this.options.language;
+ 		backendConfig.tags = this.options.tags;
+ 		backendConfig.deepgramMipOptOut = this.options.deepgramMipOptOut;
+--- a/test/unit/OutgoingConnection.test.ts
++++ b/test/unit/OutgoingConnection.test.ts
+@@ -117,6 +117,18 @@
+ 		vi.useRealTimers();
+ 	});
+ 
++
++	it('keeps selected models isolated between meeting connections', async () => {
++		const connect = vi.spyOn(mockBackend, 'connect');
++		const first = new OutgoingConnection('first', { encoding: 'opus' }, { ...options, model: 'speech-a' });
++		await vi.runAllTimersAsync();
++		expect(connect).toHaveBeenLastCalledWith(expect.objectContaining({ model: 'speech-a' }));
++		const second = new OutgoingConnection('second', { encoding: 'opus' }, { ...options, model: 'speech-b' });
++		await vi.runAllTimersAsync();
++		expect(connect).toHaveBeenLastCalledWith(expect.objectContaining({ model: 'speech-b' }));
++		first.close();
++		second.close();
++	});
+ 	describe('Constructor and initialization', () => {
+ 		it('should initialize with tag and options', () => {
+ 			const conn = new OutgoingConnection('test-tag-123', { encoding: 'opus' }, options);
+--- a/test/unit/utils.test.ts
++++ b/test/unit/utils.test.ts
+@@ -259,3 +259,11 @@
+ 		});
+ 	});
+ });
++
++// Helix assigns the speech model per meeting, never through a process-wide override.
++it('parses a bounded per-session model', () => {
++  expect(extractSessionParameters('ws://localhost/transcribe?model=speech-a').model).toBe('speech-a');
++  expect(() => extractSessionParameters('ws://localhost/transcribe?model=')).toThrow('Invalid transcription model');
++  expect(() => extractSessionParameters('ws://localhost/transcribe?model=' + 'a'.repeat(201))).toThrow();
++  expect(() => extractSessionParameters('ws://localhost/transcribe?model=%0A')).toThrow();
++});

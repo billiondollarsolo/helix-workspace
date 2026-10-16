@@ -201,7 +201,7 @@ export type MeetHostControl =
       readonly mediaParticipantId: string;
     };
 
-export const MEET_RECORDING_NOTICE_VERSION = "2026-09-02";
+export const MEET_RECORDING_NOTICE_VERSION = "2026-10-15";
 
 export interface MeetRecordingConsent {
   readonly recordingNoticeAccepted: true;

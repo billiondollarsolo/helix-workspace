@@ -57,6 +57,7 @@ function CreateOrgUnitDialog({
   });
   return (
     <Dialog
+      modal={false}
       title="Create org unit"
       onClose={onClose}
       footer={
@@ -136,6 +137,7 @@ export function OrgUnitsPanel({
     {
       id: "name",
       header: "Name",
+      sortValue: (unit) => unit.name,
       cell: (unit) => (
         <span
           className={`flex items-center gap-2 ${INDENT_CLASS[Math.min(depthOf(unit), INDENT_CLASS.length - 1)] ?? "pl-0"}`}
@@ -148,12 +150,14 @@ export function OrgUnitsPanel({
     {
       id: "members",
       header: "Members",
+      sortValue: (unit) => unit.memberCount,
       width: "140px",
       cell: (unit) => pluralize(unit.memberCount, "member"),
     },
     {
       id: "children",
       header: "Sub-units",
+      sortValue: (unit) => unit.childCount,
       width: "140px",
       cell: (unit) => (unit.childCount === 0 ? "None" : pluralize(unit.childCount, "sub-unit")),
     },
@@ -198,14 +202,20 @@ export function OrgUnitsPanel({
           body="Org units mirror your organization's structure, so settings can apply to one team."
           action={
             <Button type="button" variant="outline" onClick={() => onCreatingChange(true)}>
-              <PlusIcon aria-hidden="true" /> Create org unit
+              <PlusIcon aria-hidden="true" /> Add org unit
             </Button>
           }
           headingLevel={2}
           size="inline"
         />
       ) : (
-        <AdminTable label="Org units" columns={columns} rows={units} rowKey={(unit) => unit.id} />
+        <AdminTable
+          label="Org units"
+          columns={columns}
+          rows={units}
+          rowKey={(unit) => unit.id}
+          searchText={(unit) => `${unit.name} ${unit.path}`}
+        />
       )}
       {creating ? (
         <CreateOrgUnitDialog units={units} onClose={() => onCreatingChange(false)} />

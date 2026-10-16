@@ -60,9 +60,12 @@ function report() {
   };
 }
 
-async function openSpamFiltering(page: Page): Promise<{ puts: unknown[]; tests: unknown[] }> {
+async function openSpamFiltering(
+  page: Page,
+): Promise<{ puts: unknown[]; tests: unknown[]; llmPatches: unknown[] }> {
   const puts: unknown[] = [];
   const tests: unknown[] = [];
+  const llmPatches: unknown[] = [];
   let current = view();
   await page.addInitScript(() => {
     window.localStorage.setItem("helix.accessToken", "e2e-admin-token");
@@ -73,6 +76,31 @@ async function openSpamFiltering(page: Page): Promise<{ puts: unknown[]; tests: 
     const pathname = new URL(request.url()).pathname;
     const reply = (body: unknown, status = 200) =>
       route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
+    if (pathname === "/v1/api/admin/platform-config") {
+      if (request.method() === "PATCH") llmPatches.push(request.postDataJSON());
+      await reply({
+        config: {
+          security: { tier: "business" },
+          ai: {
+            providers: [
+              {
+                id: "spam-llm",
+                plugin: "openai-compat",
+                config: {
+                  displayName: "Spam provider",
+                  models: ["spam-model", { id: "advanced-model", supportsTools: true }],
+                  defaultModel: "spam-model",
+                  apiKeyConfigured: true,
+                },
+              },
+            ],
+            mailSpamAi: { betaEnabled: false },
+          },
+        },
+        readiness: { ready: true, requirements: [] },
+      });
+      return;
+    }
     if (pathname === "/v1/api/admin/mail/spam") {
       await reply({
         enabled: true,
@@ -129,7 +157,7 @@ async function openSpamFiltering(page: Page): Promise<{ puts: unknown[]; tests: 
   });
   await page.goto("/admin/mail?tab=spam");
   await expect(page.getByRole("heading", { name: "AI decision model", exact: true })).toBeVisible();
-  return { puts, tests };
+  return { puts, tests, llmPatches };
 }
 
 test.describe("/admin/mail?tab=spam — AI decision model", () => {
@@ -171,6 +199,35 @@ test.describe("/admin/mail?tab=spam — AI decision model", () => {
     // Write-only: once stored, the key field is replaced by Replace / Remove.
     await expect(page.getByRole("button", { name: "Replace" })).toBeVisible();
     await expect(page.locator('input[type="password"]')).toHaveCount(0);
+  });
+
+  test("assigns a separate LLM spam provider without changing Clef settings or secrets", async ({
+    page,
+  }) => {
+    const backend = await openSpamFiltering(page);
+    await page.getByRole("switch", { name: "Enable LLM spam second pass" }).click();
+    await page.getByRole("button", { name: "Save LLM spam settings" }).click();
+    await expect(
+      page.getByText("Choose a configured provider and model before enabling the LLM spam pass."),
+    ).toBeVisible();
+    expect(backend.llmPatches).toHaveLength(0);
+    await page.getByLabel("Spam LLM provider").selectOption("spam-llm");
+    await expect(page.getByLabel("Spam LLM model")).toHaveValue("spam-model");
+    await page.getByRole("button", { name: "Save LLM spam settings" }).click();
+    await expect(page.getByText("LLM spam settings saved.")).toBeVisible();
+    expect(backend.llmPatches).toEqual([
+      {
+        ai: {
+          mailSpamAi: { betaEnabled: true },
+          routing: {
+            rules: [
+              { feature: "mail.spam-ai", primary: { providerId: "spam-llm", model: "spam-model" } },
+            ],
+          },
+        },
+      },
+    ]);
+    expect(backend.puts).toHaveLength(0);
   });
 
   test("has no axe violations", async ({ page }) => {

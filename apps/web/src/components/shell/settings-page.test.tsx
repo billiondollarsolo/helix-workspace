@@ -126,6 +126,7 @@ describe("SettingsPage", () => {
       "Language & region",
       "Appearance",
       "Keyboard shortcuts",
+      "Bot workspaces",
       "Mail",
     ]);
     expect(

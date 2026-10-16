@@ -307,3 +307,17 @@ await s3.send(new PutObjectCommand({ Bucket: "my-drive", Key: "notes/today.md", 
   content type, without JSON parsing.
 - The bundled Caddyfile allows bodies up to 64 MiB under `/v1/s3/*`, and it
   does not compress S3 responses.
+
+### Cloudflare and other reverse proxies
+
+For a proxied workspace, add a Cache Rule matching its hostname and URI paths beginning
+with `/v1/`, with **Cache eligibility: Bypass cache**. Cloudflare can turn a cache-eligible
+HEAD request into GET before forwarding it, invalidating the AWS signature. Do not weaken
+signature verification to accommodate this. Preserve the Host, path, query, method and signed
+headers, and disable response transformations for S3 and DAV. See
+[Cloudflare HEAD behavior](https://developers.cloudflare.com/cache/concepts/cache-behavior/).
+
+Proxy body limits apply per request, including UploadPart. Multipart uploads can keep each
+request below the proxy cap, but the completed object must still fit Helix's configured
+antivirus file-size limit. Infected uploads are quarantined; scanner outages never make an
+unscanned object downloadable.

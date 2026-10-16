@@ -28,7 +28,8 @@ export function createMailSearchIndexer(
         return { delete: [mailDocumentId(messageId, scope.actorId)] };
       }
 
-      const record = await store.getMailSearchRecord({ ...scope, messageId });
+      const record = await (store.getMailSearchRecordForIndexing?.({ ...scope, messageId }) ??
+        store.getMailSearchRecord({ ...scope, messageId }));
       if (record === null) {
         return { delete: [mailDocumentId(messageId, scope.actorId)] };
       }

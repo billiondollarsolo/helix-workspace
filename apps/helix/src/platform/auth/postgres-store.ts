@@ -1,3 +1,4 @@
+import { parseConfirmationOverride } from "./credential-overrides.js";
 import type postgres from "postgres";
 import { sha256Hex } from "../crypto/index.js";
 import { parseActorRoleBindings } from "../permissions/roles.js";
@@ -11,12 +12,10 @@ import type {
   AgentCredentialRecord,
   AgentCredentialType,
   AllowedHoursWindow,
-  ConfirmationOverride,
   IssueAgentCredentialInput,
   RateLimitOverrides,
   RotateAgentCredentialInput,
 } from "./credentials.js";
-import { EMPTY_CREDENTIAL_POLICY } from "./credentials.js";
 import type {
   AccessTokenRecord,
   OAuthClientCreateInput,
@@ -888,6 +887,8 @@ interface AgentCredentialRow {
   readonly id: string;
   readonly credential_type: AgentCredentialType;
   readonly actor_id: string;
+  readonly actor_display_name: string | null;
+  readonly actor_email: string | null;
   readonly org_id: string;
   readonly scopes: readonly string[];
   readonly role_bindings: unknown;
@@ -918,6 +919,8 @@ const AGENT_CREDENTIAL_COLUMNS = `
   c.credential_type,
   c.actor_id,
   a.org_id,
+  a.display_name as actor_display_name,
+  a.email as actor_email,
   c.scopes,
   helix_actor_role_bindings(a.org_id, c.actor_id) as role_bindings,
   c.client_id,
@@ -1135,6 +1138,8 @@ function rowToCredential(row: AgentCredentialRow | undefined): AgentCredentialRe
     id: row.id,
     credentialType: row.credential_type,
     actorId: row.actor_id,
+    ...(row.actor_display_name == null ? {} : { actorDisplayName: row.actor_display_name }),
+    ...(row.actor_email == null ? {} : { actorEmail: row.actor_email }),
     orgId: row.org_id,
     scopes: [...row.scopes],
     ...(roleBindings.length === 0 ? {} : { roleBindings }),
@@ -1190,19 +1195,6 @@ function parseAllowedHours(value: unknown): AllowedHoursWindow | null {
       ? { days: record.days.filter((day): day is number => typeof day === "number") }
       : {}),
   };
-}
-
-function parseConfirmationOverride(value: unknown): ConfirmationOverride {
-  if (value === "always" || value === "never" || value === "inherit") {
-    return value;
-  }
-  if (value !== null && typeof value === "object") {
-    const mode = (value as Record<string, unknown>).mode;
-    if (mode === "always" || mode === "never" || mode === "inherit") {
-      return mode;
-    }
-  }
-  return EMPTY_CREDENTIAL_POLICY.confirmationOverride;
 }
 
 function parseRateLimitOverrides(value: unknown): RateLimitOverrides {

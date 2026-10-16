@@ -1,6 +1,29 @@
 import { z } from "zod";
 import { canonicalTimeZone } from "./calendar-time.js";
 
+export const accountEmailFactorStatusSchema = z.object({
+  outboundReady: z.boolean(),
+  email: z.string().email().nullable(),
+  verified: z.boolean(),
+  enabled: z.boolean(),
+  totpEnabled: z.boolean(),
+  pendingEmail: z.string().email().nullable(),
+});
+export type AccountEmailFactorStatus = z.infer<typeof accountEmailFactorStatusSchema>;
+export const accountExternalEmailVerificationSchema = z
+  .object({
+    email: z.string().trim().toLowerCase().max(320).email(),
+    password: z.string().min(1).max(128),
+  })
+  .strict();
+export const accountEmailCodeSchema = z.object({ code: z.string().regex(/^\d{6}$/u) }).strict();
+export const accountEmailFactorToggleSchema = z
+  .object({
+    enabled: z.boolean(),
+    password: z.string().min(1).max(128),
+  })
+  .strict();
+
 const timeOfDaySchema = z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/u, "Use 24-hour HH:MM.");
 function knownTimeZone(zone: string): string | null {
   try {

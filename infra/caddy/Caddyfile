@@ -13,8 +13,8 @@
 }
 
 {$HELIX_DOMAIN:localhost} {
-	# S3 clients verify Content-Length and checksums of raw object bytes.
-	@compressible not path /v1/s3 /v1/s3/*
+	# Preserve DAV ETags for conditional edits and S3 object lengths/checksums.
+	@compressible not path /dav/* /v1/dav/* /v1/s3 /v1/s3/*
 	encode @compressible zstd gzip
 
 	header {
@@ -23,7 +23,7 @@
 		Referrer-Policy "no-referrer"
 		X-Frame-Options "DENY"
 		Permissions-Policy "camera=(self \"{$HELIX_JITSI_ORIGIN:https://meet.localhost}\"), microphone=(self \"{$HELIX_JITSI_ORIGIN:https://meet.localhost}\"), display-capture=(self \"{$HELIX_JITSI_ORIGIN:https://meet.localhost}\"), fullscreen=(self \"{$HELIX_JITSI_ORIGIN:https://meet.localhost}\"), geolocation=(), payment=(), usb=()"
-		Content-Security-Policy "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' 'sha256-d9Fw2pof/F1+tB54KWGfO8GDBtJxf9LFM1BMcuIYV/M=' {$HELIX_JITSI_ORIGIN:https://meet.localhost}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' blob:; connect-src 'self' wss:; worker-src 'self' blob:; frame-src 'self' {$HELIX_JITSI_ORIGIN:https://meet.localhost}"
+		Content-Security-Policy "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' 'wasm-unsafe-eval' 'sha256-hHzFTfzWwCmwgbHAc/JciBfagnNs4KtGdDWPaK7lCgU=' {$HELIX_JITSI_ORIGIN:https://meet.localhost}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' blob:; connect-src 'self' wss:; worker-src 'self' blob:; frame-src 'self' {$HELIX_JITSI_ORIGIN:https://meet.localhost}"
 		Cross-Origin-Opener-Policy "same-origin-allow-popups"
 		Cross-Origin-Resource-Policy "same-origin"
 		Origin-Agent-Cluster "?1"

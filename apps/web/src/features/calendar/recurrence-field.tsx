@@ -57,7 +57,7 @@ export function RecurrenceField({
       </label>
       <select
         id={id}
-        className="cal-field type-body-sm"
+        className="input type-body-sm"
         value={preset}
         onChange={(event) => {
           const next = PRESETS.find((candidate) => candidate === event.target.value) ?? "none";
@@ -155,6 +155,7 @@ function CustomRecurrenceDialog({
 
   return (
     <Dialog
+      modal={false}
       title="Custom repeat"
       onClose={onCancel}
       width="min(400px, calc(100vw - 32px))"
@@ -177,13 +178,13 @@ function CustomRecurrenceDialog({
             type="number"
             min={1}
             max={99}
-            className="cal-field w-16"
+            className="input w-16"
             value={interval}
             onChange={(event) => setIntervalText(event.target.value)}
           />
           <select
             aria-label="Unit"
-            className="cal-field"
+            className="input"
             value={frequency}
             onChange={(event) => {
               const next = (["DAILY", "WEEKLY", "MONTHLY", "YEARLY"] as const).find(
@@ -253,7 +254,7 @@ function CustomRecurrenceDialog({
             <input
               aria-label="End date"
               type="date"
-              className="cal-field"
+              className="input"
               min={startDate}
               value={until}
               disabled={endKind !== "on"}
@@ -275,7 +276,7 @@ function CustomRecurrenceDialog({
               type="number"
               min={1}
               max={730}
-              className="cal-field w-20"
+              className="input w-20"
               value={count}
               disabled={endKind !== "after"}
               onChange={(event) => setCount(event.target.value)}

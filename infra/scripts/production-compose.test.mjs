@@ -58,6 +58,8 @@ const secretNames = [
 ];
 beforeAll(() => {
   secretsDirectory = mkdtempSync(join(tmpdir(), "helix-production-compose-"));
+  const envFile = join(secretsDirectory, "empty.env");
+  writeFileSync(envFile, "");
   const generatedSecret = "D7y9xP3vL6qR2sT8uW4aC5fG0hJ1kM7nB9zX3";
   for (const name of secretNames) {
     writeFileSync(join(secretsDirectory, name), generatedSecret, { mode: 0o600 });
@@ -109,11 +111,15 @@ beforeAll(() => {
   };
   const resolveCompose = (extraArgs = []) =>
     JSON.parse(
-      execFileSync("docker", [...composeArgs, ...extraArgs, "config", "--format", "json"], {
-        cwd: root,
-        encoding: "utf8",
-        env: composeEnvironment,
-      }),
+      execFileSync(
+        "docker",
+        [...composeArgs, "--env-file", envFile, ...extraArgs, "config", "--format", "json"],
+        {
+          cwd: root,
+          encoding: "utf8",
+          env: composeEnvironment,
+        },
+      ),
     );
   resolvedCompose = resolveCompose();
   resolvedAllProfilesCompose = resolveCompose(["--profile", "*"]);

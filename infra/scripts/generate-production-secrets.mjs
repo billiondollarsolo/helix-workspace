@@ -144,7 +144,9 @@ export function addMeetSecrets({ directory, meetHost }) {
     );
   }
   for (const name of random) {
-    writeFileSync(join(target, name), `${randomSecret()}\n`, { mode: FILE_MODE });
+    const file = join(target, name);
+    writeFileSync(file, `${randomSecret()}\n`, { mode: FILE_MODE });
+    chmodSync(file, FILE_MODE);
   }
   const pki = join(target, ".pki-work");
   mkdirSync(pki, { mode: 0o700 });
@@ -177,8 +179,11 @@ export function generateProductionSecrets({ directory, mailHost }) {
   }
   mkdirSync(target, { recursive: true, mode: 0o700 });
   chmodSync(target, 0o700);
-  const write = (name, value) =>
-    writeFileSync(join(target, name), `${value}\n`, { mode: FILE_MODE });
+  const write = (name, value) => {
+    const file = join(target, name);
+    writeFileSync(file, `${value}\n`, { mode: FILE_MODE });
+    chmodSync(file, FILE_MODE);
+  };
   const secret = randomSecret;
 
   const postgresAppPassword = secret();

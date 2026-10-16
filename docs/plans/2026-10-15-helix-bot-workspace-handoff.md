@@ -13,25 +13,31 @@ The checkouts now live together at `/home/mj/mjcode/helix-all/helix-bot` and
 `/home/mj/mjcode/helix-all/helix-workspace`. Historical paths and earlier delivery
 checklists below describe their original inspection dates.
 
-Bot now runs regular Pi agent-core with application-owned operation/message persistence.
-The actual local Workspace MCP/SSE connector passed identity verification, a background
-reply after human logout, scanned 32-byte and 9-MiB file transfers, authorized reads,
-cleanup, and rejection after credential revocation. The model was deterministic; this
-does not establish paid-model behavior or remote-host networking. Juniper, Scout and
-Forge retain their original credentials and background settings.
+Bot now runs regular Pi with native PostgreSQL operation/message persistence.
+The native connector and joint production Docker workloads passed two-owner/two-bot
+acceptance: three real Codex calls, replies after human logout, application restart
+with exactly one catch-up, scanned 32-byte and 9-MiB uploads, hash checks, private-room
+and guessed-file denial, reader sharing/revocation, and credential rejection.
+The fixture seeds isolated accounts through repositories; public enrollment, human
+approval, inbound/outbound mail and cross-tenant promotion checks remain separate.
+Juniper, Scout and Forge retain their original credentials and background settings.
+The same acceptance suite passed with Bot deployed in Kubernetes against the Docker
+Workspace, with CNPG/Barman, verified database TLS and enforced network denial. This
+qualifies that hybrid topology. See Bot's `docs/reference/app-family-qualification.md`
+for receipts and limits.
 
-Workspace's production Compose smoke passes. On an isolated Kubernetes 1.36.4 cluster,
-CNPG 1.30.1 and Barman 0.15.1 applied all 241 migrations, passed nine role/RLS tests,
-enforced allowed/denied database ingress, archived WAL, completed a base backup, restored
-to a named point with correct inclusion/exclusion of writes, and preserved committed
-rows during primary failover. These checks exercised the rendered database and migration
-resources; the complete Workspace Kubernetes application and signed-image hook still
-need qualification together.
+Workspace's production Compose smoke passed again under umask 077, including TLS,
+scanning and approved SMTP delivery to the isolated test relay. A generator fix now
+sets the intended file modes explicitly inside its private host directory.
+Earlier Kubernetes 1.36.4 evidence used CNPG 1.30.1 and Barman 0.15.1 for all 241
+migrations, nine role/RLS tests, allowed/denied database ingress, WAL, backup, named-point
+recovery and primary failover. These database/migration checks do not qualify the complete
+Workspace Kubernetes application and signed-image hooks together.
 
-Bot's PostgreSQL conversion and distributed workers remain unfinished. Its Kubernetes
-chart deliberately supports one writer; CNPG qualification of Workspace does not make
-Bot horizontally scalable. Both apps retain separate data stores and independently
-revocable credentials even within the same organization.
+Bot's PostgreSQL conversion is complete; its chart still supports one application
+writer. Distributed worker ownership and multiple application writers remain unqualified.
+Both apps retain separate databases and independently revocable credentials within the
+same organization. Neither app requires installing the other.
 
 ### Routine collaboration (2026-10-16)
 

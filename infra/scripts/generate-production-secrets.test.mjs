@@ -94,4 +94,24 @@ describe("production secrets generator", () => {
       "Refusing to overwrite",
     );
   });
+
+  it("keeps mounted secrets readable by container users under a restrictive operator umask", () => {
+    const privateDirectory = join(workspace, "private-umask");
+    execFileSync(process.execPath, [
+      "--input-type=module",
+      "-e",
+      `process.umask(0o077);
+       const { generateProductionSecrets, addMeetSecrets } = await import(process.argv[1]);
+       generateProductionSecrets({ directory: process.argv[2], mailHost: "mail.example.test" });
+       addMeetSecrets({ directory: process.argv[2], meetHost: "meet.example.test" });`,
+      new URL("./generate-production-secrets.mjs", import.meta.url).href,
+      privateDirectory,
+    ]);
+    expect(statSync(privateDirectory).mode & 0o777).toBe(0o700);
+    expect(statSync(join(privateDirectory, "ca", "ca.key")).mode & 0o777).toBe(0o600);
+    for (const name of readdirSync(privateDirectory)) {
+      const file = join(privateDirectory, name);
+      if (statSync(file).isFile()) expect(statSync(file).mode & 0o777).toBe(0o644);
+    }
+  });
 });

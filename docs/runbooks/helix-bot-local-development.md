@@ -318,18 +318,19 @@ a loopback storage URL reachable from another Pod or container.
 
 ### Verification boundary
 
-Local tests exercised credential issuance, account approval, tenant/observer
-separation, current MCP discovery/calls, REST/CLI access and private-HTTP hostname
-handling from a container. The container hostname test used a host-network alias;
-it is not evidence of a real Kubernetes installation, CNI policy or ingress test.
-Use the Helm/network settings above when deploying and repeat the connection and
-negative-permission checks in that target cluster before enabling real mail.
+The current native PostgreSQL connector and joint production Compose workloads passed
+Bot's two-owner/two-bot acceptance suite with real Codex calls, replies after logout,
+restart catch-up, scanned uploads, private-room/file denial, reader sharing and revocation.
+These tests use isolated repository-seeded accounts. They do not qualify public account
+approval, human OAuth, external inbox arrival, different-host TLS, or all catalog gates.
+The same suite passed with Kubernetes Bot connected to Docker Workspace, using
+CNPG/Barman, verified database TLS and enforced network denial. See Bot's
+`docs/reference/app-family-qualification.md` for receipts and exact topology.
 
-The October 16 follow-up did qualify the rendered CNPG database/migration resources
-on an isolated three-node Kubernetes cluster: fresh migrations, tenant/RLS checks,
-allowed/denied network traffic, Barman backup, WAL recovery to a named point, and
-primary failover. Bot's own chart was booted separately in that cluster. The full
-Workspace Kubernetes application and cross-pod connector still need a joint run.
+The rendered Workspace CNPG database/migration resources passed fresh migrations,
+tenant/RLS checks, allowed/denied network traffic, Barman backup, named-point WAL recovery
+and primary failover on an isolated three-node cluster. The complete Workspace Kubernetes
+application and signed-image hook still need a joint run.
 
 In Bot's chart, put the setup credential in the existing credentials Secret (for example
 key `workspace-installation.key`). Configure the connection using the application's

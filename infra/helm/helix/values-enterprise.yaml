@@ -37,6 +37,11 @@ cloudnativepg:
   bootstrap:
     owner: helix_migrator
   instances: 3
+  postgresql:
+    synchronous:
+      method: any
+      number: 1
+      dataDurability: required
   storage:
     size: 200Gi
     annotations:

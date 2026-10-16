@@ -178,7 +178,7 @@ assert_contains "$BASE" 'prometheus.io/scrape: "true"' "deployment must expose P
 # old schema until this Job existed.
 assert_contains "$BASE" '^kind: Job$' "base chart must render the migration Job"
 assert_contains "$BASE" 'dist/db/migrate.js' "migration Job must run the migration runner"
-assert_contains "$BASE" '"helm.sh/hook": pre-install,pre-upgrade' "migrations must run as a pre-install/pre-upgrade hook, before the Deployment is applied"
+assert_contains "$BASE" 'name: helix-migrate-install$' "first-install migrations must be an ordinary Job so Helm wait cannot deadlock"
 
 assert_contains "$BASE" '^kind: PodDisruptionBudget$' "base chart must render a PDB"
 assert_contains "$BASE" '^  minReadySeconds: 10$' "workloads must remain ready before a rollout advances"
@@ -197,6 +197,7 @@ assert_contains "$BASE_DEFAULT_POLICY" 'k8s-app: kube-dns' "default egress must 
 assert_contains "$BASE_DEFAULT_POLICY" '^          port: 53$' "default egress must allow DNS destination port 53"
 assert_not_contains "$BASE_DEFAULT_POLICY" 'port: 443|cidr:|namespaceSelector: \{\}|podSelector: \{\}|- \{\}' "default app policy must have no broad ingress or non-DNS egress"
 assert_contains "$BASE_VERIFIER_POLICY" 'helix.io/role: "image-verifier"' "image verifier must have its own exact policy"
+assert_contains "$BASE_VERIFIER_POLICY" 'helix.io/service-account: "helix-verifier"' "verifier policy must match the verifier hook service account"
 assert_contains "$BASE_VERIFIER_POLICY" 'helm.sh/hook-weight: "-20"' "verifier policy must exist before the verification Job"
 assert_contains "$BASE_VERIFIER_POLICY" 'helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded' "verifier policy must be removed after the hook finishes"
 assert_contains "$BASE_VERIFIER_POLICY" '^  ingress: \[\]$' "image verifier must deny all ingress"
@@ -279,7 +280,7 @@ assert_contains "$ENTERPRISE_DEFAULT_POLICY" '^          port: 5432$' "CloudNati
 # non-superuser owner (docs/deployment-production.md#database).
 ENTERPRISE_UPGRADE="$WORK_DIR/enterprise-upgrade.yaml"
 CNPG_RECOVERY="$WORK_DIR/cnpg-recovery.yaml"
-assert_contains "$ENTERPRISE" "imageName: \"ghcr\\.io/billiondollarsolo/helix-workspace-postgres-cnpg@${CNPG_VALIDATION_DIGEST}\"" "CloudNativePG must run the digest-pinned Helix PostgreSQL 18 + pgvector operand"
+assert_contains "$ENTERPRISE" "imageName: \"ghcr\\.io/billiondollarsolo/helix-workspace-postgres-cnpg:18.6@${CNPG_VALIDATION_DIGEST}\"" "CloudNativePG must run the digest-pinned Helix PostgreSQL 18 + pgvector operand with an upgrade-detectable version"
 assert_not_contains "$ENTERPRISE" 'cloudnative-pg/postgresql:' "CloudNativePG must not run an upstream operand without pgvector"
 for extension in vector pgcrypto pg_trgm; do
   assert_contains "$ENTERPRISE" "^        - CREATE EXTENSION IF NOT EXISTS ${extension}$" "CloudNativePG bootstrap must create the ${extension} extension as the superuser"
@@ -293,10 +294,19 @@ assert_contains "$ENTERPRISE" '^kind: ObjectStore$' "CloudNativePG backups must 
 assert_contains "$ENTERPRISE" 'apiVersion: barmancloud\.cnpg\.io/v1' "ObjectStore must use the Barman Cloud Plugin API"
 assert_contains "$ENTERPRISE" '^    - name: "barman-cloud\.cloudnative-pg\.io"$' "Cluster must archive WAL through the Barman Cloud Plugin"
 assert_contains "$ENTERPRISE" '^      isWALArchiver: true$' "Barman Cloud Plugin must be the WAL archiver"
+assert_contains "$ENTERPRISE" 'podAntiAffinityType: "required"' "database replicas must require separate nodes"
+assert_contains "$ENTERPRISE" 'dataDurability: required' "enterprise writes must wait for a synchronous standby"
+assert_contains "$ENTERPRISE" 'name: helix-postgres-ingress$' "database ingress must be restricted"
+assert_contains "$BASE" 'serviceAccountName: helix-verifier$' "pre-install verifier must use its hook-created service account"
+assert_contains "$BASE" 'helm.sh/hook-weight: "-30"' "verifier account must exist before its job"
+assert_template_fails cnpg-no-instances -f "$CHART_DIR/values-enterprise.yaml" --set cloudnativepg.instances=0
+assert_template_fails cnpg-unsatisfiable-sync -f "$CHART_DIR/values-enterprise.yaml" --set cloudnativepg.instances=1
+assert_template_fails cnpg-invalid-affinity -f "$CHART_DIR/values-enterprise.yaml" --set cloudnativepg.podAntiAffinityType=ignored
+assert_template_fails cnpg-restore-without-backup -f "$CHART_DIR/values-enterprise.yaml" --set cloudnativepg.bootstrap.recovery.enabled=true --set-string cloudnativepg.bootstrap.recovery.recoveryTarget.targetName=restore-point
 assert_contains "$ENTERPRISE" '^  method: plugin$' "ScheduledBackup must use the Barman Cloud Plugin"
 assert_not_contains "$ENTERPRISE" '^    barmanObjectStore:$' "deprecated in-core barmanObjectStore must not be rendered"
-assert_contains "$ENTERPRISE" '"helm.sh/hook": post-install$' "first install must migrate after the CloudNativePG Cluster exists"
-assert_contains "$ENTERPRISE_UPGRADE" '"helm.sh/hook": pre-install,pre-upgrade$' "upgrades must migrate before the Deployment rolls"
+assert_contains "$ENTERPRISE" 'name: helix-migrate-install$' "first-install migration must run alongside CloudNativePG without Helm hook deadlock"
+assert_contains "$ENTERPRISE_UPGRADE" '"helm.sh/hook": pre-upgrade$' "upgrades must migrate before the Deployment rolls"
 assert_contains "$ENTERPRISE" '^            - name: HELIX_MIGRATION_DATABASE_URL$' "migration Job must receive the owner credential"
 assert_contains "$ENTERPRISE" '^                  name: "helix-postgres-app"$' "migration Job must default to the CloudNativePG owner Secret"
 assert_contains "$ENTERPRISE" '^                  key: uri$' "migration Job must read the CloudNativePG owner URI"
@@ -306,26 +316,28 @@ assert_contains "$ENTERPRISE" 'secretName: "helix-postgres-ca"' "CloudNativePG C
 assert_contains "$CNPG_RECOVERY" '^    recovery:$' "recovery values must bootstrap from a backup"
 assert_contains "$CNPG_RECOVERY" 'barmanObjectName: "helix-postgres-backup"' "recovery must read the source through the Barman Cloud Plugin"
 assert_not_contains "$CNPG_RECOVERY" 'postInitApplicationSQL:' "a restored cluster already carries its extensions and roles"
-assert_not_contains "$BASE" '^kind: Cluster$|POSTGRES_TLS_CA_FILE|HELIX_MIGRATION_DATABASE_URL' "external Postgres must not render CloudNativePG wiring"
+assert_not_contains "$BASE" '^kind: Cluster$|HELIX_MIGRATION_DATABASE_URL' "external Postgres must not render CloudNativePG wiring"
+assert_contains "$BASE" 'POSTGRES_TLS_CA_FILE' "external PostgreSQL must also pin its CA in the application and migration pods"
 BASE_MIGRATE_POLICY="$WORK_DIR/base-migrate-network-policy.yaml"
 ENTERPRISE_MIGRATE_POLICY="$WORK_DIR/enterprise-migrate-network-policy.yaml"
 assert_contains "$BASE_MIGRATE_POLICY" 'helix.io/role: "migrate"' "migration Job must have its own NetworkPolicy"
-assert_contains "$BASE_MIGRATE_POLICY" 'helm.sh/hook: pre-install,pre-upgrade' "migration policy must exist before the pre-install/pre-upgrade Job"
-assert_contains "$BASE_MIGRATE_POLICY" 'helm.sh/hook-weight: "-20"' "migration policy must be created before the Job"
+assert_not_contains "$BASE_MIGRATE_POLICY" 'helm.sh/hook:' "first-install migration policy must be an ordinary release resource"
+assert_contains "$ENTERPRISE_UPGRADE" 'helm.sh/hook-weight: "-20"' "upgrade migration policy must precede the Job"
 assert_contains "$BASE_MIGRATE_POLICY" '^  ingress: \[\]$' "migration Job must deny all ingress"
 assert_contains "$BASE_MIGRATE_POLICY" 'k8s-app: kube-dns' "migration Job must reach exact cluster DNS"
 assert_not_contains "$BASE_MIGRATE_POLICY" 'port: 443|cidr:|namespaceSelector: \{\}|podSelector: \{\}|- \{\}' "migration Job must have no egress beyond DNS until a PostgreSQL endpoint is configured"
 assert_contains "$BASE" 'helix.io/service-account: "helix"' "migration pods must carry the network identity label"
-assert_contains "$ENTERPRISE_MIGRATE_POLICY" 'helm.sh/hook: post-install' "first-install migration policy must follow the post-install Job"
+assert_not_contains "$ENTERPRISE_MIGRATE_POLICY" 'helm.sh/hook:' "CNPG first-install migration policy must not wait for app readiness"
 assert_contains "$ENTERPRISE_MIGRATE_POLICY" 'cnpg.io/cluster: "helix-postgres"' "migration Job must reach the CloudNativePG cluster"
 assert_contains "$ENTERPRISE_MIGRATE_POLICY" '^          port: 5432$' "migration Job must reach only PostgreSQL"
 assert_not_contains "$ENTERPRISE_MIGRATE_POLICY" 'port: 443|cidr:' "migration Job must not reach public HTTPS"
-assert_contains "$ENTERPRISE_UPGRADE" 'helm.sh/hook: pre-install,pre-upgrade' "upgrade migration policy must precede the pre-upgrade Job"
+assert_contains "$ENTERPRISE_UPGRADE" 'helm.sh/hook: pre-upgrade' "upgrade migration policy must precede the pre-upgrade Job"
 assert_contains "$BASE" "^              value: \"ghcr\\.io/billiondollarsolo/helix-workspace@${VALIDATION_DIGEST}\"$" "pods must receive HELIX_IMAGE from the selected image digest"
 assert_contains "$BASE" '^              value: helm$' "Helm pods must declare HELIX_DEPLOYMENT_KIND=helm for the image-pinning check"
 assert_contains "$SOVEREIGN" "^              value: \"ghcr\\.io/billiondollarsolo/helix-workspace-fips@" "sovereign pods must pin the approved FIPS repository"
 assert_template_fails migrate-public-https --set networkPolicy.migrate.egress.publicHttps=true
 assert_template_fails cnpg-tag-image --set cloudnativepg.enabled=true --set-string cloudnativepg.image.digest=
+assert_template_fails cnpg-unversioned-image --set cloudnativepg.enabled=true --set-string cloudnativepg.image.tag=latest
 assert_template_fails cnpg-placeholder-image --set cloudnativepg.enabled=true \
   --set-string cloudnativepg.image.digest=sha256:0000000000000000000000000000000000000000000000000000000000000000
 assert_template_fails cnpg-legacy-image-name --set-string cloudnativepg.imageName=ghcr.io/cloudnative-pg/postgresql:17

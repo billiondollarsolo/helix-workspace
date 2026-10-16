@@ -257,6 +257,10 @@ auth:
 
 external:
   postgres:
+    # External PostgreSQL CA; CNPG uses its generated <clusterName>-ca instead.
+    caSecret:
+      name: helix-postgres-ca
+      key: ca.crt
     # Database credentials are accepted only through a Secret reference.
     url: ""
     urlSecret:
@@ -416,14 +420,34 @@ cloudnativepg:
   inheritedAnnotations: {}
   # Helix CNPG operand: the CloudNativePG `minimal` PostgreSQL 18.6 image plus
   # pgvector 0.8.5 compiled from the same pinned commit as the Compose image
-  # (infra/postgres/Dockerfile.cnpg). Tags are unsupported; set the digest
+  # (infra/postgres/Dockerfile.cnpg). The version tag lets CNPG detect upgrades;
+  # the digest pins the actual bytes. Set the digest
   # published by the Production Image Security workflow.
   image:
     repository: ghcr.io/billiondollarsolo/helix-workspace-postgres-cnpg
+    tag: "18.6"
     digest: ""
   instances: 3
+  # Distinct nodes are required; a three-instance cluster needs three eligible nodes.
+  podAntiAffinityType: required
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      memory: 2Gi
+  monitoring:
+    enablePodMonitor: false
+  networkPolicy:
+    operatorNamespace: cnpg-system
+    operatorPodLabels:
+      app.kubernetes.io/name: cloudnative-pg
+    # Extra ingress rules, e.g. port 9187 from your exact Prometheus pod selector.
+    additionalIngress: []
   postgresql:
     parameters: {}
+    # Enterprise sets strict synchronous durability; {} selects asynchronous replication.
+    synchronous: {}
   storage:
     size: 100Gi
     storageClass: ""

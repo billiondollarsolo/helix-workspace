@@ -21,7 +21,7 @@ spec:
     matchLabels:
       {{- include "helix.selectorLabels" $root | nindent 6 }}
       helix.io/role: {{ $role | quote }}
-      helix.io/service-account: {{ include "helix.serviceAccountName" $root | quote }}
+      helix.io/service-account: {{ .serviceAccount | default (include "helix.serviceAccountName" $root) | quote }}
   policyTypes:
     - Ingress
     - Egress
@@ -146,10 +146,10 @@ spec:
 {{ include "helix.networkPolicy" (dict "root" $ "role" $role.name "policy" $rolePolicy "database" true) }}
 {{- end }}
 ---
-{{ include "helix.networkPolicy" (dict "root" . "role" "image-verifier" "policy" .Values.networkPolicy.imageVerifier "hook" true) }}
+{{ include "helix.networkPolicy" (dict "root" . "role" "image-verifier" "policy" .Values.networkPolicy.imageVerifier "hook" true "serviceAccount" (printf "%s-verifier" (include "helix.fullname" .))) }}
 {{- if .Values.migrations.enabled }}
 {{- /* Migration Job: DNS plus PostgreSQL only (CloudNativePG pods or exact
        external endpoints), created just before the Job in the same hook. */}}
 ---
-{{ include "helix.networkPolicy" (dict "root" . "role" "migrate" "policy" .Values.networkPolicy.migrate "hook" true "hookEvents" (include "helix.migrationHook" .) "database" true) }}
+{{ include "helix.networkPolicy" (dict "root" . "role" "migrate" "policy" .Values.networkPolicy.migrate "hook" .Release.IsUpgrade "hookEvents" "pre-upgrade" "database" true) }}
 {{- end }}

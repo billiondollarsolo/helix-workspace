@@ -9,6 +9,8 @@ apiVersion: barmancloud.cnpg.io/v1
 kind: ObjectStore
 metadata:
   name: {{ include "helix.cloudnativepgObjectStoreName" . }}
+  annotations:
+    helm.sh/resource-policy: keep
   labels:
     {{- include "helix.labels" . | nindent 4 }}
 spec:

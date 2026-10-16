@@ -1,6 +1,11 @@
 import { readdirSync, readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { loadMigrationEnv } from "../../apps/helix/src/config/env.ts";
+
+const { parseAllDocuments } = createRequire(resolve("apps/helix/package.json"))("yaml");
 
 // The superuser bootstrap exists in two places: the Compose init scripts and
 // the CloudNativePG postInitApplicationSQL rendered by the Helm chart. Both
@@ -51,6 +56,57 @@ function roleAttributes(source, pattern) {
 }
 
 describe("PostgreSQL bootstrap contract", () => {
+  it.skipIf(spawnSync("helm", ["version", "--short"]).status !== 0)(
+    "renders install and upgrade migration environments accepted by production startup",
+    () => {
+      const enterprise = [
+        "-f",
+        "infra/helm/helix/values-enterprise.yaml",
+        "--set-string",
+        `cloudnativepg.image.digest=sha256:${"2".repeat(64)}`,
+      ];
+      for (const mode of [[], ["--is-upgrade"], enterprise, [...enterprise, "--is-upgrade"]]) {
+        const rendered = spawnSync(
+          "helm",
+          [
+            "template",
+            "helix",
+            "infra/helm/helix",
+            "--show-only",
+            "templates/migrate-job.yaml",
+            "--set-string",
+            `image.digest=sha256:${"1".repeat(64)}`,
+            ...mode,
+          ],
+          { encoding: "utf8" },
+        );
+        expect(rendered.status, rendered.stderr).toBe(0);
+        const job = parseAllDocuments(rendered.stdout)[0].toJSON();
+        expect(
+          job.spec.template.metadata.annotations?.["vault.hashicorp.com/agent-inject"],
+        ).toBeUndefined();
+        expect(job.spec.template.spec.volumes.map((volume) => volume.name)).not.toContain(
+          "vault-secrets",
+        );
+        const literalEnv = Object.fromEntries(
+          job.spec.template.spec.containers[0].env
+            .filter((entry) => entry.value !== undefined)
+            .map((entry) => [entry.name, entry.value]),
+        );
+        expect(() =>
+          loadMigrationEnv({
+            ...literalEnv,
+            DATABASE_URL:
+              "postgresql://helix_app:09azAZ18byBY27cxCX36dwDW45evEV54fuFU@postgres/helix",
+          }),
+        ).not.toThrow();
+      }
+    },
+  );
+
+  it("keeps bootstrap SQL unchanged by Kubernetes dollar escaping", () => {
+    expect(cnpgBootstrap.replaceAll("$$", "$")).toBe(cnpgBootstrap);
+  });
   it("knows which extensions the migrations create", () => {
     expect(migrationExtensions).toEqual(["pg_trgm", "pgcrypto", "vector"]);
   });

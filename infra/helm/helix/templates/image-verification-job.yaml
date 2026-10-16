@@ -17,9 +17,9 @@ spec:
       labels:
         {{- include "helix.selectorLabels" . | nindent 8 }}
         helix.io/role: image-verifier
-        helix.io/service-account: {{ include "helix.serviceAccountName" . | quote }}
+        helix.io/service-account: {{ printf "%s-verifier" (include "helix.fullname" .) | quote }}
     spec:
-      serviceAccountName: {{ include "helix.serviceAccountName" . }}
+      serviceAccountName: {{ include "helix.fullname" . }}-verifier
       automountServiceAccountToken: false
       restartPolicy: Never
       securityContext:

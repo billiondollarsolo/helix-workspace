@@ -1,40 +1,19 @@
 {{- if .Values.migrations.enabled }}
-{{- /*
-  Schema migrations, run before the application rolls.
-
-  docker-compose.production.yml has always had a `helix-migrate` service that
-  the app `depends_on` with `condition: service_completed_successfully`. The
-  chart had no equivalent, so a Kubernetes install or upgrade started serving
-  new code against the old schema — the pods come up healthy and then fail on
-  the first request touching a table the release expects to have changed.
-
-  A pre-install/pre-upgrade hook is what makes this ordered: Helm waits for
-  this Job to succeed before applying the Deployment, and a failure aborts the
-  release rather than half-applying it. `before-hook-creation` deletes the
-  previous Job so an upgrade is not blocked by an immutable completed Job of
-  the same name.
-
-  The migration runner takes an advisory lock (see migration-runner-lock.test),
-  so a Job that runs while an old replica is still serving is safe.
-
-  An in-chart CloudNativePG Cluster is an ordinary release resource, so on the
-  first install it does not exist while pre-install hooks run. That install
-  runs this Job post-install instead and the runner retries connections for
-  migrations.databaseWaitSeconds; CloudNativePG accepts them only after its
-  bootstrap SQL has run. Every upgrade keeps the pre-upgrade ordering.
-*/}}
+{{- /* First installs create the Job alongside its dependencies; upgrades migrate before rolling code. */}}
 {{- $cnpg := .Values.cloudnativepg }}
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ include "helix.fullname" . }}-migrate
+  name: {{ include "helix.fullname" . }}-migrate{{ if .Release.IsInstall }}-install{{ end }}
   labels:
     {{- include "helix.labels" . | nindent 4 }}
     helix.io/role: migrate
+  {{- if .Release.IsUpgrade }}
   annotations:
-    "helm.sh/hook": {{ include "helix.migrationHook" . }}
+    "helm.sh/hook": pre-upgrade
     "helm.sh/hook-weight": "-5"
     "helm.sh/hook-delete-policy": before-hook-creation
+  {{- end }}
 spec:
   backoffLimit: {{ .Values.migrations.backoffLimit }}
   {{- with .Values.migrations.activeDeadlineSeconds }}
@@ -49,14 +28,9 @@ spec:
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      annotations:
-        {{- if .Values.vault.agentInject }}
-        vault.hashicorp.com/agent-inject: "true"
-        vault.hashicorp.com/role: {{ .Values.external.vault.role | quote }}
-        vault.hashicorp.com/agent-inject-secret-helix: {{ .Values.vault.secretPath | quote }}
-        {{- end }}
     spec:
       restartPolicy: Never
+      automountServiceAccountToken: false
       serviceAccountName: {{ include "helix.serviceAccountName" . }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
@@ -83,11 +57,23 @@ spec:
           securityContext:
             {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           command: ["/nodejs/bin/node", "dist/db/migrate.js"]
-          # Same env as the application container: the runner reads the same
-          # DATABASE_URL and TLS settings, so a migration that connects
-          # differently from the app is not a state this chart can produce.
+          # The migration process needs no auth, mailbox, storage or provider secrets.
           env:
-            {{- include "helix.containerEnv" . | nindent 12 }}
+            - name: NODE_ENV
+              value: production
+            - name: HELIX_DEPLOYMENT_KIND
+              value: helm
+            - name: HELIX_IMAGE
+              value: {{ include "helix.image" . | quote }}
+            - name: HELIX_REGION
+              value: {{ .Values.external.s3.region | quote }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.external.postgres.urlSecret.name | quote }}
+                  key: {{ .Values.external.postgres.urlSecret.key | quote }}
+            - name: POSTGRES_TLS_CA_FILE
+              value: /var/run/helix/postgres-tls/ca.crt
             # Owner-capable credential for this Job only; application pods
             # never receive it.
             {{- $migrationSecret := .Values.external.postgres.migrationUrlSecret }}
@@ -110,23 +96,10 @@ spec:
             - name: tmp
               mountPath: /tmp
             {{- with (include "helix.postgresTlsVolumeMount" .) }}{{- . | nindent 12 }}{{- end }}
-            {{- if .Values.vault.csi.enabled }}
-            - name: vault-secrets
-              mountPath: /mnt/secrets-store
-              readOnly: true
-            {{- end }}
           resources:
             {{- toYaml .Values.migrations.resources | nindent 12 }}
       volumes:
         - name: tmp
           emptyDir: {}
         {{- with (include "helix.postgresTlsVolume" .) }}{{- . | nindent 8 }}{{- end }}
-        {{- if .Values.vault.csi.enabled }}
-        - name: vault-secrets
-          csi:
-            driver: secrets-store.csi.k8s.io
-            readOnly: true
-            volumeAttributes:
-              secretProviderClass: {{ include "helix.fullname" . }}-vault
-        {{- end }}
 {{- end }}

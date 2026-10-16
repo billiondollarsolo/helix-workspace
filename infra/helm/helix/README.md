@@ -425,18 +425,32 @@ Secrets:
   only the migration Job receives it. Without it the Job falls back to `DATABASE_URL`, which
   cannot apply migrations when that URL is the least-privileged `helix_app`.
 
-Mount the server CA and set `POSTGRES_TLS_CA_FILE` through `extraVolumes`, `extraVolumeMounts`, and
-`env`.
+Pre-create `external.postgres.caSecret` (default `helix-postgres-ca`, key `ca.crt`).
+The chart mounts this CA and sets `POSTGRES_TLS_CA_FILE` in both application and migration
+pods. With CNPG client TLS enabled, both use the operator-generated Cluster CA instead.
 
 ### CloudNativePG
 
 Requires CloudNativePG 1.26 or newer and, with backups enabled, the Barman Cloud Plugin. Set
 `cloudnativepg.enabled=true` to render:
 
-- A `Cluster` running `cloudnativepg.image.repository@cloudnativepg.image.digest`: the
+- A `Cluster` running `cloudnativepg.image.repository:tag@digest`: the
   `helix-workspace-postgres-cnpg` operand (CloudNativePG `minimal` PostgreSQL 18.6 plus pgvector
-  0.8.5 from the Compose image's pinned source). The digest is required; tags and the legacy
+  0.8.5 from the Compose image's pinned source). The digest is required; the `18.6`
+  version tag allows CNPG to detect PostgreSQL upgrades. Tags alone and the legacy
   `cloudnativepg.imageName` are rejected.
+- Required node anti-affinity and explicit database resources. Enterprise uses one
+  synchronous standby with `dataDurability: required`: losing all synchronous standbys
+  blocks commits rather than acknowledging unreplicated writes. Provision three eligible
+  nodes for the default three instances. `PodMonitor` is opt-in.
+- Restricted database ingress for this release's application/migration pods, peer database
+  pods and the CNPG operator. Set `cloudnativepg.networkPolicy.operatorNamespace` and
+  `operatorPodLabels` to the actual operator. Add monitoring ingress explicitly through
+  `additionalIngress`. Database egress remains operator/infrastructure-managed; it needs
+  the Kubernetes API, DNS, replication peers and the backup endpoint.
+- Retained Cluster, ObjectStore and database ingress policy on Helm removal. Do not delete database PVCs
+  or backup objects as routine application cleanup. Retention is not a substitute for
+  off-cluster backups and tested restores.
 - `bootstrap.initdb` with owner `helix_migrator` and `postInitApplicationSQL` that runs once as the
   superuser: creates `vector` and `pgcrypto`, creates the four Helix roles with the migration 0090
   attributes, grants `helix_migration_owner` to the owner, applies the function grants, then
@@ -448,10 +462,12 @@ Requires CloudNativePG 1.26 or newer and, with backups enabled, the Barman Cloud
   labelled `cnpg.io/reload: "true"`).
 - The migration Job with `HELIX_MIGRATION_DATABASE_URL` from the operator-generated
   `<clusterName>-app` Secret (key `uri`, the `helix_migrator` login) unless
-  `external.postgres.migrationUrlSecret` is set. On the first install the Job is a `post-install`
-  hook, because the `Cluster` does not exist while pre-install hooks run, and the runner waits up to
-  `migrations.databaseWaitSeconds` for it. Application pods restart until the schema is current, so
-  do not combine the first install with `helm install --wait`. Upgrades run the Job `pre-upgrade`.
+  `external.postgres.migrationUrlSecret` is set. On the first install an ordinary
+  `helix-migrate-install` Job runs alongside the Cluster and waits up to
+  `migrations.databaseWaitSeconds` for the database. This allows `--wait --wait-for-jobs`
+  without a hook/readiness deadlock. Upgrades run the Job `pre-upgrade`, using only existing
+  database Secrets and its own network policy. The image-verification hooks have a separate
+  hook-created, tokenless ServiceAccount available before first-install resources exist.
 - With `cloudnativepg.clientTls.enabled` (default), the operator CA Secret `<clusterName>-ca` is
   mounted into application and migration pods and pinned with `POSTGRES_TLS_CA_FILE`.
 
@@ -471,6 +487,9 @@ Backups and recovery:
 - `cloudnativepg.bootstrap.recovery` and `cloudnativepg.recovery.externalClusters` (`name`,
   `barmanObjectName`, `serverName`): PITR into a new cluster. A recovered cluster keeps its
   extensions and roles, so no bootstrap SQL runs.
+  Named restore points, LSN and transaction targets also require `recoveryTarget.backupID`;
+  select a completed backup preceding the target. Keep the restored cluster's WAL archive
+  destination separate from its source archive.
 - `cloudnativepg.tde`: TDE/KMS annotations and optional PostgreSQL parameters. PVC annotations are
   applied through `inheritedMetadata`, because a CloudNativePG `pvcTemplate` has no metadata.
 

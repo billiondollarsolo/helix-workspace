@@ -202,6 +202,36 @@ describe("forced tenant RLS roles and schema gate", { skip: !enabled }, () => {
     }
   });
 
+  it("keeps actor policies alongside canonical boundaries on collaboration tables", async () => {
+    const tables = [
+      "actor_event_state",
+      "actor_events",
+      "actor_status",
+      "actor_presence_connections",
+      "agent_runtimes",
+      "bot_account_requests",
+      "bot_account_observers",
+      "mail_productivity_preferences",
+      "mail_productivity_artifacts",
+      "meet_transcripts",
+      "meet_transcript_segments",
+    ];
+    const rows = await admin<{ tablename: string; permissive: string; policyname: string }[]>`
+      select tablename, permissive, policyname from pg_policies
+      where schemaname = 'public' and tablename = any(${tables})
+    `;
+    for (const table of tables) {
+      const policies = rows.filter((row) => row.tablename === table);
+      expect(policies).toContainEqual({
+        tablename: table,
+        policyname: "helix_tenant_boundary",
+        permissive: "RESTRICTIVE",
+      });
+      expect(policies.some((policy) => policy.permissive === "PERMISSIVE")).toBe(true);
+    }
+    await expect(assertTenantRlsCoverage(app)).resolves.toBeUndefined();
+  });
+
   it("rejects a tenant table whose only policy is the restrictive boundary", async () => {
     // Forced RLS with no permissive policy hides every row from the runtime role,
     // as agent_credentials did before 0201 (OAuth clients became unknown).

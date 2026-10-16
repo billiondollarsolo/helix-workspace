@@ -136,6 +136,32 @@ topologySpreadConstraints:
 {{- fail "cloudnativepg.imageName is unsupported; set cloudnativepg.image.repository and cloudnativepg.image.digest (PostgreSQL 18 with pgvector, pinned by digest)" -}}
 {{- end -}}
 {{- if .Values.cloudnativepg.enabled -}}
+{{- $cnpg := .Values.cloudnativepg -}}
+{{- if $cnpg.bootstrap.recovery.enabled -}}
+{{- with $cnpg.bootstrap.recovery.recoveryTarget -}}
+{{- if and (or .targetName .targetLSN .targetXID) (not .backupID) -}}
+{{- fail "cloudnativepg.bootstrap.recovery.recoveryTarget.backupID is required with targetName, targetLSN or targetXID" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if not (regexMatch "^18\\.[0-9]+([-.][a-zA-Z0-9.-]+)?$" $cnpg.image.tag) -}}
+{{- fail "cloudnativepg.image.tag must identify PostgreSQL 18 (for example 18.6); image.digest still pins the image" -}}
+{{- end -}}
+{{- if lt (int $cnpg.instances) 1 -}}
+{{- fail "cloudnativepg.instances must be positive" -}}
+{{- end -}}
+{{- if not (has $cnpg.podAntiAffinityType (list "required" "preferred")) -}}
+{{- fail "cloudnativepg.podAntiAffinityType must be required or preferred" -}}
+{{- end -}}
+{{- with $cnpg.postgresql.synchronous -}}
+{{- if or (not (has .method (list "any" "first"))) (not (has .dataDurability (list "required" "preferred"))) (lt (int .number) 1) (ge (int .number) (int $cnpg.instances)) -}}
+{{- fail "cloudnativepg.postgresql.synchronous requires method any/first, dataDurability required/preferred, and 1 <= number < instances" -}}
+{{- end -}}
+{{- end -}}
+{{- $_ := required "cloudnativepg.networkPolicy.operatorNamespace is required" $cnpg.networkPolicy.operatorNamespace -}}
+{{- if not $cnpg.networkPolicy.operatorPodLabels -}}
+{{- fail "cloudnativepg.networkPolicy.operatorPodLabels must select the operator" -}}
+{{- end -}}
 {{- $cnpgDigest := required "cloudnativepg.image.digest must be the published helix-workspace-postgres-cnpg sha256 digest" .Values.cloudnativepg.image.digest -}}
 {{- if not (regexMatch "^sha256:[a-f0-9]{64}$" $cnpgDigest) -}}
 {{- fail "cloudnativepg.image.digest must match sha256:<64 lowercase hex characters>" -}}
@@ -425,10 +451,8 @@ default role. Input is the chart root context.
       name: {{ required "external.postgres.urlSecret.name is required when external.postgres.url is empty" .Values.external.postgres.urlSecret.name | quote }}
       key: {{ .Values.external.postgres.urlSecret.key | quote }}
   {{- end }}
-{{- if include "helix.cloudnativepgClientTls" . }}
 - name: POSTGRES_TLS_CA_FILE
   value: /var/run/helix/postgres-tls/ca.crt
-{{- end }}
 - name: REDIS_URL
   {{- if .Values.external.redis.url }}
   value: {{ .Values.external.redis.url | quote }}
@@ -572,44 +596,34 @@ An explicit `apps` list takes precedence over a named `role`.
 {{- define "helix.cloudnativepgImage" -}}
 {{- $image := .Values.cloudnativepg.image -}}
 {{- $digest := required "cloudnativepg.image.digest must be the published helix-workspace-postgres-cnpg sha256 digest" $image.digest -}}
-{{- printf "%s@%s" $image.repository $digest -}}
-{{- end -}}
-
-{{- /*
-  Hook events for the migration Job and its NetworkPolicy. An in-chart
-  CloudNativePG Cluster does not exist during pre-install hooks, so the first
-  install migrates post-install; every upgrade migrates pre-upgrade.
-*/ -}}
-{{- define "helix.migrationHook" -}}
-{{- if and .Values.cloudnativepg.enabled .Release.IsInstall -}}
-post-install
-{{- else -}}
-pre-install,pre-upgrade
-{{- end -}}
+{{- printf "%s:%s@%s" $image.repository $image.tag $digest -}}
 {{- end -}}
 
 {{- define "helix.cloudnativepgClientTls" -}}
 {{- if and .Values.cloudnativepg.enabled .Values.cloudnativepg.clientTls.enabled -}}true{{- end -}}
 {{- end -}}
 
-{{- /* Operator-generated server CA (`<clusterName>-ca`, key ca.crt). */ -}}
+{{- /* Share the database CA between application and migration pods. */ -}}
 {{- define "helix.postgresTlsVolumeMount" -}}
-{{- if include "helix.cloudnativepgClientTls" . -}}
 - name: postgres-tls
   mountPath: /var/run/helix/postgres-tls
   readOnly: true
-{{- end }}
 {{- end -}}
 
 {{- define "helix.postgresTlsVolume" -}}
-{{- if include "helix.cloudnativepgClientTls" . -}}
 - name: postgres-tls
   secret:
+    {{- if include "helix.cloudnativepgClientTls" . }}
     secretName: {{ printf "%s-ca" .Values.cloudnativepg.clusterName | quote }}
     items:
       - key: ca.crt
         path: ca.crt
-{{- end }}
+    {{- else }}
+    secretName: {{ required "external.postgres.caSecret.name is required" .Values.external.postgres.caSecret.name | quote }}
+    items:
+      - key: {{ required "external.postgres.caSecret.key is required" .Values.external.postgres.caSecret.key | quote }}
+        path: ca.crt
+    {{- end }}
 {{- end -}}
 
 {{- define "helix.cloudnativepgObjectStoreName" -}}
@@ -633,22 +647,22 @@ pre-install,pre-upgrade
 - CREATE EXTENSION IF NOT EXISTS vector
 - CREATE EXTENSION IF NOT EXISTS pgcrypto
 - |
-  DO $$
+  DO '
   BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'helix_migration_owner') THEN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = ''helix_migration_owner'') THEN
       CREATE ROLE helix_migration_owner NOLOGIN NOSUPERUSER BYPASSRLS NOINHERIT NOCREATEDB NOCREATEROLE NOREPLICATION;
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'helix_app') THEN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = ''helix_app'') THEN
       CREATE ROLE helix_app LOGIN NOSUPERUSER NOBYPASSRLS NOINHERIT NOCREATEDB NOCREATEROLE NOREPLICATION;
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'helix_worker') THEN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = ''helix_worker'') THEN
       CREATE ROLE helix_worker LOGIN NOSUPERUSER NOBYPASSRLS NOINHERIT NOCREATEDB NOCREATEROLE NOREPLICATION;
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'helix_readonly') THEN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = ''helix_readonly'') THEN
       CREATE ROLE helix_readonly LOGIN NOSUPERUSER NOBYPASSRLS NOINHERIT NOCREATEDB NOCREATEROLE NOREPLICATION;
     END IF;
   END
-  $$
+  '
 - GRANT helix_migration_owner TO {{ $owner }}
 - REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC
 - GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO helix_migration_owner, helix_app, helix_worker

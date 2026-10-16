@@ -1,8 +1,9 @@
 # Helix Bot: local development and trusted installation
 
 Updated 2026-10-16. This runbook describes the local working tree and development
-services on `beastnode1`. It does not claim a production deployment or change files
-in the Helix Bot repository.
+services on `beastnode1`. Both repositories are now under `/home/mj/mjcode/helix-all`.
+The apps remain independently deployable and connect through approved per-bot accounts,
+not shared database access. This runbook does not claim a production deployment.
 
 ## Connect to the running development stack
 
@@ -323,3 +324,50 @@ handling from a container. The container hostname test used a host-network alias
 it is not evidence of a real Kubernetes installation, CNI policy or ingress test.
 Use the Helm/network settings above when deploying and repeat the connection and
 negative-permission checks in that target cluster before enabling real mail.
+
+The October 16 follow-up did qualify the rendered CNPG database/migration resources
+on an isolated three-node Kubernetes cluster: fresh migrations, tenant/RLS checks,
+allowed/denied network traffic, Barman backup, WAL recovery to a named point, and
+primary failover. Bot's own chart was booted separately in that cluster. The full
+Workspace Kubernetes application and cross-pod connector still need a joint run.
+
+In Bot's chart, put the setup credential in the existing credentials Secret (for example
+key `workspace-installation.key`). Configure the connection using the application's
+ordinary settings; do not put the credential itself in Helm values:
+
+```yaml
+configuration:
+  helix_workspace:
+    installations:
+      - id: organization-workspace
+        name: Organization Workspace
+        origin: http://helix.workspace.svc.cluster.local
+        browser_origin: https://workspace.example.com
+        allow_private_http: true
+        storage_origins:
+          - https://files.example.com
+        setup:
+          tenant_id: REPLACE_WITH_BOT_TENANT_ID
+          credential_file: /run/helix/private/workspace-installation.key
+networkPolicy:
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: workspace
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: helix
+              app.kubernetes.io/instance: helix
+              helix.io/service-account: helix
+      ports:
+        - protocol: TCP
+          port: 3000
+```
+
+Replace namespaces, release labels, URLs and the Bot tenant ID with the actual deployment.
+Allow private object-store endpoints separately when used. Public storage uses the chart's
+public HTTPS rule. The setup credential maps this connection to one Workspace organization;
+each enrolled bot still needs human approval, its own credential and explicit resource grants.
+For different hosts/clusters, use reachable HTTPS origins and trusted certificates instead
+of copying a `.svc` name or granting direct database access.

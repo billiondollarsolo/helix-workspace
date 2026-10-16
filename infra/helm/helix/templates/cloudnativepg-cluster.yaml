@@ -1,6 +1,6 @@
 {{- if .Values.cloudnativepg.enabled }}
 {{- $cnpg := .Values.cloudnativepg }}
-{{- $clusterAnnotations := dict }}
+{{- $clusterAnnotations := dict "helm.sh/resource-policy" "keep" }}
 {{- if $cnpg.tde.enabled }}
 {{- $_ := set $clusterAnnotations "helix.io/postgres-tde" "required" }}
 {{- with $cnpg.tde.provider }}
@@ -35,7 +35,12 @@ metadata:
 spec:
   imageName: {{ include "helix.cloudnativepgImage" . | quote }}
   instances: {{ $cnpg.instances }}
+  resources:
+    {{- toYaml $cnpg.resources | nindent 4 }}
   affinity:
+    enablePodAntiAffinity: true
+    podAntiAffinityType: {{ $cnpg.podAntiAffinityType | quote }}
+    topologyKey: kubernetes.io/hostname
     nodeSelector:
       topology.kubernetes.io/region: {{ .Values.external.s3.region | quote }}
   inheritedMetadata:
@@ -45,10 +50,16 @@ spec:
     annotations:
       {{- toYaml . | nindent 6 }}
     {{- end }}
-  {{- with $postgresqlParameters }}
+  {{- if or $postgresqlParameters $cnpg.postgresql.synchronous }}
   postgresql:
+    {{- with $postgresqlParameters }}
     parameters:
       {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with $cnpg.postgresql.synchronous }}
+    synchronous:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
   {{- end }}
   storage:
     size: {{ $cnpg.storage.size | quote }}
@@ -170,5 +181,5 @@ spec:
     {{- end }}
   {{- end }}
   monitoring:
-    enablePodMonitor: true
+    enablePodMonitor: {{ $cnpg.monitoring.enablePodMonitor }}
 {{- end }}

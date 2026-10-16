@@ -7,6 +7,32 @@ background routines, shared projects and coding workflows. Coding is one workloa
 
 ## Read first
 
+### Current implementation and deployment evidence (2026-10-16)
+
+The checkouts now live together at `/home/mj/mjcode/helix-all/helix-bot` and
+`/home/mj/mjcode/helix-all/helix-workspace`. Historical paths and earlier delivery
+checklists below describe their original inspection dates.
+
+Bot now runs regular Pi agent-core with application-owned operation/message persistence.
+The actual local Workspace MCP/SSE connector passed identity verification, a background
+reply after human logout, scanned 32-byte and 9-MiB file transfers, authorized reads,
+cleanup, and rejection after credential revocation. The model was deterministic; this
+does not establish paid-model behavior or remote-host networking. Juniper, Scout and
+Forge retain their original credentials and background settings.
+
+Workspace's production Compose smoke passes. On an isolated Kubernetes 1.36.4 cluster,
+CNPG 1.30.1 and Barman 0.15.1 applied all 241 migrations, passed nine role/RLS tests,
+enforced allowed/denied database ingress, archived WAL, completed a base backup, restored
+to a named point with correct inclusion/exclusion of writes, and preserved committed
+rows during primary failover. These checks exercised the rendered database and migration
+resources; the complete Workspace Kubernetes application and signed-image hook still
+need qualification together.
+
+Bot's PostgreSQL conversion and distributed workers remain unfinished. Its Kubernetes
+chart deliberately supports one writer; CNPG qualification of Workspace does not make
+Bot horizontally scalable. Both apps retain separate data stores and independently
+revocable credentials even within the same organization.
+
 ### Routine collaboration (2026-10-16)
 
 An approved bot uses its own credential and ordinary resource permissions, like

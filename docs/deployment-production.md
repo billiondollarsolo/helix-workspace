@@ -343,7 +343,9 @@ The chart renders a `postgresql.cnpg.io/v1` `Cluster` that runs the digest-pinne
 `standard` flavour also contains pgvector, but as whatever PGDG package was current at its weekly
 rebuild, so it cannot guarantee the version Compose pins. The Production Image Security workflow
 builds, SBOM-scans, Trivy-gates, and publishes the operand like every other dependency image; set
-its published digest in `cloudnativepg.image.digest`. Tags are rejected.
+its published digest in `cloudnativepg.image.digest`. The `cloudnativepg.image.tag`
+version (default `18.6`) lets CNPG detect upgrades; the digest pins the image bytes.
+Tags without a digest are rejected.
 
 Backups use the Barman Cloud Plugin (`barman-cloud.cloudnative-pg.io`): the operator injects
 barman-cloud as a sidecar, which is why the operand does not bundle it. The in-core

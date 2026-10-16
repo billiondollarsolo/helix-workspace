@@ -1,0 +1,43 @@
+{{- if .Values.cloudnativepg.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Values.cloudnativepg.clusterName }}-ingress
+  annotations:
+    helm.sh/resource-policy: keep
+  labels:
+    {{- include "helix.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: {{ .Values.cloudnativepg.clusterName | quote }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: {{ .Values.cloudnativepg.clusterName | quote }}
+      ports:
+        - {protocol: TCP, port: 5432}
+        - {protocol: TCP, port: 8000}
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "helix.selectorLabels" . | nindent 14 }}
+              helix.io/service-account: {{ include "helix.serviceAccountName" . | quote }}
+      ports:
+        - {protocol: TCP, port: 5432}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.cloudnativepg.networkPolicy.operatorNamespace | quote }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .Values.cloudnativepg.networkPolicy.operatorPodLabels | nindent 14 }}
+      ports:
+        - {protocol: TCP, port: 5432}
+        - {protocol: TCP, port: 8000}
+    {{- with .Values.cloudnativepg.networkPolicy.additionalIngress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}

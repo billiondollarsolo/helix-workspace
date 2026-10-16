@@ -371,3 +371,13 @@ public HTTPS rule. The setup credential maps this connection to one Workspace or
 each enrolled bot still needs human approval, its own credential and explicit resource grants.
 For different hosts/clusters, use reachable HTTPS origins and trusted certificates instead
 of copying a `.svc` name or granting direct database access.
+
+### Bot database operations
+
+Bot now requires PostgreSQL independently of Workspace's database. Use Bot's
+`pnpm init:compose` and `deploy/compose/README.md` for a new container installation,
+or its `deploy/helm/helix-bot/README.md` for CNPG/Barman deployment and recovery.
+Keep each application's database role, database and backup credentials separate,
+even when they share a host or Kubernetes cluster. No cross-database access is needed
+for the integration. Bot currently runs one application writer; a replicated database
+alone does not make its artifact volumes or workers highly available.

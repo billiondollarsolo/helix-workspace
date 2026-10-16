@@ -732,3 +732,20 @@ credentials were revoked, synthetic identities disabled, and private test rooms 
 External-mail arrival, paid-model behavior and actual remote/container/cluster deployment
 remain unqualified. Bot's transfer adapter reports pending file phases but does not yet
 resume those phases automatically after a Workspace review.
+
+## Bot PostgreSQL foundation (2026-10-16)
+
+Bot's shared application state now has a native PostgreSQL baseline, using regular Pi
+with application-owned orchestration records. Docker Compose provisions PostgreSQL;
+its Kubernetes chart uses CNPG with synchronous replication and Barman Cloud Plugin
+backups/PITR. An isolated three-node qualification exercised promotion, Bot restart,
+verified TLS, NetworkPolicy enforcement and recovery across the promotion timeline.
+The Bot repository records the evidence and limits in
+`docs/reference/postgres-qualification.md` and ADR-077.
+
+Workspace and Bot retain separate databases, credentials and release lifecycles. Their
+organization-scoped integration still uses the authenticated API/MCP/event contracts
+above; neither application reads the other's database. Bot currently admits one
+application writer. CNPG makes its database redundant, but application artifact volumes,
+worker availability and multiple Bot writers need separate qualification. The database
+change does not enable background grants or change Juniper, Scout or Forge credentials.

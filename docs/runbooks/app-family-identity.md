@@ -4,7 +4,9 @@ Updated 2026-10-17. Optional identity connection for one Workspace organization;
 Bot remains independently installable. The identity feature defaults off.
 See the [cross-app identity protocol](../../../helix-bot/docs/reference/app-family-identity-protocol.md)
 and [management/backup design](../../../helix-bot/docs/plans/2026-10-17-app-family-management.md).
-Centralized backup policy and job management are planned separately.
+Optional backup management is implemented; see the [backup runbook](app-family-backups.md).
+The [hosted activation record](2026-10-17-hosted-family-operations.md) describes the
+current paired installation and its independently enrolled recovery workers.
 
 ## Enable and pair
 

@@ -1,4 +1,7 @@
 {{- include "helix.validateValues" . }}
+{{- if and .Values.bootstrapAdmin.enabled (not (regexMatch "^[^ @]+@[^ @]+[.][^ @]+$" .Values.bootstrapAdmin.email)) }}
+{{- fail "bootstrapAdmin.email must be a valid explicit email" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -88,7 +91,26 @@ spec:
           # HELIX_APPS — see templates/role-deployments.yaml.
           env:
             {{- include "helix.containerEnv" . | nindent 12 }}
+            {{- if .Values.bootstrapAdmin.enabled }}
+            - {name: HELIX_BOOTSTRAP_ADMIN_ENABLED, value: "true"}
+            - name: HELIX_BOOTSTRAP_ADMIN_EMAIL
+              value: {{ .Values.bootstrapAdmin.email | quote }}
+            - name: HELIX_BOOTSTRAP_ADMIN_NAME
+              value: {{ .Values.bootstrapAdmin.displayName | quote }}
+            {{- if .Values.bootstrapAdmin.existingSecret.name }}
+            - {name: HELIX_BOOTSTRAP_ADMIN_PASSWORD_FILE, value: /run/helix-bootstrap/admin-password}
+            {{- else }}
+            - {name: HELIX_BOOTSTRAP_ADMIN_STATE_DIRECTORY, value: /var/lib/helix/bootstrap/private}
+            {{- end }}
+            {{- end }}
           volumeMounts:
+            {{- if .Values.bootstrapAdmin.enabled }}
+            {{- if .Values.bootstrapAdmin.existingSecret.name }}
+            - {name: bootstrap-password, mountPath: /run/helix-bootstrap/admin-password, subPath: password, readOnly: true}
+            {{- else }}
+            - {name: bootstrap-password, mountPath: /var/lib/helix/bootstrap}
+            {{- end }}
+            {{- end }}
             - name: tmp
               mountPath: /tmp
             {{- if .Values.spire.enabled }}
@@ -141,6 +163,20 @@ spec:
       # the kubelet sends SIGKILL.
       terminationGracePeriodSeconds: {{ .Values.gracefulShutdown.terminationGracePeriodSeconds }}
       volumes:
+        {{- if .Values.bootstrapAdmin.enabled }}
+        - name: bootstrap-password
+          {{- if .Values.bootstrapAdmin.existingSecret.name }}
+          secret:
+            secretName: {{ .Values.bootstrapAdmin.existingSecret.name | quote }}
+            defaultMode: 0440
+            items:
+              - key: {{ .Values.bootstrapAdmin.existingSecret.passwordKey | quote }}
+                path: password
+          {{- else }}
+          persistentVolumeClaim:
+            claimName: {{ include "helix.fullname" . }}-bootstrap
+          {{- end }}
+        {{- end }}
         - name: tmp
           emptyDir: {}
         {{- if .Values.spire.enabled }}

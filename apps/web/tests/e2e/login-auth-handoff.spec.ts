@@ -27,6 +27,43 @@ const sessionUser = {
 };
 
 test.describe("/login authenticated handoff", () => {
+  test("resumes a signed family authorization after normal Workspace sign-in", async ({ page }) => {
+    await mockAppApi(page, {
+      backendCalls: [],
+      signInCalls: [],
+      signInResponse: { status: 200, body: { user: sessionUser } },
+    });
+    const resumes: Record<string, unknown>[] = [];
+    await page.route("**/v1/api/auth/oauth2/continue", async (route) => {
+      resumes.push(route.request().postDataJSON() as Record<string, unknown>);
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          redirect: true,
+          url: "https://bot.example/v1/auth/sso/callback?code=fixture",
+        }),
+      });
+    });
+    await page.route("https://bot.example/**", (route) =>
+      route.fulfill({ status: 200, body: "Connected to Bot" }),
+    );
+    await page.goto(
+      "/login?client_id=family-client&state=family-state&ba_param=client_id&ba_param=state&sig=fixture&extra=ignored",
+    );
+    await page.getByLabel("Email", { exact: true }).fill("admin@helix.local");
+    await page.getByRole("button", { name: "Next" }).click();
+    await page.getByLabel("Password", { exact: true }).fill("helix-admin-password");
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await expect(page).toHaveURL("https://bot.example/v1/auth/sso/callback?code=fixture");
+    expect(resumes).toEqual([
+      {
+        postLogin: true,
+        oauth_query:
+          "client_id=family-client&state=family-state&ba_param=client_id&ba_param=state&sig=fixture",
+      },
+    ]);
+  });
   test("signs in with local email/password and sends the session cookie on backend calls", async ({
     page,
   }) => {

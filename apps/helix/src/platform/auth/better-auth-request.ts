@@ -30,17 +30,31 @@ export function createBetterAuthRequest(
   if (options.path !== undefined) headers.set("content-type", "application/json");
   const init: RequestInit = { method, headers };
   if (method !== "GET" && method !== "HEAD" && body !== undefined) {
-    init.body = requestBodyForFetch(body);
+    init.body = requestBodyForFetch(body, headers);
   }
   return new Request(url, init);
 }
 
-function requestBodyForFetch(body: unknown): NonNullable<RequestInit["body"]> {
+function requestBodyForFetch(body: unknown, headers: Headers): NonNullable<RequestInit["body"]> {
   if (typeof body === "string" || body instanceof Blob || body instanceof FormData) {
     return body;
   }
   if (body instanceof ArrayBuffer || ArrayBuffer.isView(body)) {
     return body as NonNullable<RequestInit["body"]>;
+  }
+  if (
+    headers.get("content-type")?.split(";", 1)[0]?.trim() === "application/x-www-form-urlencoded" &&
+    body !== null &&
+    typeof body === "object"
+  ) {
+    const form = new URLSearchParams();
+    for (const [key, value] of Object.entries(body)) {
+      for (const item of Array.isArray(value) ? value : [value]) {
+        if (typeof item !== "string") throw new TypeError("OAuth form fields must be strings.");
+        form.append(key, item);
+      }
+    }
+    return form.toString();
   }
   return JSON.stringify(body);
 }

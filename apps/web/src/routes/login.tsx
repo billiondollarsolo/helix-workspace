@@ -1,6 +1,6 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { LocalLoginPanel } from "@/features/auth/login-panel";
-import { getSessionUser, safeLoginReturnTo } from "@/lib/auth";
+import { getSessionUser, safeLoginReturnTo, resumeFamilySignIn } from "@/lib/auth";
 
 export const Route = createFileRoute("/login")({
   validateSearch: (
@@ -15,21 +15,27 @@ export const Route = createFileRoute("/login")({
     ...(typeof search.token === "string" && search.token.length > 0 ? { token: search.token } : {}),
   }),
   beforeLoad: async ({ search }) => {
-    if (search.reauthenticate !== true && (await getSessionUser()) !== null) {
+    const user = await getSessionUser();
+    if (search.reauthenticate !== true && user !== null && !user.passwordChangeRequired) {
+      await resumeFamilySignIn();
       // eslint-disable-next-line @typescript-eslint/only-throw-error
       throw redirect({ href: safeLoginReturnTo(search.returnTo) });
     }
+    return { initialPasswordRequired: user?.passwordChangeRequired === true };
   },
   component: LoginRoute,
 });
 
 function LoginRoute() {
   const search = Route.useSearch();
+  const context = Route.useRouteContext();
   return (
     <LocalLoginPanel
+      initialPasswordRequired={context.initialPasswordRequired}
       reauthenticate={search.reauthenticate === true}
       {...(search.token === undefined ? {} : { resetToken: search.token })}
-      onSignedIn={() => {
+      onSignedIn={async () => {
+        await resumeFamilySignIn();
         window.location.replace(safeLoginReturnTo(search.returnTo));
       }}
     />

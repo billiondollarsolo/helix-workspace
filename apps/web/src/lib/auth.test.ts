@@ -13,6 +13,7 @@ import {
   signInWithOidc,
   signOut,
 } from "./auth";
+import { familyAuthorizationQuery } from "./family-auth";
 import { settleSecondFactorStepUp, subscribeSecondFactorStepUp } from "./second-factor-step-up";
 
 describe("web auth helpers", () => {
@@ -23,6 +24,16 @@ describe("web auth helpers", () => {
   afterEach(() => {
     document.cookie = "helix_csrf=; Max-Age=0; Path=/";
     vi.restoreAllMocks();
+  });
+
+  it("preserves only provider-declared signed authorization fields", () => {
+    expect(
+      familyAuthorizationQuery(
+        "?client_id=app&ba_param=client_id&sig=proof&returnTo=https://evil.test&extra=ignored",
+      ),
+    ).toBe("client_id=app&ba_param=client_id&sig=proof");
+    expect(familyAuthorizationQuery("?client_id=app&ba_param=client_id")).toBeUndefined();
+    expect(familyAuthorizationQuery("?sig=proof")).toBeUndefined();
   });
 
   it("keeps login return paths local and prevents login redirect loops", () => {

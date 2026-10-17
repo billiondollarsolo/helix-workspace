@@ -1,3 +1,4 @@
+import { familyProviderPlugins, createFamilyClientManager } from "./family-provider.js";
 import { passkey } from "@better-auth/passkey";
 import { env } from "../../config/env.js";
 import { resolvePostgresSsl } from "../../config/postgres-connection.js";
@@ -8,6 +9,7 @@ import { makeSignature } from "better-auth/crypto";
 import { fromNodeHeaders } from "better-auth/node";
 import { twoFactor } from "better-auth/plugins";
 import { createHmac, randomBytes } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { IncomingHttpHeaders } from "node:http";
 import { Pool } from "pg";
 import type postgres from "postgres";
@@ -318,6 +320,17 @@ class BetterAuthApiSessionVerifier implements BetterAuthSessionVerifier {
 }
 
 export interface BetterAuthRuntimeConfig {
+  readonly familyIdentity?: {
+    readonly checkSession: (userId: string, headers: Headers) => Promise<boolean>;
+    readonly claims: (
+      userId: string,
+      metadata: Record<string, unknown> | undefined,
+    ) => Promise<Record<string, unknown>>;
+    readonly userInfo: (
+      userId: string,
+      claims: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>;
+  };
   readonly databaseUrl: string;
   readonly secret: string;
   readonly baseUrl: string;
@@ -347,6 +360,16 @@ export interface BetterAuthRuntimeConfig {
 }
 
 export interface BetterAuthRuntime {
+  readonly familyClients:
+    | {
+        discovery(): Promise<Record<string, unknown>>;
+        create(
+          input: { orgId: string; appId: string; origin: string },
+          headers: Headers,
+        ): Promise<{ clientId: string; clientSecret: string }>;
+        disable(clientId: string): Promise<void>;
+      }
+    | undefined;
   readonly auth: BetterAuthInstance;
   readonly pool: Pool;
   readonly sessionVerifier: BetterAuthSessionVerifier;
@@ -363,7 +386,9 @@ export function createBetterAuthRuntime(config: BetterAuthRuntimeConfig): Better
   const sendPasswordReset = config.sendPasswordReset;
   const emailMfa = config.externalEmailMfa;
   const cookiePolicy = sessionCookiePolicyForBaseUrl(config.baseUrl);
+  const familyClientMutation = new AsyncLocalStorage<boolean>();
   const auth = betterAuth({
+    basePath: config.familyIdentity === undefined ? "/api/auth" : "/v1/api/auth",
     database: pool,
     secrets: [{ version: 1, value: config.secret }],
     baseURL: config.baseUrl,
@@ -406,6 +431,7 @@ export function createBetterAuthRuntime(config: BetterAuthRuntimeConfig): Better
     },
     account: { encryptOAuthTokens: true },
     disabledPaths: [
+      "/token",
       "/sso/register",
       "/sso/update-provider",
       "/sso/delete-provider",
@@ -415,6 +441,9 @@ export function createBetterAuthRuntime(config: BetterAuthRuntimeConfig): Better
       "/sso/verify-domain",
     ],
     plugins: [
+      ...(config.familyIdentity === undefined
+        ? []
+        : familyProviderPlugins(config.familyIdentity, familyClientMutation)),
       ...(emailMfa === undefined ? [] : [emailMfa.deliveryPlugin()]),
       twoFactor({
         issuer: "Helix",
@@ -495,7 +524,21 @@ export function createBetterAuthRuntime(config: BetterAuthRuntimeConfig): Better
     },
   });
   return {
-    auth,
+    familyClients:
+      config.familyIdentity === undefined
+        ? undefined
+        : createFamilyClientManager(auth.api, pool, familyClientMutation),
+    auth:
+      config.familyIdentity === undefined
+        ? auth
+        : {
+            api: auth.api,
+            handler(request) {
+              const url = new URL(request.url);
+              if (url.pathname.startsWith("/api/auth/")) url.pathname = `/v1${url.pathname}`;
+              return auth.handler(new Request(url, request));
+            },
+          },
     pool,
     sessionVerifier: new BetterAuthApiSessionVerifier(auth),
   };

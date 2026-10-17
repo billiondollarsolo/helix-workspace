@@ -90,7 +90,7 @@ export async function withTenantIoSagaPostgresContext<T>(
         orgId: normalized.orgId,
         ...(actorId === null ? {} : { actorId }),
       });
-      return callback(tx);
+      return activeTenantContext.run({ orgId: normalized.orgId, actorId, tx }, () => callback(tx));
     }),
   ) as Promise<T>;
 }

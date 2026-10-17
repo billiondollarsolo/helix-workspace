@@ -1,3 +1,4 @@
+import { useFamilyApps } from "@/features/apps/use-family-apps";
 import { iconMap as Icons } from "@/components/icon-map";
 /* AppLauncher — the full app grid, three tiles per row. The rail carries only
    the pinned apps; this lists every enabled app plus search. Anchored beside
@@ -6,7 +7,7 @@ import { iconMap as Icons } from "@/components/icon-map";
 import { APPS } from "@/components/apps";
 import { useEnabledApps } from "@/features/apps/use-enabled-apps";
 import { Link } from "@tanstack/react-router";
-import { Search as SearchIcon } from "lucide-react";
+import { Search as SearchIcon, ExternalLink } from "lucide-react";
 import { useEffect, useRef } from "react";
 
 export interface AppLauncherProps {
@@ -16,6 +17,7 @@ export interface AppLauncherProps {
 
 export function AppLauncher({ open, onClose }: AppLauncherProps) {
   const enabled = useEnabledApps();
+  const family = useFamilyApps(open);
   const launcherRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -98,6 +100,28 @@ export function AppLauncher({ open, onClose }: AppLauncherProps) {
             </Link>
           );
         })}
+        {(family.data ?? []).map((app) => (
+          <a
+            key={app.id}
+            href={app.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            role="menuitem"
+            className="launcher-tile"
+            onClick={onClose}
+          >
+            <span className="launcher-icon launcher-icon-neutral">
+              <ExternalLink size={20} aria-hidden="true" />
+            </span>
+            <span>
+              {app.label}
+              <span className="sr-only"> (opens in a new tab)</span>
+            </span>
+          </a>
+        ))}
+        {family.error ? (
+          <p role="status">Connected apps are unavailable. Try again shortly.</p>
+        ) : null}
         <Link
           to="/search"
           preload="intent"

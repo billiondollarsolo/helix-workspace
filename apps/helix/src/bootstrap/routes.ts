@@ -1,3 +1,4 @@
+import { installFamilyConnections } from "./family.js";
 import { installMeetCapture } from "./meet-capture.js";
 import { registerAgentRuntimeRoutes } from "../platform/agent-runtime/admin-routes.js";
 import { AgentRuntimeStore } from "../platform/agent-runtime/store.js";
@@ -44,12 +45,9 @@ import {
 } from "../platform/apps/admin-routes.js";
 import { registerAuditLogAdminRoutes } from "../platform/audit/routes.js";
 import {
-  createCsrfToken,
-  csrfTokenFromCookie,
   isTrustedCookieMutation,
   isTrustedCorsOrigin,
   normalizeTrustedOrigins,
-  serializeCsrfCookie,
 } from "../platform/auth/browser-security.js";
 import { PostgresCrownJewelApprovalStore } from "../platform/auth/crown-jewel.js";
 import { registerDomainIdentityDiscoveryRoute } from "../platform/auth/domain-identity.js";
@@ -112,7 +110,8 @@ import {
   registerWebhookRoutes,
   registerWebhookVerificationDocsRoute,
 } from "../platform/webhooks/index.js";
-import { registerBetterAuthRoutes } from "./auth-routes.js";
+import { registerAuthCsrfRoute, registerBetterAuthRoutes } from "./auth-routes.js";
+import { bootstrapPasswordChangeRequired } from "../platform/auth/bootstrap-admin.js";
 import { installAgentSecretAdministration } from "./agent-secrets.js";
 import { installEdgeCertificateManagement } from "./edge-certificate.js";
 import { createPersonLimitStore, personLimitDefaults } from "./person-limits.js";
@@ -252,13 +251,7 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
 
   await app.register(cookie);
 
-  app.get("/api/auth/csrf-token", async (request, reply) => {
-    const token = csrfTokenFromCookie(request.headers.cookie) ?? createCsrfToken();
-    if (csrfTokenFromCookie(request.headers.cookie) === null) {
-      reply.header("set-cookie", serializeCsrfCookie(token, bootEnv.NODE_ENV === "production"));
-    }
-    return { csrfToken: token };
-  });
+  registerAuthCsrfRoute(app, bootEnv.NODE_ENV === "production");
 
   registerDomainIdentityDiscoveryRoute(app, domainIdentityStore);
 
@@ -271,9 +264,14 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
     betterAuthRuntime?.sessionVerifier,
     sessionActorResolver,
     externalEmailMfa,
+    (orgId, userId) => bootstrapPasswordChangeRequired(sql, orgId, userId),
+    betterAuthRuntime?.familyClients === undefined
+      ? undefined
+      : () => betterAuthRuntime.familyClients?.discovery() ?? Promise.resolve({}),
   );
 
   await app.register(websocket, { options: { maxPayload: WEBSOCKET_MAX_PAYLOAD_BYTES } });
+  installFamilyConnections(context);
 
   await app.register(swagger, {
     openapi: {

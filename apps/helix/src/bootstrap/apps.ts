@@ -30,6 +30,13 @@ import {
 import { CoreAppRegistrationPlan } from "../platform/apps/core-apps.js";
 import { createBetterAuthSessionActorResolver } from "../platform/auth/better-auth.js";
 import {
+  bootstrapAdmin,
+  bootstrapPasswordChangeRequired,
+} from "../platform/auth/bootstrap-admin.js";
+import { ForbiddenError } from "../api/api-error.js";
+import { APIError as AuthApiError } from "better-auth/api";
+import { evaluateOrgAdminMfa } from "../platform/admin/security-policy-runtime.js";
+import {
   PostgresRecoveryCodeBroker,
   PostgresSessionMfaAssurance,
   unverifiedMfaResolver,
@@ -83,6 +90,7 @@ export async function installApps(context: Awaited<ReturnType<typeof installAuth
     oauthStore,
     agentCredentialStore,
     betterAuthConfig,
+    familyApplications,
     betterAuthRuntime,
     orgStore,
     domainsStore,
@@ -161,6 +169,38 @@ export async function installApps(context: Awaited<ReturnType<typeof installAuth
       );
     },
   });
+
+  if (betterAuthRuntime !== undefined) {
+    await bootstrapAdmin(
+      sql,
+      defaultOrg.id,
+      runtimeEnvironment().HELIX_PUBLIC_URL ||
+        runtimeEnvironment().BETTER_AUTH_URL ||
+        "http://localhost:3000",
+      runtimeEnvironment(),
+    );
+    app.addHook("preHandler", async (request) => {
+      const path = (request.url.split("?")[0] ?? "").replace(/^\/v1(?=\/)/u, "");
+      if (
+        [
+          "/api/auth/get-session",
+          "/api/auth/sign-in/email",
+          "/api/auth/sign-out",
+          "/api/auth/change-password",
+          "/api/account/password",
+          "/api/auth/csrf-token",
+        ].includes(path)
+      )
+        return;
+      const user = await betterAuthRuntime.sessionVerifier.getSessionUser(request);
+      if (
+        user !== null &&
+        request.tenant != null &&
+        (await bootstrapPasswordChangeRequired(sql, request.tenant.orgId, user.id))
+      )
+        throw new ForbiddenError("Change your initial administrator password to continue.");
+    });
+  }
 
   const configuredTenantRootHosts =
     bootEnv.HELIX_TENANT_ROOT_HOSTS?.split(",")
@@ -371,6 +411,42 @@ export async function installApps(context: Awaited<ReturnType<typeof installAuth
         );
 
   const mfaResolver: MfaVerificationResolver = mfaAssurance ?? unverifiedMfaResolver;
+  if (familyApplications !== undefined && betterAuthRuntime !== undefined) {
+    familyApplications.authorizeSession = async (userId, headers) => {
+      const request = { headers: {} as Record<string, string> };
+      headers.forEach((value, key) => {
+        request.headers[key] = value;
+      });
+      const user = await betterAuthRuntime.sessionVerifier.getSessionUser(request);
+      const resolved =
+        user === null ? null : await betterAuthPlatform.resolveUserActor(user, defaultOrg.id);
+      const token = await betterAuthRuntime.sessionVerifier.getSessionToken?.(request);
+      if (
+        resolved === null ||
+        user?.id !== userId ||
+        !token ||
+        !(await sessionPolicyAuthorizer.authorize({
+          token,
+          authUserId: userId,
+          orgId: defaultOrg.id,
+          actorId: resolved.actor.id,
+          adminAction: true,
+        }))
+      )
+        throw new AuthApiError("FORBIDDEN", {
+          message: "Verify your Workspace session again to continue.",
+        });
+      if (await bootstrapPasswordChangeRequired(sql, defaultOrg.id, userId)) return true;
+      const decision = evaluateOrgAdminMfa({
+        tier: runtimeConfiguration.current.security.tier,
+        actor: resolved.actor,
+        orgMfaPolicy: await securityPoliciesStore.get(defaultOrg.id, "mfa"),
+        mfaVerified: (await mfaAssurance?.isMfaVerified(request)) === true,
+      });
+      if (!decision.allowed) throw new AuthApiError("FORBIDDEN", { message: decision.message });
+      return false;
+    };
+  }
 
   const recoveryCodes =
     betterAuthConfig === undefined

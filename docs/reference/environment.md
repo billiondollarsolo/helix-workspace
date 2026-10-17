@@ -45,6 +45,11 @@ Production assertions impose additional requirements; follow the [deployment gui
 | `HELIX_BACKUP_DIR`                                 | Optional     | —                                                           |
 | `HELIX_BACKUP_ENCRYPTION_AT_REST_ATTESTED`         | Optional     | —                                                           |
 | `HELIX_BACKUP_SCRIPT`                              | Optional     | —                                                           |
+| `HELIX_BOOTSTRAP_ADMIN_EMAIL`                      | Optional     | —                                                           |
+| `HELIX_BOOTSTRAP_ADMIN_ENABLED`                    | Optional     | —                                                           |
+| `HELIX_BOOTSTRAP_ADMIN_NAME`                       | Optional     | —                                                           |
+| `HELIX_BOOTSTRAP_ADMIN_PASSWORD_FILE`              | Optional     | —                                                           |
+| `HELIX_BOOTSTRAP_ADMIN_STATE_DIRECTORY`            | Optional     | —                                                           |
 | `HELIX_BYO_STORAGE_HEALTH_REFRESH_BATCH_SIZE`      | Optional     | `100`                                                       |
 | `HELIX_BYO_STORAGE_HEALTH_REFRESH_INTERVAL_MS`     | Optional     | `3600000`                                                   |
 | `HELIX_CERBOS_IMAGE`                               | Optional     | —                                                           |
@@ -79,6 +84,8 @@ Production assertions impose additional requirements; follow the [deployment gui
 | `HELIX_EDGE_CERT_DIR`                              | Optional     | —                                                           |
 | `HELIX_EDGE_PROBE_ADDRESS`                         | Optional     | —                                                           |
 | `HELIX_EDGE_TLS_SOURCE`                            | Optional     | —                                                           |
+| `HELIX_FAMILY_ALLOW_PRIVATE_NETWORK`               | Optional     | —                                                           |
+| `HELIX_FAMILY_IDENTITY_ENABLED`                    | Optional     | —                                                           |
 | `HELIX_GLOBAL_READ_ONLY`                           | Optional     | —                                                           |
 | `HELIX_IMAGE`                                      | Optional     | —                                                           |
 | `HELIX_LOCAL_DEMO_ANCHOR_DATE`                     | Optional     | —                                                           |

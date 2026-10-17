@@ -24,6 +24,7 @@
     "@aws-sdk/client-kms": "3.1125.0",
     "@aws-sdk/client-s3": "3.1125.0",
     "@aws-sdk/s3-request-presigner": "3.1125.0",
+    "@better-auth/oauth-provider": "1.7.2",
     "@better-auth/passkey": "1.7.2",
     "@better-auth/sso": "1.7.2",
     "@fastify/cookie": "11.1.2",

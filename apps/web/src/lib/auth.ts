@@ -17,6 +17,7 @@ export interface SignInInput {
 }
 
 export interface SessionUser {
+  readonly passwordChangeRequired?: boolean;
   readonly id: string;
   readonly email: string;
   readonly name: string;
@@ -41,10 +42,13 @@ export class SecondFactorRequiredError extends Error {
   }
 }
 
-const browserAuthClient = createAuthClient({
-  plugins: [twoFactorClient(), passkeyClient()],
-  fetchOptions: { customFetchImpl: betterAuthBrowserFetch },
-});
+let browserAuthClient:
+  Promise<ReturnType<typeof import("./passkey-client").createBrowserAuthClient>> | undefined;
+function passkeys() {
+  return (browserAuthClient ??= import("./passkey-client").then((module) =>
+    module.createBrowserAuthClient(betterAuthBrowserFetch),
+  ));
+}
 
 /**
  * Fetch wrapper for backend (`/api`, `/oauth`, `/trpc`, SSE) requests.
@@ -156,7 +160,10 @@ export async function signInWithEmail(
     method: "POST",
     credentials: "include",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ email: input.email, password: input.password }),
+    body: JSON.stringify({
+      email: input.email,
+      password: input.password,
+    }),
   });
   const output: unknown = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -182,7 +189,7 @@ export async function signInWithEmail(
 }
 
 export async function signInWithPasskey(): Promise<SessionUser> {
-  const result = await browserAuthClient.signIn.passkey();
+  const result = await (await passkeys()).signIn.passkey();
   if (result.error !== null) throw new Error(result.error.message ?? "Passkey sign-in failed.");
   const user = sessionUserFromOutput(result.data);
   if (user === null) throw new Error("Passkey sign-in response was incomplete.");
@@ -202,13 +209,19 @@ export async function signInWithOidc(
   if (!isRecord(discovery) || discovery.managed !== true || discovery.protocol !== "oidc") {
     throw new Error("OIDC sign-in is not configured for this email domain.");
   }
+  const familyQuery = window.location.search.includes("ba_param=")
+    ? (await import("./family-auth")).familyAuthorizationQuery(window.location.search)
+    : undefined;
   const result = await authJson(fetchImpl, "/api/auth/sign-in/sso", {
     method: "POST",
     body: JSON.stringify({
       email: normalizedEmail,
       providerType: "oidc",
       requestSignUp: false,
-      callbackURL: `${window.location.origin}${safeLoginReturnTo(new URLSearchParams(window.location.search).get("returnTo"))}`,
+      callbackURL:
+        familyQuery === undefined
+          ? `${window.location.origin}${safeLoginReturnTo(new URLSearchParams(window.location.search).get("returnTo"))}`
+          : `${window.location.origin}/login?${familyQuery}`,
       errorCallbackURL: `${window.location.origin}/login`,
     }),
   });
@@ -243,7 +256,7 @@ export async function verifyEmailMfaCode(code: string): Promise<SessionUser> {
 }
 
 export async function addPasskey(name?: string): Promise<void> {
-  const result = await browserAuthClient.passkey.addPasskey({ name });
+  const result = await (await passkeys()).passkey.addPasskey({ name });
   if (result.error !== null) throw new Error(result.error.message ?? "Passkey enrollment failed.");
 }
 
@@ -420,6 +433,7 @@ function sessionUserFromOutput(output: unknown): SessionUser | null {
     return null;
   }
   return {
+    ...(user.passwordChangeRequired === true ? { passwordChangeRequired: true } : {}),
     id: user.id,
     email: typeof user.email === "string" ? user.email : "",
     name: typeof user.name === "string" ? user.name : "",
@@ -463,6 +477,11 @@ async function authJson(fetchImpl: AuthFetch, path: string, init: RequestInit): 
   if (!response.ok)
     throw new Error(errorMessageFromOutput(output) ?? "Authentication request failed.");
   return output;
+}
+
+export async function resumeFamilySignIn(): Promise<void> {
+  if (typeof window !== "undefined" && window.location.search.includes("ba_param="))
+    await (await import("./family-auth")).resumeFamilySignIn();
 }
 
 async function betterAuthBrowserFetch(
@@ -521,9 +540,6 @@ function errorMessageFromOutput(output: unknown): string | undefined {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
-import { passkeyClient } from "@better-auth/passkey/client";
-import { createAuthClient } from "better-auth/client";
-import { twoFactorClient } from "better-auth/client/plugins";
 import { requestSecondFactorStepUp, stepUpRefusal } from "./second-factor-step-up";
 
 /** Keep post-login navigation inside this app, excluding a login loop. */

@@ -1,0 +1,19 @@
+{{- if and .Values.bootstrapAdmin.enabled (not .Values.bootstrapAdmin.existingSecret.name) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "helix.fullname" . }}-bootstrap
+  labels:
+    {{- include "helix.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    {{- toYaml .Values.bootstrapAdmin.persistence.accessModes | nindent 4 }}
+  {{- if .Values.bootstrapAdmin.persistence.storageClass }}
+  storageClassName: {{ .Values.bootstrapAdmin.persistence.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.bootstrapAdmin.persistence.size | quote }}
+{{- end }}

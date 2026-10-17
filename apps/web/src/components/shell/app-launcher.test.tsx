@@ -26,6 +26,13 @@ vi.mock("@/features/apps/use-enabled-apps", () => ({
   useEnabledApps: () => ({ isEnabled: () => true }),
 }));
 
+vi.mock("@/features/apps/use-family-apps", () => ({
+  useFamilyApps: () => ({
+    data: [{ id: "bot", label: "Helix Bot", url: "https://bot.example" }],
+    error: null,
+  }),
+}));
+
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
 
@@ -56,7 +63,11 @@ describe("AppLauncher", () => {
 
     const menu = container.querySelector<HTMLElement>('[role="menu"]');
     const items = Array.from(container.querySelectorAll<HTMLAnchorElement>('[role="menuitem"]'));
-    expect(items).toHaveLength(10);
+    expect(items).toHaveLength(11);
+    const bot = items.find((item) => item.getAttribute("href") === "https://bot.example");
+    expect(bot?.href).toBe("https://bot.example/");
+    expect(bot?.target).toBe("_blank");
+    expect(bot?.rel).toContain("noopener");
     expect(items.map((item) => item.textContent)).toContain("Search");
     expect(items[0]?.dataset.preload).toBe("intent");
     expect(document.activeElement).toBe(items[0]);

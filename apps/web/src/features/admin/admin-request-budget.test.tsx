@@ -127,6 +127,7 @@ const emptyPayload: Record<string, unknown> = {
   policies: [],
   domains: [],
   apps: [],
+  applications: [],
   entries: [],
   events: [],
   records: [],
@@ -436,6 +437,13 @@ describe("admin console request budget", () => {
             "/v1/api/admin/tenant-config",
             "/v1/api/tools/drive.lifecycle.get",
             "/v1/api/tools/drive.quota.usage",
+          ],
+        },
+        "family-applications": {
+          "requestCount": 1,
+          "settled": true,
+          "urls": [
+            "/v1/api/admin/family-applications",
           ],
         },
         "groups": {

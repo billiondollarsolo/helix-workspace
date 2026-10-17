@@ -630,3 +630,21 @@ airgap:
   enabled: false
   imageRegistry: registry.example.internal
   pullPolicy: IfNotPresent
+
+# Optional first administrator. No password is stored in values or ConfigMaps.
+bootstrapAdmin:
+  enabled: false
+  email: ""
+  displayName: ""
+  existingSecret:
+    name: ""
+    passwordKey: password
+  persistence:
+    size: 1Gi
+    storageClass: ""
+    accessModes: [ReadWriteMany]
+
+# Optional human SSO provider and organization directory for connected applications.
+familyIdentity:
+  enabled: false
+  allowPrivateNetwork: false

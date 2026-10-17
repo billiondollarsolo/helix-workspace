@@ -47,5 +47,8 @@ overrides:
   "undici": "7.29.1"
   "ws": "8.21.1"
 
+patchedDependencies:
+  "@better-auth/oauth-provider@1.7.2": patches/@better-auth__oauth-provider@1.7.2.patch
+
 strictDepBuilds: true
 trustLockfile: false

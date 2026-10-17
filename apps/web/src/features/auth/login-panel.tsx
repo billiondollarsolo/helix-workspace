@@ -21,10 +21,13 @@ import {
   type SignInInput,
 } from "@/lib/auth";
 import { AuthCard } from "./auth-card";
+import { getSessionUser } from "@/lib/auth";
 
-type Step = "email" | "password" | "totp" | "recovery" | "email_code" | "forgot" | "reset";
+type Step =
+  "email" | "password" | "totp" | "recovery" | "email_code" | "forgot" | "reset" | "initial";
 
 const TITLES: Readonly<Record<Step, string>> = {
+  initial: "Choose a new password",
   email: "Sign in",
   password: "Welcome",
   totp: "2-step verification",
@@ -37,6 +40,7 @@ const TITLES: Readonly<Record<Step, string>> = {
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u;
 
 export interface LocalLoginPanelProps {
+  readonly initialPasswordRequired?: boolean;
   readonly reauthenticate?: boolean;
   /** From a password-reset link (`/login?token=`): opens "Choose a new password". */
   readonly resetToken?: string;
@@ -46,13 +50,16 @@ export interface LocalLoginPanelProps {
 }
 
 export function LocalLoginPanel({
+  initialPasswordRequired = false,
   reauthenticate = false,
   resetToken,
   signIn = signInWithEmail,
   discover = discoverSignInMethod,
   onSignedIn,
 }: LocalLoginPanelProps = {}) {
-  const [step, setStep] = useState<Step>(resetToken === undefined ? "email" : "reset");
+  const [step, setStep] = useState<Step>(
+    initialPasswordRequired ? "initial" : resetToken === undefined ? "email" : "reset",
+  );
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -78,7 +85,8 @@ export function LocalLoginPanel({
     setError(null);
     try {
       const user = await operation();
-      if (user !== undefined) await onSignedIn?.(user);
+      if (user?.passwordChangeRequired) goTo("initial");
+      else if (user !== undefined) await onSignedIn?.(user);
       else setStatus("sent");
     } catch (caught) {
       setStatus("idle");
@@ -290,6 +298,19 @@ export function LocalLoginPanel({
           legend="Choose a new password"
           onSubmit={() =>
             void run(async () => {
+              if (step === "initial") {
+                const { changeAccountPassword } = await import("@/features/account/api");
+                await changeAccountPassword({
+                  currentPassword: password,
+                  newPassword,
+                  revokeOtherSessions: true,
+                });
+                setPassword("");
+                setNewPassword("");
+                const user = await getSessionUser();
+                if (user === null) throw new Error("Sign in again with your new password.");
+                return user;
+              }
               if (resetToken === undefined) {
                 throw new Error("This reset link is invalid. Request a new one.");
               }
@@ -299,6 +320,17 @@ export function LocalLoginPanel({
             })
           }
         >
+          {step === "initial" ? (
+            <AuthInput
+              label="Current password"
+              name="current-password"
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={setPassword}
+              {...errorProps}
+            />
+          ) : null}
           <AuthInput
             label="New password"
             name="new-password"
@@ -319,7 +351,9 @@ export function LocalLoginPanel({
           </label>
           {message}
           <div className="auth-actions">
-            <SubmitButton busy={busy}>Reset password</SubmitButton>
+            <SubmitButton busy={busy}>
+              {step === "initial" ? "Change password" : "Reset password"}
+            </SubmitButton>
           </div>
         </AuthForm>
       )}
@@ -329,8 +363,10 @@ export function LocalLoginPanel({
 
 function subtitle(step: Step): string {
   switch (step) {
+    case "initial":
+      return "Change your initial administrator password to continue";
     case "email":
-      return "Use your Helix account";
+      return "Use your Helix Workspace account";
     case "password":
       return "Enter your password to continue";
     case "totp":

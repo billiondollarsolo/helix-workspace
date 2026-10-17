@@ -1,3 +1,8 @@
+import {
+  createCsrfToken,
+  csrfTokenFromCookie,
+  serializeCsrfCookie,
+} from "../platform/auth/browser-security.js";
 import type { Actor } from "@helix/sdk-types";
 import { type FastifyInstance } from "fastify";
 import type { SessionActorResolver } from "../api/actor.js";
@@ -25,9 +30,17 @@ export function registerBetterAuthRoutes(
   sessionVerifier?: BetterAuthSessionVerifier,
   sessionActorResolver?: SessionActorResolver,
   emailMfa?: ExternalEmailMfa,
+  passwordChangeRequired?: (orgId: string, userId: string) => Promise<boolean>,
+  discovery?: () => Promise<Record<string, unknown>>,
 ): void {
   if (auth === undefined) {
     return;
+  }
+  if (discovery !== undefined) {
+    app.get("/api/auth/.well-known/openid-configuration", async (_request, reply) => {
+      reply.header("Cache-Control", "public, max-age=60");
+      return discovery();
+    });
   }
   app.route({
     method: ["GET", "POST"],
@@ -37,6 +50,22 @@ export function registerBetterAuthRoutes(
       const sessionUser = await sessionVerifier?.getSessionUser({ headers: request.headers });
       const sessionToken = await sessionVerifier?.getSessionToken?.({ headers: request.headers });
       let requestBody = request.body;
+      // Resume separately after this route records verified MFA/passkey assurance.
+      if (
+        !path.startsWith("/api/auth/oauth2/") &&
+        isRecord(requestBody) &&
+        "oauth_query" in requestBody
+      ) {
+        const { oauth_query: _query, ...body } = requestBody;
+        requestBody = body;
+      }
+      if (
+        path === "/api/auth/change-password" &&
+        isRecord(requestBody) &&
+        requestBody.currentPassword === requestBody.newPassword
+      ) {
+        return reply.code(400).send({ message: "Choose a different password." });
+      }
       if (
         request.method === "POST" &&
         path === "/api/auth/sign-in/email" &&
@@ -88,6 +117,21 @@ export function registerBetterAuthRoutes(
       const response =
         emailMfa === undefined ? await operation() : await emailMfa.handleAuth(operation);
       let body = response.body === null ? null : await response.text();
+      if (response.ok && passwordChangeRequired !== undefined && request.tenant != null) {
+        const payload = jsonRecord(body);
+        if (isRecord(payload?.user) && typeof payload.user.id === "string") {
+          body = JSON.stringify({
+            ...payload,
+            user: {
+              ...payload.user,
+              passwordChangeRequired: await passwordChangeRequired(
+                request.tenant.orgId,
+                payload.user.id,
+              ),
+            },
+          });
+        }
+      }
       if (
         response.ok &&
         path === "/api/auth/sign-in/email" &&
@@ -230,4 +274,14 @@ function sessionScopes(actor: Actor): readonly string[] {
   return [
     ...new Set([...(actor.scopes ?? []), ...orgBindings.flatMap((binding) => binding.allow)]),
   ].filter((scope) => !denied.has(scope));
+}
+
+export function registerAuthCsrfRoute(app: FastifyInstance, production: boolean): void {
+  app.get("/api/auth/csrf-token", async (request, reply) => {
+    const token = csrfTokenFromCookie(request.headers.cookie) ?? createCsrfToken();
+    if (csrfTokenFromCookie(request.headers.cookie) === null) {
+      reply.header("set-cookie", serializeCsrfCookie(token, production));
+    }
+    return { csrfToken: token };
+  });
 }

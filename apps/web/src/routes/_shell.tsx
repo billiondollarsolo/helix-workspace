@@ -20,7 +20,7 @@ export const Route = createFileRoute("/_shell")({
       ...sessionUserQueryOptions(),
       revalidateIfStale: true,
     });
-    if (user === null) {
+    if (user === null || user.passwordChangeRequired) {
       // TanStack Router signals navigation by throwing a redirect.
       // eslint-disable-next-line @typescript-eslint/only-throw-error
       throw redirect({ to: "/login", search: { returnTo: location.href } });

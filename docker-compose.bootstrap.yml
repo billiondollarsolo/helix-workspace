@@ -1,0 +1,15 @@
+# Opt in: docker compose -f docker-compose.yml -f docker-compose.bootstrap.yml up -d
+# Pre-create the host directory as UID/GID 10001, mode 0700.
+services:
+  helix:
+    environment:
+      HELIX_BOOTSTRAP_ADMIN_ENABLED: ${HELIX_BOOTSTRAP_ADMIN_ENABLED:-false}
+      HELIX_BOOTSTRAP_ADMIN_EMAIL: ${HELIX_BOOTSTRAP_ADMIN_EMAIL:-}
+      HELIX_BOOTSTRAP_ADMIN_NAME: ${HELIX_BOOTSTRAP_ADMIN_NAME:-}
+      HELIX_BOOTSTRAP_ADMIN_STATE_DIRECTORY: /var/lib/helix/bootstrap
+      HELIX_BOOTSTRAP_ADMIN_PASSWORD_FILE: ${HELIX_BOOTSTRAP_ADMIN_PASSWORD_FILE:-}
+    volumes:
+      - type: bind
+        source: ${HELIX_BOOTSTRAP_ADMIN_DIRECTORY:-./secrets/bootstrap-admin}
+        target: /var/lib/helix/bootstrap
+        bind: { create_host_path: false }

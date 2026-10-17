@@ -86,12 +86,15 @@ describe("withTenantPostgresContext", () => {
     await withTenantPostgresContext(sql, { orgId }, async () => {
       await withTenantIoSagaPostgresContext(sql, { orgId, actorId }, async (tx) => {
         await tx`select 'short saga phase'`;
+        await withTenantPostgresContext(sql, { orgId, actorId }, async () => {
+          await sql`select 'nested credential store shares the saga phase'`;
+        });
       });
       await sql`select 'ambient request phase'`;
     });
 
     expect(recording.calls.filter((call) => call.kind === "begin")).toHaveLength(2);
-    expect(recording.calls.filter((call) => call.kind === "savepoint")).toHaveLength(0);
+    expect(recording.calls.filter((call) => call.kind === "savepoint")).toHaveLength(1);
     expect(recording.calls).toEqual(
       expect.arrayContaining([
         {

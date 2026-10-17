@@ -518,3 +518,15 @@ For Tier 3, replace the example backup destination, object-store credentials Sec
 `pnpm infra:helm:validate` renders the external and CloudNativePG paths (install, upgrade, and
 recovery), asserts the bootstrap SQL, roles, plugin backups, hook ordering, and CA wiring, and
 validates the CloudNativePG and Barman Cloud resources against their CRD schemas with kubeconform.
+
+## Optional app family and first administrator
+
+`familyIdentity.enabled` enables Workspace's org-bound human OIDC provider and
+explicit Bot pairing; `familyIdentity.allowPrivateNetwork` permits explicitly
+paired private HTTPS destinations. Both default off. `bootstrapAdmin.enabled`,
+`.email`, `.displayName` and optional `.existingSecret.name`/`.passwordKey` seed
+only an empty installation. Generated mode uses a retained private bootstrap PVC;
+its access mode/storage class must suit the API replica topology. Helm never
+renders a random password and no Secret API RBAC is added. See the
+[family operations runbook](../../../docs/runbooks/app-family-identity.md) for
+pairing, credential retrieval, rotation, outages and recovery.

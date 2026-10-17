@@ -336,6 +336,10 @@ this so a role replica boots from the same configmap + external secrets as the
 default role. Input is the chart root context.
 */}}
 {{- define "helix.containerEnv" -}}
+- name: HELIX_FAMILY_IDENTITY_ENABLED
+  value: {{ .Values.familyIdentity.enabled | quote }}
+- name: HELIX_FAMILY_ALLOW_PRIVATE_NETWORK
+  value: {{ .Values.familyIdentity.allowPrivateNetwork | quote }}
 - name: NODE_ENV
   value: production
 # The production image-pinning check: a Helm release pins the image it runs.

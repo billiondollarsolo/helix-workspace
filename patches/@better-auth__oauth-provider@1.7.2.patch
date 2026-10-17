@@ -1,0 +1,58 @@
+diff --git a/dist/oauth-D8xpKR0_.d.mts b/dist/oauth-D8xpKR0_.d.mts
+index 47f2a9db17e9b22cf7ae24709c111db3c3574304..7002101aed41a31f4d5a072df06c121577cd79d2 100644
+--- a/dist/oauth-D8xpKR0_.d.mts
++++ b/dist/oauth-D8xpKR0_.d.mts
+@@ -110,7 +110,7 @@ declare function buildOAuthDeviceGrant(): {
+     resource: {
+       oneOf: ({
+         type: string;
+-        items?: undefined;
++        items?: never;
+       } | {
+         type: string;
+         items: {
+@@ -788,7 +788,7 @@ declare const oauthProvider: <O extends OAuthOptions<Scope[]>>(options: O) => {
+               type: "string";
+               format?: undefined;
+               minimum?: undefined;
+-              items?: undefined;
++              items?: never;
+             };
+             description: string;
+           } | {
+@@ -799,7 +799,7 @@ declare const oauthProvider: <O extends OAuthOptions<Scope[]>>(options: O) => {
+               type: "string";
+               format?: undefined;
+               minimum?: undefined;
+-              items?: undefined;
++              items?: never;
+             };
+             description: string;
+           } | {
+@@ -810,7 +810,7 @@ declare const oauthProvider: <O extends OAuthOptions<Scope[]>>(options: O) => {
+               type: "string";
+               format: string;
+               minimum?: undefined;
+-              items?: undefined;
++              items?: never;
+             };
+             description: string;
+           } | {
+@@ -821,7 +821,7 @@ declare const oauthProvider: <O extends OAuthOptions<Scope[]>>(options: O) => {
+               type: "integer";
+               minimum: number;
+               format?: undefined;
+-              items?: undefined;
++              items?: never;
+             };
+             description: string;
+           } | {
+@@ -1073,7 +1073,7 @@ declare const oauthProvider: <O extends OAuthOptions<Scope[]>>(options: O) => {
+                       oneOf: ({
+                         type: string;
+                         description: string;
+-                        items?: undefined;
++                        items?: never;
+                       } | {
+                         type: string;
+                         items: {

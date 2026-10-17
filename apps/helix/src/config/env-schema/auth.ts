@@ -1,6 +1,13 @@
 import { z } from "zod";
 import { coercePositiveInt, optionalString, optionalUrl } from "./common.js";
 export const authEnv = {
+  HELIX_FAMILY_IDENTITY_ENABLED: optionalString.pipe(z.enum(["true", "false"]).optional()),
+  HELIX_FAMILY_ALLOW_PRIVATE_NETWORK: optionalString.pipe(z.enum(["true", "false"]).optional()),
+  HELIX_BOOTSTRAP_ADMIN_ENABLED: optionalString.pipe(z.enum(["true", "false"]).optional()),
+  HELIX_BOOTSTRAP_ADMIN_EMAIL: optionalString,
+  HELIX_BOOTSTRAP_ADMIN_NAME: optionalString,
+  HELIX_BOOTSTRAP_ADMIN_PASSWORD_FILE: optionalString,
+  HELIX_BOOTSTRAP_ADMIN_STATE_DIRECTORY: optionalString,
   HELIX_TENANT_ROOT_HOSTS: optionalString,
   HELIX_TENANT_PROXY_SECRET: optionalString.pipe(z.string().min(32).optional()),
   HELIX_TENANT_STORAGE_MIGRATION_INTERVAL_MS: coercePositiveInt(15000),

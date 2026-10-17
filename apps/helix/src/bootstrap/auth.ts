@@ -1,4 +1,3 @@
-import { runtimeEnvironment } from "../config/env.js";
 import { createMeteringClient } from "@helix/sdk";
 import { Redis } from "ioredis";
 import {
@@ -8,6 +7,8 @@ import {
 } from "../api/idempotency.js";
 import { envFlag } from "../bootstrap/env.js";
 import { getBetterAuthRuntimeConfig } from "../config/auth.js";
+import { runtimeEnvironment } from "../config/env.js";
+import { FamilyApplications } from "../platform/auth/family-applications.js";
 import { resolveRedisConnection } from "../config/redis-connection.js";
 import {
   assertTenantRlsCoverage,
@@ -178,6 +179,10 @@ export async function installAuth(context: Awaited<ReturnType<typeof installHttp
   const tenantStorageSecretReader = createVaultTenantSecretReaderFromEnv(runtimeEnvironment());
 
   const betterAuthConfig = getBetterAuthRuntimeConfig(runtimeEnvironment());
+  const familyApplications =
+    runtimeEnvironment().HELIX_FAMILY_IDENTITY_ENABLED === "true"
+      ? new FamilyApplications(sql)
+      : undefined;
 
   const externalEmailMfa =
     betterAuthConfig === undefined
@@ -224,6 +229,16 @@ export async function installAuth(context: Awaited<ReturnType<typeof installHttp
       ? undefined
       : createBetterAuthRuntime({
           ...betterAuthConfig,
+          ...(familyApplications === undefined
+            ? {}
+            : {
+                familyIdentity: {
+                  checkSession: (userId, headers) =>
+                    familyApplications.authorizeSession(userId, headers),
+                  claims: (userId, metadata) => familyApplications.claims(userId, metadata),
+                  userInfo: (userId, claims) => familyApplications.claims(userId, claims),
+                },
+              }),
           ...(externalEmailMfa === undefined || identityMailTransport === undefined
             ? {}
             : {
@@ -519,6 +534,7 @@ export async function installAuth(context: Awaited<ReturnType<typeof installHttp
     tenantSecretCipher,
     betterAuthConfig,
     betterAuthRuntime,
+    familyApplications,
     externalEmailMfa,
     betterAuthSessionIssuer,
     orgStore,

@@ -134,6 +134,8 @@ export function registerAccountSecurityRoutes(
         },
       );
     }
+    if (parsed.data.currentPassword === parsed.data.newPassword)
+      throw new BadRequestError("Choose a different password.");
     const response = await callAuth(request, "POST", "change-password", parsed.data);
     if (!response.ok) {
       const payload: unknown = await response.json().catch(() => null);

@@ -1,0 +1,37 @@
+# Optional recovery executor. Supply an operator tool image pinned by digest and
+# private config/key files. Native operator workers can use the same API instead.
+services:
+  backup-worker:
+    image: ${HELIX_BACKUP_WORKER_IMAGE:?Set an immutable recovery tool image}
+    user: "${HELIX_BACKUP_WORKER_UID:-10001}:${HELIX_BACKUP_WORKER_GID:-10001}"
+    command: [dist/platform/backup/family-worker.js, serve, /etc/helix-backup-worker/worker.json]
+    volumes:
+      - type: bind
+        source: ${HELIX_BACKUP_WORKER_CONFIG:?Set the private recovery configuration directory}
+        target: /etc/helix-backup-worker
+        read_only: true
+        bind: { create_host_path: false }
+      - backup-worker-state:/var/lib/helix-backup-worker
+    expose: ["3081"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: ["/tmp:rw,nosuid,nodev,size=256m,mode=1777"]
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 60s
+    mem_limit: 1g
+    pids_limit: 128
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://127.0.0.1:3081/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+volumes:
+  backup-worker-state:

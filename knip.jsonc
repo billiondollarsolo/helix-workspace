@@ -10,6 +10,13 @@
         "infra/scripts/*smoke.mjs",
       ],
     },
+    "apps/helix": {
+      "entry": [
+        "src/index.ts",
+        "src/platform/backup/family-worker.ts",
+        "src/platform/backup/family-backup-tool.ts",
+      ],
+    },
     "apps/web": {
       "entry": ["public/theme-bootstrap.js"],
     },

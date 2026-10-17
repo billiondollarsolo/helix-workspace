@@ -120,3 +120,9 @@ humans/two bots, roles/groups, tenant isolation, restart, a measured outage,
 offboarding/readmission, rollback denial and re-pairing. This is not a hosted
 pilot, live external-IdP MFA journey, cross-host deployment or full production
 container recovery qualification. Live Kubernetes testing remains deferred.
+
+## Optional operations management
+
+Backup policy, status, approvals and recovery-set enrollment are separate from
+identity pairing. Follow the [family backup runbook](app-family-backups.md) to
+provision independent operator capabilities and retain app-local recovery.

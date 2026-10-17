@@ -513,8 +513,10 @@ export class FamilyPairing {
     actorId: string | null,
     appId: string,
     verb: string,
+    payload: Record<string, string> = {},
+    objectType = "family_application",
   ) {
     await tx`insert into activity(org_id,actor_id,verb,object_type,object_id,payload,prev_hash,this_hash)
-      values(${orgId},${actorId},${verb},'family_application',${appId},'{}',null,'')`;
+      values(${orgId},${actorId},${verb},${objectType},${appId},${tx.json(payload)},null,'')`;
   }
 }

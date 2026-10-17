@@ -648,3 +648,25 @@ bootstrapAdmin:
 familyIdentity:
   enabled: false
   allowPrivateNetwork: false
+
+# Optional independent recovery executor. Its tools and scoped credentials are
+# installed by the operator; enabling identity never enables backups or restores.
+backupWorker:
+  enabled: false
+  image: "" # Supply an immutable repository@sha256:digest with the required recovery tools.
+  existingSecret: ""
+  configKey: worker.json
+  managementKey: management.key
+  restoreKey: ""
+  extraSecretKeys: []
+  extraVolumes: [] # Operator-approved snapshot/destination volumes.
+  extraVolumeMounts: []
+  ownsSchedule: false
+  persistence:
+    size: 10Gi
+    storageClass: ""
+  ingress: [] # Explicit ingress-controller/operator NetworkPolicy rules.
+  egress: [] # Explicit database/object-store/API NetworkPolicy rules.
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: "1", memory: 1Gi }

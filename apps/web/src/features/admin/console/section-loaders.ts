@@ -123,6 +123,10 @@ export const ADMIN_SECTION_LOADERS: Record<AdminSectionId, AdminSectionLoader> =
     exportName: "PasswordsAdminSection",
     prefetch: "prefetchAdminAppSettingsQueries",
   },
+  "family-backups": {
+    load: () => import("@/features/admin/sections/family-backups"),
+    exportName: "FamilyBackups",
+  },
   "family-applications": {
     load: () => import("@/features/admin/sections/family-applications"),
     exportName: "FamilyApplications",

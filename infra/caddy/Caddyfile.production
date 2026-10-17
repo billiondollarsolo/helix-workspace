@@ -68,6 +68,13 @@
 		}
 	}
 
+	@familyRecovery path /v1/family-operations/*
+	handle @familyRecovery {
+		reverse_proxy {$HELIX_BACKUP_WORKER_UPSTREAM:backup-worker:3081} {
+			header_up -X-Helix-Mfa-Verified
+		}
+	}
+
 	@backend {
 		path /api/* /oauth /oauth/* /trpc /trpc/* /mcp /mcp/* /v1 /v1/*
 		path /openapi.json /openapi.yaml /asyncapi.json

@@ -154,6 +154,7 @@ export const ADMIN_NAV_GROUPS = [
       { id: "app-passwords", label: "App passwords", icon: "Key" },
       { id: "oauth-apps", label: "OAuth apps", icon: "Grid" },
       { id: "family-applications", label: "Family applications", icon: "Grid" },
+      { id: "family-backups", label: "Family backups", icon: "Archive" },
       { id: "agent-credentials", label: "Agent credentials", icon: "Code" },
       { id: "agent-secrets", label: "Agent secrets", icon: "Lock" },
       { id: "agent-mail", label: "Agent mail", icon: "Mail" },

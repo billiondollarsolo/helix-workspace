@@ -75,6 +75,20 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 
 ENTRYPOINT ["/nodejs/bin/node", "dist/index.js"]
 
+# Optional operator-side recovery executor. Commands and tools are operator-owned;
+# the API runtime never receives Docker sockets or cluster-admin permissions.
+FROM ${BUILD_BASE} AS backup-worker
+WORKDIR /app
+COPY --from=build --chown=10001:10001 /app/deploy /app
+RUN mkdir -p /var/lib/helix-backup-worker \
+    && chown 10001:10001 /var/lib/helix-backup-worker \
+    && chmod 0700 /var/lib/helix-backup-worker \
+    && command -v flock
+USER 10001:10001
+EXPOSE 3081
+ENTRYPOINT ["node"]
+CMD ["dist/platform/backup/family-worker.js", "serve", "/etc/helix-backup-worker/worker.json"]
+
 FROM ${BUILD_BASE} AS web-build
 
 ENV PNPM_HOME=/pnpm \

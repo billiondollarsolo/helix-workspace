@@ -446,6 +446,14 @@ describe("admin console request budget", () => {
             "/v1/api/admin/family-applications",
           ],
         },
+        "family-backups": {
+          "requestCount": 2,
+          "settled": true,
+          "urls": [
+            "/v1/api/admin/family-backup-jobs",
+            "/v1/api/admin/family-backups",
+          ],
+        },
         "groups": {
           "requestCount": 1,
           "settled": true,

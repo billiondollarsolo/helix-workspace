@@ -1,0 +1,17 @@
+# Append after the production overlays; keep the data plane on its existing networks.
+services:
+  helix:
+    networks:
+      app-family:
+        aliases:
+          - helix-workspace
+  caddy:
+    networks:
+      app-family:
+        aliases:
+          - ${HELIX_DOMAIN:?set the public Workspace hostname for signed storage URLs}
+
+networks:
+  app-family:
+    external: true
+    name: ${HELIX_FAMILY_NETWORK:-helix-family}

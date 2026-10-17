@@ -61,14 +61,15 @@ It covers secrets, managed mail delivery, deployment evidence, and recovery requ
 
 ## Explore the docs
 
-| I want to…                    | Start here                                                                             |
-| ----------------------------- | -------------------------------------------------------------------------------------- |
-| Run or contribute locally     | [Development guide](docs/development.md)                                               |
-| Deploy and operate Helix      | [Production deployment](docs/deployment-production.md) · [Runbook](docs/RUNBOOK.md)    |
-| Manage users and policies     | [Admin guide](docs/admin-guide.md)                                                     |
-| Connect storage clients       | [S3 API](docs/drive-s3-api.md) · [Desktop sync](docs/drive-desktop-sync.md)            |
-| Understand security and scope | [Threat model](docs/security/threat-model.md) · [1.0 scope](docs/release/1.0-scope.md) |
-| Find architecture and APIs    | [Documentation index](docs/README.md)                                                  |
+| I want to…                    | Start here                                                                                                                          |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Run or contribute locally     | [Development guide](docs/development.md)                                                                                            |
+| Deploy and operate Helix      | [Production deployment](docs/deployment-production.md) · [Runbook](docs/RUNBOOK.md)                                                 |
+| Connect Helix Bot             | [Installation trust and optional Docker joining profiles](docs/runbooks/helix-bot-local-development.md#docker-compose-private-http) |
+| Manage users and policies     | [Admin guide](docs/admin-guide.md)                                                                                                  |
+| Connect storage clients       | [S3 API](docs/drive-s3-api.md) · [Desktop sync](docs/drive-desktop-sync.md)                                                         |
+| Understand security and scope | [Threat model](docs/security/threat-model.md) · [1.0 scope](docs/release/1.0-scope.md)                                              |
+| Find architecture and APIs    | [Documentation index](docs/README.md)                                                                                               |
 
 ## Release status
 

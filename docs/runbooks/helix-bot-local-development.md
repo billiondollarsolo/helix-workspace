@@ -1,6 +1,6 @@
 # Helix Bot: local development and trusted installation
 
-Updated 2026-10-16. This runbook describes the local working tree and development
+Updated 2026-10-17. This runbook describes the local working tree and development
 services on `beastnode1`. Both repositories are now under `/home/mj/mjcode/helix-all`.
 The apps remain independently deployable and connect through approved per-bot accounts,
 not shared database access. This runbook does not claim a production deployment.
@@ -232,11 +232,33 @@ are not a production deployment template.
 
 ## Docker Compose: private HTTP
 
-Use **two addresses**:
+Both repos now include matching optional joining profiles: Workspace's
+`docker-compose.bot.yml` and Bot's `deploy/compose/compose.workspace.yaml`.
+Create `docker network create --internal helix-family` once; append each profile after
+that app's selected Compose/TLS overrides. Set `HELIX_FAMILY_NETWORK` identically in
+both project env files when using another network name. Only Workspace's API and
+Caddy and Bot's app join; database services keep their existing networks and ports.
+These profiles add no automatic account grants or cross-app startup dependency.
+
+The Workspace profile gives its API the stable alias `helix-workspace` and its Caddy
+edge the existing `HELIX_DOMAIN` hostname for signed HTTPS storage URLs on port 443.
+Keep the existing public domain, browser/OAuth origin and storage URL. Bot uses
+`origin: http://helix-workspace:3000`, its public Workspace `browser_origin`, and the
+exact signed-file `storage_origins`. Its setup file must contain
+`HELIX_BASE_URL=http://helix-workspace:3000` plus the installation key; store it as
+`secrets/workspace-setup.env` (0600) in Bot's private installation directory. The Bot
+profile mounts it at `/run/secrets/helix_workspace_setup`; select that path in
+`helix_workspace.installations[].setup.credential_file` and bind `setup.tenant_id` to
+the intended Bot team. The complete procedure is in Bot's
+`docs/reference/join-workspace.md`. Existing protected local setup files are unchanged.
+
+Configure **three addresses**:
 
 - Helix's browser/OAuth origin: e.g. `https://workspace.example.com`.
 - Bot's service connection: `http://helix:3000`, where `helix` is the Compose
   service name on their shared private network.
+- Signed file URLs: an exact HTTPS origin reachable from both Bot and the browser;
+  the bundled production storage defaults to the public Workspace origin.
 
 Keep `HELIX_PUBLIC_URL` and `BETTER_AUTH_URL` set to the browser/OAuth origin on
 Helix. Set `HOST=0.0.0.0` inside the API container so its private network interface

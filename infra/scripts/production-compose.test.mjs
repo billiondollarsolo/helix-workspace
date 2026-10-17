@@ -9,6 +9,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 let secretsDirectory;
 let resolvedCompose;
 let resolvedAllProfilesCompose;
+let resolvedBotCompose;
 let composeEnvironment;
 const composeArgs = ["compose", "-f", "docker-compose.yml", "-f", "docker-compose.production.yml"];
 const promotedImages = Object.freeze({
@@ -94,6 +95,7 @@ beforeAll(() => {
     HELIX_SPAMD_IMAGE: promotedImages.spamassassin,
     HELIX_CLAMAV_IMAGE: promotedImages.clamav,
     HELIX_DOMAIN: "workspace.example.test",
+    HELIX_FAMILY_NETWORK: "organization-family",
     HELIX_REGION: "eu-test",
     HELIX_DEFAULT_ORG_NAME: "Example Workspace",
     CADDY_HTTP_PORT: "80",
@@ -123,6 +125,7 @@ beforeAll(() => {
     );
   resolvedCompose = resolveCompose();
   resolvedAllProfilesCompose = resolveCompose(["--profile", "*"]);
+  resolvedBotCompose = resolveCompose(["-f", "docker-compose.bot.yml"]);
 });
 afterAll(() => {
   if (secretsDirectory !== undefined) {
@@ -130,6 +133,31 @@ afterAll(() => {
   }
 });
 describe("production Compose overlay", () => {
+  it("joins Bot through only the API and signed-storage edge, keeping data services private", () => {
+    expect(resolvedCompose.networks["app-family"]).toBeUndefined();
+    expect(resolvedBotCompose.networks["app-family"]).toMatchObject({
+      name: "organization-family",
+      external: true,
+    });
+    expect(resolvedBotCompose.services.helix.networks["app-family"].aliases).toEqual([
+      "helix-workspace",
+    ]);
+    expect(resolvedBotCompose.services.caddy.networks["app-family"].aliases).toEqual([
+      "workspace.example.test",
+    ]);
+    for (const [name, service] of Object.entries(resolvedBotCompose.services)) {
+      if (name !== "helix" && name !== "caddy")
+        expect(service.networks?.["app-family"]).toBeUndefined();
+      for (const [network, settings] of Object.entries(
+        resolvedCompose.services[name].networks ?? {},
+      ))
+        expect(service.networks?.[network]).toEqual(settings);
+      expect(service.ports).toEqual(resolvedCompose.services[name].ports);
+    }
+    expect(resolvedBotCompose.services.helix.environment).toEqual(
+      resolvedCompose.services.helix.environment,
+    );
+  });
   it("publishes only Caddy HTTP/HTTPS and inbound SMTP", () => {
     const published = Object.entries(resolvedAllProfilesCompose.services).flatMap(
       ([service, config]) =>

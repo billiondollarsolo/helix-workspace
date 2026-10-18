@@ -808,5 +808,25 @@ files trashed. Native Workspace's pending additive migrations were applied after
 an encrypted backup; Juniper, Scout and Forge keep their original credentials.
 
 The hosted Bot still needs its model account connected and a dedicated Workspace
-identity/resource/background grant before a live autonomous pilot. Work-board
-intake, generated file delivery and PDF/image interpretation remain later work.
+identity/resource/background grant before a live autonomous pilot. Generated file
+delivery and PDF/image interpretation remain later work.
+
+## Work-board intake delivery (2026-10-18)
+
+Bot `6053e4f` (schema 7) now follows authoritative Workspace requests on its
+existing Work board. One private card per accepted message links the original
+source, operation, saved reply and Workspace approval. Other owners and
+administrators cannot inspect those cards. Approvals remain in Workspace; the
+board cannot grant access, share, reassign or replay a request. Delivered replies
+enter human Review. Cancellation and revoked grants stop local work; already
+submitted remote actions retain an unknown outcome and their approval reference.
+
+Workspace remains `7df2837`, with its API, deployment configuration and proxy
+unchanged by this increment. Both apps are publicly ready. Real local MCP/SSE and
+Pi qualification with a deterministic model passed the Work-card links and
+owner isolation; production-bundle Work/phone/accessibility checks passed eleven
+cases with nine viewport skips. Bot's integration plan records the full unit
+run's single lease-timing fixture failure, test-only repair and passing focused
+rerun; the full unit run was not repeated after that repair. Encrypted recovery
+checkpoints were authenticated. Hosted model activation, large-file transfer under
+the current DLP policy and a complete application/object restore remain unqualified.

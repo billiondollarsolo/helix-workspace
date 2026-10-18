@@ -785,3 +785,28 @@ ClamAV readiness attempts one reload for each stale loaded signature version to
 recover a missed startup update notification. Readiness still fails until the
 loaded database is fresh, and an unchanged stale version cannot cause repeated
 reloads. Signature freshness limits and malware scanning remain enforced.
+
+Deployment checkpoint: Workspace `7df2837` and Bot `4bc371d` (schema 6) are
+running and publicly ready. Workspace's web/proxy image remains `9400401`; this
+increment changes its API only. Original ingress restrictions and Bot's existing
+user/agent inventory were preserved, with attachment grants off by default.
+Encrypted rollback and off-server operator checkpoints were authenticated.
+Two incorrect direct-origin health probes caused safe pre-release rollbacks;
+the final rollout uses normal public ingress. A complete application/object
+restore drill remains outstanding.
+
+All required checks passed, including 5,725 Workspace tests with 432
+environment-gated skips, ten real PostgreSQL/RLS checks and Bot's 786 unit tests
+with one optional skip. Two focused production-bundle desktop/mobile browser
+and accessibility checks passed. Local cross-app qualification used actual
+Workspace MCP/SSE and Bot's persisted Pi execution with a deterministic model:
+scanned source attachment read/reply, isolated identities/history, restart,
+sharing and revocation passed. The current native `api_agent` DLP policy blocked
+the 9-MiB upload case; large transfer and a paid hosted model remain unqualified.
+Temporary identities were disabled, credentials revoked, the room archived and
+files trashed. Native Workspace's pending additive migrations were applied after
+an encrypted backup; Juniper, Scout and Forge keep their original credentials.
+
+The hosted Bot still needs its model account connected and a dedicated Workspace
+identity/resource/background grant before a live autonomous pilot. Work-board
+intake, generated file delivery and PDF/image interpretation remain later work.

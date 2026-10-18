@@ -453,6 +453,7 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
         store: mailStore,
         actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
         maxAttachmentBytes: bootEnv.MAIL_SMTP_MAX_MESSAGE_BYTES,
+        dlp,
       });
     });
   }

@@ -75,6 +75,57 @@ describe("raw mail source route", () => {
 describe("mail attachment download route", () => {
   const attachmentUrl = `/api/mail/messages/${messageId}/attachments/${objectId}`;
 
+  it.each(["block", "quarantine", "warn"] as const)(
+    "applies %s DLP decisions before returning mail attachment bytes",
+    async (action) => {
+      const content = Buffer.from("PRIVATE_ATTACHMENT_BYTES");
+      const app = withApiErrorHandler(fastify());
+      registerMailSourceRoutes(app, {
+        store: new FakeSourceStore(null, {
+          content,
+          mimeType: "text/plain",
+          filename: "private.txt",
+          disposition: "attachment",
+        }),
+        actorFromRequest: () => actor(["mail.read"]),
+        maxAttachmentBytes: 1024,
+        dlp: {
+          evaluate: async (input) => {
+            expect(input).toMatchObject({
+              orgId,
+              actorId,
+              boundary: "copy_export",
+              content,
+              resources: [
+                { resourceType: "mail.message", resourceId: messageId },
+                { resourceType: "drive.file", resourceId: objectId },
+              ],
+            });
+            return {
+              action,
+              boundary: input.boundary,
+              classification: "restricted",
+              findings: [],
+              acknowledged: false,
+            };
+          },
+        },
+      });
+      try {
+        const response = await app.inject({ method: "GET", url: attachmentUrl });
+        if (action === "warn") {
+          expect(response.statusCode).toBe(200);
+          expect(response.headers["x-helix-dlp-warning"]).toBe("restricted");
+        } else {
+          expect(response.statusCode).toBe(action === "quarantine" ? 423 : 403);
+          expect(response.body).not.toContain("PRIVATE_ATTACHMENT_BYTES");
+        }
+      } finally {
+        await app.close();
+      }
+    },
+  );
+
   it("streams a visible attachment as a download with safe headers", async () => {
     const store = new FakeSourceStore(null, {
       content: Buffer.from("%PDF-1.7"),

@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { NotFoundError } from "../../api/api-error.js";
 import { requireActorScope } from "../../api/scopes.js";
+import { dlpDecisionError, type DlpGuard } from "../dlp.js";
 import { safeDriveContentHeaders } from "../drive/content-security.js";
 import type { MailRawSourceStore, MailStore } from "./store.js";
 
@@ -24,6 +25,7 @@ export function registerMailSourceRoutes(
     readonly actorFromRequest: (request: FastifyRequest) => Actor | Promise<Actor>;
     /** Largest stored attachment served; an inbound attachment never exceeds the message cap. */
     readonly maxAttachmentBytes: number;
+    readonly dlp?: DlpGuard;
   },
 ): void {
   // Attachment bytes for a message in the caller's (or a delegated) mailbox.
@@ -42,6 +44,22 @@ export function registerMailSourceRoutes(
     });
     if (attachment === null) {
       throw new NotFoundError("Mail attachment not found.");
+    }
+    if (options.dlp !== undefined) {
+      const decision = await options.dlp.evaluate({
+        orgId: actor.orgId,
+        actorId: actor.id,
+        boundary: "copy_export",
+        content: attachment.content,
+        resources: [
+          { resourceType: "mail.message", resourceId: messageId },
+          { resourceType: "drive.file", resourceId: objectId },
+        ],
+        traceId: request.id,
+      });
+      if (decision.action === "block" || decision.action === "quarantine")
+        throw dlpDecisionError(decision);
+      if (decision.action === "warn") reply.header("x-helix-dlp-warning", decision.classification);
     }
     const headers = safeDriveContentHeaders(
       attachment.filename ?? "attachment",

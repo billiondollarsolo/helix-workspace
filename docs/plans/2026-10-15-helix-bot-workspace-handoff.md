@@ -755,3 +755,33 @@ above; neither application reads the other's database. Bot currently admits one
 application writer. CNPG makes its database redundant, but application artifact volumes,
 worker availability and multiple Bot writers need separate qualification. The database
 change does not enable background grants or change Juniper, Scout or Forge credentials.
+
+## Source-bound attachment intake (2026-10-18)
+
+`events.resolve` now includes at most 32 attachment references from the exact
+message's stored links. Each carries `objectId`, `source` (`drive`, `mail` or
+`chat`), `name`, `mimeType`, `byteSize` and nullable `sha256`. Source metadata also includes
+an opaque `audienceHash` for current Chat permission/history settings or the exact
+mail reply recipient. Drive references require current audience read access. The query runs under
+the caller's tenant/actor RLS, excludes deleted or unready objects, and requires
+clean retained mail ingestion or ready chat attachment state. Message text cannot
+supply these IDs. Changed content changes the returned hash; deleting, cleaning
+or losing access removes the source. Content remains a separate authenticated
+read through the existing Drive, mail-message or chat-attachment endpoint.
+
+Bot's separate opt-in background attachment grant admits only these pinned source
+IDs. It reads at most 12,000 bytes of UTF-8 text, checks size/hash/current source
+before exposing content and rechecks the source before replying. Large, binary or
+unhashed attachments return metadata only. Arbitrary files, links, local paths,
+PDF/image interpretation, uploads and sharing are not granted by this option.
+Existing grants remain off. Revocation invalidates older accepted operations.
+
+Mail attachment downloads now enforce the existing `copy_export` DLP boundary
+with message and file classification labels. Block/quarantine decisions prevent
+bytes from leaving; warnings carry the same `x-helix-dlp-warning` header as other
+file exports, which Bot refuses to import into model context.
+
+ClamAV readiness attempts one reload for each stale loaded signature version to
+recover a missed startup update notification. Readiness still fails until the
+loaded database is fresh, and an unchanged stale version cannot cause repeated
+reloads. Signature freshness limits and malware scanning remain enforced.

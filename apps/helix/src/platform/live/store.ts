@@ -6,6 +6,7 @@ import type {
   PresenceStatusInput,
 } from "@helix/contracts";
 import type postgres from "postgres";
+import { createHash } from "node:crypto";
 import { actorHasScope } from "../../api/scopes.js";
 import { BadRequestError, NotFoundError, RateLimitedError } from "../../api/api-error.js";
 import { withTenantPostgresContext } from "../tenancy/postgres-roles.js";
@@ -111,6 +112,56 @@ export class LiveStore {
             else helix_can_read_mail_message(m.org_id,m.id) end`;
       if (!message) throw new NotFoundError("Event unavailable.");
       const mail = event.type === "mail.received";
+      const audience = mail
+        ? []
+        : await tx<
+            { actor_id: string; valid_from: Date; expires_at: Date | null; metadata: unknown }[]
+          >`select p.actor_id,p.valid_from,p.expires_at,s.metadata
+        from permissions p join chat_room_settings s on s.org_id=p.org_id and s.thread_id=p.resource_id
+        where p.org_id=${actor.orgId} and p.resource_type='thread' and p.resource_id=${message.thread_id}
+          and chat_permission_is_valid(p,p.org_id,p.actor_id,p.resource_id)
+        order by p.actor_id,p.id`;
+      const audienceHash = createHash("sha256")
+        .update(
+          JSON.stringify({
+            thread: message.thread_id,
+            audience: mail ? [message.actor_id, message.address] : audience,
+          }),
+        )
+        .digest("hex");
+      const attachments = await tx<
+        {
+          object_id: string;
+          kind: string;
+          name: string;
+          mime_type: string;
+          byte_size: string | number;
+          sha256: string | null;
+        }[]
+      >`
+        select o.id as object_id,o.kind::text,
+          left(coalesce(ma.snapshot->>'filename',o.metadata->>'filename',o.metadata->>'name','Attachment'),255) as name,
+          o.mime_type,o.byte_size,o.sha256
+        from message_attachments ma join objects o on o.org_id=ma.org_id and o.id=ma.object_id
+        where ma.org_id=${actor.orgId} and ma.message_id=${event.resourceId} and o.deleted_at is null
+          and (
+            (o.kind in ('file','recording') and coalesce(o.metadata->>'status','ready')='ready'
+              and case when ${mail} then ${message.actor_id}::uuid is not null
+                and drive_comment_actor_role_rank(o.org_id,o.id,${message.actor_id}::uuid)>=0
+              else cardinality(${tx.array(audience.map((peer) => peer.actor_id))}::uuid[])>0 and not exists(
+                select 1 from unnest(${tx.array(audience.map((peer) => peer.actor_id))}::uuid[]) peer(actor_id)
+                where drive_comment_actor_role_rank(o.org_id,o.id,peer.actor_id)<0
+              ) end)
+            or (o.kind='mail_attachment' and ${mail} and exists(
+              select 1 from mail_attachment_ingestions s where s.org_id=o.org_id and s.object_id=o.id
+                and s.status in ('clean','attached') and s.cleaned_at is null))
+            or (o.kind='chat_attachment' and not ${mail} and exists(
+              select 1 from chat_attachments a where a.org_id=o.org_id and a.object_id=o.id
+                and a.message_id=${event.resourceId} and a.status='ready'))
+          )
+        order by o.id limit 33`;
+      if (attachments.length > 32)
+        throw new BadRequestError("Too many attachments for background processing.");
       return {
         event,
         source: {
@@ -121,6 +172,20 @@ export class LiveStore {
           senderType: message.sender_type ?? "external",
           replyTo: mail ? message.address : null,
           uri: `helix://${mail ? "mail/thread" : "chat/room"}/${message.thread_id}?messageId=${event.resourceId}`,
+          audienceHash,
+          attachments: attachments.map((attachment) => ({
+            objectId: attachment.object_id,
+            source:
+              attachment.kind === "mail_attachment"
+                ? ("mail" as const)
+                : attachment.kind === "chat_attachment"
+                  ? ("chat" as const)
+                  : ("drive" as const),
+            name: attachment.name,
+            mimeType: attachment.mime_type,
+            byteSize: Number(attachment.byte_size),
+            sha256: attachment.sha256,
+          })),
         },
       };
     });

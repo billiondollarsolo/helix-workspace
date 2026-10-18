@@ -93,7 +93,48 @@ describe.skipIf(skipUnlessLiveDatabase("Live inbox and presence"))(
       >`select sequence::text from actor_events where actor_id=${actor.id} and resource_id=${message}`;
       if (!event) throw new Error("Missing chat event");
       const id = `${actor.id}:${event.sequence}`;
+      const fileId = randomUUID(),
+        privateFileId = randomUUID(),
+        pendingFileId = randomUUID();
+      for (const [objectId, status] of [
+        [fileId, "ready"],
+        [privateFileId, "ready"],
+        [pendingFileId, "ready"],
+      ] as const) {
+        await admin`insert into objects(id,org_id,owner_actor_id,kind,storage_key,mime_type,byte_size,sha256,metadata) values(${objectId},${orgId},${sender},'file',${objectId},'text/plain',12,${"a".repeat(64)},${admin.json({ name: "request.txt", status })})`;
+      }
+      await admin.begin(async (tx) => {
+        await tx`select set_config('helix.org_id',${orgId},true),set_config('helix.actor_id',${sender},true)`;
+        for (const objectId of [fileId, pendingFileId]) {
+          await tx`insert into permissions(org_id,actor_id,resource_type,resource_id,role,granted_by_actor_id) values(${orgId},${actor.id},'object',${objectId},'reader',${sender})`;
+          await tx`insert into message_attachments(org_id,message_id,object_id,disposition) values(${orgId},${message},${objectId},'attachment')`;
+        }
+      });
+      await admin`update objects set metadata=metadata || '{"status":"pending_upload"}'::jsonb where id=${pendingFileId}`;
       const resolved = await store.resolve(actor, id);
+      expect(resolved.source?.attachments).toEqual([
+        {
+          objectId: fileId,
+          source: "drive",
+          name: "request.txt",
+          mimeType: "text/plain",
+          byteSize: 12,
+          sha256: "a".repeat(64),
+        },
+      ]);
+      expect(resolved.source?.audienceHash).toMatch(/^[a-f0-9]{64}$/u);
+      const newPeer = randomUUID();
+      await admin`insert into actors(id,org_id,type,display_name) values(${newPeer},${orgId},'user','New peer')`;
+      await admin`insert into permissions(org_id,actor_id,resource_type,resource_id,role,granted_by_actor_id) values(${orgId},${newPeer},'thread',${room},'member',${sender})`;
+      const expanded = await store.resolve(actor, id);
+      expect(expanded.source?.audienceHash).not.toBe(resolved.source?.audienceHash);
+      expect(expanded.source?.attachments).toEqual([]);
+      await admin`delete from permissions where org_id=${orgId} and actor_id=${newPeer} and resource_id=${room}`;
+      expect((await store.resolve(actor, id)).source?.attachments).toHaveLength(1);
+      await admin`update objects set sha256=${"b".repeat(64)} where id=${fileId}`;
+      expect((await store.resolve(actor, id)).source?.attachments[0]?.sha256).toBe("b".repeat(64));
+      await admin`update objects set deleted_at=now() where id=${fileId}`;
+      expect((await store.resolve(actor, id)).source?.attachments).toEqual([]);
       expect(resolved.source).toMatchObject({
         senderActorId: sender,
         senderType: "user",
@@ -299,6 +340,24 @@ describe.skipIf(skipUnlessLiveDatabase("Live inbox and presence"))(
         "approval.updated",
       ]);
       expect(JSON.stringify(page)).not.toContain("not-in-event");
+      const fileId = randomUUID();
+      await admin`insert into objects(id,org_id,owner_actor_id,kind,storage_key,mime_type,byte_size,sha256,metadata) values(${fileId},${orgId},${actor.id},'mail_attachment',${fileId},'text/plain',12,${"c".repeat(64)},'{"filename":"mail.txt"}')`;
+      await admin`insert into mail_attachment_ingestions(org_id,owner_actor_id,object_id,status,storage_key,filename,declared_mime_type,expected_byte_size,actual_byte_size,expected_sha256,actual_sha256,scan_evidence,expires_at) values(${orgId},${actor.id},${fileId},'clean',${fileId},'mail.txt','text/plain',12,12,${"c".repeat(64)},${"c".repeat(64)},'{"scanned":true}',now()+interval '1 hour')`;
+      await admin`insert into message_attachments(org_id,message_id,object_id,disposition) values(${orgId},${message},${fileId},'attachment')`;
+      const mailEvent = page.events.find((event) => event.type === "mail.received");
+      if (!mailEvent) throw new Error("Missing mail event");
+      expect((await store.resolve(actor, mailEvent.id)).source?.attachments).toEqual([
+        {
+          objectId: fileId,
+          source: "mail",
+          name: "mail.txt",
+          mimeType: "text/plain",
+          byteSize: 12,
+          sha256: "c".repeat(64),
+        },
+      ]);
+      await admin`update mail_attachment_ingestions set cleaned_at=now(),status='rejected',message_id=null,rejected_at=now(),failure_reason='revoked' where object_id=${fileId}`;
+      expect((await store.resolve(actor, mailEvent.id)).source?.attachments).toEqual([]);
     });
 
     it("cannot skip an earlier uncommitted event when writers race", async () => {

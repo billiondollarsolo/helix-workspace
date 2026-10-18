@@ -34,6 +34,22 @@ export function registerLiveTools(tools: RuntimeToolRegistry, store: LiveStore) 
               senderType: z.string(),
               replyTo: z.string().nullable(),
               uri: z.string(),
+              audienceHash: z.string().regex(/^[a-f0-9]{64}$/u),
+              attachments: z
+                .array(
+                  z.object({
+                    objectId: z.string().uuid(),
+                    source: z.enum(["drive", "mail", "chat"]),
+                    name: z.string().max(255),
+                    mimeType: z.string(),
+                    byteSize: z.number().int().nonnegative(),
+                    sha256: z
+                      .string()
+                      .regex(/^[a-f0-9]{64}$/u)
+                      .nullable(),
+                  }),
+                )
+                .max(32),
             })
             .nullable(),
         }),

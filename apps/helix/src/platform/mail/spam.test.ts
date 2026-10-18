@@ -19,12 +19,15 @@ function fakeDaemon(
   return new Promise((resolve, reject) => {
     const server: Server = createServer({ allowHalfOpen: true }, (socket) => {
       let timer: NodeJS.Timeout | undefined;
+      let replied = false;
       const chunks: Buffer[] = [];
       const replyOnce = (): void => {
+        if (replied) return;
         if (timer !== undefined) {
           clearTimeout(timer);
         }
         timer = setTimeout(() => {
+          replied = true;
           socket.end(typeof reply === "function" ? reply(Buffer.concat(chunks)) : reply);
         }, 25);
       };
@@ -225,6 +228,34 @@ describe("ClamavScanner", () => {
         now: new Date("2026-09-03T10:33:42.000Z"),
       }),
     ).resolves.toMatchObject({ engineVersion: "1.5.4", signatureVersion: 27835 });
+  });
+
+  it("requests one reload for a stale loaded database and stays unready until it is fresh", async () => {
+    let reloads = 0;
+    let updated = false;
+    const daemon = await fakeDaemon((request) => {
+      if (request.includes(Buffer.from("PING"))) return "PONG\0";
+      if (request.includes(Buffer.from("RELOAD"))) {
+        reloads++;
+        return "RELOADING\0";
+      }
+      return updated
+        ? "ClamAV 1.5.4/27836/Thu Sep 3 06:00:00 2026\0"
+        : "ClamAV 1.5.4/27835/Tue Aug 1 10:33:42 2026\0";
+    });
+    servers.push(daemon);
+    const scanner = new ClamavScanner({ host: "127.0.0.1", port: daemon.port });
+    const options = {
+      maxSignatureAgeMs: 48 * 60 * 60 * 1_000,
+      now: new Date("2026-09-03T10:33:42.000Z"),
+    };
+    await expect(scanner.checkReadiness(options)).rejects.toThrow("signatures are stale");
+    await expect(scanner.checkReadiness(options)).rejects.toThrow("signatures are stale");
+    expect(reloads).toBe(1);
+    updated = true;
+    await expect(scanner.checkReadiness(options)).resolves.toMatchObject({
+      signatureVersion: 27836,
+    });
   });
 
   it("fails readiness for stale signatures and bounds a hung scan", async () => {

@@ -86,6 +86,7 @@ export class ClamavScanner implements AntivirusScanner {
   readonly #client: ClamdInstreamClient;
   readonly #tier: SecurityTier;
   readonly #metrics: SecurityScanningMetrics | undefined;
+  #reloadRequestedFor: number | undefined;
 
   constructor(options: ClamavScannerOptions) {
     this.#host = options.host;
@@ -121,8 +122,14 @@ export class ClamavScanner implements AntivirusScanner {
       throw new Error("clamd signature timestamp is unexpectedly in the future");
     }
     if (ageMs > options.maxSignatureAgeMs) {
+      if (this.#reloadRequestedFor !== version.signatureVersion) {
+        // Freshclam can update disk before clamd's startup notification socket exists.
+        this.#reloadRequestedFor = version.signatureVersion;
+        await this.#request("zRELOAD\0").catch(() => undefined);
+      }
       throw new Error("clamd signatures are stale");
     }
+    this.#reloadRequestedFor = undefined;
     return version;
   }
 

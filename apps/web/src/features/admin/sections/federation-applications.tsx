@@ -346,6 +346,16 @@ function Assignments({
         className="flex gap-2"
         onSubmit={(event) => {
           event.preventDefault();
+          if (query.trim() === search)
+            void queries.invalidateQueries({
+              queryKey: adminUsersQueryOptions({
+                type: "user",
+                includeDisabled: false,
+                limit: 50,
+                query: search,
+              }).queryKey,
+              exact: true,
+            });
           setSearch(query.trim());
         }}
       >

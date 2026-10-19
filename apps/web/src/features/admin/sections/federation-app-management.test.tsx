@@ -9,7 +9,7 @@ import {
 } from "@tanstack/react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mount, settle, unmountAll, axeViolations } from "@/test/ui";
-import { buttonNamed } from "@/features/mail/settings/test-support";
+import { buttonNamed, control, typeInto } from "@/features/mail/settings/test-support";
 import { FederationApplications } from "./federation-applications";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
@@ -225,6 +225,7 @@ describe("Federated app management", () => {
     document.cookie = `helix_csrf=${"x".repeat(43)}; Path=/`;
     const writes: unknown[] = [];
     let fail = true;
+    let failSearch = true;
     let assignments = people;
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const path = route(input);
@@ -246,7 +247,14 @@ describe("Federated app management", () => {
         }
         return jsonResponse({ assignments });
       }
-      if (path.includes("/admin/users?")) return jsonResponse({ users: [], nextCursor: null });
+      if (path.includes("/admin/users?")) {
+        if (failSearch && new URL(path, "https://fixture.test").searchParams.get("query") === "Jo")
+          return jsonResponse(
+            { error: { message: "Search temporarily unavailable." } },
+            { status: 503 },
+          );
+        return jsonResponse({ users: [], nextCursor: null });
+      }
       return jsonResponse({ applications: [app] });
     });
     const mounted = await render();
@@ -259,6 +267,19 @@ describe("Federated app management", () => {
       jo.value = "admin";
       jo.dispatchEvent(new Event("change", { bubbles: true }));
     });
+    typeInto(control("Find people"), "Jo");
+    const searchForm = control("Find people")?.closest("form");
+    if (!searchForm) throw new Error("Search form missing");
+    act(() => searchForm.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+    await settle();
+    await settle();
+    expect(mounted.container.textContent).toContain("People could not be loaded");
+    failSearch = false;
+    act(() => searchForm.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+    await settle();
+    await settle();
+    expect(mounted.container.textContent).not.toContain("People could not be loaded");
+    expect(jo.value).toBe("admin");
     assignments = [{ ...people[0]!, role: "admin" }, people[1]!];
     act(() => buttonNamed("Refresh assigned people")?.click());
     await settle();

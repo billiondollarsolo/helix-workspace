@@ -624,6 +624,6 @@ describe("production Compose overlay", () => {
     expect(caddyfile).not.toMatch(/path[^\n]*\/rustfs/u);
     expect(caddyfile).not.toContain("/cerbos");
     expect(caddyfile).not.toContain("/metrics");
-    expect(caddyfile.match(/header_up -X-Helix-Mfa-Verified/gu)).toHaveLength(3);
+    expect(caddyfile.match(/header_up -X-Helix-Mfa-Verified/gu)).toHaveLength(4);
   });
 });

@@ -9,7 +9,7 @@ background routines, shared projects and coding workflows. Coding is one workloa
 
 ### Hosted integration checkpoint (2026-10-19)
 
-The current hosted releases are Bot `a103f68` (schema 8), Workspace API `d74ba3f` and
+The current hosted releases are Bot `a103f68` (schema 8), Workspace API `cab9432` and
 Workspace web `8afe194`. The real Codex pilot passed private Chat, internal mail,
 source attachment reading and Work source/result inspection through the normal UI.
 An additional real Codex pilot continued an explicit Chat thread reply on the
@@ -33,8 +33,8 @@ Owner is preserved. Helix's dedicated account expires 2026-11-18; its pilot
 background grant expires 2026-10-20 05:00 UTC, at ten turns/day, with source
 attachments enabled and skills and bot-to-bot replies disabled.
 
-The latest required Workspace checks passed: 5,732 ordinary-suite tests with 442
-environment-gated skips, plus 37 targeted PostgreSQL tests and 11 browser/a11y
+The latest required Workspace checks passed: 5,732 ordinary-suite tests with 446
+environment-gated skips, plus 45 targeted PostgreSQL tests and 11 browser/a11y
 cases. Bot passed 788 tests with one optional skip and its required proof checks.
 Its updated account and request-history browser checks passed on desktop and phone.
 Encrypted off-server operator and database checkpoints include the active release
@@ -52,6 +52,19 @@ background runners were disabled. Production promotion remains separate. Private
 The Bot account page now reports owner-only background status as unavailable to
 another identity and disables those editing controls, instead of showing a false
 "off" state. Its focused desktop/phone and accessibility checks passed.
+
+Workspace `cab9432` also rechecks destination-folder permission before publishing
+the first version of an uploaded file, including after asynchronous scanning or
+an infected verdict. A prepared file's owner grant cannot preserve revoked folder
+access. Existing committed files keep their ownership and idempotency behavior.
+Four real PostgreSQL regressions pass, with controlled storage/scanner boundaries;
+the complete targeted database run passed 45 tests. Required ordinary checks passed
+5,732 tests with 446 environment-gated skips, plus format/type/lint/build/boundaries.
+The API-only release requires no new migration and retains the existing web image.
+
+Local Workspace's missing migrations 0249/0250 were applied after an authenticated
+encrypted database/configuration checkpoint. Its restarted source API is ready on
+schema 251; local Bot remains ready with its provider and executor configured.
 
 Generated file results, transfer approval continuation, scheduled follow-through,
 PDF/image interpretation and specialist execution remain the next Bot work.

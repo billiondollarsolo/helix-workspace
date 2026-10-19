@@ -676,3 +676,20 @@ boundary checks passed. These checks do not activate hosted native AI or qualify
 real provider generation, attachment filing/scanning after folder revocation,
 or live meeting transcription/recaps. Private logs are under
 `~/.local/share/helix-recovery/20261019/integration-completion/productivity-*`.
+
+## Destination revocation during filing — 2026-10-19
+
+Real PostgreSQL regressions exposed that a prepared upload's creator could still
+publish it after losing access to its destination folder, including during an
+asynchronous scan. The shared upload authorization now rechecks permission to add
+children until a first Drive version is committed. This covers attachment filing,
+ordinary finalization, multipart completion and scan commits. An infected verdict
+cannot erase the restriction; successful existing files retain their ownership
+and idempotent receipts.
+
+Four new runtime-role database cases passed, with controlled storage and scanner
+verdicts; 45 targeted database tests passed in total. The full ordinary suite passed
+5,732 tests with 446 environment-gated skips; format/type/lint/build/boundaries passed.
+API `cab9432` is deployed and ready, with an authenticated encrypted rollback dump.
+No schema migration or web-image change was needed. Native AI remains off; this
+does not qualify provider generation, an entire live filing workflow, or Meet media.

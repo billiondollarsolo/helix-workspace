@@ -431,3 +431,9 @@ Private receipts and reproduction helpers remain under
 `~/.local/share/helix-recovery/20261019/integration-completion/restore/`.
 This drill does not promote restored state, reboot the host, or qualify the full
 Workspace Kubernetes application.
+
+On 2026-10-19 the local API also applied migrations 0249 and 0250 after a private,
+authenticated encrypted database/environment/service checkpoint. Readiness passed
+at 251 migration rows after restart. Object storage was unchanged and excluded
+from that narrow native checkpoint. The current source includes the destination
+revocation guard described in the handoff; no account credential was replaced.

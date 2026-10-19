@@ -17,6 +17,27 @@ import { systemActor } from "./actor.js";
 import { createStoreBackedMcpResourceProvider } from "./mcp-resources.js";
 import { handleMcpJsonRpcRequest } from "./mcp.js";
 describe("createStoreBackedMcpResourceProvider", () => {
+  it("lists a mail thread once when search returns several messages, retaining its newest descriptor", async () => {
+    const mail = new FakeMailStore();
+    const hit = (await mail.search({ orgId: agentActor.orgId, actorId: agentActor.id }))[0];
+    assert(hit);
+    const resources = createStoreBackedMcpResourceProvider({
+      mail: {
+        search: async () => [
+          hit,
+          { ...hit, messageId: "older-message", sentAt: new Date(0) },
+          { ...hit, threadId: "thread-2", messageId: "other-thread" },
+        ],
+        getThread: (input) => mail.getThread(input),
+      },
+    });
+    const listed = await resources.list({ ...agentActor, scopes: ["mail.read"] });
+    expect(listed.map((resource) => resource.uri)).toEqual([
+      "helix://mail/thread/thread-1",
+      "helix://mail/thread/thread-2",
+    ]);
+    expect(listed[0]?.description).toBe(`Mail thread updated ${hit.sentAt.toISOString()}`);
+  });
   it("lists only resources allowed by actor scopes and store access", async () => {
     const mail = new FakeMailStore();
     const chat = new FakeChatStore();

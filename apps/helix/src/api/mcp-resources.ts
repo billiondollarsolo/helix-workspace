@@ -118,7 +118,12 @@ export function createStoreBackedMcpResourceProvider(
         });
         resources.push(...hits.map(driveHitToResource));
       }
-      return resources;
+      const seen = new Set<string>();
+      return resources.filter((resource) => {
+        if (seen.has(resource.uri)) return false;
+        seen.add(resource.uri);
+        return true;
+      });
     },
     async read(actor, uri) {
       const parsed = parseStoreResourceUri(uri);

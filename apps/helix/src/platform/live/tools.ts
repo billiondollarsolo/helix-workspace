@@ -9,6 +9,7 @@ import { z } from "zod";
 import { requireActorScope } from "../../api/scopes.js";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { defineTool } from "../tools/define-tool.js";
+import { collaborationAuthorization } from "../tools/collaboration-authorization.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import type { LiveStore } from "./store.js";
 const shape = { type: "object", additionalProperties: true } as const;
@@ -100,12 +101,13 @@ export function registerLiveTools(tools: RuntimeToolRegistry, store: LiveStore) 
     }),
   );
   tools.register(
-    defineTool({
+    defineTool<z.output<typeof presenceHeartbeatSchema>, { ok: true }>({
       id: "presence.heartbeat",
       description:
         "Renew your own connection lease for 60 seconds. Reuse a UUID per runner; report working or waiting_approval explicitly. Disconnect removes only that lease.",
       permission: "notifications.write",
       sideEffects: "write",
+      standingAuthorization: collaborationAuthorization("notifications.write", 6000),
       inputSchema: schema(presenceHeartbeatSchema),
       outputSchema: schema(z.object({ ok: z.literal(true) })),
       handler: async (input, ctx) => {

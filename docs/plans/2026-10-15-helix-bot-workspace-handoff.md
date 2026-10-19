@@ -1121,3 +1121,10 @@ complete encrypted stream authenticated and required paths were verified; the
 new archive has not been restored or reboot-tested. Private receipts include
 `workspace-split-login-qualification.json`, `catalog-dedup-workspace-deployed.json`
 and `reviewed-file-live-pilot.json` in the October 19 integration-completion evidence.
+
+The sign-in form was subsequently corrected to show Email and Password together,
+matching Bot's single-submit flow. Managed-domain SSO still discovers the domain
+before credential submission; the entered password is never sent to its SSO path.
+Passkeys, password reset, required password changes and second-factor verification
+remain available. Twenty-one browser/auth/accessibility cases and eight focused
+login unit cases passed for the combined form.

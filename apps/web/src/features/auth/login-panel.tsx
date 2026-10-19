@@ -1,7 +1,5 @@
-/* Sign in, one step at a time: email → Next → password (or the company
-   identity provider when the email's domain is managed), then a second
-   factor when the account has one. Errors never reveal whether an account
-   exists. */
+/* Email and password share one form. Managed domains use their identity
+   provider; accounts with a second factor continue to verification. */
 
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
@@ -23,13 +21,11 @@ import {
 import { AuthCard } from "./auth-card";
 import { getSessionUser } from "@/lib/auth";
 
-type Step =
-  "email" | "password" | "totp" | "recovery" | "email_code" | "forgot" | "reset" | "initial";
+type Step = "signin" | "totp" | "recovery" | "email_code" | "forgot" | "reset" | "initial";
 
 const TITLES: Readonly<Record<Step, string>> = {
   initial: "Choose a new password",
-  email: "Sign in",
-  password: "Welcome",
+  signin: "Sign in",
   totp: "2-step verification",
   recovery: "2-step verification",
   email_code: "2-step verification",
@@ -58,7 +54,7 @@ export function LocalLoginPanel({
   onSignedIn,
 }: LocalLoginPanelProps = {}) {
   const [step, setStep] = useState<Step>(
-    initialPasswordRequired ? "initial" : resetToken === undefined ? "email" : "reset",
+    initialPasswordRequired ? "initial" : resetToken === undefined ? "signin" : "reset",
   );
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -104,19 +100,18 @@ export function LocalLoginPanel({
     }
   }
 
-  const next = async () => {
+  const submitSignIn = async () => {
+    if (busy) return;
     const trimmed = email.trim();
     if (!EMAIL_PATTERN.test(trimmed)) {
       setError("Enter a valid email address.");
       return;
     }
-    setStatus("submitting");
-    setError(null);
-    if ((await discover(trimmed)) === "sso") {
-      await run(() => signInWithOidc(trimmed));
-      return;
-    }
-    goTo("password");
+    await run(async () => {
+      if ((await discover(trimmed)) === "sso") return signInWithOidc(trimmed);
+      if (password === "") throw new Error("Enter your password.");
+      return signIn({ email: trimmed, password });
+    });
   };
 
   const errorProps = error === null ? {} : { invalid: true, describedBy: errorId };
@@ -135,8 +130,11 @@ export function LocalLoginPanel({
         </p>
       ) : null}
 
-      {step === "email" ? (
-        <AuthForm legend="Sign in with your email" onSubmit={() => void next()}>
+      {step === "signin" ? (
+        <AuthForm
+          legend="Sign in with your email and password"
+          onSubmit={() => void submitSignIn()}
+        >
           <AuthInput
             label="Email"
             name="email"
@@ -147,25 +145,6 @@ export function LocalLoginPanel({
             autoFocus
             {...errorProps}
           />
-          {message}
-          <div className="auth-actions">
-            <button
-              type="button"
-              className="btn ghost"
-              disabled={busy}
-              onClick={() => void run(signInWithPasskey)}
-            >
-              Use a passkey
-            </button>
-            <SubmitButton busy={busy}>Next</SubmitButton>
-          </div>
-        </AuthForm>
-      ) : step === "password" ? (
-        <AuthForm
-          legend="Enter your password"
-          onSubmit={() => void run(() => signIn({ email: email.trim(), password }))}
-        >
-          <AccountChip email={email.trim()} onChange={() => goTo("email")} />
           <AuthInput
             label="Password"
             name="password"
@@ -173,7 +152,6 @@ export function LocalLoginPanel({
             autoComplete="current-password"
             value={password}
             onChange={setPassword}
-            autoFocus
             {...errorProps}
           />
           <label className="auth-check">
@@ -191,6 +169,14 @@ export function LocalLoginPanel({
             </button>
             <SubmitButton busy={busy}>Sign in</SubmitButton>
           </div>
+          <button
+            type="button"
+            className="btn ghost"
+            disabled={busy}
+            onClick={() => void run(signInWithPasskey)}
+          >
+            Use a passkey
+          </button>
         </AuthForm>
       ) : step === "totp" || step === "recovery" || step === "email_code" ? (
         <AuthForm
@@ -282,11 +268,7 @@ export function LocalLoginPanel({
             </p>
           ) : null}
           <div className="auth-actions">
-            <button
-              className="btn ghost"
-              type="button"
-              onClick={() => goTo(email.trim() === "" ? "email" : "password")}
-            >
+            <button className="btn ghost" type="button" onClick={() => goTo("signin")}>
               <ArrowLeft aria-hidden="true" size={16} />
               Back to sign in
             </button>
@@ -316,7 +298,7 @@ export function LocalLoginPanel({
               }
               await resetPassword(resetToken, newPassword);
               setNewPassword("");
-              goTo("email");
+              goTo("signin");
             })
           }
         >
@@ -365,10 +347,8 @@ function subtitle(step: Step): string {
   switch (step) {
     case "initial":
       return "Change your initial administrator password to continue";
-    case "email":
+    case "signin":
       return "Use your Helix Workspace account";
-    case "password":
-      return "Enter your password to continue";
     case "totp":
       return "Enter the 6-digit code from your authenticator app";
     case "recovery":
@@ -380,28 +360,6 @@ function subtitle(step: Step): string {
     case "reset":
       return "Reset links work once and expire after 15 minutes";
   }
-}
-
-function AccountChip({
-  email,
-  onChange,
-}: {
-  readonly email: string;
-  readonly onChange: () => void;
-}) {
-  return (
-    <div className="auth-account">
-      <span className="auth-account-email">{email}</span>
-      <button
-        type="button"
-        className="btn ghost sm"
-        onClick={onChange}
-        aria-label={`Use another account instead of ${email}`}
-      >
-        Change
-      </button>
-    </div>
-  );
 }
 
 export function AuthForm({
@@ -452,7 +410,7 @@ export function AuthInput(props: {
         autoComplete={props.autoComplete}
         inputMode={props.inputMode}
         spellCheck={false}
-        // Each sign-in step has one field to fill; focus moves to it.
+        // Focus the first field when the form changes.
         autoFocus={props.autoFocus}
         value={props.value}
         aria-invalid={props.invalid === true ? true : undefined}

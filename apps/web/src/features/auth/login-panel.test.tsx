@@ -43,7 +43,6 @@ describe("LocalLoginPanel", () => {
       />,
     );
     typeInto(control("Email"), "admin@helix.local");
-    await submit();
     typeInto(control("Password"), "password");
     await submit();
     expect(control("Email code")).not.toBeNull();
@@ -58,26 +57,25 @@ describe("LocalLoginPanel", () => {
     ]);
     expect(onSignedIn).toHaveBeenCalledWith(expect.objectContaining({ id: user.id }));
   });
-  it("asks for the email first, then the password, and signs in", async () => {
+  it("shows email and password together and signs in with one submission", async () => {
     const signIn = vi.fn().mockResolvedValue(user);
     const discover = vi.fn().mockResolvedValue("password");
     const onSignedIn = vi.fn();
     mount(<LocalLoginPanel signIn={signIn} discover={discover} onSignedIn={onSignedIn} />);
 
     expect(document.querySelector("h1")?.textContent).toBe("Sign in");
-    expect(document.querySelector('input[type="password"]')).toBeNull();
+    expect(control("Email")).not.toBeNull();
+    expect(control("Password")).not.toBeNull();
     expect(document.body.textContent).not.toContain("Local email/password");
     typeInto(control("Email"), " admin@helix.local ");
-    await submit();
 
-    expect(discover).toHaveBeenCalledWith("admin@helix.local");
-    expect(document.body.textContent).toContain("admin@helix.local");
     const password = control("Password");
     expect(password?.getAttribute("type")).toBe("password");
     expect(password?.getAttribute("autocomplete")).toBe("current-password");
     typeInto(password, "helix-admin-password");
     await submit();
 
+    expect(discover).toHaveBeenCalledWith("admin@helix.local");
     expect(signIn).toHaveBeenCalledWith({
       email: "admin@helix.local",
       password: "helix-admin-password",
@@ -96,11 +94,28 @@ describe("LocalLoginPanel", () => {
     expect(discover).not.toHaveBeenCalled();
   });
 
+  it("requires a password for local sign-in and recovers from discovery errors", async () => {
+    const signIn = vi.fn();
+    const discover = vi
+      .fn()
+      .mockResolvedValueOnce("password")
+      .mockRejectedValueOnce(new Error("Try again."));
+    mount(<LocalLoginPanel signIn={signIn} discover={discover} />);
+    typeInto(control("Email"), "owner@example.com");
+    await submit();
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe("Enter your password.");
+    expect(signIn).not.toHaveBeenCalled();
+    typeInto(control("Password"), "test-password");
+    await submit();
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe("Try again.");
+    expect(buttonNamed("Sign in")?.disabled).toBe(false);
+    expect(signIn).not.toHaveBeenCalled();
+  });
+
   it("shows the password on request and focuses a described error after a failure", async () => {
     const signIn = vi.fn().mockRejectedValue(new Error("Wrong email or password."));
     mount(<LocalLoginPanel signIn={signIn} discover={() => Promise.resolve("password")} />);
     typeInto(control("Email"), "owner@example.com");
-    await submit();
     const showPassword = control("Show password");
     showPassword?.click();
     await settle();
@@ -116,18 +131,17 @@ describe("LocalLoginPanel", () => {
     expect(await axeViolations()).toEqual([]);
   });
 
-  it("goes back to change the account and offers a password reset", async () => {
+  it("returns from password reset to the combined sign-in form", async () => {
     mount(<LocalLoginPanel discover={() => Promise.resolve("password")} />);
     typeInto(control("Email"), "owner@example.com");
-    await submit();
     buttonNamed("Forgot password?")?.click();
     await settle();
     expect(document.querySelector("h1")?.textContent).toBe("Reset your password");
     expect(control<HTMLInputElement>("Email")?.value).toBe("owner@example.com");
     buttonNamed("Back to sign in")?.click();
     await settle();
-    buttonNamed("Use another account instead of owner@example.com")?.click();
-    await settle();
+    expect(control("Email")).not.toBeNull();
+    expect(control("Password")).not.toBeNull();
     expect(document.querySelector("h1")?.textContent).toBe("Sign in");
     expect(await axeViolations()).toEqual([]);
   });

@@ -47,6 +47,9 @@ test.describe("/login authenticated handoff", () => {
       const form = page.locator(".auth-panel");
       await expect(welcome).toBeVisible();
       await expect(page.getByRole("heading", { name: "Sign in", exact: true })).toBeVisible();
+      await expect(page.getByLabel("Email", { exact: true })).toBeVisible();
+      await expect(page.getByLabel("Password", { exact: true })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
       const introBox = await welcome.boundingBox();
       const formBox = await form.boundingBox();
       expect(introBox).not.toBeNull();
@@ -68,6 +71,40 @@ test.describe("/login authenticated handoff", () => {
       expect(violations).toEqual([]);
     });
   }
+  test("uses managed-domain SSO without sending the entered password", async ({ page }) => {
+    const signInCalls: SignInCall[] = [];
+    await mockAppApi(page, {
+      backendCalls: [],
+      signInCalls,
+      signInResponse: { status: 200, body: { user: sessionUser } },
+    });
+    await page.route("**/v1/api/auth/domain-discovery", (route) =>
+      fulfillJson(route, { managed: true, protocol: "oidc" }),
+    );
+    const ssoCalls: Record<string, unknown>[] = [];
+    await page.route("**/v1/api/auth/sign-in/sso", async (route) => {
+      ssoCalls.push(route.request().postDataJSON() as Record<string, unknown>);
+      await fulfillJson(route, { url: "https://identity.example/authorize", redirect: true });
+    });
+    await page.route("https://identity.example/**", (route) =>
+      route.fulfill({ status: 200, body: "Company sign-in" }),
+    );
+    await page.goto("/login");
+    await page.getByLabel("Email", { exact: true }).fill("member@company.example");
+    await page.getByLabel("Password", { exact: true }).fill("synthetic-local-password");
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await expect(page).toHaveURL("https://identity.example/authorize");
+    expect(signInCalls).toEqual([]);
+    expect(ssoCalls).toEqual([
+      {
+        email: "member@company.example",
+        providerType: "oidc",
+        requestSignUp: false,
+        callbackURL: "http://127.0.0.1:4173/mail",
+        errorCallbackURL: "http://127.0.0.1:4173/login",
+      },
+    ]);
+  });
   test("resumes a signed family authorization after normal Workspace sign-in", async ({ page }) => {
     await mockAppApi(page, {
       backendCalls: [],
@@ -93,7 +130,6 @@ test.describe("/login authenticated handoff", () => {
       "/login?client_id=family-client&state=family-state&ba_param=client_id&ba_param=state&sig=fixture&extra=ignored",
     );
     await page.getByLabel("Email", { exact: true }).fill("admin@helix.local");
-    await page.getByRole("button", { name: "Next" }).click();
     await page.getByLabel("Password", { exact: true }).fill("helix-admin-password");
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
     await expect(page).toHaveURL("https://bot.example/v1/auth/sso/callback?code=fixture");
@@ -125,11 +161,9 @@ test.describe("/login authenticated handoff", () => {
     await page.goto("/login");
     await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
     await expect(page.getByText("Local email/password login")).toHaveCount(0);
-    await expect(page.getByLabel("Password", { exact: true })).toHaveCount(0);
+    await expect(page.getByLabel("Password", { exact: true })).toBeVisible();
 
     await page.getByLabel("Email", { exact: true }).fill(" admin@helix.local ");
-    await page.getByRole("button", { name: "Next" }).click();
-    await expect(page.getByText("admin@helix.local", { exact: true })).toBeVisible();
     await page.getByLabel("Password", { exact: true }).fill("helix-admin-password");
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
 
@@ -173,7 +207,6 @@ test.describe("/login authenticated handoff", () => {
 
     await page.goto("/login");
     await page.getByLabel("Email", { exact: true }).fill("admin@helix.local");
-    await page.getByRole("button", { name: "Next" }).click();
     await page.getByLabel("Password", { exact: true }).fill("wrong-password");
     await page.getByLabel("Show password").check();
     await expect(page.getByLabel("Password", { exact: true })).toHaveAttribute("type", "text");

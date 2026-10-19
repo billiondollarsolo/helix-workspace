@@ -76,7 +76,6 @@ test("re-verifies an expired admin session once and returns to the requested pag
     ),
   ).toEqual([]);
   await page.getByLabel("Email", { exact: true }).fill("admin@example.test");
-  await page.getByRole("button", { name: "Next", exact: true }).click();
   await page.getByLabel("Password", { exact: true }).fill("test-password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page).toHaveURL(/\/admin\/users#directory$/u);

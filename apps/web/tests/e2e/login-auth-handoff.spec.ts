@@ -1,4 +1,5 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
+import axe from "axe-core";
 import { fulfillCoreAppsRoute } from "./support/api-fixtures";
 
 const accessTokenStorageKey = "helix.accessToken";
@@ -27,6 +28,46 @@ const sessionUser = {
 };
 
 test.describe("/login authenticated handoff", () => {
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 390, height: 844 },
+  ]) {
+    test(`shows the Workspace welcome and sign-in panels at ${viewport.width}px`, async ({
+      page,
+    }) => {
+      await page.setViewportSize(viewport);
+      await page.emulateMedia({ colorScheme: viewport.width > 760 ? "dark" : "light" });
+      await mockAppApi(page, {
+        backendCalls: [],
+        signInCalls: [],
+        signInResponse: { status: 200, body: { user: sessionUser } },
+      });
+      await page.goto("/login");
+      const welcome = page.getByRole("complementary", { name: "Welcome to Helix Workspace" });
+      const form = page.locator(".auth-panel");
+      await expect(welcome).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Sign in", exact: true })).toBeVisible();
+      const introBox = await welcome.boundingBox();
+      const formBox = await form.boundingBox();
+      expect(introBox).not.toBeNull();
+      expect(formBox).not.toBeNull();
+      if (!introBox || !formBox) throw new Error("Sign-in panels are missing");
+      if (viewport.width > 760)
+        expect(formBox.x).toBeGreaterThanOrEqual(introBox.x + introBox.width);
+      else expect(formBox.y).toBeGreaterThanOrEqual(introBox.y + introBox.height);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+        viewport.width,
+      );
+      await page.addScriptTag({ content: axe.source });
+      const violations = await page.evaluate(async () => {
+        const result = await (window as typeof window & { axe: typeof axe }).axe.run(document, {
+          runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21aa"] },
+        });
+        return result.violations.map(({ id, description }) => ({ id, description }));
+      });
+      expect(violations).toEqual([]);
+    });
+  }
   test("resumes a signed family authorization after normal Workspace sign-in", async ({ page }) => {
     await mockAppApi(page, {
       backendCalls: [],

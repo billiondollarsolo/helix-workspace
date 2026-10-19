@@ -128,7 +128,7 @@ export function LocalLoginPanel({
     );
 
   return (
-    <AuthCard title={TITLES[step]} subtitle={subtitle(step)}>
+    <AuthCard title={TITLES[step]} subtitle={subtitle(step)} split>
       {reauthenticate ? (
         <p role="status" className="auth-notice">
           Your session must be verified again. Sign in again to continue.

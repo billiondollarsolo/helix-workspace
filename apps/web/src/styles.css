@@ -1716,7 +1716,136 @@
     gap: 10px;
   }
 
-  /* A centered card: the Helix mark, a heading, then one step at a time. */
+  .auth-screen.auth-screen-split {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    min-height: 100dvh;
+    place-items: stretch;
+    padding: 0;
+  }
+
+  .auth-welcome {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 72px;
+    padding: 48px clamp(32px, 4vw, 72px);
+    border-right: 1px solid var(--border);
+    background: var(--surface-2);
+  }
+
+  .auth-workspace-brand {
+    display: flex;
+    align-items: center;
+    gap: 13px;
+    width: fit-content;
+    color: var(--text);
+    text-decoration: none;
+    font-size: var(--text-h2);
+    font-weight: 600;
+    line-height: 1.3;
+    letter-spacing: -0.03em;
+  }
+
+  .auth-workspace-brand > svg {
+    flex-shrink: 0;
+  }
+
+  .auth-workspace-brand small {
+    display: block;
+    margin-top: 4px;
+    font-size: var(--text-meta);
+    font-weight: 400;
+    color: var(--text-2);
+    letter-spacing: 0;
+  }
+
+  .auth-workspace-story {
+    max-width: 510px;
+  }
+
+  .auth-workspace-story h2 {
+    margin: 0;
+    font-size: calc(var(--text-display) * 1.6);
+    font-weight: 600;
+    line-height: 1.16;
+    letter-spacing: -0.045em;
+  }
+
+  .auth-workspace-story h2 span {
+    color: var(--accent);
+  }
+
+  .auth-workspace-story p {
+    margin: 24px 0 0;
+    max-width: 46ch;
+    color: var(--text-2);
+    font-size: var(--text-body-lg);
+    line-height: 1.65;
+  }
+
+  .auth-workspace-capabilities {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px 26px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    color: var(--text-2);
+    font-size: var(--text-meta);
+  }
+
+  .auth-screen-split > .auth-column {
+    width: 100%;
+    min-width: 0;
+    align-content: center;
+    justify-items: center;
+    padding: 64px 48px;
+  }
+
+  .auth-screen-split .auth-panel {
+    max-width: 390px;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .auth-screen-split .auth-brand {
+    align-items: flex-start;
+    text-align: left;
+    margin-bottom: 36px;
+  }
+
+  @media (max-width: 760px) {
+    .auth-screen.auth-screen-split {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .auth-welcome {
+      padding: 28px 26px 30px;
+      gap: 34px;
+      border-right: 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .auth-workspace-story h2 {
+      font-size: var(--text-display);
+    }
+
+    .auth-workspace-story p {
+      margin-top: 16px;
+    }
+
+    .auth-workspace-capabilities {
+      display: none;
+    }
+
+    .auth-screen-split > .auth-column {
+      padding: 40px 26px;
+    }
+  }
+
+  /* Centered cards remain in use for invitations and consent. */
   .auth-column {
     width: min(100%, 448px);
     display: grid;

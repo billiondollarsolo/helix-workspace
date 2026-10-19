@@ -189,10 +189,10 @@ for (const viewport of [
   }
 }
 
-/** Account menu → Manage your account (the Profile home) → Personal info. */
+/** Account menu → Manage your account and status → Personal info. */
 async function openPersonalInfo(page: Page) {
   await page.getByRole("button", { name: /^Account:/ }).click();
-  await page.getByRole("button", { name: "Manage your account", exact: true }).click();
+  await page.getByRole("button", { name: "Manage your account and status", exact: true }).click();
   const settings = page.getByRole("dialog", { name: "Settings", exact: true });
   await expect(settings.getByRole("heading", { name: /^Welcome, / })).toBeVisible();
   await settings.getByRole("button", { name: "Personal info", exact: true }).click();

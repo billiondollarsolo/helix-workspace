@@ -967,3 +967,39 @@ Still open: the hosted real-model message→Work→reply pilot, generated-file o
 PDF/image interpretation, continued work and specialist handoffs, two-human/two-bot
 hosted acceptance, large-file DLP qualification, real Jibri/transcription/recap,
 identity/revocation reconciliation after restore, host reboot and live Kubernetes.
+
+### Later qualification and file continuation — 2026-10-19
+
+The hosted real Codex pilot and reply-based continuation have since passed. The
+same Work item retained two actual requests and replies; its result remains in
+Review. The real managed-human sign-in also passed. A current two-app snapshot
+was restored with private keys and Workspace object bytes in isolation; peer
+reconciliation, directory-key rotation and removal of an existing managed session
+passed while the independent recovery Owner remained authorized. This supersedes
+those pending items in the earlier checkpoint above; host reboot and Kubernetes
+application acceptance remain separate.
+
+Bot `f24a40c`, schema 9, now retains encrypted checkpoints for interactive file
+transfers. The original Bot approval receipt stays unchanged. The same person
+can use a fresh signed-in session to continue Workspace preparation/finalization
+approvals, refresh scanning and open an authenticated download after availability.
+Known acknowledged writes/bytes are not repeated. Uncertain writes stop for
+review; denied approvals and blocked scans become terminal. Workspace retains its
+own access checks, destination-revocation gate and scanning policy. Background
+attachment-read permission does not grant file output.
+
+Bot passed 794 ordinary tests, one optional skip, all required proof/static/type/
+build checks, eight focused file cases, and desktop/phone browser/accessibility
+checks. A clone of the restored schema-8 database upgraded to schema 9 without
+changing its six Work records. Hosted and native Bot are ready. Workspace API
+`426025a` and web `8afe194` remain ready with 251 migration rows. The actual managed
+Admin session survived the deployment; it was not used to impersonate the recovery
+Owner or exercise that Owner's private upload workflow.
+
+Cold encrypted pre-migration checkpoints and an updated authenticated off-server
+operator/key/source checkpoint were retained. The new operator archive itself has
+not been restored; the preceding complete snapshot and separate upgrade clone
+are the current recovery evidence. See the Bot
+[integration ledger](../../../helix-bot/docs/plans/helix-bot-workspace-integration.md)
+for exact releases, hashes and remaining generated-output, PDF/image, specialist,
+onboarding, productivity, Calendar/SMTP and consented Meet acceptance work.

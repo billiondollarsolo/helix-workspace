@@ -78,7 +78,7 @@ afterEach(() => {
 });
 async function render() {
   const query = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    defaultOptions: { queries: { retry: false, throwOnError: true }, mutations: { retry: false } },
   });
   queries.push(query);
   const root = createRootRoute({

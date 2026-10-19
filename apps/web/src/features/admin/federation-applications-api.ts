@@ -1,6 +1,7 @@
 import { queryOptions } from "@tanstack/react-query";
 import { authenticatedFetch } from "@/lib/auth";
 import { responseError } from "@/lib/tool-call";
+import { ADMIN_QUERY_DEFAULTS } from "@/features/admin/console/request-budget";
 
 export interface FederationApplication {
   readonly id: string;
@@ -22,6 +23,7 @@ export interface FederationAssignment {
 }
 export function federationApplicationsQueryOptions() {
   return queryOptions({
+    ...ADMIN_QUERY_DEFAULTS,
     queryKey: ["admin", "federation-applications"],
     retry: false,
     refetchInterval: 15_000,
@@ -65,6 +67,7 @@ export async function registerFederationApplication(input: {
 }
 export function federationAssignmentsQueryOptions(appId: string, enabled: boolean) {
   return queryOptions({
+    ...ADMIN_QUERY_DEFAULTS,
     queryKey: ["admin", "federation-applications", appId, "assignments"],
     enabled,
     retry: false,

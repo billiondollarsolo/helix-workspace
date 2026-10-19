@@ -1,6 +1,7 @@
 import { queryOptions } from "@tanstack/react-query";
 import { authenticatedFetch } from "@/lib/auth";
 import { responseError } from "@/lib/tool-call";
+import { ADMIN_QUERY_DEFAULTS } from "@/features/admin/console/request-budget";
 
 export interface BackupPolicy {
   revision: number;
@@ -78,6 +79,7 @@ export async function federationBackupMutation<T>(
 }
 export function federationBackupsQueryOptions() {
   return queryOptions({
+    ...ADMIN_QUERY_DEFAULTS,
     queryKey: ["admin", "federation-backups"],
     retry: false,
     refetchInterval: 15000,
@@ -97,6 +99,7 @@ export function federationBackupsQueryOptions() {
 }
 export function federationBackupJobsQueryOptions() {
   return queryOptions({
+    ...ADMIN_QUERY_DEFAULTS,
     queryKey: ["admin", "federation-backup-jobs"],
     retry: false,
     refetchInterval: 15000,

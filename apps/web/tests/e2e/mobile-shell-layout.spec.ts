@@ -61,7 +61,7 @@ test.describe("mobile shell layout", () => {
       "Meet",
       "Contacts",
       "Helix AI",
-      "Admin",
+      "Administration",
       "Search",
     ]);
     const sheetBox = await sheet.boundingBox();

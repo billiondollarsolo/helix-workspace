@@ -9,7 +9,7 @@ const PRIMARY_NAMES = [
   "Meet",
   "Contacts",
   "Helix AI",
-  "Admin",
+  "Administration",
 ] as const;
 const PINNED_NAMES = ["Mail", "Calendar", "Drive", "Chat", "Meet", "Helix AI"] as const;
 const EXCLUDED_NAMES = ["Docs", "Sheets", "Slides", "PDF"] as const;
@@ -46,7 +46,9 @@ test.describe("workspace product scope", () => {
     }
   });
 
-  test("hides Admin from members and Helix AI while no provider answers", async ({ page }) => {
+  test("hides Administration from members and Helix AI while no provider answers", async ({
+    page,
+  }) => {
     await seedBrowserSession(page, "storage-scope-token");
     await mockBackend(page, { scopes: ["mail.read", "drive.read"], assistantAvailable: false });
     await page.goto("/drive");
@@ -63,7 +65,7 @@ test.describe("workspace product scope", () => {
 
     await page.getByRole("button", { name: /^Account:/ }).click();
     await expect(page.getByRole("dialog", { name: "Account" })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Admin console" })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: "Administration" })).toHaveCount(0);
     await page.keyboard.press("Escape");
 
     await page.goto("/admin/overview");
@@ -122,6 +124,10 @@ async function mockBackend(
       return;
     }
     if (await fulfillCoreAppsRoute(route)) return;
+    if (pathname === "/v1/api/federation/apps") {
+      await fulfillJson(route, { applications: [] });
+      return;
+    }
     if (pathname === "/v1/api/tools/drive.list") {
       await fulfillJson(route, { entries: [] });
       return;

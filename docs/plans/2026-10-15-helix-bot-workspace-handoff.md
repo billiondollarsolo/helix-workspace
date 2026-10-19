@@ -1128,3 +1128,33 @@ before credential submission; the entered password is never sent to its SSO path
 Passkeys, password reset, required password changes and second-factor verification
 remain available. Twenty-one browser/auth/accessibility cases and eight focused
 login unit cases passed for the combined form.
+
+### Restore repair and management structure — 2026-10-19
+
+The native Workspace logical-restore blocker is repaired. Fixture cleanup now
+removes app passwords before their actors; five actorless credentials and seven
+invalid derived rows were encrypted and archived before guarded removal. Valid
+credentials were preserved. A fresh complete logical dump restored with all
+foreign-key constraints, and the cleanup regression passed on the isolated copy.
+
+Management Stage 2 is implemented in both repositories: Administration and Personal
+settings, app/organization authority context and common navigation groups. Workspace
+apps remain distinct from Federated apps. Bot has a dedicated Federation page;
+admins can inspect status while the independent local owner retains connection and
+disconnection authority. Desktop/mobile navigation, accessibility, draft retention
+and the production JavaScript budget passed. Setting ownership and broader app
+management are still Stages 3 and 4; native AI product acceptance remains deferred.
+
+See the [current deployment and qualification receipt](../runbooks/2026-10-17-hosted-federation-operations.md#management-layout-qualification--2026-10-19)
+for the final revisions, checks and recovery evidence. Private evidence is under
+`~/.local/share/helix-recovery/20261019/management-alignment/`.
+
+Hosted and native deployment is complete: Workspace web `ae2a735`, API `eddec8b`,
+and Bot `78402c0`; schemas remain 251 and 13. All required checks passed, including
+the full Bot rerun (818 passes, one optional skip), and the CSS-only follow-up's
+built browser/performance checks. Both readiness endpoints pass; hosted directory
+authority is fresh. Live Bot desktop/phone checks passed. The saved Workspace
+Preview session needs its normal MFA re-verification for the live organization
+label; isolated authenticated browser coverage passed. No further credentials or
+paid model calls were used. The final encrypted hosted checkpoint authenticated
+off-server; it has not itself been restored or reboot-tested.

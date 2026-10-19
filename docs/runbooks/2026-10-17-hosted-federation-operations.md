@@ -61,6 +61,55 @@ source checkpoint together; starting old code against the renamed schema is not
 supported. Fresh human SSO/MFA sign-in, paid model calls, host reboot and Kubernetes
 were not repeated for this naming cutover. The management-layout follow-up is recorded below.
 
+## Management layout qualification — 2026-10-19
+
+Workspace web `ae2a735` and Bot `78402c0` align Administration and Personal settings,
+app/organization context and the common navigation groups. Workspace apps is the
+built-in module destination; Federated apps and Federated backups have their own
+Federation group. Bot's dedicated Federation page shows its governing Workspace,
+with administrator status visibility and separately authorized local recovery-owner
+mutations. Existing routes, app controls and private resource grants remain intact.
+
+Workspace format, types, lint, full tests, build and boundaries passed: 4,034 backend
+and 1,445 web tests; 448 fixture-dependent backend skips. The new cleanup regression
+also ran separately against restored PostgreSQL. Nine focused Workspace browser/
+accessibility cases passed, including desktop/mobile navigation and the dashboard
+fixture, member denial and mobile shell. Bot's source Settings/SSO/navigation run passed 23 cases with 19 intentional
+mobile skips; its built Settings/navigation/performance run passed 21 cases with
+17 intentional mobile skips. The production JavaScript budget was preserved by
+loading the setup guide through the existing lazy settings helper.
+
+The final Bot full check at `87c54c4` passed 818 tests with one optional skip,
+plus static/types, Effect/driver contracts, Pi recovery, portability, build and
+compatibility reporting. Its full image/PDF and background-reply fixtures passed.
+An earlier concurrent run timed out in the background-reply test; both its isolated
+and final full reruns passed without relaxing runtime timeouts or authorization.
+The CSS-only scope-label follow-up `78402c0` passed static/build checks and five
+built browser/accessibility/performance cases (one intentional mobile performance
+skip); label bounds are now asserted at both widths.
+
+These revisions are hosted and native ready. Workspace API stays `eddec8b`; its
+container was refreshed only to report the new web image metadata. Schemas remain
+Workspace 251 / Bot 13. The existing hosted directory regained fresh authority.
+Live Bot desktop/390px checks confirm the governing Workspace, directory status,
+mobile menu, readable scope labels and no horizontal overflow. Workspace's new
+navigation assets loaded, but its saved Preview session reached the normal
+“Confirm it’s you” gate; the live organization-label check remains behind that
+verification. No new login or credentials were requested for this layout change.
+
+Native providers/executor and the separate Claude service remain ready. Hosted
+providers remain ready and its executor remains unconfigured. Recovery workers,
+network boundaries, resource grants and provider credentials are retained;
+unauthenticated recovery requests still return 401. Pre-change encrypted native
+and hosted checkpoints authenticated. The final hosted online logical/configuration
+checkpoint also authenticated off-server:
+`hosted-after-management.tar.gz.age`, SHA-256
+`3be458183b608fa64907707140f13ef6a60e9f92ecc2ede0dbcc1968ecb7a2b3`.
+It captures current source bundles, configuration and keys; existing object/private
+artifacts remain covered by the earlier full snapshots. This new checkpoint was
+not restored. Fresh SSO/MFA, paid model calls, host reboot and a coverage sweep were
+not repeated. Stages 3 and 4 remain in the federation standard.
+
 ## Native restore integrity repair — 2026-10-19
 
 The fixture cleanup helper deleted actors without deleting their app passwords,

@@ -1044,3 +1044,35 @@ rotation and the owner's file-approval pilot remain separate from these checks.
 Generated file output, PDF/image interpretation, specialist/timer execution,
 remaining productivity/Calendar/SMTP, consented Meet, reboot and Kubernetes
 acceptance are still tracked in the Bot integration ledger.
+
+### Source images and owner-reviewed text files — 2026-10-19
+
+Bot `05fa024`, schema 12, is hosted and native ready. Workspace API `9e1b232`,
+schema 251, and web `8afe194` are unchanged and ready. Bot account owners may now
+separately grant source PNG/JPEG interpretation (up to 512 KiB) and private text
+file drafts (up to four 12,000-byte files per source operation). Neither capability
+was enabled on an existing account. Hosted and native generated-file tables are
+empty. Image reads revalidate the exact source, audience, scan, DLP and hash before
+each model request. File drafts belong to the original Bot account owner and Work
+operation; other administrators and Work collaborators cannot download them.
+
+File-producing requests have separate model contexts so later messages cannot
+inherit file contents or unfinished tool calls. The existing Work ledger still
+retains reply follow-ups. Draft creation does not upload or deliver a file to the
+Workspace audience. Reviewed export and source-audience delivery, PDF interpretation
+and specialist/timer work remain to implement. The hosted file/model pilot still
+needs the separate local Owner's Preview sign-in; the managed Admin session remains
+active and was not used to impersonate that Owner.
+
+All required Bot checks passed with 802 tests and one optional skip. Four desktop/
+mobile grant, real HTTP download, Work and accessibility flows passed. Restored
+schema-10 and schema-11 clones qualified upgrades to 11 and 12, with all six Work
+records, existing grants and key binding retained, empty rollback fingerprints
+matched and repeat upgrades ready. New encrypted operator checkpoints authenticated
+off-server; those new archives have not themselves been restored. Exact receipts
+and hashes are in the Bot integration ledger.
+
+Fresh Bot unit coverage remains below its unchanged line/function floors (81.31%
+lines, 82.15% branches, 75.86% functions). The initial JavaScript budget also remains
+open. These gates were not waived. No Workspace runtime code or dependency changed
+for these Bot-only capabilities.

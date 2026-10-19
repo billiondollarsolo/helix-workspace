@@ -437,3 +437,12 @@ authenticated encrypted database/environment/service checkpoint. Readiness passe
 at 251 migration rows after restart. Object storage was unchanged and excluded
 from that narrow native checkpoint. The current source includes the destination
 revocation guard described in the handoff; no account credential was replaced.
+
+Bot schema 12 adds separate owner opt-ins for source images and private text file
+drafts. Existing grants remain off. PNG/JPEG input is bounded to 512 KiB; text
+drafts are limited to four 12,000-byte files per operation. Drafts download from
+the original owner's private Bot Work through a current human session. They are
+not automatically uploaded or delivered to Workspace. Workspace still owns file
+ACLs, scanning and DLP; it gained no viewer/converter integration or dependency.
+See the current Bot integration ledger linked in the handoff for deployment,
+restored-clone qualification, checkpoint hashes and remaining live acceptance.

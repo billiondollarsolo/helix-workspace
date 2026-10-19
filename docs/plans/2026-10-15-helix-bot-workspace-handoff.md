@@ -1076,3 +1076,48 @@ Fresh Bot unit coverage remains below its unchanged line/function floors (81.31%
 lines, 82.15% branches, 75.86% functions). The initial JavaScript budget also remains
 open. These gates were not waived. No Workspace runtime code or dependency changed
 for these Bot-only capabilities.
+
+### Two-panel sign-in and live reviewed-file acceptance — 2026-10-19
+
+Workspace web `1ff7a26` is hosted and native ready. Sign-in now has a branded left
+panel and the existing form on the right; phones stack the panels. Password, SSO,
+passkey and verification behavior is retained. Twenty browser cases passed,
+including desktop dark/mobile light layout and accessibility, SSO handoff,
+reauthentication, retained drafts and profile editing. The actual hosted desktop
+and 390-pixel phone views passed visual and overflow checks.
+
+The original Bot Owner's real Preview sign-in enabled the live file pilot. An
+actual Codex-backed Workspace request created one private 31-byte text draft in
+Bot Work. Another Bot administrator received 404 for that private draft. The Owner
+reviewed its exact content, hash and destination audience, then approved the saved
+upload request through Connection activity. Workspace scanned and activated exactly
+one `helix-reviewed-upload-pilot.txt` in `Helix integration pilot`. Mike's authenticated
+download returned 200 with the exact expected bytes and SHA-256; signed-out access
+returned 401. Folder access remains Mike Owner / Helix Editor, with no additional
+file grants or public links. The temporary file-draft grant was restored off;
+existing background reply and attachment-read grants were retained.
+
+Full MCP discovery exposed duplicate mail-thread resource URIs when several search
+hits belonged to one thread. Workspace API `384c082` now keeps the newest descriptor
+for each URI; Bot's strict catalog validation remains. The regression and 39 focused
+MCP cases passed, followed by every required format/type/lint/test/build/boundary
+check: 4,034 server and 1,444 web tests passed, with 447 gated server skips. Actual
+Bot discovery and reviewed upload passed after deployment. Schema remains 251;
+Bot runtime remains `05c6326`, schema 13. This supersedes earlier pending Owner,
+generated-draft and reviewed-upload pilot entries above. Original-audience delivery
+and specialist/timer follow-through remain separate acceptance work.
+
+Native AI settings are prepared: the normal Admin UI saved `meet.summarize` on the
+existing provider, preserving its other routes and credentials. Meeting recaps and
+transcription remain off, following the user's credential-connection deferral.
+
+Authenticated encrypted native/hosted pre-change checkpoints are retained. The
+new off-server operator delta is
+`operator-checkpoint-workspace-login-catalog-delta-20261019.tar.gz.age`,
+43,357,255 bytes, SHA-256
+`5614ec70a02bcd314c830b19e125e46d9c457878c5660c5f1e6d7a698a1d694a`.
+It requires the full PDF operator checkpoint and prior PDF-guidance delta. Its
+complete encrypted stream authenticated and required paths were verified; the
+new archive has not been restored or reboot-tested. Private receipts include
+`workspace-split-login-qualification.json`, `catalog-dedup-workspace-deployed.json`
+and `reviewed-file-live-pilot.json` in the October 19 integration-completion evidence.

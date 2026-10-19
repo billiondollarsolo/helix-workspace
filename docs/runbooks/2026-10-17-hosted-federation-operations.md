@@ -1,5 +1,68 @@
 # Hosted federation deployment and recovery enrollment
 
+## Greenfield terminology cutover — 2026-10-19
+
+Hosted Workspace API/web now run `eddec8b`; Bot runs `c88124d`. Native checkouts
+include the same changes, plus Workspace's deployment-test correction `0af0954`.
+The schemas still contain 251 Workspace migrations and 13 Bot migrations.
+The integration uses federation names throughout code, routes, configuration,
+database objects, credential bindings and recovery protocols. Old routes return
+404; there are no aliases, redirects, dual settings or runtime compatibility code.
+
+Both apps were stopped behind temporary maintenance responses for the hosted
+conversion. Encrypted cold database dumps and matching configuration, keys and
+source bundles were authenticated off-server first. One-time operator transactions
+renamed database objects and migration records and rewrapped the existing encrypted
+credentials under their new contexts. No migration was replayed. Fresh-schema
+fingerprints match Bot's converted database. Enrollment metadata, the saved pairing
+code prefix and the managed SCIM-token label were converted once too. Opaque OAuth
+client IDs and historical audit/recovery records retain their original values.
+
+Original users, bots, Work, model providers, vault secrets, memberships and account
+drafts were compared. Their authority and content remain intact; normal credential
+use timestamps advanced after restart. The existing hosted directory connection
+regained fresh authority before maintenance ended. Both public readiness checks
+pass, and native Bot still reports providers and executor ready. The separate
+local Claude service and executor configuration were retained.
+
+The private shared network is now `helix-federation`. Its gateway, firewall bridge
+and three participating containers were preserved. Independent workers use
+`helix.federation.backup.v1` at `/v1/federation-operations/*`, with their existing
+bindings, management capabilities and journals. Both workers completed verification
+of an existing encrypted archive through the new route and command environment.
+Archive/key contents were preserved while their enclosing names and operator paths
+were converted. The off-server custodian timer was updated and re-enabled.
+
+Qualification: Workspace format, types, lint, full tests, build and boundaries
+passed (4,034 backend and 1,445 web tests; 447 backend fixture-dependent skips).
+Bot static/types, contract, Pi recovery, portability and build checks passed.
+Its full run recorded 815 passes, one optional skip and a parent/child failure from
+one PDF fixture's database-pool timeout. That complete fixture passed separately
+(three tests); the full suite was not repeated. The joined TLS proof passed pairing,
+lost acknowledgements, three credential rotations, directory roles/groups,
+restart/outage denial, offboarding, rollback denial, re-pairing and local recovery.
+The real encrypted backup/isolated-restore fixture passed. Workspace's seven
+focused browser/accessibility checks and Bot's three SSO browser checks passed;
+Bot's three mobile cases are intentionally skipped by that suite.
+
+The native encrypted checkpoint authenticated. Its Bot database restored in
+isolation and selected original application rows matched both live databases.
+Native Workspace's isolated restore stopped at a foreign-key constraint: five
+pre-existing app-password rows refer to missing actors. Those rows were retained;
+this checkpoint is not a fully qualified Workspace logical restore. Hosted
+Workspace's cold dump restored successfully for exact comparison. Existing older
+hosted physical-restore evidence below remains separate from this conversion.
+
+Private scripts, receipts and encrypted checkpoints are under
+`~/.local/share/helix-recovery/20261019/federation-clean-rename/` on the backup
+machine. A rollback requires the matching old database, configuration, worker and
+source checkpoint together; starting old code against the renamed schema is not
+supported. Fresh human SSO/MFA sign-in, paid model calls, host reboot and Kubernetes
+were not repeated for this naming cutover. Management-navigation alignment remains
+the next stage in the [federation standard](../architecture/helix-federation-management.md).
+
+## Original deployment — 2026-10-17
+
 Deployed on 2026-10-17 to `89.167.14.138`:
 
 | Application | URL                              | Application source |
@@ -43,8 +106,8 @@ unqualified.
 Open **Workspace → Admin → Federated backups** for the two recovery targets.
 Independent native operator services are `helix-workspace-recovery.service` and
 `helix-bot-recovery.service`. Their fixed command/configuration, journals and
-capabilities are private under `/srv/helix-data/family-operations/`. Runtime code
-is under `/opt/helix-recovery-9400401/`; privileged execution is outside the API
+capabilities are private under `/srv/helix-data/federation-operations/`. Runtime code
+is under `/opt/helix-recovery-eddec8b/`; privileged execution is outside the API
 containers. The workers bind only the private Docker bridge gateway; UFW admits
 that bridge to ports 3081–3082. Caddy routes `/v1/federation-operations/*` at each
 existing HTTPS hostname. No additional DNS entry or public worker port was added.
@@ -74,7 +137,7 @@ keeps existing copies and does not automatically delete old recovery material.
 
 The off-server user service/timer is `helix-federation-backup-custodian`, polling each
 minute. Its script is at
-`~/.local/share/helix-workspace/89.167.14.138/bin/pull-family-backups.py`; encrypted
+`~/.local/share/helix-workspace/89.167.14.138/bin/pull-federation-backups.py`; encrypted
 per-app artifacts are under that host directory's `federation-backups/`. Independent
 age identities are in its private `keys/` directory. User lingering is enabled so
 collection does not depend on an interactive login. This backup machine must stay

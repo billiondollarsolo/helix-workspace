@@ -101,6 +101,11 @@ restore it. New backups and fresh installations use federation names exclusively
 
 ## Delivery stages for Workspace and Bot
 
+Stage 1 was implemented and deployed on 2026-10-19, including the coordinated
+technical rename without aliases. See the [cutover receipt](../runbooks/2026-10-17-hosted-federation-operations.md#greenfield-terminology-cutover--2026-10-19)
+for validation and recovery limits. The management structure and shared controls
+below remain planned work.
+
 1. **Terminology and baseline:** replace current management headings, navigation,
    recovery copy and active guide terminology. Rename the integration in code, routes,
    schema, configuration and worker protocols through one coordinated cutover.

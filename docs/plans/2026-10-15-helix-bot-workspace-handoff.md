@@ -785,7 +785,7 @@ This update did not run live Bot enrollment, database isolation qualification,
 Playwright or new browser accessibility checks, and did not deploy. Use the
 acceptance tasks above to qualify the integration before enabling it.
 
-## App-family contract update — 2026-10-16
+## Federation contract update — 2026-10-16
 
 Bot and Workspace remain independently deployable applications within one organization.
 Network proximity does not establish trust. Each installation/account uses the same

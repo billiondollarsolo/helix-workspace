@@ -88,6 +88,13 @@ export async function requireUploadWriteAccess(
   if (stringMetadata(object.metadata, "status") === "pending_upload" && uploadActorId !== actorId) {
     throw new DriveForbiddenError("Only the actor who prepared this upload may finalize it.");
   }
+  const folderId = stringMetadata(object.metadata, "folderId");
+  if (folderId) {
+    const versions =
+      await sql`select 1 from drive_versions where org_id=${orgId} and object_id=${objectId} limit 1`;
+    // Owning a prepared file does not preserve permission to add it to a revoked folder.
+    if (versions.length === 0) await requireFolderAddChildren(sql, orgId, actorId, folderId);
+  }
   return object;
 }
 

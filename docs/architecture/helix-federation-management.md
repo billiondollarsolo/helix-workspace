@@ -133,7 +133,12 @@ Administration and Personal settings, app/organization context and the common
 navigation groups. Workspace distinguishes built-in Workspace apps from Federated
 apps. Bot has a dedicated Federation destination and a mobile section drawer;
 its existing controls, routes and independent recovery-owner boundary are retained.
-Stages 3 and 4 remain planned work.
+Stage 3 is implemented and deployed: Bot identifies setting sources, shows effective
+managed sign-in values and links to the existing Workspace editors. Workspace's
+app card identifies its assignment authority and the controls Bot retains. SSO-only
+accounts use their provider's password, recovery and verification controls; Bot's
+local recovery owner remains independent. See the [ownership qualification](../runbooks/2026-10-17-hosted-federation-operations.md#setting-ownership-qualification--2026-10-19).
+Stage 4 remains planned. General Workspace policy propagation is not implemented.
 
 1. **Terminology and baseline:** replace current management headings, navigation,
    recovery copy and active guide terminology. Rename the integration in code, routes,

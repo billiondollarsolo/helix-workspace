@@ -26,6 +26,24 @@ for (const width of [1440, 390]) {
             },
           },
         });
+      if (path === "/v1/api/admin/federation-applications")
+        return route.fulfill({
+          json: {
+            applications: [
+              {
+                id: "11111111-1111-4111-8111-111111111111",
+                origin: "https://bot.example.test",
+                status: "active",
+                installationId: "installation",
+                tenantId: "team",
+                lastSyncedAt: null,
+                error: null,
+                pending: false,
+                rotationPending: false,
+              },
+            ],
+          },
+        });
       return route.fulfill({ json: { applications: [], targets: [], jobs: [] } });
     });
     await page.goto("/admin/federation-backups");
@@ -46,6 +64,8 @@ for (const width of [1440, 390]) {
       await expect(nav.getByRole("heading", { name, exact: true })).toBeVisible();
     await nav.getByRole("link", { name: "Federated apps", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Federated apps", exact: true })).toBeVisible();
+    await expect(page.getByText("Managed by Workspace:", { exact: true })).toBeVisible();
+    await expect(page.getByText("Managed in Helix Bot:", { exact: true })).toBeVisible();
     if (width < 600) {
       await expect(nav).toBeHidden();
       await page.getByRole("button", { name: "Main menu", exact: true }).click();

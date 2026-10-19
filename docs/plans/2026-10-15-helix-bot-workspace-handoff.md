@@ -1158,3 +1158,23 @@ Preview session needs its normal MFA re-verification for the live organization
 label; isolated authenticated browser coverage passed. No further credentials or
 paid model calls were used. The final encrypted hosted checkpoint authenticated
 off-server; it has not itself been restored or reboot-tested.
+
+### Setting ownership deployed — 2026-10-19
+
+Stage 3 is hosted and native ready: Workspace web `6e44cc5`, Bot `92b5ae9`, with
+Workspace API `eddec8b` and schemas 251 / 13 retained. Bot shows inherited/local
+sources, effective managed sign-in values and links to existing Workspace editors.
+Those editors enforce the person's own Workspace permissions. Local recovery and
+Bot resource grants remain separate. SSO-only people use their sign-in provider's
+password/recovery/verification controls and are excluded from Bot's local MFA count.
+Workspace's app card clarifies its managed assignments and Bot's retained controls.
+
+Both apps' required checks, focused SSO/permission regressions and desktop/phone
+accessibility checks passed. Both environments are ready; directory synchronization,
+recovery workers and native providers/executor/Claude remain healthy. Before/after
+encrypted deployment checkpoints authenticated, including off-server hosted custody.
+The final checkpoint has not been restored. Preview requires fresh Workspace
+verification for the authenticated live review. No new model calls were made.
+See the [ownership deployment receipt](../runbooks/2026-10-17-hosted-federation-operations.md#setting-ownership-qualification--2026-10-19)
+for exact results and recovery limits. Broader app management remains Stage 4;
+general shared policy propagation and native AI product acceptance remain deferred.

@@ -1,5 +1,60 @@
 # Hosted federation deployment and recovery enrollment
 
+## Setting ownership qualification — 2026-10-19
+
+Workspace web `6e44cc5` and Bot `92b5ae9` are hosted and native ready. Workspace API
+remains `eddec8b`; schemas remain 251 / 13. This Stage 3 change shows current
+ownership and effective values using existing contracts; it adds no generalized
+Workspace policy propagation. The [setting inventory](../architecture/helix-federation-management.md#setting-ownership-inventory)
+records the inherited and local fields.
+
+Managed people and Single sign-on show Workspace as their source and link to its
+existing Federated apps editor. Links require the person's own Workspace session
+and permissions; Bot roles do not grant Workspace administration. Member-only
+views show the source without an administrator link. Managed sign-in shows the
+provider, issuer, enabled state, assigned role range and local-owner login policy.
+Managed editors remain read-only. Unavailable connection data offers retry without
+declaring local authority, and synchronization errors retain the Workspace source.
+
+Bot's password, recovery and MFA editors are offered to local password accounts;
+SSO-only users see provider ownership. The required-MFA count now excludes SSO-only
+identities. Existing backend member/SSO write fences and owner-only pairing and
+disconnect remain in force. Workspace's app card identifies its assigned-person
+roles, profiles, groups and sign-in authority, and distinguishes Bot's local
+recovery, credentials, bots, Work and grants. App assignment grants no Mail, Chat
+or Drive access.
+
+Workspace format, types, lint, full tests, build and boundaries passed: 4,034 backend
+and 1,446 web tests, with 448 fixture-gated backend skips. Three browser/accessibility
+cases passed, including the active app card at desktop and 390px and the existing
+backup enrollment flow. Bot's full `pnpm check` passed: 820 tests, one optional skip,
+plus static/types, Effect/driver contracts, Pi recovery, portability, build and
+compatibility reporting. Its complete image/PDF and background fixtures passed.
+Fifteen focused PostgreSQL/SSO/permission cases and two frontend self-checks passed.
+The source browser run passed 19 cases with three intentional mobile SSO skips;
+the built run passed 13 with one intentional mobile performance skip. These cover
+standalone and managed settings, SSO-only accounts, member denial, failure/retry,
+keyboard scrolling, accessibility and the unchanged production JavaScript budget.
+The read-only settings scroll region is named and keyboard-focusable.
+
+The hosted directory regained fresh authority, both recovery workers and the
+private federation network remain intact, and unauthenticated recovery status is
+denied. Native providers/executor and the separate Claude service remain ready;
+hosted providers remain ready and its executor remains unconfigured. The existing
+Preview sessions now require normal Workspace verification, including Bot SSO.
+Authenticated live visual review remains pending; no verification gate was bypassed.
+
+Encrypted online logical/configuration checkpoints authenticated before each
+rollout. The final hosted checkpoint also authenticated off-server:
+`hosted-after-ownership.tar.gz.age`, SHA-256
+`7b4d7e17c90586d0cafa3e2fcd2bb373030143105f5c5045631ead6133328da9`.
+It includes current database dumps, deployment/configuration, keys and source
+bundles. Existing private/object artifacts remain covered by the earlier full
+snapshots. This new checkpoint was not restored. Private scripts, logs and receipts
+are under `~/.local/share/helix-recovery/20261019/setting-ownership/` on the backup
+machine. Fresh human SSO/MFA completion, paid model calls, host reboot and a coverage
+sweep were not repeated. Broader app management is Stage 4.
+
 ## Greenfield terminology cutover — 2026-10-19
 
 Hosted Workspace API/web now run `eddec8b`; Bot runs `c88124d`. Native checkouts

@@ -660,3 +660,19 @@ each migrated message, so canonical plain text also replaces old HTML search
 content and AI passage offsets. Refresh references remain body-free and scoped
 to authorized mailboxes. All 25 live projections refreshed; MCP/CLI and human
 reads passed. See [validation evidence](../reviews/evidence/2026-10-15-mail-index-recovery-validation.json).
+
+## Prepared-reply concurrency qualification — 2026-10-19
+
+Four new PostgreSQL integration cases use the real mailbox, draft and artifact
+stores under the runtime RLS role, with a controlled AI boundary. They prove one
+model call across concurrent preparation, preservation of a separately edited
+human draft, rejection after new mail arrives, AI-off rechecking before persistence,
+and a lease replacement that prevents stale workers overwriting current output.
+Another mailbox actor cannot read the private artifact or prepare that thread.
+
+All 37 targeted PostgreSQL cases passed. The full ordinary suite passed 5,732
+tests with 442 environment-gated skips; format, type, lint, build and dependency
+boundary checks passed. These checks do not activate hosted native AI or qualify
+real provider generation, attachment filing/scanning after folder revocation,
+or live meeting transcription/recaps. Private logs are under
+`~/.local/share/helix-recovery/20261019/integration-completion/productivity-*`.

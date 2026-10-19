@@ -9,9 +9,13 @@ background routines, shared projects and coding workflows. Coding is one workloa
 
 ### Hosted integration checkpoint (2026-10-19)
 
-The current hosted releases are Bot `7d5bdb6`, Workspace API `d74ba3f` and
+The current hosted releases are Bot `6a7952a` (schema 8), Workspace API `d74ba3f` and
 Workspace web `8afe194`. The real Codex pilot passed private Chat, internal mail,
 source attachment reading and Work source/result inspection through the normal UI.
+An additional real Codex pilot continued an explicit Chat thread reply on the
+same private Work item. Both requests/runs and their replies are retained; the
+current result still requires human acceptance. Changed audiences or grants,
+unthreaded direct messages and uncertain/active work keep independent cards.
 The owner granted the scanned text file to Helix as Viewer. A separate request
 was observed running before that grant was removed; it stopped with
 `workspace_source_changed`, without a file tool invocation or reply. The file
@@ -29,9 +33,10 @@ Owner is preserved. Helix's dedicated account expires 2026-11-18; its pilot
 background grant expires 2026-10-20 05:00 UTC, at ten turns/day, with source
 attachments enabled and skills and bot-to-bot replies disabled.
 
-The latest required Workspace checks passed: 5,732 ordinary-suite tests with 437
-environment-gated skips, plus 33 targeted PostgreSQL tests and 11 browser/a11y
-cases. Bot passed 787 tests with one optional skip and its required proof checks.
+The latest required Workspace checks passed: 5,732 ordinary-suite tests with 442
+environment-gated skips, plus 37 targeted PostgreSQL tests and 11 browser/a11y
+cases. Bot passed 788 tests with one optional skip and its required proof checks.
+Its updated account and request-history browser checks passed on desktop and phone.
 Encrypted off-server operator and database checkpoints include the active release
 bundles. Restored Bot service checks validate installation/key identity, stale
 managed-access denial, directory reconciliation and existing-session revocation
@@ -39,7 +44,7 @@ while preserving local recovery access. Independent peer reconciliation and
 production promotion remain separate. Private receipts live in
 `~/.local/share/helix-recovery/20261019/integration-completion/`.
 
-Generated file results, transfer approval continuation, durable follow-through,
+Generated file results, transfer approval continuation, scheduled follow-through,
 PDF/image interpretation and specialist execution remain the next Bot work.
 Broader productivity, Calendar, external SMTP and Meet infrastructure acceptance,
 host reboot and complete Workspace Kubernetes qualification remain outstanding.

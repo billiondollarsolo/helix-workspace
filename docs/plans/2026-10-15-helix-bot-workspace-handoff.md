@@ -1019,3 +1019,28 @@ format/type/lint/test/build/boundary checks passed: 5,733 ordinary tests and 447
 gated skips. Bot is separately qualifying explicit status-only background grants
 and owner-confirmed rotation recovery. The field alone grants no background
 execution or account activation.
+
+Bot `0dbf198`, schema 10, and Workspace API `9e1b232`, schema 251, are now
+hosted and native ready. The existing Workspace web image remains `8afe194`.
+Bot's opt-in status worker checks only the original submitted request, after
+logout, for seven days and at most 100 background checks per UTC day. Connection
+activation remains a current owner-session action. Setup-key rotation requires
+explicit owner confirmation and a matching original-key fingerprint; the immutable
+bot key/manifest are retained. Existing account requests remain opted out.
+
+Bot passed 800 tests with one optional skip and all required checks. Six polling
+regressions passed after the final installation-tenant guard; desktop and phone
+controls/accessibility checks passed. The restored schema-9 clone upgraded to 10
+without changing its six Work records, and its empty-table rollback fingerprint
+and repeated upgrade passed. A real hosted MCP read matched Helix's existing key
+proof without returning the credential hash. The managed Admin sign-in survived
+both deployments. It was not used to impersonate the separate recovery Owner.
+
+Authenticated encrypted native/hosted pre-upgrade checkpoints and the updated
+operator/key/source archive were retained off-server. The new operator archive
+has not itself been restored; the preceding full snapshot and migration-clone
+qualification remain the recovery evidence. Actual production owner opt-in,
+rotation and the owner's file-approval pilot remain separate from these checks.
+Generated file output, PDF/image interpretation, specialist/timer execution,
+remaining productivity/Calendar/SMTP, consented Meet, reboot and Kubernetes
+acceptance are still tracked in the Bot integration ledger.

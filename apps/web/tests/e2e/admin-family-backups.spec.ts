@@ -21,6 +21,8 @@ test("enrolls an independently authorized worker and retains rejected capability
     return route.fulfill({ json: { targets: [], jobs: [], applications: [] } });
   });
   await page.goto("/admin/family-backups");
+  await expect(page.getByRole("heading", { name: "Federated backups", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Federated apps", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "+ Add backup target", exact: true }).click();
   const form = page.getByRole("form", { name: "Connect backup worker" });
   await form.getByRole("button", { name: "Review and connect recovery" }).click();

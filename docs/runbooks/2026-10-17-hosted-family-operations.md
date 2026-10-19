@@ -1,4 +1,4 @@
-# Hosted family deployment and recovery enrollment
+# Hosted federation deployment and recovery enrollment
 
 Deployed on 2026-10-17 to `89.167.14.138`:
 
@@ -16,7 +16,7 @@ an audited transition to production-mode security or promoted release artifacts.
 The existing Workspace owner was used for Bot's separate local recovery account.
 The operator generated a private initial password; the owner changed it before
 pairing. No Workspace password was reset. Temporary operator sessions were retired.
-Family identity is enabled, the apps are paired, and their backup workers are
+Federation identity is enabled, the apps are paired, and their backup workers are
 independently enrolled. Human assignments and bot resource grants remain explicit.
 
 ### Human sign-in checkpoint — 2026-10-19
@@ -40,7 +40,7 @@ unqualified.
 
 ## Operation and custody
 
-Open **Workspace → Admin → Family backups** for the two recovery targets.
+Open **Workspace → Admin → Federated backups** for the two recovery targets.
 Independent native operator services are `helix-workspace-recovery.service` and
 `helix-bot-recovery.service`. Their fixed command/configuration, journals and
 capabilities are private under `/srv/helix-data/family-operations/`. Runtime code
@@ -50,7 +50,7 @@ that bridge to ports 3081–3082. Caddy routes `/v1/family-operations/*` at each
 existing HTTPS hostname. No additional DNS entry or public worker port was added.
 
 These targets use **external scheduling**. The existing Bot metadata schedule and
-off-server whole-installation backup schedule remain in place; family snapshots
+off-server whole-installation backup schedule remain in place; federation snapshots
 can be requested manually. Policy scheduling has not silently moved to Workspace.
 The obsolete first-team bootstrap timer is disabled after successful pairing.
 
@@ -61,7 +61,7 @@ capture object storage, its KMS material and TLS/deployment configuration. Caddy
 runtime admin-socket volume is deliberately excluded. Bot snapshots capture its
 private state, PostgreSQL data, keys and deployment configuration. PostgreSQL
 recovery requires the exact recorded database image/version. These are independent
-app snapshots, not an atomic family transaction.
+app snapshots, not an atomic federation transaction.
 
 Every archive has a manifest with per-file digests, installation binding, image
 versions and a recovery boundary. The operator verifies age authentication and
@@ -114,7 +114,7 @@ identity revisions/revocations before reopening managed access.
 Live Kubernetes, host reboot and a full hosted restore have not been qualified by
 this deployment. Keep the pre-change Compose/Caddy checkpoints and old images for
 rollback; database rollback still requires its matching preserved schema/data.
-See the [family recovery runbook](app-family-backups.md) for authority and unknown-job
+See the [federation recovery runbook](app-family-backups.md) for authority and unknown-job
 handling, and the [existing host runbook](hetzner-workspace-prestage.md) for encrypted
 mount and reboot recovery.
 

@@ -11,7 +11,7 @@ afterEach(() => {
   unmountAll();
   vi.restoreAllMocks();
 });
-describe("Family backups", () => {
+describe("Federated backups", () => {
   it("keeps capabilities private, validates separate credentials and retains a failed enrollment draft", async () => {
     document.cookie = `helix_csrf=${"x".repeat(43)}; Path=/`;
     const writes: string[] = [];
@@ -37,6 +37,7 @@ describe("Family backups", () => {
     );
     await settle();
     await settle();
+    expect(mounted.container.querySelector("h1")?.textContent).toBe("Federated backups");
     act(() => buttonNamed("+ Add backup target")?.click());
     await settle();
     expect(await axeViolations(mounted.container)).toEqual([]);

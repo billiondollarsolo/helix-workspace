@@ -46,7 +46,7 @@ export function FamilyBackups() {
   return (
     <>
       <PageHeading
-        title="Family backups"
+        title="Federated backups"
         subtitle="Manage approved backup workers. Each app keeps its own backups, keys and local recovery."
         actions={
           <Button
@@ -62,11 +62,11 @@ export function FamilyBackups() {
         access. Restores create isolated targets; promoting them into production remains an operator
         action.
       </p>
-      {targets.isPending ? <LoadingState label="Loading family backup status" /> : null}
+      {targets.isPending ? <LoadingState label="Loading federated backup status" /> : null}
       {targets.data?.enabled === false ? (
         <p>
-          Enable family identity and install an operator-approved backup worker before connecting
-          recovery.
+          Enable Workspace federation and install an operator-approved backup worker before
+          connecting recovery.
         </p>
       ) : null}
       {[targets.error, jobs.error, action.error, recoverySet.error]
@@ -115,7 +115,7 @@ export function FamilyBackups() {
           disabled={recoverySet.isPending || !targets.data?.targets.length}
           onClick={() => recoverySet.mutate()}
         >
-          Record family recovery set
+          Record federation recovery set
         </Button>
         <p>
           Sets label independently captured snapshots. Complete requires a recent, verified receipt

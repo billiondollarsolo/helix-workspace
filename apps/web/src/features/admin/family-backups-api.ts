@@ -69,7 +69,7 @@ export async function familyBackupMutation<T>(
     throw responseError(
       response,
       await response.json().catch(() => null),
-      "Family recovery",
+      "Federation recovery",
       "Recovery operation failed. Review its status and retry.",
     );
   return response.json() as Promise<T>;
@@ -86,7 +86,7 @@ export function familyBackupsQueryOptions() {
         throw responseError(
           response,
           await response.json().catch(() => null),
-          "Family recovery",
+          "Federation recovery",
           "Recovery status could not be loaded.",
         );
       return { ...((await response.json()) as { targets: BackupTarget[] }), enabled: true };
@@ -105,7 +105,7 @@ export function familyBackupJobsQueryOptions() {
         throw responseError(
           response,
           await response.json().catch(() => null),
-          "Family recovery",
+          "Federation recovery",
           "Recovery jobs could not be loaded.",
         );
       return response.json() as Promise<{ jobs: BackupJob[] }>;

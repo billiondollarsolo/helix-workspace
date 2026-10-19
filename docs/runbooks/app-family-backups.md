@@ -1,6 +1,6 @@
-# Optional family backup management
+# Optional federated backup management
 
-Workspace's **Admin → Family backups** manages independently enrolled recovery
+Workspace's **Admin → Federated backups** manages independently enrolled recovery
 workers for its own installation and paired Bot installations. Identity pairing
 does not enroll recovery or grant access to backups. Only the default installation
 organization's administrators can manage physical installation backups.
@@ -100,9 +100,9 @@ remote connections. Containers behind a trusted TLS edge need `host: "0.0.0.0"`
 and explicit `privateHttp: true`; restrict worker traffic to that edge. Never
 expose cleartext capability traffic to an untrusted network. Browser cookies are
 rejected. Workspace uses its existing bounded HTTPS transport and rejects redirects.
-Private addresses require the existing family private-network opt-in.
+Private addresses require the existing federation private-network opt-in.
 
-Enroll through Admin → Family backups with the independent management capability,
+Enroll through Admin → Federated backups with the independent management capability,
 and optionally the independent restore capability. Workspace stores them encrypted
 with its tenant envelope key. Enrollment acknowledges the current local policy;
 then policy changes require consecutive revisions. Failed submissions preserve
@@ -224,5 +224,5 @@ references and artifact digests. A complete set requires this Workspace and ever
 active paired app to have fresh status and a recent, verified, off-host full backup.
 These are **independent snapshots**, not an atomic cross-app transaction. A partial
 set is explicitly incomplete. Promotion remains the existing reviewed operator
-restore procedure, including reconciliation of family revisions/revocations before
+restore procedure, including reconciliation of federation revisions/revocations before
 opening access. Workspace downtime never prevents local recovery.

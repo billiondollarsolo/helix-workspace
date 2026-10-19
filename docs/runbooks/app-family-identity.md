@@ -20,9 +20,9 @@ current paired installation and its independently enrolled recovery workers.
    This permits protected outbound private routing, not HTTP or unverified TLS.
    Bot has a corresponding `family_identity.allow_private_networks` setting.
 4. As Bot's separate local recovery owner, open Team settings → Single sign-on →
-   Helix app family, choose **+ Connect Workspace** and copy the address,
+   Workspace federation, choose **+ Connect Workspace** and copy the address,
    connection ID and short-lived installation proof.
-5. As the Workspace organization administrator, open Admin → Family applications →
+5. As the Workspace organization administrator, open Admin → Federated apps →
    **+ Add application**. Enter those values and review the connection. Copy the
    returned code directly into Bot's **Workspace pairing code** form and connect.
    Do not put proof/code/credentials in URLs, tickets, logs or assistant prompts.
@@ -82,7 +82,7 @@ for at most 45 seconds from its fresh challenge. It requires a new checkpoint
 after restart. Once that bound expires, managed users and affected owner-derived
 background work fail closed; local recovery and unconnected teams remain usable.
 Inspect the application's last-sync/error status in Workspace Admin and Bot's
-family panel. Check HTTPS reachability, host clocks, registered origins and
+federation panel. Check HTTPS reachability, host clocks, registered origins and
 protected credentials before retrying. Never bypass this by adding local passwords
 to managed users or increasing source revisions by hand.
 
@@ -93,7 +93,7 @@ managed-member changes are rejected by Bot and link back to Workspace.
 
 ## Credentials, disconnect and recovery
 
-Rotate OIDC, provisioning or enrollment credentials independently in Family
+Rotate OIDC, provisioning or enrollment credentials independently in Federation
 applications. A sealed pending rotation is durable and retried by the directory
 worker after a lost response. Retry that operation rather than starting a different
 one. The previous credential retires after acknowledgement; per-bot keys remain
@@ -126,5 +126,5 @@ container recovery qualification. Live Kubernetes testing remains deferred.
 ## Optional operations management
 
 Backup policy, status, approvals and recovery-set enrollment are separate from
-identity pairing. Follow the [family backup runbook](app-family-backups.md) to
+identity pairing. Follow the [federated backup runbook](app-family-backups.md) to
 provision independent operator capabilities and retain app-local recovery.

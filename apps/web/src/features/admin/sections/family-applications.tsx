@@ -25,7 +25,7 @@ export function FamilyApplications() {
   return (
     <>
       <PageHeading
-        title="Family applications"
+        title="Federated apps"
         subtitle="Connect applications to this Workspace organization and assign the people who may use them."
         actions={
           <Button
@@ -69,7 +69,7 @@ export function FamilyApplications() {
         <Application key={app.id} application={app} />
       ))}
       {apps.data?.enabled && apps.data.applications.length === 0 ? (
-        <p>No family applications are connected.</p>
+        <p>No federated apps are connected.</p>
       ) : null}
     </>
   );

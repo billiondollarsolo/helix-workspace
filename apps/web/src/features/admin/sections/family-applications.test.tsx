@@ -13,7 +13,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("Family applications", () => {
+describe("Federated apps", () => {
   it("reviews installation proof with accessible fields and retains it on a failed registration", async () => {
     document.cookie = `helix_csrf=${"x".repeat(43)}; Path=/`;
     const calls: string[] = [];
@@ -38,6 +38,7 @@ describe("Family applications", () => {
     );
     await settle();
     await settle();
+    expect(mounted.container.querySelector("h1")?.textContent).toBe("Federated apps");
     act(() => buttonNamed("+ Add application")?.click());
     await settle();
     expect(await axeViolations(mounted.container)).toEqual([]);

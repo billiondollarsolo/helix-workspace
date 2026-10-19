@@ -1,11 +1,48 @@
 # Helix Bot → Helix Workspace implementation handoff
 
-Updated 2026-10-16. **Helix Bot is the new name of Chungus.** This handoff is for
+Updated 2026-10-19. **Helix Bot is the new name of Chungus.** This handoff is for
 its implementation agent. The user wants persistent bots with their own email,
 Chat, file storage and other Workspace capabilities, including personal assistants,
 background routines, shared projects and coding workflows. Coding is one workload.
 
 ## Read first
+
+### Hosted integration checkpoint (2026-10-19)
+
+The current hosted releases are Bot `7d5bdb6`, Workspace API `d74ba3f` and
+Workspace web `8afe194`. The real Codex pilot passed private Chat, internal mail,
+source attachment reading and Work source/result inspection through the normal UI.
+The owner granted the scanned text file to Helix as Viewer. A separate request
+was observed running before that grant was removed; it stopped with
+`workspace_source_changed`, without a file tool invocation or reply. The file
+is private again. External-mail policy was not changed.
+
+The action queue and count, shared live update stream, bot oversight/history
+paging, explicit observer inventory/revocation and stable bot links are deployed.
+Presence heartbeats no longer queue routine approval requests. The directory
+picker includes active visible agents and service accounts with a Bot label,
+retaining existing tenant and directory privacy restrictions.
+
+The owner's actual Workspace OIDC sign-in now reaches their assigned Bot Admin
+identity after fresh verification. The independent password-capable Bot recovery
+Owner is preserved. Helix's dedicated account expires 2026-11-18; its pilot
+background grant expires 2026-10-20 05:00 UTC, at ten turns/day, with source
+attachments enabled and skills and bot-to-bot replies disabled.
+
+The latest required Workspace checks passed: 5,732 ordinary-suite tests with 437
+environment-gated skips, plus 33 targeted PostgreSQL tests and 11 browser/a11y
+cases. Bot passed 787 tests with one optional skip and its required proof checks.
+Encrypted off-server operator and database checkpoints include the active release
+bundles. Restored Bot service checks validate installation/key identity, stale
+managed-access denial, directory reconciliation and existing-session revocation
+while preserving local recovery access. Independent peer reconciliation and
+production promotion remain separate. Private receipts live in
+`~/.local/share/helix-recovery/20261019/integration-completion/`.
+
+Generated file results, transfer approval continuation, durable follow-through,
+PDF/image interpretation and specialist execution remain the next Bot work.
+Broader productivity, Calendar, external SMTP and Meet infrastructure acceptance,
+host reboot and complete Workspace Kubernetes qualification remain outstanding.
 
 ### Current implementation and deployment evidence (2026-10-16)
 

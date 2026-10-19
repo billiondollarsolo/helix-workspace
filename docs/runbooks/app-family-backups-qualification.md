@@ -1,5 +1,43 @@
 # Family backup management qualification — 2026-10-17
 
+## Hosted recovery follow-up — 2026-10-19
+
+Both hosted recovery workers are enrolled and active. Encrypted off-server
+archives were authenticated, every manifest/file digest checked, and both apps'
+databases, private state, keys and Workspace object/KMS volumes restored into
+disposable Docker volumes. The restored apps have no public ports or outbound
+network; Workspace outbound mail and SMTP reception are disabled.
+
+Both original restored apps started. Their restored databases then upgraded to
+Bot `7d5bdb6` (schema 7) and Workspace `d74ba3f` (251 migration rows). The packaged
+Workspace migrator applied two migrations and skipped 249. Both current apps
+report ready. The current Workspace API downloaded an authenticated 1,875,041-byte
+restored object matching its stored SHA-256; unauthenticated access was denied.
+The original paired-app inventory also survived.
+
+A fresh post-pilot database copy exercised actual restored Bot identity services:
+installation/key checks, recovered family-vault decryption, stale managed-access
+denial, authenticated directory checkpoint, session creation, assignment removal
+and rejection of that existing session. The local password-capable recovery Owner
+remained usable. This checks Bot's recovery behavior; the independent restored
+Workspace-to-Bot reconciliation delivery is still separate.
+
+Backup operator metadata now records the current schemas, and full-server
+capture resolves each active release bundle from its operator configuration.
+A fresh authenticated encrypted off-server checkpoint includes operator keys,
+journals, deployment configuration and the reviewed API/web/Bot source bundles.
+Fresh encrypted database dumps restored separately after the hosted pilot.
+Private evidence is under
+`~/.local/share/helix-recovery/20261019/integration-completion/`.
+
+Production promotion, host reboot and live Kubernetes qualification remain
+unperformed. Do not promote a recovered managed identity before reconciling its
+current upstream assignment. Restoring a database dump into a new database must
+also preserve the original database owner; table ownership alone does not grant
+the runtime schema creation privileges needed by Bot's migration checks.
+
+## Original implementation qualification
+
 Implemented in both repositories; optional recovery enrollment defaults off.
 The [operator runbook](app-family-backups.md) covers activation and recovery.
 
@@ -51,9 +89,11 @@ The database integration needs the existing migrated isolated test database and
 RLS role environment. Use both adjacent repositories for the cross-app deployment
 and real Bot recovery checks; the latter command is in Bot's backup runbook.
 
-Not activated on the hosted installation in this change. An operator must choose
+At the original 2026-10-17 implementation checkpoint this was not activated on the
+hosted installation. An operator must choose
 actual backup custody/storage, mount required snapshots, provide qualified commands,
 perform the scheduler handoff, route HTTPS and enroll separate capabilities.
-A deployed full two-app restore including real Workspace objects and revocation
+The 2026-10-19 evidence above supersedes the original isolated two-app startup,
+object recovery and Bot revocation-check gaps. Independent restored-peer
 reconciliation, production promotion and live Kubernetes tests remain unqualified.
 The worker base image is not a preconfigured production backup toolchain.

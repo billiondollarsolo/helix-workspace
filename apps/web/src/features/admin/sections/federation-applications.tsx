@@ -211,8 +211,14 @@ function Application({ application }: { readonly application: FederationApplicat
       </p>
       {application.error ? <p role="alert">{application.error}</p> : null}
       <p>
-        Organization membership is managed here. Bot retains its own roles, conversations and local
-        recovery owner.
+        <strong>Managed by Workspace:</strong> assigned people, their Bot roles (Viewer, Member or
+        Admin), managed profile names and email addresses, groups and the application's sign-in
+        connection. Workspace sign-in policies apply when people sign in through Workspace.
+      </p>
+      <p>
+        <strong>Managed in Helix Bot:</strong> local accounts, recovery ownership, password-account
+        MFA, models, bots, conversations, Work and resource grants. Assigning someone here does not
+        grant bots access to Workspace Mail, Chat or Drive.
       </p>
       <div className="flex flex-wrap gap-2">
         <Button

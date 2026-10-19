@@ -63,6 +63,31 @@ their editor link. Show the source and effective value when a policy constrains 
 app setting. Recovery-owner controls are explicitly identified and separately
 authorized. Never enable a restricted operation merely because its control is visible.
 
+## Setting ownership inventory
+
+The current integration inherits the fields below. It does not yet propagate a
+general Workspace policy object into Bot. Shared policy enforcement must be
+advertised and qualified per capability before an app describes a field as inherited.
+
+| Fields / controls                                                                       | Standalone Bot                          | Federated Bot                                                                      | Authoritative editor                                                                          |
+| --------------------------------------------------------------------------------------- | --------------------------------------- | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Managed person's name, email, active assignment and groups                              | Bot or its configured identity provider | Workspace directory; read-only in Bot                                              | Workspace Users / Groups; app access in Federated apps                                        |
+| Assigned person's Bot role                                                              | Bot or its configured identity provider | Workspace assignment: Viewer, Member or Admin; never ownership                     | Workspace Federated apps → assigned people                                                    |
+| App sign-in provider, installation OIDC credentials and directory provisioning          | Bot Single sign-on / operator           | Workspace connection and credential lifecycle; effective values shown in Bot       | Workspace Federated apps; local recovery owner approves pairing/disconnect in Bot             |
+| Local accounts and ownership                                                            | Bot                                     | Bot, independent of managed identities                                             | Bot Members / account security; existing owner restrictions apply                             |
+| Bot MFA enrolment and required-MFA flag                                                 | Bot password accounts                   | Bot password accounts; Workspace owns verification for Workspace SSO               | Bot Security / Personal settings for local MFA; Workspace identity controls for Workspace SSO |
+| Models, provider credentials, bot instructions and model selections                     | Bot                                     | Bot                                                                                | Bot Models / Bunnies                                                                          |
+| Tool connections, secrets, per-bot grants, project/Work access, spending and publishing | Bot                                     | Bot; federation assignment grants no resource access                               | Corresponding Bot controls                                                                    |
+| Appearance, accessibility, notifications and app preferences                            | Personal settings                       | Personal settings                                                                  | Personal settings in the owning app                                                           |
+| Optional federated backup policy and recovery operations                                | Independent operator                    | Workspace policy plus separately enrolled worker capabilities and operator consent | Workspace Federated backups / independent recovery operator                                   |
+
+Bot administrator roles do not grant Workspace administration. Management links
+open the governing Workspace's existing editors, which enforce that person's own
+Workspace session and scopes. Member-only Bot views identify the source without
+presenting an administrator editor link. No cross-app permission is inferred from
+a matching email or a local owner role. Unavailable connection information never
+enables a local replacement editor for a managed field.
+
 ## Requirements for additional apps
 
 Every federated app must provide:

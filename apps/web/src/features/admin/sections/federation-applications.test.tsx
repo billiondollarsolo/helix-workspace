@@ -14,6 +14,39 @@ afterEach(() => {
 });
 
 describe("Federated apps", () => {
+  it("identifies Workspace assignments and preserves local Bot control ownership", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        applications: [
+          {
+            id: "11111111-1111-4111-8111-111111111111",
+            origin: "https://bot.example",
+            status: "active",
+            installationId: "installation",
+            tenantId: "team",
+            lastSyncedAt: null,
+            error: null,
+            pending: false,
+            rotationPending: false,
+          },
+        ],
+      }),
+    );
+    const queries = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const mounted = mount(
+      <QueryClientProvider client={queries}>
+        <FederationApplications />
+      </QueryClientProvider>,
+    );
+    await settle();
+    await settle();
+    expect(mounted.container.textContent).toContain("Managed by Workspace:");
+    expect(mounted.container.textContent).toContain("their Bot roles (Viewer, Member or Admin)");
+    expect(mounted.container.textContent).toContain("Managed in Helix Bot:");
+    expect(mounted.container.textContent).toContain("recovery ownership");
+    expect(await axeViolations(mounted.container)).toEqual([]);
+    queries.clear();
+  });
   it("reviews installation proof with accessible fields and retains it on a failed registration", async () => {
     document.cookie = `helix_csrf=${"x".repeat(43)}; Path=/`;
     const calls: string[] = [];

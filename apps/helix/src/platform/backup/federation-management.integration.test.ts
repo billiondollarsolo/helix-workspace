@@ -145,6 +145,27 @@ describe.skipIf(skipUnlessLiveDatabase("federation backup control plane"))(
         const service = new FederationBackupManagement(federation, orgId, (error) => {
           throw error;
         });
+        await federation.assign(operator, appId, [{ actorId: approver.id, role: "member" }]);
+        const assignments = await federation.assignments(
+          { ...operator, scopes: ["admin.agents"] },
+          appId,
+        );
+        expect(assignments).toEqual([
+          {
+            actorId: approver.id,
+            role: "member",
+            displayName: "Approver",
+            email: `approver@${orgId}.test`,
+          },
+        ]);
+        await expect(federation.assignments({ ...operator, scopes: [] }, appId)).rejects.toThrow();
+        await expect(
+          federation.assignments({ ...operator, type: "agent" }, appId),
+        ).rejects.toThrow();
+        expect(await federation.assignments({ ...operator, orgId: otherOrg }, appId)).toEqual([]);
+        await admin`update actors set disabled_at=now() where org_id=${orgId} and id=${approver.id}`;
+        expect(await federation.assignments(operator, appId)).toEqual([]);
+        await admin`update actors set disabled_at=null where org_id=${orgId} and id=${approver.id}`;
         const selfId = randomUUID(),
           botId = randomUUID();
         await service.enroll(operator, {

@@ -419,12 +419,23 @@ export class FederationPairing {
       { orgId: actor.orgId, actorId: actor.id },
       async (tx) => {
         const rows = await tx<
-          { actor_id: string; role: "viewer" | "member" | "admin" }[]
-        >`select assigned.actor_id,assigned.role from federation_app_assignments assigned
+          {
+            actor_id: string;
+            role: "viewer" | "member" | "admin";
+            display_name: string;
+            email: string | null;
+          }[]
+        >`select assigned.actor_id,assigned.role,a.display_name,a.email from federation_app_assignments assigned
+        join actors a on a.org_id=assigned.org_id and a.id=assigned.actor_id and a.type='user' and a.disabled_at is null
         join organization_memberships m on m.org_id=assigned.org_id and m.actor_id=assigned.actor_id and m.status='active'
         join identity_subjects s on s.id=m.subject_id and s.status='active' and s.federation_generation=assigned.identity_generation
         where assigned.org_id=${actor.orgId} and assigned.application_id=${appId} order by assigned.actor_id`;
-        return rows.map((row) => ({ actorId: row.actor_id, role: row.role }));
+        return rows.map((row) => ({
+          actorId: row.actor_id,
+          role: row.role,
+          displayName: row.display_name,
+          email: row.email,
+        }));
       },
     );
   }

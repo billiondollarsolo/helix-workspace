@@ -7,6 +7,10 @@ import { PageHeading, LoadingState } from "@/features/admin/console/primitives";
 import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
 import { adminUsersQueryOptions } from "@/features/admin/admin-users";
 import {
+  ApplicationSynchronization,
+  FederationApplicationDetails,
+} from "./federation-application-details";
+import {
   federationApplicationsQueryOptions,
   federationAssignmentsQueryOptions,
   registerFederationApplication,
@@ -37,7 +41,10 @@ export function FederationApplications() {
         }
       />
       {apps.isPending ? <LoadingState label="Loading application connections" /> : null}
-      {apps.error ? <p role="alert">{apps.error.message}</p> : null}
+      {apps.error ? <p role="alert">Connection status unavailable. {apps.error.message}</p> : null}
+      <Button variant="secondary" disabled={apps.isFetching} onClick={() => void apps.refetch()}>
+        {apps.isFetching ? "Refreshing…" : "Refresh connections"}
+      </Button>
       {apps.data?.enabled === false ? (
         <p>Application connections are not enabled. Ask your operator to enable them.</p>
       ) : null}
@@ -188,6 +195,7 @@ function Registration({
 }
 function Application({ application }: { readonly application: FederationApplication }) {
   const [expanded, setExpanded] = useState(false),
+    [details, setDetails] = useState(false),
     [confirming, setConfirming] = useState(false);
   const queryClient = useQueryClient();
   const revoke = useMutation({
@@ -202,13 +210,7 @@ function Application({ application }: { readonly application: FederationApplicat
   return (
     <section className="admin-card grid gap-3" aria-labelledby={`federation-app-${application.id}`}>
       <h2 id={`federation-app-${application.id}`}>Helix Bot · {application.origin}</h2>
-      <p role="status">
-        {application.status}
-        {application.pending ? " · Directory changes pending" : ""}
-        {application.lastSyncedAt
-          ? ` · Last verified ${new Date(application.lastSyncedAt).toLocaleString()}`
-          : ""}
-      </p>
+      <ApplicationSynchronization application={application} />
       {application.error ? <p role="alert">{application.error}</p> : null}
       <p>
         <strong>Managed by Workspace:</strong> assigned people, their Bot roles (Viewer, Member or
@@ -221,6 +223,13 @@ function Application({ application }: { readonly application: FederationApplicat
         grant bots access to Workspace Mail, Chat or Drive.
       </p>
       <div className="flex flex-wrap gap-2">
+        <Button
+          variant="secondary"
+          aria-expanded={details}
+          onClick={() => setDetails((value) => !value)}
+        >
+          {details ? "Hide app details" : "View app details"}
+        </Button>
         <Button
           variant="secondary"
           onClick={() => setExpanded((value) => !value)}
@@ -236,6 +245,7 @@ function Application({ application }: { readonly application: FederationApplicat
           Disconnect application
         </Button>
       </div>
+      {details ? <FederationApplicationDetails application={application} /> : null}
       <Assignments
         appId={application.id}
         expanded={expanded}
@@ -280,16 +290,8 @@ function Assignments({
     ...adminUsersQueryOptions({ type: "user", includeDisabled: false, limit: 50, query: search }),
     enabled: expanded && search.length > 0,
   });
-  useEffect(() => {
-    if (!initialized.current && assignments.data) {
-      setDraft(
-        Object.fromEntries(
-          assignments.data.assignments.map((entry) => [entry.actorId, entry.role]),
-        ),
-      );
-      initialized.current = true;
-    }
-  }, [assignments.data]);
+  const queries = useQueryClient();
+  // shortcut: this API replaces the list; add revision checks before supporting concurrent editors.
   const save = useMutation({
     mutationFn: () =>
       setFederationAssignments(
@@ -298,10 +300,32 @@ function Assignments({
       ),
     onMutate: () => setDirty(true),
     onError: () => setDirty(true),
-    onSuccess: () => setDirty(false),
+    onSuccess: async () => {
+      const result = await assignments.refetch();
+      await queries.invalidateQueries({
+        queryKey: ["admin", "federation-applications"],
+        exact: true,
+      });
+      if (!result.error) setDirty(false);
+    },
   });
+  useEffect(() => {
+    if (!dirty && assignments.data) {
+      setDraft(
+        Object.fromEntries(
+          assignments.data.assignments.map((entry) => [entry.actorId, entry.role]),
+        ),
+      );
+      initialized.current = true;
+    }
+  }, [assignments.data, dirty]);
   if (!expanded) return null;
   const people = search.length > 0 ? matching.data?.users : users.data?.users;
+  const candidates = new Map((people ?? []).map((person) => [person.id, person]));
+  const assigned = new Map(
+    (assignments.data?.assignments ?? []).map((person) => [person.actorId, person]),
+  );
+  const ids = new Set([...Object.keys(draft), ...assigned.keys(), ...candidates.keys()]);
   return (
     <div className="grid gap-3">
       <p>
@@ -327,43 +351,61 @@ function Assignments({
         </Button>
       </form>
       {assignments.error ? <p role="alert">{assignments.error.message}</p> : null}
+      {assignments.isPending ? <LoadingState label="Loading assigned people" /> : null}
+      <Button
+        variant="secondary"
+        disabled={assignments.isFetching || save.isPending}
+        onClick={() => void assignments.refetch()}
+      >
+        Refresh assigned people
+      </Button>
       {(users.error ?? matching.error) ? (
         <p role="alert">People could not be loaded. Try again.</p>
       ) : null}
-      {(people ?? []).map((person) => (
-        <AdminField key={person.id} label={person.email ?? person.displayName}>
-          <AdminSelect
-            disabled={
-              disabled || !initialized.current || save.isPending || person.status !== "active"
-            }
-            value={draft[person.id] ?? "unassigned"}
-            onChange={(event) => {
-              const role = event.target.value as FederationRole | "unassigned";
-              setDirty(true);
-              setDraft((previous) => {
-                const next = { ...previous };
-                if (role === "unassigned") delete next[person.id];
-                else next[person.id] = role;
-                return next;
-              });
-            }}
-          >
-            <option value="unassigned">Not assigned</option>
-            <option value="viewer">Viewer</option>
-            <option value="member">Member</option>
-            <option value="admin">Admin</option>
-          </AdminSelect>
-        </AdminField>
-      ))}
+      {[...ids].map((id) => {
+        const person = assigned.get(id) ?? candidates.get(id);
+        return (
+          <AdminField key={id} label={person?.email ?? person?.displayName ?? id}>
+            <AdminSelect
+              disabled={
+                disabled ||
+                !initialized.current ||
+                save.isPending ||
+                (candidates.get(id)?.status !== undefined &&
+                  candidates.get(id)?.status !== "active")
+              }
+              value={draft[id] ?? "unassigned"}
+              onChange={(event) => {
+                const role = event.target.value as FederationRole | "unassigned";
+                setDirty(true);
+                setDraft((previous) => {
+                  const next = { ...previous };
+                  if (role === "unassigned") delete next[id];
+                  else next[id] = role;
+                  return next;
+                });
+              }}
+            >
+              <option value="unassigned">Not assigned</option>
+              <option value="viewer">Viewer</option>
+              <option value="member">Member</option>
+              <option value="admin">Admin</option>
+            </AdminSelect>
+          </AdminField>
+        );
+      })}
       <p>
         {Object.keys(draft).length} people assigned. Search to find additional people; saving
-        retains assignments outside the current search.
+        retains assignments outside the current search. Refreshing keeps unsaved changes.
       </p>
       {save.error ? <p role="alert">{save.error.message}</p> : null}
       {save.isSuccess && !dirty ? (
         <p role="status">Assignments saved. Directory synchronization is pending.</p>
       ) : null}
-      <Button disabled={disabled || !dirty || save.isPending} onClick={() => save.mutate()}>
+      <Button
+        disabled={disabled || !dirty || save.isPending || assignments.isError}
+        onClick={() => save.mutate()}
+      >
         {save.isPending ? "Saving…" : "Save assignments"}
       </Button>
     </div>

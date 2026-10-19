@@ -32,6 +32,8 @@ export interface BackupTarget {
   restoreEnabled: boolean;
   observedAt: string | null;
   observation: {
+    protocol: string;
+    policy: BackupPolicy;
     scheduler: "worker" | "external";
     owner: "local" | "workspace";
     capabilities: string[];

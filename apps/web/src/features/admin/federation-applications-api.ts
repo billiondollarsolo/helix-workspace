@@ -17,6 +17,8 @@ export type FederationRole = "viewer" | "member" | "admin";
 export interface FederationAssignment {
   readonly actorId: string;
   readonly role: FederationRole;
+  readonly displayName: string;
+  readonly email: string | null;
 }
 export function federationApplicationsQueryOptions() {
   return queryOptions({
@@ -66,6 +68,7 @@ export function federationAssignmentsQueryOptions(appId: string, enabled: boolea
     queryKey: ["admin", "federation-applications", appId, "assignments"],
     enabled,
     retry: false,
+    refetchInterval: 15_000,
     queryFn: async () => {
       const response = await authenticatedFetch(
         `/api/admin/federation-applications/${encodeURIComponent(appId)}/assignments`,
@@ -81,7 +84,10 @@ export function federationAssignmentsQueryOptions(appId: string, enabled: boolea
     },
   });
 }
-export async function setFederationAssignments(appId: string, assignments: FederationAssignment[]) {
+export async function setFederationAssignments(
+  appId: string,
+  assignments: Pick<FederationAssignment, "actorId" | "role">[],
+) {
   const response = await authenticatedFetch(
     `/api/admin/federation-applications/${encodeURIComponent(appId)}/assignments`,
     {

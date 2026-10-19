@@ -106,22 +106,25 @@ function assignedControl(email: string) {
   if (!select) throw new Error(`Assigned person missing: ${email}`);
   return select;
 }
+function jsonResponse(value: unknown, init?: ResponseInit) {
+  return Promise.resolve(Response.json(value, init));
+}
 function route(input: RequestInfo | URL) {
-  return String(input);
+  return typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
 }
 
 describe("Federated app management", () => {
   it("loads capability details only on request and separates acknowledged policy from pending delivery", async () => {
     const calls: string[] = [];
     let unavailable = false;
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       calls.push(route(input));
       if (unavailable && route(input).endsWith("federation-backups"))
-        return Response.json(
+        return jsonResponse(
           { error: { message: "Worker inventory unavailable." } },
           { status: 503 },
         );
-      return Response.json(
+      return jsonResponse(
         route(input).endsWith("federation-backups")
           ? {
               targets: [
@@ -166,8 +169,8 @@ describe("Federated app management", () => {
   });
 
   it("does not present an overdue or detached healthy observation as current health", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
-      Response.json(
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+      jsonResponse(
         route(input).endsWith("federation-backups")
           ? {
               targets: [
@@ -190,15 +193,15 @@ describe("Federated app management", () => {
 
   it("distinguishes permission failure, unenrolled recovery and a disabled capability and supports retry", async () => {
     let status = 403;
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
       route(input).endsWith("federation-backups")
-        ? Response.json(
+        ? jsonResponse(
             status === 200
               ? { targets: [] }
               : { error: { message: "Recovery administration is required." } },
             { status },
           )
-        : Response.json({ applications: [app] }),
+        : jsonResponse({ applications: [app] }),
     );
     const mounted = await render();
     act(() => buttonNamed("View app details")?.click());
@@ -223,14 +226,15 @@ describe("Federated app management", () => {
     const writes: unknown[] = [];
     let fail = true;
     let assignments = people;
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const path = route(input);
       if (path.endsWith("/assignments")) {
         if (init?.method === "PUT") {
-          const body = JSON.parse(String(init.body));
+          if (typeof init.body !== "string") throw new Error("Expected a JSON assignment body");
+          const body = JSON.parse(init.body);
           writes.push(body);
           if (fail)
-            return Response.json(
+            return jsonResponse(
               { error: { message: "Try the assignment save again." } },
               { status: 409 },
             );
@@ -238,12 +242,12 @@ describe("Federated app management", () => {
             ...people.find((person) => person.actorId === entry.actorId),
             ...entry,
           }));
-          return Response.json({ updated: true });
+          return jsonResponse({ updated: true });
         }
-        return Response.json({ assignments });
+        return jsonResponse({ assignments });
       }
-      if (path.includes("/admin/users?")) return Response.json({ users: [], nextCursor: null });
-      return Response.json({ applications: [app] });
+      if (path.includes("/admin/users?")) return jsonResponse({ users: [], nextCursor: null });
+      return jsonResponse({ applications: [app] });
     });
     const mounted = await render();
     act(() => buttonNamed("Manage assigned people")?.click());

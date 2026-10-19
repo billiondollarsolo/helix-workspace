@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
 import { LoadingState } from "@/features/admin/console/primitives";
@@ -51,6 +51,7 @@ export function FederationApplicationDetails({
   readonly application: FederationApplication;
 }) {
   const backups = useQuery(federationBackupsQueryOptions());
+  const queries = useQueryClient();
   const targets =
     backups.data?.targets.filter((target) => target.applicationId === application.id) ?? [];
   return (
@@ -107,7 +108,12 @@ export function FederationApplicationDetails({
           <Button
             variant="secondary"
             disabled={backups.isFetching}
-            onClick={() => void backups.refetch()}
+            onClick={() =>
+              void queries.invalidateQueries({
+                queryKey: ["admin", "federation-backups"],
+                exact: true,
+              })
+            }
           >
             {backups.isFetching ? "Refreshing…" : "Refresh backup status"}
           </Button>

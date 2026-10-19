@@ -42,7 +42,16 @@ export function FederationApplications() {
       />
       {apps.isPending ? <LoadingState label="Loading application connections" /> : null}
       {apps.error ? <p role="alert">Connection status unavailable. {apps.error.message}</p> : null}
-      <Button variant="secondary" disabled={apps.isFetching} onClick={() => void apps.refetch()}>
+      <Button
+        variant="secondary"
+        disabled={apps.isFetching}
+        onClick={() =>
+          void queryClient.invalidateQueries({
+            queryKey: ["admin", "federation-applications"],
+            exact: true,
+          })
+        }
+      >
         {apps.isFetching ? "Refreshing…" : "Refresh connections"}
       </Button>
       {apps.data?.enabled === false ? (
@@ -276,6 +285,7 @@ function Assignments({
   readonly expanded: boolean;
   readonly disabled: boolean;
 }) {
+  const assignmentKey = federationAssignmentsQueryOptions(appId, expanded).queryKey;
   const assignments = useQuery(federationAssignmentsQueryOptions(appId, expanded)),
     users = useQuery({
       ...adminUsersQueryOptions({ type: "user", includeDisabled: false, limit: 50 }),
@@ -301,12 +311,12 @@ function Assignments({
     onMutate: () => setDirty(true),
     onError: () => setDirty(true),
     onSuccess: async () => {
-      const result = await assignments.refetch();
+      await queries.invalidateQueries({ queryKey: assignmentKey, exact: true });
       await queries.invalidateQueries({
         queryKey: ["admin", "federation-applications"],
         exact: true,
       });
-      if (!result.error) setDirty(false);
+      if (queries.getQueryState(assignmentKey)?.status === "success") setDirty(false);
     },
   });
   useEffect(() => {
@@ -355,7 +365,7 @@ function Assignments({
       <Button
         variant="secondary"
         disabled={assignments.isFetching || save.isPending}
-        onClick={() => void assignments.refetch()}
+        onClick={() => void queries.invalidateQueries({ queryKey: assignmentKey, exact: true })}
       >
         Refresh assigned people
       </Button>

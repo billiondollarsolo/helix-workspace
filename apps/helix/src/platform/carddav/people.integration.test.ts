@@ -25,6 +25,8 @@ describe.skipIf(!live)("people directory search (PostgreSQL)", () => {
   const neighbourId = randomUUID();
   const foreignId = randomUUID();
   const groupId = randomUUID();
+  const botId = randomUUID();
+  const serviceId = randomUUID();
 
   beforeAll(async () => {
     await admin`insert into orgs (id, slug, display_name, status) values
@@ -99,5 +101,24 @@ describe.skipIf(!live)("people directory search (PostgreSQL)", () => {
     const people = await store.list({ orgId, actorId: viewerId, query: "n", limit: 50 });
 
     expect(people[0]?.displayName).toBe("Neighbour");
+  });
+
+  it("includes visible bots for mail and file sharing while excluding private, disabled and foreign bots", async () => {
+    await admin`insert into actors (id,org_id,type,email,display_name,metadata,disabled_at) values
+      (${botId},${orgId},'agent','bot@people.test','Directory pilot bot','{}',null),
+      (${serviceId},${orgId},'service_account','service@people.test','Directory pilot service','{}',null),
+      (${randomUUID()},${orgId},'agent','private-bot@people.test','Directory pilot private bot',${admin.json({ directoryVisibility: "private" })},null),
+      (${randomUUID()},${orgId},'agent','disabled-bot@people.test','Directory pilot disabled bot','{}',now()),
+      (${randomUUID()},${foreignOrgId},'agent','foreign-bot@people.test','Directory pilot foreign bot','{}',null)`;
+    const people = await store.list({
+      orgId,
+      actorId: viewerId,
+      query: "Directory pilot",
+      limit: 25,
+    });
+    expect(people.map(({ actorId, title }) => ({ actorId, title }))).toEqual([
+      { actorId: botId, title: "Bot" },
+      { actorId: serviceId, title: "Bot" },
+    ]);
   });
 });

@@ -67,12 +67,12 @@ export class PostgresPeopleStore implements PeopleStore {
         union all
         select actor.id, 'directory', actor.email,
           coalesce(nullif(actor.display_name, ''), actor.email, 'Unnamed person'), actor.id,
-          nullif(btrim(actor.metadata->'profile'->>'jobTitle'), ''), false,
+          case when actor.type='user' then nullif(btrim(actor.metadata->'profile'->>'jobTitle'), '') else 'Bot' end, false,
           case when actor.metadata->>'avatarDataUrl' ~ '^data:image/(png|jpeg|webp);base64,'
             then actor.metadata->>'avatarDataUrl' else null end,
           '{}'::jsonb, 1
         from actors actor
-        where actor.org_id = ${input.orgId} and actor.type = 'user' and actor.disabled_at is null
+        where actor.org_id = ${input.orgId} and actor.type in ('user','agent','service_account') and actor.disabled_at is null
           and (actor.id = ${input.actorId} or coalesce(actor.metadata->>'directoryVisibility', 'organization') <> 'private')
           and (actor.id = ${input.actorId} or not exists (
             select 1 from organization_memberships membership

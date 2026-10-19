@@ -1178,3 +1178,33 @@ verification for the authenticated live review. No new model calls were made.
 See the [ownership deployment receipt](../runbooks/2026-10-17-hosted-federation-operations.md#setting-ownership-qualification--2026-10-19)
 for exact results and recovery limits. Broader app management remains Stage 4;
 general shared policy propagation and native AI product acceptance remain deferred.
+
+### Federated app management deployed — 2026-10-19
+
+Stage 4 is implemented for the current Bot integration. Workspace API/web
+`6bfbf55` exposes app bindings, directory verification and credential-delivery
+status, complete assigned-person labels, and on-demand backup capability health
+and acknowledged policy. Pending policy is distinguished from the worker's accepted
+policy. Cached or stale observations do not become current health. Backup status
+uses the app binding and its own recovery permissions; it grants no new operations.
+
+Assigned people outside the first directory page remain visible. Refresh, section
+collapse and failed saves retain drafts, and the same failed search can be retried.
+The existing app-admin scope controls assignment labels; broader directory lookup
+still has its own permissions. Assignment saves still replace the complete list;
+concurrent editors need future revision checks. Use one assignment editor at a time.
+
+Both installations are ready, with Bot runtime `92b5ae9` and schemas 251 / 13
+retained. All required Workspace checks passed (4,034 backend / 1,450 web passes;
+448 gated backend skips), plus two live PostgreSQL/HTTP fixtures, seven focused UI
+cases and five source plus five built desktop/phone accessibility cases. The final
+query/search changes also passed focused lint and types. Native providers/executor
+and Claude, directory synchronization, recovery workers and network boundaries
+remain healthy. Encrypted pre-change and final hosted checkpoints authenticated,
+including off-server custody; the new checkpoints were not restored. Preview's
+normal Workspace verification still gates the authenticated live visual review.
+
+See the [app management deployment receipt](../runbooks/2026-10-17-hosted-federation-operations.md#federated-app-management-qualification--2026-10-19)
+for exact coverage and recovery limits. Management stages 1–4 are implemented for
+Workspace and Bot. General shared policies, further app integrations, native AI
+product acceptance and reviewed production restore remain separate work.

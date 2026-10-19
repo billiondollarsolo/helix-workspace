@@ -1,5 +1,72 @@
 # Hosted federation deployment and recovery enrollment
 
+## Federated app management qualification — 2026-10-19
+
+Workspace API and web `6bfbf55` are hosted and native ready. Bot runtime remains
+`92b5ae9`; schemas remain 251 / 13. Recovery workers retain their existing
+`eddec8b` binaries and federation protocol. The change adds no schema, configuration
+authority, credential rotation or general policy propagation.
+
+Federated apps now offers on-demand app details: installation and app-tenancy
+bindings, a link to the app, directory verification recency, pending directory
+changes and pending credential delivery. Separately authorized backup observations
+are joined by application ID, not matching origin. The view distinguishes an
+unenrolled worker, disabled backup management, permission/transport failure, stale
+observations and detached targets. A failed refresh cannot present cached health
+as current. It shows the last acknowledged worker policy separately from the desired
+Workspace revision and pending delivery, and identifies an external scheduler's
+authority. Reported capabilities, restore enrollment, coverage, alerts and the last
+completed artifact's verification/restore evidence remain observations, not new
+operation permissions or proof of a currently running app version.
+
+The existing assignments projection now includes names and email addresses for
+active assigned people in the requesting organization. App-admin authorization and
+identity-generation filtering remain enforced; disabled people are excluded.
+Assigned people outside the directory's first 50 results are visible and editable.
+Searching for additional people still uses separately authorized directory access.
+Refresh, collapsing the section and failed saves preserve drafts; clean drafts
+follow refreshed assignments. Retrying the same failed search makes a new request.
+Federation query factories use the shared admin defaults so permission and network
+errors retain inline errors and Retry controls under the production error default.
+App assignment still grants no Bot ownership or Mail, Chat, Drive or private Work access.
+
+Workspace format, types, lint, full tests, build and boundaries passed: 4,034 backend
+and 1,450 web tests, with 448 fixture-gated backend skips. The final query/search
+follow-ups passed focused lint, types and all seven ownership/management/backup UI
+tests, including the production query-error default. Two complete PostgreSQL/HTTP
+fixtures passed on a fresh, disposable migrated database, covering scoped app-admin
+labels, member/agent denial, cross-organization isolation, disabled-person filtering,
+OIDC/PKCE, backup bindings, lost replies and recovery approvals. Five source and five
+built browser/accessibility cases passed at desktop and 390px, including capability
+failure/retry, pending versus acknowledged policy, app binding, assignment draft
+retention and the existing backup enrollment/navigation flows. No lint or accessibility
+rule was disabled. Bot's runtime source did not change; its full suite was not repeated.
+
+Hosted and native readiness pass. The directory regained fresh authority, both
+independent recovery workers and the private federation network remain intact,
+and native providers/executor/Claude remain ready. Hosted providers remain ready;
+its executor remains unconfigured. Anonymous app-management requests are denied
+with 403; recovery status requests are denied with 401. The saved Workspace Preview
+session still requires normal verification, so authenticated live visual review
+remains pending. No fresh human SSO/MFA completion or paid model request was made.
+
+The pre-change native and hosted encrypted deployment checkpoints authenticated.
+The final hosted checkpoint also authenticated off-server:
+`hosted-after-app-management.tar.gz.age`, SHA-256
+`2c9a9dd07e9af0e2b5a243872b3e105c7e09195ae674b38c0a795849428d1c01`.
+These are online logical databases plus deployment/configuration, application keys
+and source bundles. Existing private/object artifacts and independent operator
+runtime/key/journal custody still require the previously preserved full snapshots
+and operator checkpoint. No new checkpoint was restored or reboot-qualified.
+Private scripts, logs and receipts are under
+`~/.local/share/helix-recovery/20261019/app-management/` on the backup machine.
+
+Assignment saves retain the existing whole-list replacement API. Unsaved drafts
+survive refresh, but simultaneous editors are not conflict-checked; use one editor
+at a time. Revision checks are required before supporting concurrent editing.
+General shared-policy enforcement, additional app implementations, native AI product
+acceptance and reviewed production restore remain separate work.
+
 ## Setting ownership qualification — 2026-10-19
 
 Workspace web `6e44cc5` and Bot `92b5ae9` are hosted and native ready. Workspace API

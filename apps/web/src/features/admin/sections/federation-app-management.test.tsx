@@ -270,12 +270,16 @@ describe("Federated app management", () => {
     typeInto(control("Find people"), "Jo");
     const searchForm = control("Find people")?.closest("form");
     if (!searchForm) throw new Error("Search form missing");
-    act(() => searchForm.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+    await act(() =>
+      searchForm.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })),
+    );
     await settle();
     await settle();
     expect(mounted.container.textContent).toContain("People could not be loaded");
     failSearch = false;
-    act(() => searchForm.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+    await act(() =>
+      searchForm.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })),
+    );
     await settle();
     await settle();
     expect(mounted.container.textContent).not.toContain("People could not be loaded");

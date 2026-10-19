@@ -138,7 +138,13 @@ managed sign-in values and links to the existing Workspace editors. Workspace's
 app card identifies its assignment authority and the controls Bot retains. SSO-only
 accounts use their provider's password, recovery and verification controls; Bot's
 local recovery owner remains independent. See the [ownership qualification](../runbooks/2026-10-17-hosted-federation-operations.md#setting-ownership-qualification--2026-10-19).
-Stage 4 remains planned. General Workspace policy propagation is not implemented.
+Stage 4 is implemented for the current Bot integration: Workspace exposes the
+connection binding, directory observations, complete assigned-person labels and
+the separately enrolled backup capability's health, acknowledged policy and pending
+delivery. Details load on request through the existing scoped APIs. See the
+[app management qualification](../runbooks/2026-10-17-hosted-federation-operations.md#federated-app-management-qualification--2026-10-19).
+Additional app types still require their own contract implementation and
+qualification. General Workspace policy propagation is not implemented.
 
 1. **Terminology and baseline:** replace current management headings, navigation,
    recovery copy and active guide terminology. Rename the integration in code, routes,

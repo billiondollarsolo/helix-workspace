@@ -246,7 +246,7 @@ async function json(route: Route, body: unknown, status = 200) {
 }
 
 function settingsDialog(page: Page) {
-  return page.getByRole("dialog", { name: "Settings", exact: true });
+  return page.getByRole("dialog", { name: "Personal settings", exact: true });
 }
 
 async function expectNoAxeViolations(page: Page) {

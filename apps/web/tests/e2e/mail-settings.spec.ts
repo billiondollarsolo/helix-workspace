@@ -129,7 +129,7 @@ async function fulfillJson(route: Route, body: unknown) {
 }
 
 function settingsDialog(page: Page) {
-  return page.getByRole("dialog", { name: "Settings", exact: true });
+  return page.getByRole("dialog", { name: "Personal settings", exact: true });
 }
 
 test("creates a nested, colored label from the Labels tab", async ({ page }) => {

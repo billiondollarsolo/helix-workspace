@@ -32,7 +32,7 @@ test("profile save keeps a failed draft, updates identity, and persists after re
   await page.goto("/assistant");
   await expect(page.getByRole("heading", { name: "Hi Léa, what can I help with?" })).toBeVisible();
   await openPersonalInfo(page);
-  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+  const settings = page.getByRole("dialog", { name: "Personal settings", exact: true });
   await expect(settings.getByLabel("Display name", { exact: true })).toHaveValue(
     initialProfile.displayName,
   );
@@ -59,7 +59,7 @@ test("profile save keeps a failed draft, updates identity, and persists after re
   await page.reload();
   await expectProfileFields(page, editedFields);
   await page
-    .getByRole("dialog", { name: "Settings", exact: true })
+    .getByRole("dialog", { name: "Personal settings", exact: true })
     .getByRole("button", { name: "Done", exact: true })
     .click();
   await expect(page.getByRole("heading", { name: "Hi Nora, what can I help with?" })).toBeVisible();
@@ -106,7 +106,7 @@ test("a new photo is cropped to a square, resized in the browser and saved", asy
     await fulfillJson(route, {});
   });
   await page.goto("/assistant?settings=personal-info");
-  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+  const settings = page.getByRole("dialog", { name: "Personal settings", exact: true });
   // A wide 600×300 PNG drawn in the page, so the crop really has to square it.
   const png = await page.evaluate(async () => {
     const canvas = document.createElement("canvas");
@@ -189,17 +189,17 @@ for (const viewport of [
   }
 }
 
-/** Account menu → Manage your account and status → Personal info. */
+/** Account menu → Personal settings → Personal info. */
 async function openPersonalInfo(page: Page) {
   await page.getByRole("button", { name: /^Account:/ }).click();
-  await page.getByRole("button", { name: "Manage your account and status", exact: true }).click();
-  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+  await page.getByRole("button", { name: "Personal settings", exact: true }).click();
+  const settings = page.getByRole("dialog", { name: "Personal settings", exact: true });
   await expect(settings.getByRole("heading", { name: /^Welcome, / })).toBeVisible();
   await settings.getByRole("button", { name: "Personal info", exact: true }).click();
 }
 
 async function expectProfileFields(page: Page, fields: typeof editedFields) {
-  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+  const settings = page.getByRole("dialog", { name: "Personal settings", exact: true });
   await expect(settings.getByLabel("Display name", { exact: true })).toHaveValue(
     fields.displayName,
   );

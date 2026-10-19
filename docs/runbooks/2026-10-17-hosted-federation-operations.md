@@ -47,9 +47,10 @@ Bot's three mobile cases are intentionally skipped by that suite.
 
 The native encrypted checkpoint authenticated. Its Bot database restored in
 isolation and selected original application rows matched both live databases.
-Native Workspace's isolated restore stopped at a foreign-key constraint: five
-pre-existing app-password rows refer to missing actors. Those rows were retained;
-this checkpoint is not a fully qualified Workspace logical restore. Hosted
+Native Workspace's original isolated restore stopped at a foreign-key constraint:
+five pre-existing app-password rows referred to missing actors. That historical
+checkpoint remains unqualified; the repair and fresh successful restore are
+recorded below. Hosted
 Workspace's cold dump restored successfully for exact comparison. Existing older
 hosted physical-restore evidence below remains separate from this conversion.
 
@@ -58,8 +59,29 @@ Private scripts, receipts and encrypted checkpoints are under
 machine. A rollback requires the matching old database, configuration, worker and
 source checkpoint together; starting old code against the renamed schema is not
 supported. Fresh human SSO/MFA sign-in, paid model calls, host reboot and Kubernetes
-were not repeated for this naming cutover. Management-navigation alignment remains
-the next stage in the [federation standard](../architecture/helix-federation-management.md).
+were not repeated for this naming cutover. The management-layout follow-up is recorded below.
+
+## Native restore integrity repair — 2026-10-19
+
+The fixture cleanup helper deleted actors without deleting their app passwords,
+because those credentials have no organization column. It now deletes passwords
+through the selected fixture actors before removing tenant rows. An integration
+test against the isolated, restored native database verifies deletion and retention
+of another tenant's credentials, including rejection of an empty tenant list.
+
+The five actorless native credentials were archived under age encryption before
+an exact-ID, still-orphaned guarded deletion. Seven derived rows referencing missing
+organizations (four search-index mutations and three storage counters) were also
+archived and removed. Valid app-password rows were unchanged. No human password
+was reset. A fresh complete Workspace logical dump then restored in isolation with
+all foreign keys and post-data constraints applied successfully.
+
+Private repair/restore receipts and authenticated archives are under
+`~/.local/share/helix-recovery/20261019/management-alignment/`. The successful dump is
+`native-workspace-after-integrity-repair.pgdump.age`, SHA-256
+`a333c0143eae6448eac230e59164646740e0fc60a4b484359915f823cac76567`.
+This validates the repaired logical database; it does not replace object-storage,
+physical-restore or host-reboot qualification.
 
 ## Original deployment — 2026-10-17
 

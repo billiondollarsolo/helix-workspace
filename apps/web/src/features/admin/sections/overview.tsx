@@ -596,7 +596,7 @@ export function AdminOverview() {
   return (
     <>
       <PageHeading
-        title="Home"
+        title="Overview"
         subtitle="What needs your attention across the organization."
         actions={
           <Button

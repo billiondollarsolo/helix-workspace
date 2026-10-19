@@ -2635,6 +2635,17 @@
   .admin-nav-group {
     margin-top: 12px;
   }
+  .admin-context {
+    display: grid;
+    gap: var(--space-1);
+    padding: var(--space-2);
+    margin-bottom: var(--space-3);
+    overflow-wrap: anywhere;
+  }
+  .admin-context-source {
+    color: var(--muted-foreground);
+    font-size: var(--text-xs);
+  }
   .admin-nav-group-title {
     margin: 0;
     padding: 0 10px 2px;

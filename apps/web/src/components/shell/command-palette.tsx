@@ -172,7 +172,7 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
             {
               id: "admin-console",
               group: "Settings",
-              title: "Admin console",
+              title: "Administration",
               icon: "Shield" as const,
               action: () => goto("/admin"),
             },

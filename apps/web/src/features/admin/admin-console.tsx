@@ -52,7 +52,11 @@ export function AdminConsole({ section: id }: { readonly section: AdminSectionId
   useAdminRealtime(id);
 
   return (
-    <SurfaceFrame title={`Admin · ${adminSectionLabel(id)}`} icon={<ShieldIcon size={16} />}>
+    <SurfaceFrame
+      title={`Administration · ${adminSectionLabel(id)}`}
+      icon={<ShieldIcon size={16} />}
+      navigationKey={id}
+    >
       <AdminSidebar section={id} onPreloadSection={preloadAdminSection} />
       <div className="admin-main">
         <div className="admin-searchbar">

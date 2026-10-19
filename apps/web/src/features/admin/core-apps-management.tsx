@@ -104,7 +104,7 @@ export function CoreAppsManagement() {
               h1 like every other `/admin/<section>` page — it rendered an h2 here
               and an h3 in tenant settings purely by accident of authorship. */}
       <PageHeading
-        title="All apps"
+        title="Workspace apps"
         subtitle="Turn apps on or off for everyone in your organization."
         meta={
           apps.length > 0 ? (

@@ -103,8 +103,12 @@ restore it. New backups and fresh installations use federation names exclusively
 
 Stage 1 was implemented and deployed on 2026-10-19, including the coordinated
 technical rename without aliases. See the [cutover receipt](../runbooks/2026-10-17-hosted-federation-operations.md#greenfield-terminology-cutover--2026-10-19)
-for validation and recovery limits. The management structure and shared controls
-below remain planned work.
+for validation and recovery limits. Stage 2 is implemented: both apps use
+Administration and Personal settings, app/organization context and the common
+navigation groups. Workspace distinguishes built-in Workspace apps from Federated
+apps. Bot has a dedicated Federation destination and a mobile section drawer;
+its existing controls, routes and independent recovery-owner boundary are retained.
+Stages 3 and 4 remain planned work.
 
 1. **Terminology and baseline:** replace current management headings, navigation,
    recovery copy and active guide terminology. Rename the integration in code, routes,

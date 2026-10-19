@@ -38,7 +38,7 @@ test("System theme follows the device and explicit choices persist", async ({ pa
   await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
   await mockBackend(page);
   await page.goto("/assistant?settings=appearance");
-  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+  const settings = page.getByRole("dialog", { name: "Personal settings", exact: true });
   const theme = settings.getByRole("group", { name: "Theme" });
 
   await expect(theme.getByRole("radio", { name: "System" })).toBeChecked();

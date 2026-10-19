@@ -209,14 +209,14 @@ describe("CommandPalette", () => {
   it("offers Admin and Helix AI only when the shell enables them", () => {
     render(createWebPlatformHost({ queryClient }), vi.fn());
     expect(container.textContent).toContain("Go to Admin");
-    expect(container.textContent).toContain("Admin console");
+    expect(container.textContent).toContain("Administration");
     expect(container.textContent).toContain("Go to Helix AI");
 
     disabledApps.add("admin");
     disabledApps.add("assistant");
     render(createWebPlatformHost({ queryClient }), vi.fn());
     expect(container.textContent).not.toContain("Go to Admin");
-    expect(container.textContent).not.toContain("Admin console");
+    expect(container.textContent).not.toContain("Administration");
     expect(container.textContent).not.toContain("Go to Helix AI");
     expect(container.textContent).toContain("Go to Mail");
   });

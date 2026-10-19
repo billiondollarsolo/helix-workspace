@@ -82,14 +82,14 @@ describe("ProfileMenu", () => {
 
   it("manages the account in settings", () => {
     const { card, openSettings } = openCard();
-    act(() => buttonIn(card, "Manage your account and status")?.click());
+    act(() => buttonIn(card, "Personal settings")?.click());
     expect(openSettings).toHaveBeenCalledWith("profile");
     expect(document.querySelector('[role="dialog"]')).toBeNull();
   });
 
-  it("offers the Admin console only to admins", () => {
+  it("offers the Administration only to admins", () => {
     const { card } = openCard();
-    expect(card.textContent).not.toContain("Admin console");
+    expect(card.textContent).not.toContain("Administration");
     act(() => root.unmount());
     root = createRoot(container);
 
@@ -102,7 +102,7 @@ describe("ProfileMenu", () => {
     } as never);
     const { card: adminCard } = openCard();
     const link = Array.from(adminCard.querySelectorAll("a")).find(
-      (anchor) => anchor.textContent?.trim() === "Admin console",
+      (anchor) => anchor.textContent?.trim() === "Administration",
     );
     expect(link?.getAttribute("href")).toBe("/admin");
     act(() => link?.click());

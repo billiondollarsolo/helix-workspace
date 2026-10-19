@@ -53,7 +53,7 @@ test.describe("keyboard shortcuts", () => {
     await expect(dialog.getByRole("region", { name: "Shortcut list" })).toBeFocused();
 
     await dialog.getByRole("button", { name: "Shortcut settings" }).click();
-    const settings = page.getByRole("dialog", { name: "Settings" });
+    const settings = page.getByRole("dialog", { name: "Personal settings" });
     await expect(settings.getByRole("heading", { name: "Keyboard shortcuts" })).toBeVisible();
     await expect(settings.getByRole("group", { name: "Keyboard shortcuts" })).toBeVisible();
     expect(await axeViolations(page, '[aria-labelledby="settings-title"]')).toEqual([]);

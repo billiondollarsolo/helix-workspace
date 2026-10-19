@@ -122,21 +122,26 @@ export interface DirectoryUser {
  * `label` is the page's `<h1>` as well as its nav entry, so the two always
  * agree. */
 
-export const ADMIN_NAV_ROOT = { id: "overview", label: "Home", icon: "Grid" } as const;
+export const ADMIN_NAV_ROOT = { id: "overview", label: "Overview", icon: "Grid" } as const;
 
 export const ADMIN_NAV_GROUPS = [
   {
-    title: "Directory",
+    title: "People and access",
     items: [
       { id: "users", label: "Users", icon: "Users" },
       { id: "groups", label: "Groups & org units", icon: "Building" },
-      { id: "limits", label: "Limits", icon: "Settings" },
+      { id: "identity", label: "Identity & SSO", icon: "Key" },
+      { id: "policies", label: "Policies", icon: "Lock" },
+      { id: "app-passwords", label: "App passwords", icon: "Key" },
+      { id: "oauth-apps", label: "OAuth apps", icon: "Grid" },
     ],
   },
   {
-    title: "Apps",
+    title: "Workspace settings",
     items: [
-      { id: "workspace-apps", label: "All apps", icon: "Briefcase" },
+      { id: "workspace-settings", label: "Workspace settings", icon: "Settings" },
+      { id: "domains", label: "Domains", icon: "Globe" },
+      { id: "workspace-apps", label: "Workspace apps", icon: "Briefcase" },
       { id: "mail", label: "Mail", icon: "Mail" },
       { id: "drive", label: "Drive", icon: "Drive" },
       { id: "chat", label: "Chat", icon: "Chat" },
@@ -144,26 +149,21 @@ export const ADMIN_NAV_GROUPS = [
       { id: "meet", label: "Meet", icon: "Video" },
       { id: "assistant", label: "Assistant", icon: "Sparkles" },
       { id: "passwords", label: "Passwords", icon: "Key" },
-    ],
-  },
-  {
-    title: "Security",
-    items: [
-      { id: "policies", label: "Policies", icon: "Lock" },
-      { id: "identity", label: "Identity & SSO", icon: "Key" },
-      { id: "app-passwords", label: "App passwords", icon: "Key" },
-      { id: "oauth-apps", label: "OAuth apps", icon: "Grid" },
-      { id: "federation-applications", label: "Federated apps", icon: "Grid" },
-      { id: "federation-backups", label: "Federated backups", icon: "Archive" },
       { id: "agent-credentials", label: "Agent credentials", icon: "Code" },
       { id: "agent-secrets", label: "Agent secrets", icon: "Lock" },
       { id: "agent-mail", label: "Agent mail", icon: "Mail" },
       { id: "agent-controls", label: "Agent controls", icon: "Shield" },
-      { id: "tier-readiness", label: "Security tier", icon: "Shield" },
     ],
   },
   {
-    title: "Reporting",
+    title: "Federation",
+    items: [
+      { id: "federation-applications", label: "Federated apps", icon: "Grid" },
+      { id: "federation-backups", label: "Federated backups", icon: "Archive" },
+    ],
+  },
+  {
+    title: "Activity",
     items: [
       { id: "audit", label: "Audit log", icon: "Log" },
       { id: "ai-costs", label: "AI costs", icon: "Credit" },
@@ -171,10 +171,10 @@ export const ADMIN_NAV_GROUPS = [
     ],
   },
   {
-    title: "Account",
+    title: "Operations",
     items: [
-      { id: "domains", label: "Domains", icon: "Globe" },
-      { id: "workspace-settings", label: "Workspace settings", icon: "Settings" },
+      { id: "limits", label: "Limits", icon: "Settings" },
+      { id: "tier-readiness", label: "Security tier", icon: "Shield" },
       { id: "services", label: "Services", icon: "Archive" },
       { id: "webhooks", label: "Webhooks", icon: "Send" },
     ],

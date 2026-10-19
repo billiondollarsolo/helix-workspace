@@ -345,7 +345,7 @@ describe("AdminConsole", () => {
     // Overview's own content is covered by sections/overview.test.tsx; this is
     // a routing test, so it asserts only that the default section is the one
     // that rendered.
-    expect(container.querySelector("h1")?.textContent).toBe("Home");
+    expect(container.querySelector("h1")?.textContent).toBe("Overview");
   });
 
   it("puts one search box for settings, users, and groups above every page", async () => {
@@ -380,7 +380,13 @@ describe("AdminConsole", () => {
     const groupTitles = [...container.querySelectorAll(".admin-nav-group h2")].map((element) =>
       element.textContent?.trim(),
     );
-    expect(groupTitles).toEqual(["Directory", "Apps", "Security", "Reporting", "Account"]);
+    expect(groupTitles).toEqual([
+      "People and access",
+      "Workspace settings",
+      "Federation",
+      "Activity",
+      "Operations",
+    ]);
     // Every heading has the same shape, whether or not it can fold.
     expect(
       [...container.querySelectorAll(".admin-nav-group h2")].every(
@@ -403,7 +409,13 @@ describe("AdminConsole", () => {
     // Progressive disclosure buys vertical space, but paying for it with a
     // section the operator has to hunt for is the worse trade. Nothing is
     // folded until someone folds it.
-    for (const title of ["Directory", "Apps", "Security", "Reporting", "Account"]) {
+    for (const title of [
+      "People and access",
+      "Workspace settings",
+      "Federation",
+      "Activity",
+      "Operations",
+    ]) {
       expect(navGroupList(title).hidden).toBe(false);
       expect(navGroupToggle(title)?.getAttribute("aria-expanded")).toBe("true");
     }
@@ -414,8 +426,8 @@ describe("AdminConsole", () => {
 
     await renderConsole("overview");
 
-    const toggle = navGroupToggle("Apps");
-    const list = navGroupList("Apps");
+    const toggle = navGroupToggle("Workspace settings");
+    const list = navGroupList("Workspace settings");
     if (!toggle) {
       throw new Error("Expected a fold control on a group that is not the active one");
     }
@@ -437,15 +449,15 @@ describe("AdminConsole", () => {
       return Promise.resolve();
     });
 
-    expect(navGroupToggle("Apps")?.getAttribute("aria-expanded")).toBe("false");
+    expect(navGroupToggle("Workspace settings")?.getAttribute("aria-expanded")).toBe("false");
     // `hidden`, not a CSS height collapse — rows nobody can see must not be
     // tab stops.
-    expect(navGroupList("Apps").hidden).toBe(true);
+    expect(navGroupList("Workspace settings").hidden).toBe(true);
     // Folding must not throw focus away from the control that did it.
-    expect(document.activeElement).toBe(navGroupToggle("Apps"));
+    expect(document.activeElement).toBe(navGroupToggle("Workspace settings"));
     expect(window.localStorage.setItem).toHaveBeenCalledWith(
       COLLAPSED_GROUPS_KEY,
-      JSON.stringify(["Apps"]),
+      JSON.stringify(["Workspace settings"]),
     );
   });
 
@@ -459,15 +471,17 @@ describe("AdminConsole", () => {
     // closure meant both handlers read the same pre-batch snapshot, so the
     // second click overwrote the first and one group silently unfolded.
     await act(() => {
-      navGroupToggle("Reporting")?.click();
-      navGroupToggle("Apps")?.click();
+      navGroupToggle("Activity")?.click();
+      navGroupToggle("Workspace settings")?.click();
       return Promise.resolve();
     });
 
-    expect(navGroupList("Reporting").hidden).toBe(true);
-    expect(navGroupList("Apps").hidden).toBe(true);
+    expect(navGroupList("Activity").hidden).toBe(true);
+    expect(navGroupList("Workspace settings").hidden).toBe(true);
     // Storage must agree with what is on screen, not with one of the two.
-    expect(store.get(COLLAPSED_GROUPS_KEY)).toBe(JSON.stringify(["Reporting", "Apps"]));
+    expect(store.get(COLLAPSED_GROUPS_KEY)).toBe(
+      JSON.stringify(["Activity", "Workspace settings"]),
+    );
   });
 
   it("keeps the group holding the active section open, with no control to fold it", async () => {
@@ -475,7 +489,13 @@ describe("AdminConsole", () => {
     // Every group folded, including the one the operator is about to land in.
     store.set(
       COLLAPSED_GROUPS_KEY,
-      JSON.stringify(["Directory", "Apps", "Security", "Reporting", "Account"]),
+      JSON.stringify([
+        "People and access",
+        "Workspace settings",
+        "Federation",
+        "Activity",
+        "Operations",
+      ]),
     );
     mockJsonResponse(fetchMock, apiUsers);
 
@@ -483,10 +503,10 @@ describe("AdminConsole", () => {
 
     // Audit log lives in Reporting. A stored preference may never hide the row
     // the operator is standing on.
-    expect(navGroupList("Reporting").hidden).toBe(false);
-    expect(navGroupToggle("Reporting")).toBeNull();
+    expect(navGroupList("Activity").hidden).toBe(false);
+    expect(navGroupToggle("Activity")).toBeNull();
 
-    for (const title of ["Directory", "Apps", "Security", "Account"]) {
+    for (const title of ["People and access", "Workspace settings", "Federation", "Operations"]) {
       expect(navGroupList(title).hidden).toBe(true);
       expect(navGroupToggle(title)?.getAttribute("aria-expanded")).toBe("false");
     }
@@ -505,18 +525,18 @@ describe("AdminConsole", () => {
 
     await renderConsole("overview");
 
-    const toggle = navGroupToggle("Reporting");
+    const toggle = navGroupToggle("Activity");
     await act(() => {
       toggle?.click();
       return Promise.resolve();
     });
-    expect(navGroupList("Reporting").hidden).toBe(true);
+    expect(navGroupList("Activity").hidden).toBe(true);
 
     // The console re-renders the sidebar on every section change; a fold that
     // unfolds itself on the next click is worse than no fold at all.
     await clickNav("Users");
     expect(currentPath()).toBe("/admin/users");
-    expect(navGroupList("Reporting").hidden).toBe(true);
+    expect(navGroupList("Activity").hidden).toBe(true);
 
     // ...and it survives a full remount, which is what a refresh or a
     // deep-linked reload actually does to this component.
@@ -526,13 +546,13 @@ describe("AdminConsole", () => {
     });
     root = createRoot(container);
     await renderConsole("groups");
-    expect(navGroupList("Reporting").hidden).toBe(true);
+    expect(navGroupList("Activity").hidden).toBe(true);
     // The fold is a preference, not a hard hide: reopening it is one click.
     await act(() => {
-      navGroupToggle("Reporting")?.click();
+      navGroupToggle("Activity")?.click();
       return Promise.resolve();
     });
-    expect(navGroupList("Reporting").hidden).toBe(false);
+    expect(navGroupList("Activity").hidden).toBe(false);
   });
 
   it("scrolls the active section into view when it sits below the fold", async () => {

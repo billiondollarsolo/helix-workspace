@@ -98,7 +98,7 @@ export const APPS: readonly HelixApp[] = [
   },
   {
     id: "admin",
-    name: "Admin",
+    name: "Administration",
     description: "Users, domains and policies",
     icon: "Shield",
     color: "var(--label-slate)",

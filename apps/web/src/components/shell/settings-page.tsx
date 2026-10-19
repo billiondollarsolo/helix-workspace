@@ -160,7 +160,7 @@ function SettingsDialog({ section, onSectionChange, onClose }: Omit<SettingsPage
           <X size={18} aria-hidden="true" />
         </button>
         <span id="settings-title" className="type-h3 font-semibold">
-          Settings
+          Personal settings
         </span>
         <div className="ml-auto">
           <button type="button" className="btn primary sm" onClick={onClose}>

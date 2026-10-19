@@ -238,13 +238,13 @@ test("keeps the session and unsent Assistant draft through a backend restart and
   down = true;
   await page.clock.setSystemTime(new Date(now + 31_000));
   await page.getByRole("button", { name: /^Account:/ }).click();
-  await page.getByRole("button", { name: "Manage your account and status", exact: true }).click();
+  await page.getByRole("button", { name: "Personal settings", exact: true }).click();
   await expect(page).toHaveURL(/\/assistant\?settings=profile/u);
   await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
   await expect.poll(() => failedSessions).toBeGreaterThan(0);
   await expect.poll(() => failedLists).toBeGreaterThan(0);
   await page
-    .getByRole("dialog", { name: "Settings", exact: true })
+    .getByRole("dialog", { name: "Personal settings", exact: true })
     .getByRole("button", { name: "Done", exact: true })
     .click();
   await expect(composer).toHaveValue("Keep this unsent message while the backend restarts.");

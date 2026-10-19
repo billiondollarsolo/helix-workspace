@@ -173,6 +173,24 @@ async function mockAdminDashboardBackend(page: Page, backendCalls: BackendCall[]
       return;
     }
 
+    if (call.method === "GET" && call.pathname === "/v1/api/admin/tenant-config") {
+      await fulfillJson(route, {
+        tenantConfig: {
+          orgId: "org-e2e",
+          orgName: "Example organization",
+          byo: {},
+          features: {},
+          quotas: {},
+          branding: {},
+          effective: { byo: {}, features: {}, quotas: {}, branding: {} },
+        },
+      });
+      return;
+    }
+    if (call.method === "POST" && call.pathname === "/v1/api/tools/agent.account.requests.list") {
+      await fulfillJson(route, { requests: [] });
+      return;
+    }
     if (call.method === "GET" && call.pathname === "/v1/api/admin/audit-log") {
       await fulfillJson(route, auditLogResponse());
       return;

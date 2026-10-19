@@ -39,7 +39,7 @@ describe("admin settings search index", () => {
   });
 
   it("says where each result lives", () => {
-    expect(searchAdminSettings("spam filtering")[0]?.location).toBe("Apps › Mail");
+    expect(searchAdminSettings("spam filtering")[0]?.location).toBe("Workspace settings › Mail");
   });
 
   it("returns nothing for blank or unknown text", () => {

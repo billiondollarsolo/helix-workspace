@@ -9,6 +9,9 @@ export async function cleanupTestTenants(
   await sql.begin(async (tx) => {
     // Only cleanup bypasses retention/triggers; the assertions use real policy.
     await tx.unsafe("set local session_replication_role = replica");
+    await tx`delete from app_passwords where actor_id in (
+      select id from actors where org_id in ${tx([...orgIds])}
+    )`;
     const tables = await tx<{ tablename: string }[]>`
       select table_name as tablename from information_schema.columns
       where table_schema = 'public' and column_name = 'org_id'

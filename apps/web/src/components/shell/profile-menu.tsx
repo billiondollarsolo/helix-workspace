@@ -1,6 +1,6 @@
 import { LogOut as SignOutIcon, Shield as ShieldIcon, X as XIcon } from "lucide-react";
 /* ProfileMenu — the account card behind the top-bar avatar: who is signed in,
-   a way to manage the account, the Admin console for admins, and sign out.
+   personal settings, Administration for admins, and sign out.
    Appearance lives in Quick settings. */
 
 import type { SettingsSectionId } from "@/components/shell/overlay-context";
@@ -72,7 +72,7 @@ export function ProfileMenu({ openSettings }: ProfileMenuProps) {
               openSettings("profile");
             }}
           >
-            Manage your account and status
+            Personal settings
           </button>
           {isAdmin ? (
             <Link
@@ -83,7 +83,7 @@ export function ProfileMenu({ openSettings }: ProfileMenuProps) {
               }}
             >
               <ShieldIcon size={16} aria-hidden="true" />
-              Admin console
+              Administration
             </Link>
           ) : null}
           <button

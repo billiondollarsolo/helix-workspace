@@ -10,6 +10,10 @@ import {
   type AdminSectionId,
 } from "@/features/admin/admin-console-data";
 import { useAdminRealtimeState } from "@/features/admin/use-admin-realtime";
+import { useAdminAccess } from "@/features/admin/use-admin-access";
+import { tenantConfigQueryOptions } from "@/features/admin/tenant-config-api";
+import { useShellOverlays } from "@/components/shell/overlay-context";
+import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 
@@ -108,6 +112,7 @@ export function AdminSidebar({
 
   return (
     <nav className="surf-sidebar admin-nav" aria-label="Administration" ref={navRef}>
+      <AdministrationContext />
       <AdminNavLink
         item={ADMIN_NAV_ROOT}
         active={section === ADMIN_NAV_ROOT.id}
@@ -159,6 +164,30 @@ export function AdminSidebar({
       })}
       <AdminRealtimeIndicator />
     </nav>
+  );
+}
+
+function AdministrationContext() {
+  const access = useAdminAccess();
+  const organization = useQuery({ ...tenantConfigQueryOptions(), enabled: access.isAdmin });
+  const overlays = useShellOverlays();
+  return (
+    <div className="admin-context" role="group" aria-label="Management context">
+      <strong>Helix Workspace</strong>
+      <span>
+        {organization.data?.orgName ??
+          (access.isAdmin && organization.isPending
+            ? "Loading organization…"
+            : "Organization details unavailable")}
+      </span>
+      <span className="admin-context-source">Federation authority</span>
+      <button type="button" className="surf-nav-row" onClick={() => overlays.openSettings()}>
+        Personal settings
+      </button>
+      <Link to="/" className="surf-nav-row">
+        Back to Workspace
+      </Link>
+    </div>
   );
 }
 

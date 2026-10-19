@@ -98,7 +98,7 @@ describe("CoreAppsManagement", () => {
     await waitFor(() => {
       expect(container.textContent ?? "").toContain("Mail");
     });
-    expect(container.textContent).toContain("All apps");
+    expect(container.textContent).toContain("Workspace apps");
     expect(container.textContent).toContain("2 of 3 enabled");
 
     // Per-app state lives on the switches. It used to be duplicated into an

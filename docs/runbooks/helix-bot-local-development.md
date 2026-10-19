@@ -404,3 +404,30 @@ Keep each application's database role, database and backup credentials separate,
 even when they share a host or Kubernetes cluster. No cross-database access is needed
 for the integration. Bot currently runs one application writer; a replicated database
 alone does not make its artifact volumes or workers highly available.
+
+### Hosted isolated recovery qualification (2026-10-19)
+
+The current two-app cold capture passed database startup, private-state/key
+validation, a ready Workspace API, and an authenticated download of the newest
+pilot object with its exact hash through restored RustFS/KMS. Fresh captured
+antivirus signatures satisfied readiness; an older capture correctly failed
+readiness once its signatures aged out. Keep that dependency gate enforced.
+
+The restored Workspace directory worker reconciled through Bot's real HTTPS
+routes, rotated SCIM credentials, and revoked an existing managed session after
+assignment removal. Local recovery-owner access survived. This used internal
+networks, no published ports, disabled outbound mail and disabled restored Bot
+background runners. Isolated auth-service session fixtures are distinct from
+the separately verified hosted human OIDC journey.
+
+When relocating selected tar members, remove or rewrite PAX `path` and `linkpath`
+overrides as well as the ordinary name. Otherwise long WAL paths can land outside
+the relocated database directory. Preserve directory ownership and modes. Match
+each service's secret mounts explicitly; mounting the host's private secrets
+directory wholesale can make otherwise readable files inaccessible or expose
+credentials that the service did not originally receive.
+
+Private receipts and reproduction helpers remain under
+`~/.local/share/helix-recovery/20261019/integration-completion/restore/`.
+This drill does not promote restored state, reboot the host, or qualify the full
+Workspace Kubernetes application.

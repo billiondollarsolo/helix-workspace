@@ -9,7 +9,7 @@ background routines, shared projects and coding workflows. Coding is one workloa
 
 ### Hosted integration checkpoint (2026-10-19)
 
-The current hosted releases are Bot `6a7952a` (schema 8), Workspace API `d74ba3f` and
+The current hosted releases are Bot `a103f68` (schema 8), Workspace API `d74ba3f` and
 Workspace web `8afe194`. The real Codex pilot passed private Chat, internal mail,
 source attachment reading and Work source/result inspection through the normal UI.
 An additional real Codex pilot continued an explicit Chat thread reply on the
@@ -38,11 +38,20 @@ environment-gated skips, plus 37 targeted PostgreSQL tests and 11 browser/a11y
 cases. Bot passed 788 tests with one optional skip and its required proof checks.
 Its updated account and request-history browser checks passed on desktop and phone.
 Encrypted off-server operator and database checkpoints include the active release
-bundles. Restored Bot service checks validate installation/key identity, stale
-managed-access denial, directory reconciliation and existing-session revocation
-while preserving local recovery access. Independent peer reconciliation and
-production promotion remain separate. Private receipts live in
+bundles. A fresh cold two-app capture also passed isolated recovery: both databases
+started, Bot validated its private state and key, and the ready Workspace API
+downloaded the latest 95-byte pilot file through recovered object/KMS storage
+with the exact SHA-256. Unauthenticated download was denied. The actual restored
+Workspace directory worker reconciled through Bot's HTTPS endpoints, rotated its
+SCIM token, and removed an assignment, revoking an existing managed session while
+preserving local recovery access. Session fixtures use the restored auth service;
+hosted interactive OIDC was checked separately. Outbound mail and restored Bot
+background runners were disabled. Production promotion remains separate. Private receipts live in
 `~/.local/share/helix-recovery/20261019/integration-completion/`.
+
+The Bot account page now reports owner-only background status as unavailable to
+another identity and disables those editing controls, instead of showing a false
+"off" state. Its focused desktop/phone and accessibility checks passed.
 
 Generated file results, transfer approval continuation, scheduled follow-through,
 PDF/image interpretation and specialist execution remain the next Bot work.

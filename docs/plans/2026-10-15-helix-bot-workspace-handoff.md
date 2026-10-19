@@ -1208,3 +1208,17 @@ See the [app management deployment receipt](../runbooks/2026-10-17-hosted-federa
 for exact coverage and recovery limits. Management stages 1–4 are implemented for
 Workspace and Bot. General shared policies, further app integrations, native AI
 product acceptance and reviewed production restore remain separate work.
+
+### Authenticated live admin review completed — 2026-10-19
+
+The owner completed normal Workspace verification. The hosted administration view
+passed read-only desktop/390px checks: organization context, fresh directory,
+assigned Admin role, app-bound backup worker, acknowledged policy versus pending
+delivery and refresh controls. Both widths had no horizontal overflow. This
+supersedes the earlier pending Workspace visual-review statements. No assignments,
+credentials, policies or recovery operations were changed.
+
+The worker reports stale managed-backup history and no recorded restore drill;
+its artifact version is historical. The newer encrypted deployment checkpoint is
+separate and has not yet been restored. Assignment conflict protection also remains
+pending. See the [live review receipt](../runbooks/2026-10-17-hosted-federation-operations.md#authenticated-live-admin-review--2026-10-19).

@@ -46,9 +46,9 @@ Hosted and native readiness pass. The directory regained fresh authority, both
 independent recovery workers and the private federation network remain intact,
 and native providers/executor/Claude remain ready. Hosted providers remain ready;
 its executor remains unconfigured. Anonymous app-management requests are denied
-with 403; recovery status requests are denied with 401. The saved Workspace Preview
-session still requires normal verification, so authenticated live visual review
-remains pending. No fresh human SSO/MFA completion or paid model request was made.
+with 403; recovery status requests are denied with 401. At rollout, Workspace
+Preview required normal verification; the completed live follow-up is recorded
+below. No paid model request was made.
 
 The pre-change native and hosted encrypted deployment checkpoints authenticated.
 The final hosted checkpoint also authenticated off-server:
@@ -66,6 +66,26 @@ survive refresh, but simultaneous editors are not conflict-checked; use one edit
 at a time. Revision checks are required before supporting concurrent editing.
 General shared-policy enforcement, additional app implementations, native AI product
 acceptance and reviewed production restore remain separate work.
+
+### Authenticated live admin review — 2026-10-19
+
+The owner completed Workspace's normal verification. Read-only review of the hosted
+page passed at 1280px and 390px: the governing organization loaded, the directory
+was recently verified, the assigned Admin role was visible, and the app's bound
+backup worker showed acknowledged policy revision 0 with no pending delivery.
+External scheduling, backup/verify capabilities and unenrolled restore were
+identified correctly. App, backup-status and assignment refreshes completed without
+inline errors. Both widths had zero horizontal overflow; the mobile menu was
+available. No role, credential, policy or recovery operation was submitted.
+
+The worker reports `backup_stale` and `restore_drill_missing` for its managed
+artifact history. Its displayed artifact version is explicitly historical. This
+does not replace the separate authenticated deployment-checkpoint evidence above;
+the latest checkpoint still has not been restored. The live review is complete;
+assignment conflict protection and the checkpoint restore test remain pending.
+Private receipt and screenshot references: `app-management/live-admin-review.json`
+under the October 19 recovery directory. This follow-up covers Workspace's admin
+view; it does not repeat Bot's human SSO or a paid model call.
 
 ## Setting ownership qualification — 2026-10-19
 

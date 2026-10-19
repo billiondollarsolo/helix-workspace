@@ -1,6 +1,6 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { LocalLoginPanel } from "@/features/auth/login-panel";
-import { getSessionUser, safeLoginReturnTo, resumeFamilySignIn } from "@/lib/auth";
+import { getSessionUser, safeLoginReturnTo, resumeFederationSignIn } from "@/lib/auth";
 
 export const Route = createFileRoute("/login")({
   validateSearch: (
@@ -17,7 +17,7 @@ export const Route = createFileRoute("/login")({
   beforeLoad: async ({ search }) => {
     const user = await getSessionUser();
     if (search.reauthenticate !== true && user !== null && !user.passwordChangeRequired) {
-      await resumeFamilySignIn();
+      await resumeFederationSignIn();
       // eslint-disable-next-line @typescript-eslint/only-throw-error
       throw redirect({ href: safeLoginReturnTo(search.returnTo) });
     }
@@ -35,7 +35,7 @@ function LoginRoute() {
       reauthenticate={search.reauthenticate === true}
       {...(search.token === undefined ? {} : { resetToken: search.token })}
       onSignedIn={async () => {
-        await resumeFamilySignIn();
+        await resumeFederationSignIn();
         window.location.replace(safeLoginReturnTo(search.returnTo));
       }}
     />

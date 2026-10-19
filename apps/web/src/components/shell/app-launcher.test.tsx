@@ -26,8 +26,8 @@ vi.mock("@/features/apps/use-enabled-apps", () => ({
   useEnabledApps: () => ({ isEnabled: () => true }),
 }));
 
-vi.mock("@/features/apps/use-family-apps", () => ({
-  useFamilyApps: () => ({
+vi.mock("@/features/apps/use-federation-apps", () => ({
+  useFederationApps: () => ({
     data: [{ id: "bot", label: "Helix Bot", url: "https://bot.example" }],
     error: null,
   }),

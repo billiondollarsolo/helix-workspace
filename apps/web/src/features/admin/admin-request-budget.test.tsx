@@ -439,19 +439,19 @@ describe("admin console request budget", () => {
             "/v1/api/tools/drive.quota.usage",
           ],
         },
-        "family-applications": {
+        "federation-applications": {
           "requestCount": 1,
           "settled": true,
           "urls": [
-            "/v1/api/admin/family-applications",
+            "/v1/api/admin/federation-applications",
           ],
         },
-        "family-backups": {
+        "federation-backups": {
           "requestCount": 2,
           "settled": true,
           "urls": [
-            "/v1/api/admin/family-backup-jobs",
-            "/v1/api/admin/family-backups",
+            "/v1/api/admin/federation-backup-jobs",
+            "/v1/api/admin/federation-backups",
           ],
         },
         "groups": {

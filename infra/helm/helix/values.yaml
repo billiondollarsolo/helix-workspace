@@ -645,7 +645,7 @@ bootstrapAdmin:
     accessModes: [ReadWriteMany]
 
 # Optional human SSO provider and organization directory for connected applications.
-familyIdentity:
+federationIdentity:
   enabled: false
   allowPrivateNetwork: false
 

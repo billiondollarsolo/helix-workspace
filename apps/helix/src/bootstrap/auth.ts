@@ -8,7 +8,7 @@ import {
 import { envFlag } from "../bootstrap/env.js";
 import { getBetterAuthRuntimeConfig } from "../config/auth.js";
 import { runtimeEnvironment } from "../config/env.js";
-import { FamilyApplications } from "../platform/auth/family-applications.js";
+import { FederationApplications } from "../platform/auth/federation-applications.js";
 import { resolveRedisConnection } from "../config/redis-connection.js";
 import {
   assertTenantRlsCoverage,
@@ -179,9 +179,9 @@ export async function installAuth(context: Awaited<ReturnType<typeof installHttp
   const tenantStorageSecretReader = createVaultTenantSecretReaderFromEnv(runtimeEnvironment());
 
   const betterAuthConfig = getBetterAuthRuntimeConfig(runtimeEnvironment());
-  const familyApplications =
-    runtimeEnvironment().HELIX_FAMILY_IDENTITY_ENABLED === "true"
-      ? new FamilyApplications(sql)
+  const federationApplications =
+    runtimeEnvironment().HELIX_FEDERATION_IDENTITY_ENABLED === "true"
+      ? new FederationApplications(sql)
       : undefined;
 
   const externalEmailMfa =
@@ -229,14 +229,14 @@ export async function installAuth(context: Awaited<ReturnType<typeof installHttp
       ? undefined
       : createBetterAuthRuntime({
           ...betterAuthConfig,
-          ...(familyApplications === undefined
+          ...(federationApplications === undefined
             ? {}
             : {
-                familyIdentity: {
+                federationIdentity: {
                   checkSession: (userId, headers) =>
-                    familyApplications.authorizeSession(userId, headers),
-                  claims: (userId, metadata) => familyApplications.claims(userId, metadata),
-                  userInfo: (userId, claims) => familyApplications.claims(userId, claims),
+                    federationApplications.authorizeSession(userId, headers),
+                  claims: (userId, metadata) => federationApplications.claims(userId, metadata),
+                  userInfo: (userId, claims) => federationApplications.claims(userId, claims),
                 },
               }),
           ...(externalEmailMfa === undefined || identityMailTransport === undefined
@@ -534,7 +534,7 @@ export async function installAuth(context: Awaited<ReturnType<typeof installHttp
     tenantSecretCipher,
     betterAuthConfig,
     betterAuthRuntime,
-    familyApplications,
+    federationApplications,
     externalEmailMfa,
     betterAuthSessionIssuer,
     orgStore,

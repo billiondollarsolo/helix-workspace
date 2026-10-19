@@ -209,8 +209,8 @@ export async function signInWithOidc(
   if (!isRecord(discovery) || discovery.managed !== true || discovery.protocol !== "oidc") {
     throw new Error("OIDC sign-in is not configured for this email domain.");
   }
-  const familyQuery = window.location.search.includes("ba_param=")
-    ? (await import("./family-auth")).familyAuthorizationQuery(window.location.search)
+  const federationQuery = window.location.search.includes("ba_param=")
+    ? (await import("./federation-auth")).federationAuthorizationQuery(window.location.search)
     : undefined;
   const result = await authJson(fetchImpl, "/api/auth/sign-in/sso", {
     method: "POST",
@@ -219,9 +219,9 @@ export async function signInWithOidc(
       providerType: "oidc",
       requestSignUp: false,
       callbackURL:
-        familyQuery === undefined
+        federationQuery === undefined
           ? `${window.location.origin}${safeLoginReturnTo(new URLSearchParams(window.location.search).get("returnTo"))}`
-          : `${window.location.origin}/login?${familyQuery}`,
+          : `${window.location.origin}/login?${federationQuery}`,
       errorCallbackURL: `${window.location.origin}/login`,
     }),
   });
@@ -479,9 +479,9 @@ async function authJson(fetchImpl: AuthFetch, path: string, init: RequestInit): 
   return output;
 }
 
-export async function resumeFamilySignIn(): Promise<void> {
+export async function resumeFederationSignIn(): Promise<void> {
   if (typeof window !== "undefined" && window.location.search.includes("ba_param="))
-    await (await import("./family-auth")).resumeFamilySignIn();
+    await (await import("./federation-auth")).resumeFederationSignIn();
 }
 
 async function betterAuthBrowserFetch(

@@ -234,8 +234,8 @@ are not a production deployment template.
 
 Both repos now include matching optional joining profiles: Workspace's
 `docker-compose.bot.yml` and Bot's `deploy/compose/compose.workspace.yaml`.
-Create `docker network create --internal helix-family` once; append each profile after
-that app's selected Compose/TLS overrides. Set `HELIX_FAMILY_NETWORK` identically in
+Create `docker network create --internal helix-federation` once; append each profile after
+that app's selected Compose/TLS overrides. Set `HELIX_FEDERATION_NETWORK` identically in
 both project env files when using another network name. Only Workspace's API and
 Caddy and Bot's app join; database services keep their existing networks and ports.
 These profiles add no automatic account grants or cross-app startup dependency.
@@ -347,7 +347,7 @@ These tests use isolated repository-seeded accounts. They do not qualify public 
 approval, human OAuth, external inbox arrival, different-host TLS, or all catalog gates.
 The same suite passed with Kubernetes Bot connected to Docker Workspace, using
 CNPG/Barman, verified database TLS and enforced network denial. See Bot's
-`docs/reference/app-family-qualification.md` for receipts and exact topology.
+`docs/reference/app-federation-qualification.md` for receipts and exact topology.
 
 The rendered Workspace CNPG database/migration resources passed fresh migrations,
 tenant/RLS checks, allowed/denied network traffic, Barman backup, named-point WAL recovery

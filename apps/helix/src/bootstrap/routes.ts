@@ -1,4 +1,4 @@
-import { installFamilyConnections } from "./family.js";
+import { installFederationConnections } from "./federation.js";
 import { installMeetCapture } from "./meet-capture.js";
 import { registerAgentRuntimeRoutes } from "../platform/agent-runtime/admin-routes.js";
 import { AgentRuntimeStore } from "../platform/agent-runtime/store.js";
@@ -265,13 +265,13 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
     sessionActorResolver,
     externalEmailMfa,
     (orgId, userId) => bootstrapPasswordChangeRequired(sql, orgId, userId),
-    betterAuthRuntime?.familyClients === undefined
+    betterAuthRuntime?.federationClients === undefined
       ? undefined
-      : () => betterAuthRuntime.familyClients?.discovery() ?? Promise.resolve({}),
+      : () => betterAuthRuntime.federationClients?.discovery() ?? Promise.resolve({}),
   );
 
   await app.register(websocket, { options: { maxPayload: WEBSOCKET_MAX_PAYLOAD_BYTES } });
-  installFamilyConnections(context);
+  installFederationConnections(context);
 
   await app.register(swagger, {
     openapi: {

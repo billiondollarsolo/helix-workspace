@@ -90,7 +90,7 @@ export async function installApps(context: Awaited<ReturnType<typeof installAuth
     oauthStore,
     agentCredentialStore,
     betterAuthConfig,
-    familyApplications,
+    federationApplications,
     betterAuthRuntime,
     orgStore,
     domainsStore,
@@ -411,8 +411,8 @@ export async function installApps(context: Awaited<ReturnType<typeof installAuth
         );
 
   const mfaResolver: MfaVerificationResolver = mfaAssurance ?? unverifiedMfaResolver;
-  if (familyApplications !== undefined && betterAuthRuntime !== undefined) {
-    familyApplications.authorizeSession = async (userId, headers) => {
+  if (federationApplications !== undefined && betterAuthRuntime !== undefined) {
+    federationApplications.authorizeSession = async (userId, headers) => {
       const request = { headers: {} as Record<string, string> };
       headers.forEach((value, key) => {
         request.headers[key] = value;

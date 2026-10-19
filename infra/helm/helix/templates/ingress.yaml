@@ -23,7 +23,7 @@ spec:
       http:
         paths:
           {{- if $.Values.backupWorker.enabled }}
-          - path: /v1/family-operations
+          - path: /v1/federation-operations
             pathType: Prefix
             backend:
               service:

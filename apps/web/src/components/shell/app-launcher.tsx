@@ -1,4 +1,4 @@
-import { useFamilyApps } from "@/features/apps/use-family-apps";
+import { useFederationApps } from "@/features/apps/use-federation-apps";
 import { iconMap as Icons } from "@/components/icon-map";
 /* AppLauncher — the full app grid, three tiles per row. The rail carries only
    the pinned apps; this lists every enabled app plus search. Anchored beside
@@ -17,7 +17,7 @@ export interface AppLauncherProps {
 
 export function AppLauncher({ open, onClose }: AppLauncherProps) {
   const enabled = useEnabledApps();
-  const family = useFamilyApps(open);
+  const federation = useFederationApps(open);
   const launcherRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -100,7 +100,7 @@ export function AppLauncher({ open, onClose }: AppLauncherProps) {
             </Link>
           );
         })}
-        {(family.data ?? []).map((app) => (
+        {(federation.data ?? []).map((app) => (
           <a
             key={app.id}
             href={app.url}
@@ -119,7 +119,7 @@ export function AppLauncher({ open, onClose }: AppLauncherProps) {
             </span>
           </a>
         ))}
-        {family.error ? (
+        {federation.error ? (
           <p role="status">Connected apps are unavailable. Try again shortly.</p>
         ) : null}
         <Link

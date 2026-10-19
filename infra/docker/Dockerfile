@@ -87,7 +87,7 @@ RUN mkdir -p /var/lib/helix-backup-worker \
 USER 10001:10001
 EXPOSE 3081
 ENTRYPOINT ["node"]
-CMD ["dist/platform/backup/family-worker.js", "serve", "/etc/helix-backup-worker/worker.json"]
+CMD ["dist/platform/backup/federation-worker.js", "serve", "/etc/helix-backup-worker/worker.json"]
 
 FROM ${BUILD_BASE} AS web-build
 

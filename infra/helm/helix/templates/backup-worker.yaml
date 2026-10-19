@@ -44,7 +44,7 @@ spec:
       containers:
         - name: backup-worker
           image: {{ .Values.backupWorker.image | quote }}
-          command: [node, /app/dist/platform/backup/family-worker.js, serve, /etc/helix-backup-worker/worker.json]
+          command: [node, /app/dist/platform/backup/federation-worker.js, serve, /etc/helix-backup-worker/worker.json]
           ports: [{name: recovery, containerPort: 3081}]
           securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
           readinessProbe: {httpGet: {path: /healthz, port: recovery}, initialDelaySeconds: 3, periodSeconds: 10}

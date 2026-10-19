@@ -4,7 +4,8 @@ services:
   backup-worker:
     image: ${HELIX_BACKUP_WORKER_IMAGE:?Set an immutable recovery tool image}
     user: "${HELIX_BACKUP_WORKER_UID:-10001}:${HELIX_BACKUP_WORKER_GID:-10001}"
-    command: [dist/platform/backup/family-worker.js, serve, /etc/helix-backup-worker/worker.json]
+    command:
+      [dist/platform/backup/federation-worker.js, serve, /etc/helix-backup-worker/worker.json]
     volumes:
       - type: bind
         source: ${HELIX_BACKUP_WORKER_CONFIG:?Set the private recovery configuration directory}

@@ -127,7 +127,7 @@ test.describe("/login authenticated handoff", () => {
       route.fulfill({ status: 200, body: "Connected to Bot" }),
     );
     await page.goto(
-      "/login?client_id=family-client&state=family-state&ba_param=client_id&ba_param=state&sig=fixture&extra=ignored",
+      "/login?client_id=federation-client&state=federation-state&ba_param=client_id&ba_param=state&sig=fixture&extra=ignored",
     );
     await page.getByLabel("Email", { exact: true }).fill("admin@helix.local");
     await page.getByLabel("Password", { exact: true }).fill("helix-admin-password");
@@ -137,7 +137,7 @@ test.describe("/login authenticated handoff", () => {
       {
         postLogin: true,
         oauth_query:
-          "client_id=family-client&state=family-state&ba_param=client_id&ba_param=state&sig=fixture",
+          "client_id=federation-client&state=federation-state&ba_param=client_id&ba_param=state&sig=fixture",
       },
     ]);
   });

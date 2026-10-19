@@ -95,7 +95,7 @@ beforeAll(() => {
     HELIX_SPAMD_IMAGE: promotedImages.spamassassin,
     HELIX_CLAMAV_IMAGE: promotedImages.clamav,
     HELIX_DOMAIN: "workspace.example.test",
-    HELIX_FAMILY_NETWORK: "organization-family",
+    HELIX_FEDERATION_NETWORK: "organization-federation",
     HELIX_REGION: "eu-test",
     HELIX_DEFAULT_ORG_NAME: "Example Workspace",
     CADDY_HTTP_PORT: "80",
@@ -134,20 +134,20 @@ afterAll(() => {
 });
 describe("production Compose overlay", () => {
   it("joins Bot through only the API and signed-storage edge, keeping data services private", () => {
-    expect(resolvedCompose.networks["app-family"]).toBeUndefined();
-    expect(resolvedBotCompose.networks["app-family"]).toMatchObject({
-      name: "organization-family",
+    expect(resolvedCompose.networks["app-federation"]).toBeUndefined();
+    expect(resolvedBotCompose.networks["app-federation"]).toMatchObject({
+      name: "organization-federation",
       external: true,
     });
-    expect(resolvedBotCompose.services.helix.networks["app-family"].aliases).toEqual([
+    expect(resolvedBotCompose.services.helix.networks["app-federation"].aliases).toEqual([
       "helix-workspace",
     ]);
-    expect(resolvedBotCompose.services.caddy.networks["app-family"].aliases).toEqual([
+    expect(resolvedBotCompose.services.caddy.networks["app-federation"].aliases).toEqual([
       "workspace.example.test",
     ]);
     for (const [name, service] of Object.entries(resolvedBotCompose.services)) {
       if (name !== "helix" && name !== "caddy")
-        expect(service.networks?.["app-family"]).toBeUndefined();
+        expect(service.networks?.["app-federation"]).toBeUndefined();
       for (const [network, settings] of Object.entries(
         resolvedCompose.services[name].networks ?? {},
       ))

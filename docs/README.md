@@ -30,7 +30,7 @@ shipped features, production packaging, security disclosures, and launch limits.
 - [Development guide and repository map](development.md#repository-map).
 - [External application integration: Helix Bot](../apps/web/public/agent-integration.md).
 - [Helix federation management standard](architecture/helix-federation-management.md).
-- [Workspace-managed app identity, bootstrap and recovery](runbooks/app-family-identity.md).
+- [Workspace-managed app identity, bootstrap and recovery](runbooks/app-federation-identity.md).
 - [CLI installation and SDK integration](reference/clients.md).
 - [Environment reference](reference/environment.md).
 - [Tool and channel inventory](architecture/mvp-tool-channel-inventory.md): REST, CLI, and MCP coverage.

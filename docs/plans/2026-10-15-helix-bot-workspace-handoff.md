@@ -103,7 +103,7 @@ approval, inbound/outbound mail and cross-tenant promotion checks remain separat
 Juniper, Scout and Forge retain their original credentials and background settings.
 The same acceptance suite passed with Bot deployed in Kubernetes against the Docker
 Workspace, with CNPG/Barman, verified database TLS and enforced network denial. This
-qualifies that hybrid topology. See Bot's `docs/reference/app-family-qualification.md`
+qualifies that hybrid topology. See Bot's `docs/reference/app-federation-qualification.md`
 for receipts and limits.
 
 Workspace's production Compose smoke passed again under umask 077, including TLS,
@@ -961,7 +961,7 @@ assignment is saved. Directory synchronization exposed a local recovery email
 collision; the qualified Bot fix creates a separate subject-bound identity, with
 hosted deployment and browser sign-in still pending. The separate isolated application/object
 recovery checkpoint and its remaining limits are recorded in the
-[hosted operations runbook](../runbooks/2026-10-17-hosted-family-operations.md#isolated-recovery-checkpoint--2026-10-19).
+[hosted operations runbook](../runbooks/2026-10-17-hosted-federation-operations.md#isolated-recovery-checkpoint--2026-10-19).
 
 Still open: the hosted real-model message→Work→reply pilot, generated-file output,
 PDF/image interpretation, continued work and specialist handoffs, two-human/two-bot

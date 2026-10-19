@@ -13,8 +13,8 @@
     "apps/helix": {
       "entry": [
         "src/index.ts",
-        "src/platform/backup/family-worker.ts",
-        "src/platform/backup/family-backup-tool.ts",
+        "src/platform/backup/federation-worker.ts",
+        "src/platform/backup/federation-backup-tool.ts",
       ],
     },
     "apps/web": {

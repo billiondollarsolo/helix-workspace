@@ -1,8 +1,8 @@
 import { z } from "zod";
 import { coercePositiveInt, optionalString, optionalUrl } from "./common.js";
 export const authEnv = {
-  HELIX_FAMILY_IDENTITY_ENABLED: optionalString.pipe(z.enum(["true", "false"]).optional()),
-  HELIX_FAMILY_ALLOW_PRIVATE_NETWORK: optionalString.pipe(z.enum(["true", "false"]).optional()),
+  HELIX_FEDERATION_IDENTITY_ENABLED: optionalString.pipe(z.enum(["true", "false"]).optional()),
+  HELIX_FEDERATION_ALLOW_PRIVATE_NETWORK: optionalString.pipe(z.enum(["true", "false"]).optional()),
   HELIX_BOOTSTRAP_ADMIN_ENABLED: optionalString.pipe(z.enum(["true", "false"]).optional()),
   HELIX_BOOTSTRAP_ADMIN_EMAIL: optionalString,
   HELIX_BOOTSTRAP_ADMIN_NAME: optionalString,

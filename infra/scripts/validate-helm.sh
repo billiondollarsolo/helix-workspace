@@ -107,12 +107,12 @@ render observability --set monitoring.prometheusRule.enabled=true
   --set-string fips.imageDigest="$VALIDATION_DIGEST" \
   --set-string cloudnativepg.image.digest="$CNPG_VALIDATION_DIGEST" \
   -f "$CHART_DIR/values-enterprise.yaml" --is-upgrade >"$WORK_DIR/enterprise-upgrade.yaml"
-render family-generated --set familyIdentity.enabled=true --set bootstrapAdmin.enabled=true --set-string bootstrapAdmin.email=recovery@example.com
-render family-supplied --set familyIdentity.enabled=true --set bootstrapAdmin.enabled=true --set-string bootstrapAdmin.email=recovery@example.com --set-string bootstrapAdmin.existingSecret.name=initial-admin
-assert_contains "$WORK_DIR/family-generated.yaml" 'HELIX_FAMILY_IDENTITY_ENABLED' 'family provider must be configurable'
-assert_contains "$WORK_DIR/family-generated.yaml" 'helm.sh/resource-policy: keep' 'generated bootstrap state must survive release replacement'
-assert_contains "$WORK_DIR/family-supplied.yaml" 'secretName: "initial-admin"' 'supplied bootstrap passwords must use existing Secrets'
-assert_not_contains "$WORK_DIR/family-supplied.yaml" 'kind: ClusterRole' 'bootstrap must not add cluster secret privileges'
+render federation-generated --set federationIdentity.enabled=true --set bootstrapAdmin.enabled=true --set-string bootstrapAdmin.email=recovery@example.com
+render federation-supplied --set federationIdentity.enabled=true --set bootstrapAdmin.enabled=true --set-string bootstrapAdmin.email=recovery@example.com --set-string bootstrapAdmin.existingSecret.name=initial-admin
+assert_contains "$WORK_DIR/federation-generated.yaml" 'HELIX_FEDERATION_IDENTITY_ENABLED' 'federation provider must be configurable'
+assert_contains "$WORK_DIR/federation-generated.yaml" 'helm.sh/resource-policy: keep' 'generated bootstrap state must survive release replacement'
+assert_contains "$WORK_DIR/federation-supplied.yaml" 'secretName: "initial-admin"' 'supplied bootstrap passwords must use existing Secrets'
+assert_not_contains "$WORK_DIR/federation-supplied.yaml" 'kind: ClusterRole' 'bootstrap must not add cluster secret privileges'
 render cnpg-recovery -f "$CHART_DIR/values-enterprise.yaml" \
   --set cloudnativepg.bootstrap.recovery.enabled=true \
   --set-string 'cloudnativepg.recovery.externalClusters[0].name=helix-postgres-backup' \

@@ -1,4 +1,4 @@
-import { familyProviderPlugins, createFamilyClientManager } from "./family-provider.js";
+import { federationProviderPlugins, createFederationClientManager } from "./federation-provider.js";
 import { passkey } from "@better-auth/passkey";
 import { env } from "../../config/env.js";
 import { resolvePostgresSsl } from "../../config/postgres-connection.js";
@@ -320,7 +320,7 @@ class BetterAuthApiSessionVerifier implements BetterAuthSessionVerifier {
 }
 
 export interface BetterAuthRuntimeConfig {
-  readonly familyIdentity?: {
+  readonly federationIdentity?: {
     readonly checkSession: (userId: string, headers: Headers) => Promise<boolean>;
     readonly claims: (
       userId: string,
@@ -360,7 +360,7 @@ export interface BetterAuthRuntimeConfig {
 }
 
 export interface BetterAuthRuntime {
-  readonly familyClients:
+  readonly federationClients:
     | {
         discovery(): Promise<Record<string, unknown>>;
         create(
@@ -386,9 +386,9 @@ export function createBetterAuthRuntime(config: BetterAuthRuntimeConfig): Better
   const sendPasswordReset = config.sendPasswordReset;
   const emailMfa = config.externalEmailMfa;
   const cookiePolicy = sessionCookiePolicyForBaseUrl(config.baseUrl);
-  const familyClientMutation = new AsyncLocalStorage<boolean>();
+  const federationClientMutation = new AsyncLocalStorage<boolean>();
   const auth = betterAuth({
-    basePath: config.familyIdentity === undefined ? "/api/auth" : "/v1/api/auth",
+    basePath: config.federationIdentity === undefined ? "/api/auth" : "/v1/api/auth",
     database: pool,
     secrets: [{ version: 1, value: config.secret }],
     baseURL: config.baseUrl,
@@ -441,9 +441,9 @@ export function createBetterAuthRuntime(config: BetterAuthRuntimeConfig): Better
       "/sso/verify-domain",
     ],
     plugins: [
-      ...(config.familyIdentity === undefined
+      ...(config.federationIdentity === undefined
         ? []
-        : familyProviderPlugins(config.familyIdentity, familyClientMutation)),
+        : federationProviderPlugins(config.federationIdentity, federationClientMutation)),
       ...(emailMfa === undefined ? [] : [emailMfa.deliveryPlugin()]),
       twoFactor({
         issuer: "Helix",
@@ -524,12 +524,12 @@ export function createBetterAuthRuntime(config: BetterAuthRuntimeConfig): Better
     },
   });
   return {
-    familyClients:
-      config.familyIdentity === undefined
+    federationClients:
+      config.federationIdentity === undefined
         ? undefined
-        : createFamilyClientManager(auth.api, pool, familyClientMutation),
+        : createFederationClientManager(auth.api, pool, federationClientMutation),
     auth:
-      config.familyIdentity === undefined
+      config.federationIdentity === undefined
         ? auth
         : {
             api: auth.api,

@@ -13,7 +13,7 @@ import {
   signInWithOidc,
   signOut,
 } from "./auth";
-import { familyAuthorizationQuery } from "./family-auth";
+import { federationAuthorizationQuery } from "./federation-auth";
 import { settleSecondFactorStepUp, subscribeSecondFactorStepUp } from "./second-factor-step-up";
 
 describe("web auth helpers", () => {
@@ -28,12 +28,12 @@ describe("web auth helpers", () => {
 
   it("preserves only provider-declared signed authorization fields", () => {
     expect(
-      familyAuthorizationQuery(
+      federationAuthorizationQuery(
         "?client_id=app&ba_param=client_id&sig=proof&returnTo=https://evil.test&extra=ignored",
       ),
     ).toBe("client_id=app&ba_param=client_id&sig=proof");
-    expect(familyAuthorizationQuery("?client_id=app&ba_param=client_id")).toBeUndefined();
-    expect(familyAuthorizationQuery("?sig=proof")).toBeUndefined();
+    expect(federationAuthorizationQuery("?client_id=app&ba_param=client_id")).toBeUndefined();
+    expect(federationAuthorizationQuery("?sig=proof")).toBeUndefined();
   });
 
   it("keeps login return paths local and prevents login redirect loops", () => {

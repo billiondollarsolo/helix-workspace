@@ -86,22 +86,24 @@ operation IDs and independent key custody rather than adding another orchestrato
 Disconnect reviews the affected capabilities and managed access; it preserves app
 data and independent recovery. Stale directory authority cannot restore revoked access.
 
-## Terminology and compatibility
+## Terminology and cutover
 
 Use **federation**, **federated apps**, **Connect to Workspace** and **Federation
 settings** in product copy. Use **Federated backups** and **Federation recovery set**
 for the optional recovery capability. Retire “family” as the product grouping name.
 
-Existing `family` API paths, database identifiers, protocol formats, credentials,
-audit event identifiers and persisted recovery artifacts remain compatible. Change
-visible labels independently. Any future wire rename needs a versioned migration;
-renaming labels must not re-pair apps, rotate keys or change access. Historical
-evidence and filename/link targets retain their original identifiers.
+Federation is the canonical name in routes, configuration, database schema, worker
+protocols, code and documentation. This is a greenfield product used by its owners;
+provide no old-name aliases, redirects, dual configuration keys or compatibility
+layers. Existing development data is converted once during a coordinated cutover.
+Keep historical recovery evidence intact and label the source revision needed to
+restore it. New backups and fresh installations use federation names exclusively.
 
 ## Delivery stages for Workspace and Bot
 
 1. **Terminology and baseline:** replace current management headings, navigation,
-   recovery copy and active guide terminology; retain working routes and contracts.
+   recovery copy and active guide terminology. Rename the integration in code, routes,
+   schema, configuration and worker protocols through one coordinated cutover.
 2. **Management structure:** align the administration entry points, organization
    context, navigation patterns and common form/table behavior. Give Bot a clear
    Federation destination instead of embedding its connection within Single sign-on.
@@ -115,7 +117,7 @@ evidence and filename/link targets retain their original identifiers.
 Relevant existing surfaces are Workspace's admin navigation, application-pairing
 and backup sections, and Bot's settings shell, member management and Workspace
 connection view. Continue the [Bot integration ledger](../../../helix-bot/docs/plans/helix-bot-workspace-integration.md)
-for dated qualification; the earlier [management plan](../../../helix-bot/docs/plans/2026-10-17-app-family-management.md)
+for dated qualification; the earlier [management plan](../../../helix-bot/docs/plans/2026-10-17-app-federation-management.md)
 retains recovery implementation history.
 
 Each stage qualifies standalone and federated behavior, existing deep links,

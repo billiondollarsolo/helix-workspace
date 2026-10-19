@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { z } from "zod";
 import { beforeAll, afterAll, describe, expect, it } from "vitest";
@@ -99,6 +99,10 @@ describe.skipIf(!adminUrl || !appUrl)("bot account approval with runtime RLS", (
     expect(first.actorId).toBeNull();
     expect(first.status).toBe("pending");
     expect(JSON.stringify(first)).not.toContain(input.apiKeyHash);
+    expect(first.keyFingerprint).toBe(createHash("sha256").update(input.apiKeyHash).digest("hex"));
+    expect((await as(setup, () => store.get(setup, first.id))).keyFingerprint).toBe(
+      first.keyFingerprint,
+    );
     expect(
       (await admin`select id from agent_credentials where api_key_hash=${input.apiKeyHash}`).length,
     ).toBe(0);

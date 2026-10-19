@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Actor } from "@helix/sdk-types";
 import type {
   BotAccountRequestInput,
@@ -57,6 +58,7 @@ export function requestView(row: RequestRow): BotAccountRequest {
     purpose: row.purpose,
     requestedEmail: row.requested_email,
     requestedScopes: row.requested_scopes,
+    keyFingerprint: createHash("sha256").update(row.api_key_hash).digest("hex"),
     status:
       row.status === "pending" && row.expires_at.getTime() <= Date.now() ? "expired" : row.status,
     actorId: row.bot_actor_id,

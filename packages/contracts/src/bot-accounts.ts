@@ -45,6 +45,8 @@ export interface BotAccountRequest {
   purpose: string;
   requestedEmail: string | null;
   requestedScopes: readonly string[];
+  /** Public proof of the requested key, never the credential hash itself. */
+  keyFingerprint?: string;
   status: "pending" | "approved" | "rejected" | "expired";
   actorId: string | null;
   credentialId: string | null;

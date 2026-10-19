@@ -1003,3 +1003,19 @@ are the current recovery evidence. See the Bot
 [integration ledger](../../../helix-bot/docs/plans/helix-bot-workspace-integration.md)
 for exact releases, hashes and remaining generated-output, PDF/image, specialist,
 onboarding, productivity, Calendar/SMTP and consented Meet acceptance work.
+
+### Original-key proof for installation credential rotation — 2026-10-19
+
+Account-request views now include optional `keyFingerprint`: SHA-256 of the
+original submitted API-key hash. The credential hash itself remains absent from
+request views. Existing requester/admin authorization and tenant isolation are
+unchanged. This lets Bot verify that status recovered with a rotated installation
+credential still belongs to the original saved bot key, without a replacement key
+or another request. Older clients can ignore the optional field.
+
+Eight real PostgreSQL bot-account cases passed with runtime RLS, including stable
+fingerprints and existing cross-installation/tenant denial. All required Workspace
+format/type/lint/test/build/boundary checks passed: 5,733 ordinary tests and 447
+gated skips. Bot is separately qualifying explicit status-only background grants
+and owner-confirmed rotation recovery. The field alone grants no background
+execution or account activation.

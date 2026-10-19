@@ -25,20 +25,52 @@ const manifest = {
 function fixture() {
   const request = vi.fn(async () => ({ status: "pending", actorId: null, credentialId: null }));
   const approve = vi.fn();
+  const listRequests = vi.fn(async () => []);
   const registry = createToolRegistry({
     auditSink: { append: vi.fn(async () => undefined) },
     confirmationDefaults: tierDefaults.enterprise,
     confirmationGate: new InMemoryConfirmationGate(new InMemoryPendingActionStore()),
   });
   for (const tool of createBotAccountTools(
-    { request, approve } as unknown as BotAccountStore,
+    { request, approve, listRequests } as unknown as BotAccountStore,
     {} as BotWorkspaceReader,
   ))
     registry.register(tool);
-  return { registry, request, approve };
+  return { registry, request, approve, listRequests };
 }
 
 describe("trusted installation enrollment", () => {
+  it("advertises and validates an optional exact external bot filter", async () => {
+    const f = fixture();
+    const tool = f.registry.get("agent.account.requests.list");
+    expect(tool?.inputSchema.toJsonSchema()).toMatchObject({
+      properties: { externalBotId: { type: "string", minLength: 1, maxLength: 200 } },
+      additionalProperties: false,
+    });
+    for (const input of [{}, { externalBotId: "juniper" }]) {
+      expect(
+        await f.registry.invoke("agent.account.requests.list", input, {
+          actor,
+          credentialId: "installation-credential",
+          enforceConfirmation: true,
+        }),
+      ).toMatchObject({ ok: true, output: { requests: [] } });
+      expect(f.listRequests).toHaveBeenLastCalledWith(actor, input);
+    }
+    for (const input of [
+      { externalBotId: "" },
+      { externalBotId: "x".repeat(201) },
+      { actorId: actor.id },
+    ])
+      expect(
+        await f.registry.invoke("agent.account.requests.list", input, {
+          actor,
+          credentialId: "installation-credential",
+          enforceConfirmation: true,
+        }),
+      ).toMatchObject({ ok: false });
+    expect(f.listRequests).toHaveBeenCalledTimes(2);
+  });
   it.each(["rest", "mcp"] as const)(
     "submits requests over %s without approving the account, even at enterprise tier",
     async (requestChannel) => {

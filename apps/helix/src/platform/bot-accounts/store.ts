@@ -150,12 +150,17 @@ export class BotAccountStore {
       },
     );
   }
-  async listRequests(actor: Actor): Promise<BotAccountRequest[]> {
+  async listRequests(
+    actor: Actor,
+    input: { externalBotId?: string | undefined } = {},
+  ): Promise<BotAccountRequest[]> {
     const all = actor.type === "user" && canReadAdminConsole(actor, "admin.agents");
     const rows = await this.sql<
       RequestRow[]
     >`select * from bot_account_requests where org_id=${actor.orgId}
-      and (${all} or requester_actor_id=${actor.id}) order by created_at desc limit 100`;
+      and (${all} or requester_actor_id=${actor.id})
+      and (${input.externalBotId ?? null}::text is null or external_bot_id=${input.externalBotId ?? null})
+      order by created_at desc limit 100`;
     return rows.map(requestView);
   }
   async get(actor: Actor, id: string): Promise<BotAccountRequest> {

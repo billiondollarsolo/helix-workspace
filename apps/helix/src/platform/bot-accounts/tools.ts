@@ -7,7 +7,6 @@ import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import type { BotAccountStore } from "./store.js";
 import type { BotWorkspaceReader } from "./workspace.js";
 const json = { type: "object", additionalProperties: true } as const;
-const empty = z.object({}).strict();
 const output = zodToolSchema(z.unknown(), json);
 export function createBotAccountTools(
   store: BotAccountStore,
@@ -46,12 +45,17 @@ export function createBotAccountTools(
     defineTool({
       id: "agent.account.requests.list",
       description:
-        "List your account requests; human administrators can review the workspace queue. Never returns credential material.",
+        "List your newest 100 account requests, optionally matching one exact externalBotId to recover an older request. Human administrators can review the workspace queue. Never returns credential material.",
       permission: "platform.read",
       sideEffects: "read",
-      inputSchema: zodToolSchema(empty, json),
+      inputSchema: zodToolSchema(
+        z
+          .object({ externalBotId: botAccountRequestSchema.shape.externalBotId.optional() })
+          .strict(),
+        json,
+      ),
       outputSchema: output,
-      handler: async (_input, ctx) => ({ requests: await store.listRequests(ctx.actor) }),
+      handler: async (input, ctx) => ({ requests: await store.listRequests(ctx.actor, input) }),
     }),
     defineTool({
       id: "agent.account.request.get",

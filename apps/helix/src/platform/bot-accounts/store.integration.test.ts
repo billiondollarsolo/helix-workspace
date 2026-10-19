@@ -108,6 +108,34 @@ describe.skipIf(!adminUrl || !appUrl)("bot account approval with runtime RLS", (
       as(setup, () => store.request(setup, { ...input, displayName: "Changed" })),
     ).rejects.toThrow("different request");
   });
+  it("finds an older exact request outside the newest 100 without crossing installation or tenant scope", async () => {
+    const input = manifest();
+    const target = await as(setup, () => store.request(setup, input));
+    await admin`update bot_account_requests set created_at=now()-interval '3 days',expires_at=now()+interval '4 days' where org_id=${orgId} and id=${target.id}`;
+    await admin`insert into bot_account_requests(org_id,requester_actor_id,external_bot_id,display_name,purpose,requested_scopes,api_key_hash,created_at,expires_at)
+      select ${orgId},${setup.id},gen_random_uuid()::text,'Newer request','Historical request',array['platform.read'],lpad(n::text,64,'a'),now()-interval '2 days',now()+interval '5 days'
+      from generate_series(1,100) n`;
+    const secondSetup = { ...setup, id: randomUUID() };
+    await admin`insert into actors(id,org_id,type,display_name,scopes) values(${secondSetup.id},${orgId},'service_account','Other installation',${admin.array([...(setup.scopes ?? [])])})`;
+    const otherRequest = await as(secondSetup, () =>
+      store.request(secondSetup, {
+        ...manifest(),
+        externalBotId: input.externalBotId,
+      }),
+    );
+    const latest = await as(setup, () => store.listRequests(setup));
+    expect(latest).toHaveLength(100);
+    expect(latest.some((row) => row.id === target.id)).toBe(false);
+    const filter = { externalBotId: input.externalBotId };
+    expect(await as(setup, () => store.listRequests(setup, filter))).toMatchObject([
+      { id: target.id },
+    ]);
+    expect(await as(secondSetup, () => store.listRequests(secondSetup, filter))).toMatchObject([
+      { id: otherRequest.id },
+    ]);
+    expect(await as(observer, () => store.listRequests(observer, filter))).toEqual([]);
+    expect(await as(other, () => store.listRequests(other, filter))).toEqual([]);
+  });
   it("requires a human admin and creates exactly one account and credential under concurrent approval", async () => {
     const input = manifest();
     const request = await as(setup, () => store.request(setup, input));

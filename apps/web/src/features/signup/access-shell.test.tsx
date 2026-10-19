@@ -298,16 +298,20 @@ describe("signup invite shell", () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
       });
     };
-    const email = container.querySelector<HTMLInputElement>('input[type="email"]');
-    if (email === null) throw new Error("Email field was not rendered.");
-    act(() => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(
-        email,
-        "ada@example.com",
-      );
-      email.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    await submitForm();
+    for (const [name, value] of [
+      ["email", "ada@example.com"],
+      ["password", "test-password"],
+    ]) {
+      const input = container.querySelector<HTMLInputElement>(`input[name="${name}"]`);
+      if (input === null) throw new Error(`${name} field was not rendered.`);
+      act(() => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(
+          input,
+          value,
+        );
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    }
     await submitForm();
 
     expect(fetchImpl).toHaveBeenCalledWith(

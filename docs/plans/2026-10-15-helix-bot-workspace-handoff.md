@@ -9,7 +9,7 @@ background routines, shared projects and coding workflows. Coding is one workloa
 
 ### Hosted integration checkpoint (2026-10-19)
 
-The current hosted releases are Bot `a103f68` (schema 8), Workspace API `cab9432` and
+The current hosted releases are Bot `351802c` (schema 8), Workspace API `426025a` and
 Workspace web `8afe194`. The real Codex pilot passed private Chat, internal mail,
 source attachment reading and Work source/result inspection through the normal UI.
 An additional real Codex pilot continued an explicit Chat thread reply on the
@@ -33,8 +33,8 @@ Owner is preserved. Helix's dedicated account expires 2026-11-18; its pilot
 background grant expires 2026-10-20 05:00 UTC, at ten turns/day, with source
 attachments enabled and skills and bot-to-bot replies disabled.
 
-The latest required Workspace checks passed: 5,732 ordinary-suite tests with 446
-environment-gated skips, plus 45 targeted PostgreSQL tests and 11 browser/a11y
+The latest required Workspace checks passed: 5,733 ordinary-suite tests with 447
+environment-gated skips, plus 46 targeted PostgreSQL tests and 11 browser/a11y
 cases. Bot passed 788 tests with one optional skip and its required proof checks.
 Its updated account and request-history browser checks passed on desktop and phone.
 Encrypted off-server operator and database checkpoints include the active release
@@ -65,6 +65,22 @@ The API-only release requires no new migration and retains the existing web imag
 Local Workspace's missing migrations 0249/0250 were applied after an authenticated
 encrypted database/configuration checkpoint. Its restarted source API is ready on
 schema 251; local Bot remains ready with its provider and executor configured.
+
+Workspace's account-request list now accepts an optional exact `externalBotId`
+filter under the existing installation/tenant rules. Bot detects it through MCP
+discovery to recover transport-confirmed requests older than the newest 100 rows,
+without repeating a pending write. Legacy discovery keeps its bounded fallback.
+The real database test seeds 100 newer requests and another installation with the
+same external identity; scope isolation, schema validation and Bot's HTTP recovery
+tests pass. A read-only hosted MCP check found the existing approved Helix request,
+and the managed Preview session survived rollout. This does not implement unattended
+polling or setup-key rotation recovery.
+
+Seven additional Calendar database cases passed for default-calendar concurrency,
+management, attendee/RSVP revocation and controlled invitation import/update/cancel.
+The invitation cases use the runtime RLS role; the older management and attendee
+fixtures use the administrator test connection. External account synchronization,
+SMTP arrival and complete Calendar timezone acceptance remain separate.
 
 Generated file results, transfer approval continuation, scheduled follow-through,
 PDF/image interpretation and specialist execution remain the next Bot work.

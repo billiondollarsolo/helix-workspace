@@ -7,6 +7,13 @@ export interface Bot {
   email: string | null;
   disabled: boolean;
 }
+export interface BotObserver {
+  actorId: string;
+  displayName: string;
+  email: string | null;
+  disabled: boolean;
+  grantedAt: string;
+}
 export interface WorkspaceData {
   threads?: MailThreadRow[];
   total?: number;
@@ -23,6 +30,7 @@ export interface WorkspaceData {
   };
   entries?: { id: string; type: string; name: string; byteSize?: number; available?: boolean }[];
   nextCursor?: string | null;
+  hasMore?: boolean;
   rooms?: { id: string; subject: string | null; kind: string }[];
   messages?: { id: string; body: string; sentAt: string }[];
   activity?: { id: string; verb: string; created_at: string }[];
@@ -34,10 +42,10 @@ export const botRequestsQueryOptions = () =>
     queryFn: () => callTool<{ requests: BotAccountRequest[] }>("agent.account.requests.list", {}),
     refetchInterval: 15000,
   });
-export const botsQueryOptions = () =>
+export const botsQueryOptions = (input: { botActorId?: string; offset?: number } = {}) =>
   queryOptions({
-    queryKey: ["bots", "visible"],
-    queryFn: () => callTool<{ bots: Bot[] }>("agent.workspace.list", {}),
+    queryKey: ["bots", "visible", input],
+    queryFn: () => callTool<{ bots: Bot[]; hasMore: boolean }>("agent.workspace.list", input),
     refetchInterval: 30000,
   });
 export const botWorkspaceQueryOptions = (input: {
@@ -51,5 +59,16 @@ export const botWorkspaceQueryOptions = (input: {
   queryOptions({
     queryKey: ["bots", "workspace", input],
     queryFn: () => callTool<WorkspaceData>("agent.workspace.read", input),
+    refetchInterval: 30000,
+  });
+export const botObserversQueryOptions = (botActorId: string | null, offset: number) =>
+  queryOptions({
+    queryKey: ["bots", "observers", botActorId, offset],
+    enabled: botActorId !== null,
+    queryFn: () =>
+      callTool<{ observers: BotObserver[]; hasMore: boolean }>("agent.workspace.access.list", {
+        botActorId,
+        offset,
+      }),
     refetchInterval: 30000,
   });

@@ -18,9 +18,11 @@ export function PendingActionReview({ pendingId }: { readonly pendingId: string 
     onSuccess: (_result, choice) => {
       setDecision(choice === "approve" ? "approved" : "cancelled");
       void client.invalidateQueries({ queryKey });
+      void client.invalidateQueries({ queryKey: ["pending-actions"] });
     },
     onError: () => {
       void client.invalidateQueries({ queryKey });
+      void client.invalidateQueries({ queryKey: ["pending-actions"] });
     },
   });
   const data = query.data;

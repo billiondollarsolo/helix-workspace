@@ -48,6 +48,7 @@ export class LiveStore {
             and helix_chat_message_visible_to(m.org_id,${actor.id},m.thread_id,m.sent_at)
             and not exists(select 1 from helix_chat_presence_blocked_actor_ids(e.org_id,${actor.id},array[m.actor_id])))
           when e.type='mail.received' then exists(select 1 from messages m where m.org_id=e.org_id and m.id=e.resource_id and m.deleted_at is null and helix_can_read_mail_message(m.org_id,m.id))
+          when e.type='mail.updated' then e.resource_id=${actor.id}
           when e.type like 'approval.%' then exists(select 1 from pending_actions p where p.org_id=e.org_id and p.id=e.resource_id and (${actor.id}=p.actor_id or ${actor.id}=p.approval_owner_actor_id))
           else exists(select 1 from notifications n where n.org_id=e.org_id and n.actor_id=${actor.id} and n.id=e.resource_id)
         end as visible
@@ -61,7 +62,7 @@ export class LiveStore {
               actor,
               r.type.startsWith("chat.")
                 ? "chat.read"
-                : r.type === "mail.received"
+                : r.type.startsWith("mail.")
                   ? "mail.read"
                   : "notifications.read",
             ),

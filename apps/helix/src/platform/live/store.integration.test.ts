@@ -180,6 +180,58 @@ describe.skipIf(skipUnlessLiveDatabase("Live inbox and presence"))(
         { connected: false, state: "offline", availability: "available", text: "" },
       ]);
     });
+    it("projects mailbox changes and read notifications only to their current actor", async () => {
+      const before = (await store.list(actor, Number.MAX_SAFE_INTEGER)).latestCursor;
+      const thread = randomUUID();
+      await admin`insert into threads(id,org_id,kind,subject,created_by_actor_id) values(${thread},${orgId},'mail','Mailbox update',${actor.id})`;
+      await admin`insert into mail_thread_state(org_id,actor_id,thread_id) values(${orgId},${actor.id},${thread})`;
+      await admin`update mail_thread_state set read_at=now() where actor_id=${actor.id} and thread_id=${thread}`;
+      const notificationId = await notification();
+      await admin`update notifications set read_at=now() where id=${notificationId}`;
+      const page = await store.list(actor, before);
+      expect(page.events.filter((item) => item.type === "mail.updated")).toHaveLength(2);
+      expect(page.events.filter((item) => item.resourceId === notificationId)).toHaveLength(2);
+      expect(
+        page.events
+          .filter((item) => item.type === "mail.updated")
+          .every((item) => item.resourceId === actor.id && item.parentId === null),
+      ).toBe(true);
+      expect(
+        (await store.list({ ...actor, scopes: ["notifications.read"] }, before)).events.some(
+          (item) => item.type === "mail.updated",
+        ),
+      ).toBe(false);
+      expect((await store.list(other, 0)).events.some((item) => item.resourceId === actor.id)).toBe(
+        false,
+      );
+      await admin`delete from mail_thread_state where actor_id=${actor.id} and thread_id=${thread}`;
+      expect((await store.list(actor, page.cursor)).events).toMatchObject([
+        { type: "mail.updated", resourceId: actor.id },
+      ]);
+    });
+    it("starts browser streams at the current head and emits content-free configuration refreshes", async () => {
+      const server = Fastify();
+      const live = new LiveRoutes(app, async () => ({ actor }));
+      await live.install(server);
+      const address = await server.listen({ port: 0, host: "127.0.0.1" });
+      const response = await fetch(`${address}/api/events/stream?tail=1`, {
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!response.body) throw new Error("Missing browser stream");
+      const reader = response.body.getReader();
+      try {
+        expect(new TextDecoder().decode((await reader.read()).value)).toContain(": connected");
+        await admin`select pg_notify('helix_workspace_config','updated')`;
+        let frames = "";
+        while (!frames.includes("event: refresh"))
+          frames += new TextDecoder().decode((await reader.read()).value);
+        expect(frames).not.toContain("event: events");
+        expect(frames).toContain("data: {}");
+      } finally {
+        await reader.cancel().catch(() => undefined);
+        await server.close();
+      }
+    });
     it("rejects anonymous presence access before touching actor data", async () => {
       const server = Fastify();
       const live = new LiveRoutes(app, async () => ({ actor: { ...actor, id: "anonymous" } }));
@@ -335,6 +387,7 @@ describe.skipIf(skipUnlessLiveDatabase("Live inbox and presence"))(
       await admin`update pending_actions set status='cancelled' where id=${action}`;
       const page = await store.list(actor, cursor);
       expect(page.events.map((event) => event.type)).toEqual([
+        "mail.updated",
         "mail.received",
         "approval.requested",
         "approval.updated",

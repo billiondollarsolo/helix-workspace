@@ -266,6 +266,7 @@ export interface RuntimeToolRegistry {
     pendingId: string,
     options: PendingActionReadOptions,
   ): Promise<PendingActionReadResult>;
+  listPendingActions: ConfirmationGate["list"];
   cancelPending(
     pendingId: string,
     options: PendingToolActionOptions,
@@ -956,6 +957,9 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
           : { error: result.ok ? "Pending action did not execute." : result.error }),
       });
       return result;
+    },
+    async listPendingActions(input) {
+      return options.confirmationGate?.list(input) ?? { items: [], total: 0 };
     },
     async getPendingAction(pendingId, statusOptions) {
       return readPendingAction(options.confirmationGate, pendingId, statusOptions);

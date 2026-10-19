@@ -1,5 +1,9 @@
 import type { Actor, ToolContext, ToolDefinition } from "@helix/sdk-types";
-import { pendingMailReviewResultSchema, pendingActionReviewResultSchema } from "@helix/contracts";
+import {
+  pendingMailReviewResultSchema,
+  pendingActionReviewResultSchema,
+  pendingActionQueueSchema,
+} from "@helix/contracts";
 import fastify from "fastify";
 import { describe, expect, it, vi } from "vitest";
 import { InMemoryOAuthClientStore } from "../platform/auth/oauth.js";
@@ -74,6 +78,79 @@ async function setup(toolId = "mail.send") {
   registerPendingActionMutationRoutes(app, { tools, tokenStore: store });
   return { app, tools, id: queued.pending.id, handler };
 }
+
+describe("human action queue", () => {
+  it("lists only the human's actionable requests without message bodies, inputs or credential metadata", async () => {
+    const { app, id, handler } = await setup();
+    try {
+      const response = await app.inject({
+        url: "/actions",
+        headers: { authorization: "Bearer owner" },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(pendingActionQueueSchema.parse(response.json())).toMatchObject({
+        total: 1,
+        items: [{ id }],
+      });
+      for (const secret of ["Exact email body", "hidden", "requesterCredentialId", "inputHash"])
+        expect(response.body).not.toContain(secret);
+      for (const token of ["outsider", "foreign"])
+        expect(
+          (
+            await app.inject({ url: "/actions", headers: { authorization: `Bearer ${token}` } })
+          ).json(),
+        ).toEqual({ total: 0, items: [] });
+      expect(
+        (await app.inject({ url: "/actions", headers: { authorization: "Bearer agent" } }))
+          .statusCode,
+      ).toBe(403);
+      expect(handler).not.toHaveBeenCalled();
+      await app.inject({
+        method: "POST",
+        url: `/api/tools/pending/${id}/cancel`,
+        headers: { authorization: "Bearer owner" },
+        payload: {},
+      });
+      expect(
+        (await app.inject({ url: "/actions", headers: { authorization: "Bearer owner" } })).json(),
+      ).toEqual({ total: 0, items: [] });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("counts all authorized requests, paginates and hides expired requests before the expiry worker runs", async () => {
+    const { app, tools, handler } = await setup("drive.rename");
+    try {
+      for (let index = 0; index < 51; index++)
+        await tools.invoke(
+          "drive.rename",
+          { objectId: `object-${String(index)}` },
+          { actor: agent, credentialOwnerActorId: owner.id, enforceConfirmation: true },
+        );
+      const first = (
+        await app.inject({ url: "/actions", headers: { authorization: "Bearer owner" } })
+      ).json<{ items: { id: string }[]; total: number }>();
+      const last = (
+        await app.inject({ url: "/actions?offset=50", headers: { authorization: "Bearer owner" } })
+      ).json<{ items: { id: string }[]; total: number }>();
+      expect(first.total).toBe(52);
+      expect(first.items).toHaveLength(50);
+      expect(last.total).toBe(52);
+      expect(last.items).toHaveLength(2);
+      expect(new Set([...first.items, ...last.items].map((item) => item.id)).size).toBe(52);
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(Date.now() + 11 * 60_000);
+      expect(
+        (await app.inject({ url: "/actions", headers: { authorization: "Bearer owner" } })).json(),
+      ).toEqual({ total: 0, items: [] });
+      expect(handler).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+      await app.close();
+    }
+  });
+});
 
 describe("human email review", () => {
   it("shows the exact stored message to its owner without executing or leaking metadata", async () => {

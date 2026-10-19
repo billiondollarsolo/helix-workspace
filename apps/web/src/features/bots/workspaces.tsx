@@ -5,9 +5,15 @@ import { FormPanel } from "@/components/ui/form-panel";
 import { AdminTable } from "@/features/admin/console/table";
 import { SettingsHeader } from "@/components/shell/settings-controls";
 import { botsQueryOptions, botWorkspaceQueryOptions, type Bot } from "./api";
-export function BotWorkspaces() {
-  const bots = useQuery(botsQueryOptions());
-  const [selected, setSelected] = useState<Bot | null>(null);
+import type { SettingsSectionProps } from "@/components/shell/settings-sections";
+export function BotWorkspaces({ tab, onTabChange, onNavigate }: SettingsSectionProps) {
+  const [botOffset, setBotOffset] = useState(0);
+  const bots = useQuery(botsQueryOptions({ offset: botOffset }));
+  const detail = useQuery({
+    ...botsQueryOptions(tab ? { botActorId: tab } : {}),
+    enabled: !!tab,
+  });
+  const selected = detail.error ? undefined : detail.data?.bots.find((bot) => bot.id === tab);
   return (
     <section className="admin-stack">
       <SettingsHeader
@@ -54,15 +60,33 @@ export function BotWorkspaces() {
             id: "open",
             header: "Workspace",
             cell: (bot) => (
-              <Button variant="outline" size="sm" onClick={() => setSelected(bot)}>
+              <Button variant="outline" size="sm" onClick={() => onTabChange(bot.id)}>
                 Inspect
               </Button>
             ),
           },
         ]}
       />
+      <div className="flex gap-2">
+        {botOffset > 0 ? (
+          <Button variant="outline" onClick={() => setBotOffset(Math.max(0, botOffset - 100))}>
+            Previous bots
+          </Button>
+        ) : null}
+        {bots.data?.hasMore ? (
+          <Button variant="outline" onClick={() => setBotOffset(botOffset + 100)}>
+            Next bots
+          </Button>
+        ) : null}
+      </div>
+      {tab && detail.isPending ? <p role="status">Loading bot…</p> : null}
+      {tab && !detail.isPending && !selected ? (
+        <p role="alert">
+          {detail.error?.message ?? "Bot workspace is unavailable or your access was revoked."}
+        </p>
+      ) : null}
       {selected ? (
-        <BotWorkspace key={selected.id} bot={selected} onClose={() => setSelected(null)} />
+        <BotWorkspace key={selected.id} bot={selected} onClose={() => onNavigate("bots")} />
       ) : null}
     </section>
   );
@@ -83,7 +107,7 @@ function BotWorkspace({ bot, onClose }: { readonly bot: Bot; readonly onClose: (
       ...(cursor ? { cursor } : {}),
     }),
   );
-  const data = query.data;
+  const data = query.error ? undefined : query.data;
   return (
     <FormPanel title={`${bot.displayName} · Workspace`} onClose={onClose}>
       <div className="admin-stack">
@@ -217,7 +241,12 @@ function BotWorkspace({ bot, onClose }: { readonly bot: Bot; readonly onClose: (
         ) : null}
         {data?.messages ? (
           <section aria-label="Bot chat messages">
-            <p className="type-caption">Latest 50 messages visible to this bot.</p>
+            <p className="type-caption">One page of up to 50 messages visible to this bot.</p>
+            {cursor ? (
+              <Button variant="outline" onClick={() => setCursor(undefined)}>
+                Latest messages
+              </Button>
+            ) : null}
             {data.messages.map((message) => (
               <article key={message.id} className="border-b border-border py-2">
                 <time className="type-caption">{new Date(message.sentAt).toLocaleString()}</time>
@@ -236,12 +265,12 @@ function BotWorkspace({ bot, onClose }: { readonly bot: Bot; readonly onClose: (
           </ul>
         ) : null}
         <div className="flex gap-2">
-          {offset > 0 ? (
+          {offset > 0 && !threadId && !roomId ? (
             <Button variant="outline" onClick={() => setOffset(Math.max(0, offset - 50))}>
               Previous page
             </Button>
           ) : null}
-          {(data?.total ?? 0) > offset + 50 || data?.activity?.length === 50 ? (
+          {(data?.total ?? 0) > offset + 50 || data?.activity?.length === 50 || data?.hasMore ? (
             <Button variant="outline" onClick={() => setOffset(offset + 50)}>
               Next page
             </Button>

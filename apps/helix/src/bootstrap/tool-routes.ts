@@ -1,4 +1,5 @@
 import { finishTenantRequestTransaction } from "../platform/tenancy/middleware.js";
+import { pendingActionQueueSchema } from "@helix/contracts";
 import { pendingActionLinks } from "../api/pending-action-links.js";
 import { redactToolInvokeResult } from "../platform/tools/sensitive-output.js";
 import { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
@@ -290,6 +291,25 @@ export function registerActionStatusRoutes(
   app: FastifyInstance,
   options: ActionStatusRoutesOptions,
 ): void {
+  app.get("/actions", async (request, reply) => {
+    const principal = await resolveRequestPrincipal(
+      request,
+      options.tokenStore,
+      options.sessionResolver,
+      options.credentialStore,
+    );
+    if (principal.actor.type !== "user")
+      return reply.code(403).send({ error: "Action review requires a signed-in person." });
+    const query = z
+      .object({
+        offset: z.coerce.number().int().min(0).max(1_000_000).default(0),
+        limit: z.coerce.number().int().min(1).max(50).default(50),
+      })
+      .parse(request.query);
+    return pendingActionQueueSchema.parse(
+      await options.tools.listPendingActions({ actor: principal.actor, ...query }),
+    );
+  });
   const actionStatusHandler = async (request: FastifyRequest, reply: FastifyReply) => {
     const params = pendingActionParamsSchema.parse(request.params);
     const principal = await resolveRequestPrincipal(

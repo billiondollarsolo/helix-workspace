@@ -27,7 +27,9 @@ import { MailDialogsHost } from "@/features/mail/settings";
 import { useEnabledApps } from "@/features/apps/use-enabled-apps";
 import { chatUnreadQueryOptions } from "@/features/chat/queries";
 import { mailFoldersQueryOptions } from "@/features/mail/queries";
-import { useMailRealtime } from "@/features/mail/use-mail-realtime";
+import { useWorkspaceRealtime } from "@/features/presence/workspace-realtime";
+import { ActionQueue } from "@/features/approvals/action-queue";
+import { pendingActionsQueryOptions } from "@/features/approvals/api";
 import {
   ShellOverlayContext,
   isSettingsSectionId,
@@ -40,6 +42,10 @@ export function AppShell() {
   const session = useQuery(sessionUserQueryOptions());
   const enabled = useEnabledApps();
   const signedIn = session.data != null;
+  const actions = useQuery({ ...pendingActionsQueryOptions(), enabled: signedIn });
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const closeActions = useCallback(() => setActionsOpen(false), []);
+  const actionTrigger = { total: actions.data?.total, onOpen: () => setActionsOpen(true) };
   useWorkspacePresence(signedIn);
   const mail = useQuery({
     ...mailFoldersQueryOptions(),
@@ -50,7 +56,7 @@ export function AppShell() {
     ...chatUnreadQueryOptions(),
     enabled: signedIn && enabled.isEnabled("chat"),
   });
-  useMailRealtime(signedIn && enabled.isEnabled("mail"));
+  useWorkspaceRealtime(signedIn);
   const unread = {
     mail: mail.data?.find((folder) => folder.id === "inbox")?.unread ?? 0,
     chat: chat.data?.totalUnread ?? 0,
@@ -134,13 +140,15 @@ export function AppShell() {
           launcherOpen={launcherOpen}
           onOpenLauncher={() => setLauncherOpen((open) => !open)}
           unread={unread}
+          actions={actionTrigger}
         >
           <AppLauncher open={launcherOpen} onClose={closeLauncher} />
         </Rail>
 
         <Outlet />
 
-        <BottomNav unread={unread} />
+        <BottomNav unread={unread} actions={actionTrigger} />
+        {actionsOpen ? <ActionQueue onClose={closeActions} /> : null}
 
         <NotificationsPanel open={notifOpen} onClose={() => setNotifOpen(false)} />
         <CommandPalette

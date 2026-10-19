@@ -19,6 +19,25 @@ pairing. No Workspace password was reset. Temporary operator sessions were retir
 Family identity is enabled, the apps are paired, and their backup workers are
 independently enrolled. Human assignments and bot resource grants remain explicit.
 
+### Human sign-in checkpoint — 2026-10-19
+
+The Workspace owner signs in as `mj@workspace.helixapps.si`. Bot's local recovery
+owner uses the same email but has its own password and session. Pairing does not
+copy passwords or adopt that local owner by email. The hosted Bot advertises
+**Sign in with Helix Workspace**; Workspace is the identity provider. The owner
+recovered Workspace access through a private, explicitly authorized reset page
+and signed in normally. Their Bot administrator assignment is saved. Directory
+synchronization exposed Bot's rejection of a matching local recovery email; the
+qualified fix creates a separate managed identity bound to the immutable subject.
+Deployment and the managed browser sign-in remain to be verified.
+
+The Workspace owner already has a password but had no verified external recovery
+email at this checkpoint. Password-reset delivery currently targets the sign-in
+address, which is the owner's Workspace mailbox. Do not assume that email recovery
+is usable while the owner cannot access that mailbox. The completed private reset
+restored access, but an independently controlled external recovery method is still
+unqualified.
+
 ## Operation and custody
 
 Open **Workspace → Admin → Family backups** for the two recovery targets.
@@ -98,3 +117,33 @@ rollback; database rollback still requires its matching preserved schema/data.
 See the [family recovery runbook](app-family-backups.md) for authority and unknown-job
 handling, and the [existing host runbook](hetzner-workspace-prestage.md) for encrypted
 mount and reboot recovery.
+
+## Isolated recovery checkpoint — 2026-10-19
+
+Off-server archives `8a801d2b-e9e0-4b89-85e6-2d7dda45b2c3` (Workspace) and
+`d0fff34f-9be2-4dc9-8ef8-501330a30f54` (Bot), captured on 2026-10-17, were
+authenticated, matched to their ciphertext/manifest receipts and checked against
+every recorded file digest before extraction. Independent custody keys stayed
+outside the repositories. Restored data uses separate disposable Docker volumes,
+the recorded PostgreSQL images and exact application images `9400401`/`623e698`.
+These are older snapshots, not backups of the subsequently connected model account.
+
+Both complete applications reached readiness using their recovered databases,
+keys and configuration. Workspace also recovered object storage and its KMS
+material. A temporary session created only inside the isolated copy downloaded
+an existing scanned owner file through the authenticated content route: 1,875,041
+bytes matched the recorded SHA-256. The same unauthenticated request was denied.
+The session was removed afterward. The paired application inventory was retained.
+
+The project `helix-full-restore-20261019` publishes no ports and uses only internal
+networks; no live data volumes are mounted. Outbound mail and SMTP receiving are
+disabled. Rebuilt caches are separate from recovered authoritative state. Private
+commands, manifests, logs and the generated isolation configuration are retained
+under `~/.local/share/helix-recovery/20261019/integration-completion/restore/`.
+
+This proves application startup and authenticated object recovery. It does not
+qualify restored managed identities, later credential rotations/revocations,
+current-schema upgrades, new-host ingress, host reboot or Kubernetes. Reconcile
+current identity and credential authority before allowing a restored copy to
+contact live peers. Hosted restore capabilities remain unenrolled; no restored
+volume was promoted or substituted for live state.

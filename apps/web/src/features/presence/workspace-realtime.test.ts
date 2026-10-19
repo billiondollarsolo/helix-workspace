@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useMailRealtime } from "./use-mail-realtime";
+import { useWorkspaceRealtime } from "./workspace-realtime";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
@@ -28,19 +28,34 @@ class FakeEventSource {
   close() {
     this.closed = true;
   }
-  emit(data: unknown) {
-    this.listeners.get("message")?.(
-      new MessageEvent("message", { data: typeof data === "string" ? data : JSON.stringify(data) }),
+  emit(data: unknown, type = "events") {
+    this.listeners.get(type)?.(
+      new MessageEvent(type, { data: typeof data === "string" ? data : JSON.stringify(data) }),
     );
   }
 }
 
 function Probe() {
-  useMailRealtime(true);
+  useWorkspaceRealtime(true);
   return null;
 }
 
-describe("useMailRealtime", () => {
+const page = (types: string[], cursor = types.length) => ({
+  events: types.map((type, index) => ({
+    id: `event-${index}`,
+    cursor: index + 1,
+    type,
+    resourceId: "00000000-0000-4000-8000-000000000001",
+    parentId: null,
+    createdAt: new Date().toISOString(),
+  })),
+  cursor,
+  latestCursor: cursor,
+  resetRequired: false,
+  hasMore: false,
+});
+
+describe("useWorkspaceRealtime", () => {
   let root: Root;
   let container: HTMLDivElement;
   let queryClient: QueryClient;
@@ -73,8 +88,8 @@ describe("useMailRealtime", () => {
     return current;
   }
 
-  it("subscribes to the mail stream with credentials and closes on unmount", () => {
-    expect(source().url).toBe("/v1/sse/mail");
+  it("subscribes once to the actor stream with credentials and closes on unmount", () => {
+    expect(source().url).toBe("/v1/api/events/stream?tail=1");
     expect(source().init).toEqual({ withCredentials: true });
     act(() => root.unmount());
     expect(source().closed).toBe(true);
@@ -82,8 +97,8 @@ describe("useMailRealtime", () => {
   });
 
   it("refreshes every mail query when mail arrives", () => {
-    source().emit({ type: "mail.received", threadId: "t1", orgId: "o1" });
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["mail"] });
+    source().emit(page(["mail.received", "mail.updated"]));
+    expect(invalidate).toHaveBeenCalledExactlyOnceWith({ queryKey: ["mail"] });
   });
 
   it("catches up after reconnection even when no new mail frame arrives", () => {
@@ -92,24 +107,47 @@ describe("useMailRealtime", () => {
     invalidate.mockClear();
     // Mail can arrive during a connection gap, without reaching this listener.
     connection.listeners.get("open")?.(new MessageEvent("open"));
-    expect(invalidate).toHaveBeenCalledOnce();
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["mail"] });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["chat"] });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["pending-actions"] });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["core-apps"] });
   });
 
-  it("refreshes the changed thread, the lists, folder counts and search on mail.updated", () => {
-    source().emit({ type: "mail.updated", threadId: "t-42", orgId: "o1" });
+  it("refreshes affected apps and approval states without writing or replacing drafts", () => {
+    source().emit(page(["chat.direct", "approval.requested", "notification", "approval.updated"]));
     const keys = invalidate.mock.calls.map(([filters]) => filters?.queryKey);
     expect(keys).toEqual([
-      ["mail", "thread", "t-42"],
-      ["mail", "threads"],
-      ["mail", "folders"],
-      ["mail", "search"],
+      ["chat"],
+      ["pending-actions"],
+      ["pending-action-review"],
+      ["notifications"],
+    ]);
+  });
+
+  it("ignores replayed cursors and recovers a retention gap using fresh reads", () => {
+    const initial = source();
+    initial.emit(page(["chat.message"]));
+    invalidate.mockClear();
+    initial.emit(page(["chat.message"]));
+    expect(invalidate).not.toHaveBeenCalled();
+    initial.emit({ ...page([], 500), resetRequired: true }, "reset");
+    expect(initial.closed).toBe(true);
+    expect(source().url).toBe("/v1/api/events/stream?after=500");
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["chat"] });
+  });
+
+  it("refreshes app availability on configuration hints", () => {
+    source().emit({}, "refresh");
+    expect(invalidate.mock.calls.map(([filters]) => filters?.queryKey)).toEqual([
+      ["core-apps"],
+      ["assistant"],
     ]);
   });
 
   it("ignores unknown and malformed frames", () => {
     source().emit({ type: "chat.message", threadId: "t1" });
     source().emit("not json");
+    source().emit(page(["unknown.permission"]));
     expect(invalidate).not.toHaveBeenCalled();
   });
 });

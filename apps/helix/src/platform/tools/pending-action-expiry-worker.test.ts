@@ -181,6 +181,7 @@ describe("PendingActionExpiryWorker", () => {
 
   it("reports errors via onError without throwing", async () => {
     const failingStore: PendingActionStore = {
+      listForApproval: vi.fn(),
       create: vi.fn(),
       get: vi.fn(),
       approve: vi.fn(),

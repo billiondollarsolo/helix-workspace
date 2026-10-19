@@ -480,16 +480,17 @@ Workspace Assistant access.
 These are shared registry tools; there is no separate enrollment REST service.
 Use `GET /v1/api/tools` or MCP discovery, then send the same validated input:
 
-| Tool ID                       | Input                                                                 | Required authority / result                                                                                 |
-| ----------------------------- | --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `agent.account.request`       | Manifest above                                                        | Setup `agent.accounts.request`; returns `{request}`                                                         |
-| `agent.account.requests.list` | `{}`                                                                  | `platform.read`; own requests, or tenant queue for a human admin; returns `{requests}` (up to 100)          |
-| `agent.account.request.get`   | `{requestId}`                                                         | Requesting principal or human admin; returns `{request}`                                                    |
-| `agent.account.approve`       | `{requestId, ownerActorId, scopes, email, expiresAt}`                 | Human admin with `admin.agents`, confirmation and authority to grant the chosen scopes; returns `{request}` |
-| `agent.account.reject`        | `{requestId, reason}`                                                 | Human admin with `admin.agents`; returns `{request}`                                                        |
-| `agent.workspace.list`        | `{}`                                                                  | Authorized human with `platform.read`; returns `{bots}` (up to 100)                                         |
-| `agent.workspace.access.set`  | `{botActorId, observerActorId, enabled}`                              | Human admin with `admin.agents`; reviewed grant/revoke, returns `{updated:true}`                            |
-| `agent.workspace.read`        | `{botActorId, surface, threadId?, roomId?, query?, offset?, cursor?}` | Authorized human with `platform.read`; scoped read result                                                   |
+| Tool ID                       | Input                                                                 | Required authority / result                                                                                         |
+| ----------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `agent.account.request`       | Manifest above                                                        | Setup `agent.accounts.request`; returns `{request}`                                                                 |
+| `agent.account.requests.list` | `{}`                                                                  | `platform.read`; own requests, or tenant queue for a human admin; returns `{requests}` (up to 100)                  |
+| `agent.account.request.get`   | `{requestId}`                                                         | Requesting principal or human admin; returns `{request}`                                                            |
+| `agent.account.approve`       | `{requestId, ownerActorId, scopes, email, expiresAt}`                 | Human admin with `admin.agents`, confirmation and authority to grant the chosen scopes; returns `{request}`         |
+| `agent.account.reject`        | `{requestId, reason}`                                                 | Human admin with `admin.agents`; returns `{request}`                                                                |
+| `agent.workspace.list`        | `{botActorId?, offset?}`                                              | Authorized human with `platform.read`; returns `{bots,hasMore}` in pages of 100; filtering never grants observation |
+| `agent.workspace.access.list` | `{botActorId, offset?}`                                               | Human admin with `admin.agents`; returns explicit `{observers,hasMore}` in pages of 50, including disabled people   |
+| `agent.workspace.access.set`  | `{botActorId, observerActorId, enabled}`                              | Human admin with `admin.agents`; reviewed grant/revoke, returns `{updated:true}`                                    |
+| `agent.workspace.read`        | `{botActorId, surface, threadId?, roomId?, query?, offset?, cursor?}` | Authorized human with `platform.read`; scoped read result                                                           |
 
 REST invocation is `POST /v1/api/tools/<tool-id>` with a JSON body and
 `Authorization: Bearer <credential>` supplied by the trusted transport. Normal
@@ -830,3 +831,59 @@ run's single lease-timing fixture failure, test-only repair and passing focused
 rerun; the full unit run was not repeated after that repair. Encrypted recovery
 checkpoints were authenticated. Hosted model activation, large-file transfer under
 the current DLP policy and a complete application/object restore remain unqualified.
+
+## Integration completion checkpoint — 2026-10-19
+
+The current local change adds a human action queue with exact counts and bounded
+pages, reusing each action's existing review and decision routes. Opening the queue
+does not approve requests or mark notifications read. Expired actions and requests
+belonging to unrelated people or tenants are excluded. A PostgreSQL JSONB encoding
+defect in stored requester identities/previews was found during qualification:
+migration `0250` repairs the older string values and new writes use the driver's
+JSON serializer exactly once. Original tool arguments and execution receipts are
+not rewritten or replayed.
+
+One browser stream now invalidates Mail, Chat, notifications and approvals from
+actor-scoped events. Mail state/sent changes and configuration hints are projected
+by migration `0249`; frames contain references, never message/configuration content.
+Initial browser connections start at the retained head, reconnects retain cursors,
+and retention resets reconcile through ordinary authorized queries. Configuration
+hints refresh enabled-app/Assistant queries. Every stream pump revalidates identity
+again after its awaited database read before sending data. Existing query polling
+remains the fallback, and drafts/focus are not replaced by stream data.
+
+Human oversight now pages bot inventory, joined conversations and older messages.
+`/mail?settings=bots/<actor-uuid>` opens a stable, permission-checked bot view.
+The administrator request panel lists explicit observation grants and can revoke
+disabled people's grants. Observers still use their own human sessions; these
+surfaces grant no send/write/credential authority. The existing file reader already
+lists authorized shared and owned files across folders; its domain ACL, scanning
+and DLP checks remain authoritative. Previously displayed content is hidden after
+a failed oversight read. Existing request alerts and credential-expiry receipts
+were already implemented and are not new work in this increment.
+
+Qualification so far: 5,731 full-suite tests passed with 437 environment-dependent
+skips; 29 real PostgreSQL tests passed for the queue, legacy encoding repair,
+live/revocation behavior, observer pagination/inventory, productivity and Meet
+lifecycle/consent/promotion/scheduled joining. Eleven browser/accessibility cases
+passed, including the new desktop/mobile queue. Full typecheck, formatting,
+build, lint and dependency boundaries passed.
+These changes have not yet been deployed to the hosted apps.
+
+The hosted model account is now connected. A normal chat test found an invalid
+parameterless tool schema; Bot is qualifying the shared conversion fix before
+enabling the pilot. The dedicated Helix account request was approved through the
+real Workspace owner session and connected in Bot. Its address is
+`helix@workspace.helixapps.si`, with credential expiry on 2026-11-18; the approved
+scopes exclude external mail and administration. Background replies remain off.
+Workspace owner recovery is complete and their managed-human Bot administrator
+assignment is saved. Directory synchronization exposed a local recovery email
+collision; the qualified Bot fix creates a separate subject-bound identity, with
+hosted deployment and browser sign-in still pending. The separate isolated application/object
+recovery checkpoint and its remaining limits are recorded in the
+[hosted operations runbook](../runbooks/2026-10-17-hosted-family-operations.md#isolated-recovery-checkpoint--2026-10-19).
+
+Still open: the hosted real-model message→Work→reply pilot, generated-file output,
+PDF/image interpretation, continued work and specialist handoffs, two-human/two-bot
+hosted acceptance, large-file DLP qualification, real Jibri/transcription/recap,
+identity/revocation reconciliation after restore, host reboot and live Kubernetes.

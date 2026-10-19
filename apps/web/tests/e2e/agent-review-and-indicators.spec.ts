@@ -27,6 +27,24 @@ async function mockReview(page: Page, expired = false) {
         })),
       };
     else if (path === "/v1/api/tools/assistant.status") body = { available: false };
+    else if (path === "/v1/actions")
+      body = {
+        total: state.status === "pending_confirmation" ? 1 : 0,
+        items:
+          state.status === "pending_confirmation"
+            ? [
+                {
+                  id: pendingId,
+                  toolId: "mail.send",
+                  actorId: "00000000-0000-4000-8000-000000000702",
+                  status: state.status,
+                  createdAt: "2026-01-01T00:00:00.000Z",
+                  expiresAt: "2099-01-01T00:00:00.000Z",
+                  preview: { consequence: "Send the reviewed email to Mike." },
+                },
+              ]
+            : [],
+      };
     else if (path.startsWith("/v1/actions/") && path.endsWith("/review"))
       body = {
         action: {
@@ -120,6 +138,37 @@ test.describe("Agent review and global indicators", () => {
   });
 
   test.skip(isLiveBackend(), "These security and expiry fixtures use a mocked backend.");
+
+  for (const width of [390, 1280] as const) {
+    test(`opens the action queue and review without making a decision at ${width}px`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width, height: 900 });
+      const state = await mockReview(page);
+      await page.goto(`/approvals/${pendingId}`);
+      if (width === 390) await page.getByRole("button", { name: /^More/ }).click();
+      await page.getByRole("button", { name: "Action required (1)", exact: true }).click();
+      const panel = page.getByRole("dialog", { name: "Action required" });
+      await expect(panel).toBeVisible();
+      await expect(panel).not.toHaveAttribute("aria-modal", "true");
+      await expect(panel).toContainText("Send the reviewed email to Mike.");
+      expect(state.decisions).toEqual([]);
+      await page.addScriptTag({ content: axe.source });
+      const violations = await page.evaluate(
+        async () =>
+          (
+            await (window as typeof window & { axe: typeof axe }).axe.run(document, {
+              runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21aa"] },
+            })
+          ).violations,
+      );
+      expect(violations).toEqual([]);
+      await panel.getByRole("link", { name: "Review request" }).click();
+      await expect(panel).toHaveCount(0);
+      await expect(page.getByRole("heading", { name: "Review email", exact: true })).toBeVisible();
+      expect(state.decisions).toEqual([]);
+    });
+  }
 
   for (const theme of ["light", "dark"] as const) {
     for (const width of [390, 1280] as const) {

@@ -113,6 +113,9 @@ describe("Mail settings tabs", () => {
     expect(isSettingsSectionId("mail/filters/extra")).toBe(false);
     expect(isSettingsSectionId("mail/../profile")).toBe(false);
     expect(isSettingsSectionId("signature")).toBe(false);
+    expect(isSettingsSectionId("bots/11111111-1111-4111-8111-111111111111")).toBe(true);
+    expect(isSettingsSectionId("bots/invalid")).toBe(false);
+    expect(isSettingsSectionId("bots/11111111-1111-4111-8111-111111111111/extra")).toBe(false);
     expect(settingsSectionBase("mail/labels")).toBe("mail");
   });
 });

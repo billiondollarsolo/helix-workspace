@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
+import { z } from "zod";
 import { beforeAll, afterAll, describe, expect, it } from "vitest";
 import type { Actor } from "@helix/sdk-types";
 import { BotAccountStore } from "./store.js";
@@ -8,6 +9,8 @@ import { PostgresAgentCredentialStore } from "../auth/postgres-store.js";
 import { generateApiKey, hashApiKey } from "../auth/credentials.js";
 import { tenantAwarePostgresSql, withTenantPostgresContext } from "../tenancy/postgres-roles.js";
 import { cleanupTestTenants } from "../../test-support/cleanup-tenants.js";
+import { PostgresChatStore } from "../chat/index.js";
+import { BotWorkspaceReader } from "./workspace.js";
 
 const adminUrl = process.env.HELIX_MIGRATION_DATABASE_URL;
 const appUrl = process.env.HELIX_RLS_APP_DATABASE_URL;
@@ -163,6 +166,125 @@ describe.skipIf(!adminUrl || !appUrl)("bot account approval with runtime RLS", (
         await admin`select id from actors where org_id=${orgId} and metadata->>'externalBotId'=${input.externalBotId}`
       ).length,
     ).toBe(0);
+  });
+  it("pages observed chats with runtime RLS and stops after membership or observation revocation", async () => {
+    const request = await as(setup, () => store.request(setup, manifest()));
+    const approved = await as(owner, () => store.approve(owner, approval(request.id)));
+    assert(approved.actorId);
+    const botActorId = approved.actorId;
+    await as(owner, () => store.grant(owner, botActorId, observer.id, true));
+    const roomIds = Array.from({ length: 52 }, () => randomUUID())
+      .sort()
+      .reverse();
+    for (const id of roomIds) {
+      await admin`insert into threads(id,org_id,kind,subject,created_by_actor_id,updated_at)
+        values(${id},${orgId},'chat_room','Observed room',${owner.id},'2026-01-01')`;
+      await admin`insert into chat_room_settings(thread_id,org_id,name)
+        values(${id},${orgId},'Observed room')`;
+      await admin`insert into permissions(org_id,actor_id,resource_type,resource_id,role,granted_by_actor_id)
+        values(${orgId},${botActorId},'thread',${id},'member',${owner.id})`;
+    }
+    const roomId = roomIds[0];
+    assert(roomId);
+    const messageIds = Array.from({ length: 52 }, () => randomUUID())
+      .sort()
+      .reverse();
+    for (const id of messageIds)
+      await admin`insert into messages(id,org_id,thread_id,actor_id,kind,body,sent_at)
+        values(${id},${orgId},${roomId},${owner.id},'chat','Observed message','2026-01-01')`;
+    const reader = new BotWorkspaceReader(store, { chat: new PostgresChatStore(app) });
+    const input = { botActorId, surface: "chat", offset: 0 } as const;
+    const roomsSchema = z.object({
+      rooms: z.array(z.object({ id: z.string() })),
+      hasMore: z.boolean(),
+    });
+    const first = roomsSchema.parse(await as(observer, () => reader.read(observer, input)));
+    const second = roomsSchema.parse(
+      await as(observer, () => reader.read(observer, { ...input, offset: 50 })),
+    );
+    expect(first.hasMore).toBe(true);
+    expect(second.hasMore).toBe(false);
+    expect([...first.rooms, ...second.rooms].map(({ id }) => id)).toEqual(roomIds);
+    const messagesSchema = z.object({
+      messages: z.array(z.object({ id: z.string() })),
+      nextCursor: z.string().nullable(),
+    });
+    const latest = messagesSchema.parse(
+      await as(observer, () => reader.read(observer, { ...input, roomId })),
+    );
+    assert(latest.nextCursor);
+    const older = messagesSchema.parse(
+      await as(observer, () =>
+        reader.read(observer, { ...input, roomId, cursor: latest.nextCursor ?? undefined }),
+      ),
+    );
+    expect([...latest.messages, ...older.messages].map(({ id }) => id)).toEqual(messageIds);
+    expect(older.nextCursor).toBeNull();
+    await expect(
+      as(observer, () => reader.read(observer, { ...input, roomId, cursor: "invalid" })),
+    ).rejects.toThrow("cursor is invalid");
+    await expect(as(other, () => reader.read(other, input))).rejects.toThrow("unavailable");
+    await admin`update permissions set status='revoked',revoked_at=now(),revocation_epoch=1 where org_id=${orgId} and actor_id=${botActorId} and resource_id=${roomId}`;
+    await expect(
+      as(observer, () =>
+        reader.read(observer, { ...input, roomId, cursor: latest.nextCursor ?? undefined }),
+      ),
+    ).rejects.toThrow("not found");
+    await as(owner, () => store.grant(owner, botActorId, observer.id, false));
+    await expect(
+      as(observer, () => reader.read(observer, { ...input, offset: 50 })),
+    ).rejects.toThrow("unavailable");
+  });
+  it("lists explicit observers for human admins and can revoke a disabled person's grant", async () => {
+    const request = await as(setup, () => store.request(setup, manifest()));
+    const approved = await as(owner, () => store.approve(owner, approval(request.id)));
+    assert(approved.actorId);
+    const botId = approved.actorId;
+    const ids = Array.from({ length: 51 }, () => randomUUID());
+    for (const id of ids) {
+      await admin`insert into actors(id,org_id,type,display_name) values(${id},${orgId},'user','Observer')`;
+      await as(owner, () => store.grant(owner, botId, id, true));
+    }
+    const first = await as(owner, () => store.observers(owner, botId, 0));
+    const second = await as(owner, () => store.observers(owner, botId, 50));
+    expect(first.observers).toHaveLength(50);
+    expect(first.hasMore).toBe(true);
+    expect(second.observers).toHaveLength(2);
+    expect(second.hasMore).toBe(false);
+    expect(
+      new Set([...first.observers, ...second.observers].map((person) => person.actorId)).size,
+    ).toBe(52);
+    await expect(as(observer, () => store.observers(observer, botId, 0))).rejects.toThrow(
+      "administrator",
+    );
+    await expect(
+      as(setup, () => store.observers({ ...setup, scopes: owner.scopes ?? [] }, botId, 0)),
+    ).rejects.toThrow("administrator");
+    await expect(as(other, () => store.observers(other, botId, 0))).rejects.toThrow("unavailable");
+    const disabledId = ids[0];
+    assert(disabledId);
+    await admin`update actors set disabled_at=now() where id=${disabledId}`;
+    const inventory = await as(owner, () => store.observers(owner, botId, 0));
+    expect(inventory.observers.find((person) => person.actorId === disabledId)?.disabled).toBe(
+      true,
+    );
+    await expect(as(owner, () => store.grant(owner, botId, disabledId, true))).rejects.toThrow(
+      "active human",
+    );
+    await as(owner, () => store.grant(owner, botId, disabledId, false));
+    expect(
+      (
+        await admin`select 1 from bot_account_observers where org_id=${orgId} and bot_actor_id=${botId} and observer_actor_id=${disabledId}`
+      ).length,
+    ).toBe(0);
+    const visible = await as(owner, () => store.visible(owner, { botActorId: botId, offset: 0 }));
+    expect(visible.map((bot) => bot.id)).toEqual([botId]);
+    expect(
+      await as(observer, () => store.visible(observer, { botActorId: botId, offset: 0 })),
+    ).toEqual([]);
+    expect(await as(other, () => store.visible(other, { botActorId: botId, offset: 0 }))).toEqual(
+      [],
+    );
   });
   it("does not activate expired requests or disabled requesting installations", async () => {
     const request = await as(setup, () => store.request(setup, manifest()));

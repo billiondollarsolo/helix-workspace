@@ -59,7 +59,18 @@ export type PendingActionCreateInput = Omit<
   | "error"
 >;
 
+export interface PendingActionListInput {
+  readonly actor: Actor;
+  readonly now: Date;
+  readonly offset: number;
+  readonly limit: number;
+}
+
 export interface PendingActionStore {
+  listForApproval(input: PendingActionListInput): Promise<{
+    readonly records: readonly PendingActionRecord[];
+    readonly total: number;
+  }>;
   create(input: PendingActionCreateInput): Promise<PendingActionRecord>;
   get(id: string): Promise<PendingActionRecord | null>;
   approve(input: {
@@ -104,6 +115,10 @@ export interface PendingExecutionClaim {
 }
 
 export interface ConfirmationGate {
+  list(input: Omit<PendingActionListInput, "now">): Promise<{
+    readonly items: readonly PendingToolInvocation[];
+    readonly total: number;
+  }>;
   queue(input: {
     readonly tool: ToolDefinition;
     readonly actor: Actor;
@@ -166,6 +181,17 @@ export class InMemoryConfirmationGate implements ConfirmationGate {
   ) {
     this.confirmationTimeoutMs = options.confirmationTimeoutMs ?? defaultConfirmationTimeoutMs;
     this.executionLeaseMs = options.executionLeaseMs ?? defaultExecutionLeaseMs;
+  }
+
+  async list(input: Omit<PendingActionListInput, "now">) {
+    if (input.actor.type !== "user") return { items: [], total: 0 };
+    const page = await this.store.listForApproval({ ...input, now: new Date() });
+    return {
+      items: page.records
+        .filter((record) => canApprove(record, input.actor))
+        .map(pendingActionRecordToInvocation),
+      total: page.total,
+    };
   }
 
   async queue(input: {
@@ -334,6 +360,21 @@ export class InMemoryConfirmationGate implements ConfirmationGate {
 
 export class InMemoryPendingActionStore implements PendingActionStore {
   readonly #pending = new Map<string, PendingActionRecord>();
+
+  async listForApproval(input: PendingActionListInput) {
+    const records = [...this.#pending.values()]
+      .filter(
+        (record) =>
+          record.status === "pending_confirmation" &&
+          record.expiresAt > input.now &&
+          canApprove(record, input.actor),
+      )
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id));
+    return {
+      records: records.slice(input.offset, input.offset + input.limit),
+      total: records.length,
+    };
+  }
 
   async create(input: PendingActionCreateInput): Promise<PendingActionRecord> {
     const record: PendingActionRecord = {
@@ -530,7 +571,7 @@ function canApprove(record: PendingActionRecord, actor: Actor): boolean {
   );
 }
 
-function hasPendingApprovalAdminScope(actor: Actor): boolean {
+export function hasPendingApprovalAdminScope(actor: Actor): boolean {
   return (
     actor.type === "user" &&
     (actor.scopes ?? []).some(

@@ -3,8 +3,11 @@ import type { Actor, JsonObject, JsonValue, PendingActionPreview } from "@helix/
 import type {
   PendingActionCreateInput,
   PendingActionRecord,
+  PendingActionListInput,
   PendingActionStore,
 } from "./registry.js";
+import { hasPendingApprovalAdminScope } from "./registry.js";
+import { toJsonObject } from "../util/json.js";
 
 interface PendingActionRow {
   readonly id: string;
@@ -52,6 +55,28 @@ const defaultSweepLimit = 500;
 export class PostgresPendingActionStore implements PendingActionStore {
   constructor(private readonly sql: postgres.Sql) {}
 
+  async listForApproval(input: PendingActionListInput) {
+    if (input.actor.type !== "user") return { records: [], total: 0 };
+    const visible = this.sql`
+      org_id = ${input.actor.orgId}
+      and status = 'pending_confirmation' and expires_at > ${input.now}
+      and (requester_principal->>'type' <> 'agent' or actor_id <> ${input.actor.id})
+      and (
+        ${hasPendingApprovalAdminScope(input.actor)}
+        or (requester_principal->>'type' = 'agent' and approval_owner_actor_id = ${input.actor.id} and actor_id <> ${input.actor.id})
+        or (requester_principal->>'type' <> 'agent' and actor_id = ${input.actor.id})
+      )
+    `;
+    const records = await this.sql<readonly PendingActionRow[]>`
+      select ${this.sql.unsafe(RETURNING_COLUMNS)} from pending_actions
+      where ${visible} order by created_at, id limit ${input.limit} offset ${input.offset}
+    `;
+    const counts = await this.sql<readonly { total: number }[]>`
+      select count(*)::integer as total from pending_actions where ${visible}
+    `;
+    return { records: records.map(toPendingActionRecord), total: counts[0]?.total ?? 0 };
+  }
+
   async create(input: PendingActionCreateInput): Promise<PendingActionRecord> {
     const rows = await this.sql<readonly PendingActionRow[]>`
       insert into pending_actions (
@@ -62,11 +87,11 @@ export class PostgresPendingActionStore implements PendingActionStore {
       )
       values (
         ${input.id}, ${input.orgId}, ${input.requesterActorId},
-        ${input.requesterCredentialId}, ${JSON.stringify(input.requesterPrincipal)}::jsonb,
+        ${input.requesterCredentialId}, ${this.sql.json(toJsonObject(input.requesterPrincipal))},
         ${input.requesterIp}, ${input.approvalOwnerActorId}, ${input.toolId},
         ${this.sql.json(input.input)}, ${input.inputHash},
         ${this.sql.json(input.policySnapshot)}, ${input.policyVersion},
-        ${JSON.stringify(input.preview)}::jsonb, ${"pending_confirmation"},
+        ${this.sql.json({ ...input.preview })}, ${"pending_confirmation"},
         ${input.expiresAt}, ${input.createdAt}, ${input.executionIdempotencyKey},
         ${input.traceId}
       )

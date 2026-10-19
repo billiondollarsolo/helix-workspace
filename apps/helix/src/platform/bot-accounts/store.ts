@@ -267,7 +267,7 @@ export class BotAccountStore {
     assertBotAdmin(actor);
     await this.assertVisible(actor, botId);
     const [person] = await this
-      .sql`select id from actors where org_id=${actor.orgId} and id=${observerId} and type='user' and disabled_at is null`;
+      .sql`select id from actors where org_id=${actor.orgId} and id=${observerId} and type='user' and (${!enabled} or disabled_at is null)`;
     if (!person) throw new BadRequestError("Observer must be an active human in this workspace.");
     if (enabled)
       await this
@@ -277,16 +277,35 @@ export class BotAccountStore {
       await this
         .sql`delete from bot_account_observers where org_id=${actor.orgId} and bot_actor_id=${botId} and observer_actor_id=${observerId}`;
   }
-  async visible(actor: Actor) {
+  async observers(actor: Actor, botId: string, offset: number) {
+    assertBotAdmin(actor);
+    await this.assertVisible(actor, botId);
+    const page = await this.sql<
+      {
+        actorId: string;
+        displayName: string;
+        email: string | null;
+        disabled: boolean;
+        grantedAt: Date;
+      }[]
+    >`select a.id as "actorId",a.display_name as "displayName",a.email,
+      (a.disabled_at is not null) as disabled,o.created_at as "grantedAt"
+      from bot_account_observers o join actors a on a.org_id=o.org_id and a.id=o.observer_actor_id
+      where o.org_id=${actor.orgId} and o.bot_actor_id=${botId}
+      order by o.created_at,a.id limit 51 offset ${offset}`;
+    return { observers: page.slice(0, 50), hasMore: page.length > 50 };
+  }
+  async visible(actor: Actor, input: { botActorId?: string | undefined; offset: number }) {
     if (actor.type !== "user")
       throw new ForbiddenError("Bot oversight is available to authorized humans.");
     const all = canReadAdminConsole(actor, "admin.agents");
     return this.sql<{ id: string; displayName: string; email: string | null; disabled: boolean }[]>`
       select a.id,a.display_name as "displayName",a.email,(a.disabled_at is not null) as disabled from actors a
       where a.org_id=${actor.orgId} and a.type in ('agent','service_account')
+        and (${input.botActorId ?? null}::uuid is null or a.id=${input.botActorId ?? null}::uuid)
         and (${all} or exists(select 1 from bot_account_observers o
           where o.org_id=a.org_id and o.bot_actor_id=a.id and o.observer_actor_id=${actor.id}))
-      order by a.display_name,a.id limit 100`;
+      order by a.display_name,a.id limit 101 offset ${input.offset}`;
   }
   async assertVisible(actor: Actor, botId: string): Promise<void> {
     if (actor.type !== "user")

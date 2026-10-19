@@ -53,11 +53,15 @@ export class LiveRoutes {
         /* Invalid hints never become events. */
       }
     });
+    const configuration = await this.sql.listen("helix_workspace_config", () => {
+      this.hints.emit("configuration");
+    });
     app.addHook("preClose", async () => {
       for (const close of this.streams) close();
     });
     app.addHook("onClose", async () => {
       await listener.unlisten();
+      await configuration.unlisten();
     });
     app.get("/api/events", async (request) => {
       const { actor } = await this.resolve(request);
@@ -146,7 +150,11 @@ export class LiveRoutes {
           },
     );
     // MCP updates are hints, not transport replay; the resource read owns durable cursors.
-    const initial = mcp ? await this.store.list(actor, Number.MAX_SAFE_INTEGER) : undefined;
+    const tail =
+      !mcp &&
+      z.object({ tail: z.literal("1").optional() }).parse(request.query).tail === "1" &&
+      request.headers["last-event-id"] === undefined;
+    const initial = mcp || tail ? await this.store.list(actor, Number.MAX_SAFE_INTEGER) : undefined;
     const release = this.limiter.acquire(actor.orgId);
     if (release === null) throw new RateLimitedError("Too many event streams.");
     const connectionId = randomUUID(),
@@ -168,6 +176,7 @@ export class LiveRoutes {
       clearInterval(timer);
       clearTimeout(lifetime);
       this.hints.off(key, wake);
+      this.hints.off("configuration", refresh);
       this.streams.delete(shutdown);
       release();
       if (graceful && mcp && !reply.raw.destroyed)
@@ -186,6 +195,17 @@ export class LiveRoutes {
       )
         close();
     };
+    const authorize = async () => {
+      const current = await this.resolve(request);
+      if (
+        current.actor.id !== actor.id ||
+        current.actor.orgId !== actor.orgId ||
+        this.binding(current) !== this.binding(principal)
+      )
+        throw new ForbiddenError("Event identity changed.");
+      requireActorScope(current.actor, "notifications.read");
+      return current.actor;
+    };
     const pump = async () => {
       if (closed) return;
       if (running) {
@@ -194,16 +214,9 @@ export class LiveRoutes {
       }
       running = true;
       try {
-        const current = await this.resolve(request);
-        if (
-          current.actor.id !== actor.id ||
-          current.actor.orgId !== actor.orgId ||
-          this.binding(current) !== this.binding(principal)
-        )
-          throw new ForbiddenError("Event identity changed.");
-        requireActorScope(current.actor, "notifications.read");
+        const current = await authorize();
         if (Date.now() - lastBeat >= 15000) {
-          await this.store.heartbeat(current.actor, connectionId, "idle");
+          await this.store.heartbeat(current, connectionId, "idle");
           lastBeat = Date.now();
           if (!reply.raw.write(": heartbeat\n\n")) {
             close();
@@ -211,7 +224,8 @@ export class LiveRoutes {
           }
         }
         if (mcp && !subscribed) return;
-        const page = await this.store.list(current.actor, cursor);
+        const page = await this.store.list(current, cursor);
+        await authorize();
         if (page.resetRequired) {
           write(
             mcp
@@ -258,6 +272,15 @@ export class LiveRoutes {
     const wake = () => {
       void pump();
     };
+    const refresh = () => {
+      void authorize()
+        .then(() => {
+          if (!mcp) write({}, "refresh");
+        })
+        .catch(() => {
+          close();
+        });
+    };
     const shutdown = () => {
       close(true);
     };
@@ -265,6 +288,7 @@ export class LiveRoutes {
       lifetime = setTimeout(shutdown, 55 * 60000);
     this.streams.add(shutdown);
     this.hints.on(key, wake);
+    this.hints.on("configuration", refresh);
     reply.raw.on("close", () => {
       close();
     });

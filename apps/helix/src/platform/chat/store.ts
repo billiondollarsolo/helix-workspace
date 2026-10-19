@@ -137,6 +137,7 @@ export interface ChatStore {
     readonly actorId: string;
     readonly query?: string | undefined;
     readonly limit?: number | undefined;
+    readonly offset?: number | undefined;
   }): Promise<readonly ChatRoomRecord[]>;
   discoverRooms(input: {
     readonly orgId: string;
@@ -917,6 +918,7 @@ export class PostgresChatStore
     readonly actorId: string;
     readonly query?: string | undefined;
     readonly limit?: number | undefined;
+    readonly offset?: number | undefined;
   }): Promise<readonly ChatRoomRecord[]> {
     const query = input.query ?? "";
     const rows = await this.sql<ChatRoomRow[]>`
@@ -965,8 +967,9 @@ export class PostgresChatStore
             and access_grant.status = 'active'
             and chat_permission_is_valid(access_grant, ${input.orgId}, ${input.actorId}, t.id)
         )
-      order by t.updated_at desc
+      order by t.updated_at desc, t.id desc
       limit ${input.limit ?? 50}
+      offset ${input.offset ?? 0}
     `;
     return rows.map(mapRoom);
   }

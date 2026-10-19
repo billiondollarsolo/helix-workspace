@@ -17,11 +17,19 @@ import {
 } from "lucide-react";
 import { Dialog } from "radix-ui";
 import { useState } from "react";
+import { ClipboardCheck } from "lucide-react";
+import type { ActionQueueTrigger } from "@/features/approvals/action-queue";
 
 /** Bottom-bar slots for apps; "More" takes the fifth. */
 export const BOTTOM_NAV_APP_SLOTS = 4;
 
-export function BottomNav({ unread }: { readonly unread?: AppUnreadCounts }) {
+export function BottomNav({
+  unread,
+  actions,
+}: {
+  readonly unread?: AppUnreadCounts;
+  readonly actions?: ActionQueueTrigger;
+}) {
   const location = useLocation();
   const activeApp = appForRoute(location.pathname);
   const enabled = useEnabledApps();
@@ -47,11 +55,16 @@ export function BottomNav({ unread }: { readonly unread?: AppUnreadCounts }) {
         />
       ))}
       <Dialog.Root open={moreOpen} onOpenChange={setMoreOpen}>
-        <Dialog.Trigger className="bottom-nav-item" data-active={moreActive || undefined}>
+        <Dialog.Trigger
+          className="bottom-nav-item"
+          data-active={moreActive || undefined}
+          aria-label={actions?.total ? `More (${actions.total} actions required)` : undefined}
+        >
           <span className="bottom-nav-pill" aria-hidden="true">
             <MoreIcon size={18} />
           </span>
           <span className="bottom-nav-label">More</span>
+          <UnreadBadge count={actions?.total ?? 0} id="bottom-actions-count" />
         </Dialog.Trigger>
         <Dialog.Portal>
           <Dialog.Overlay className="sheet-overlay" />
@@ -91,6 +104,19 @@ export function BottomNav({ unread }: { readonly unread?: AppUnreadCounts }) {
               </li>
             </ul>
             <div className="more-sheet-actions">
+              {actions ? (
+                <button
+                  type="button"
+                  className="more-sheet-action"
+                  onClick={() => {
+                    setMoreOpen(false);
+                    actions.onOpen();
+                  }}
+                >
+                  <ClipboardCheck size={16} aria-hidden="true" />
+                  Action required{actions.total === undefined ? "" : ` (${actions.total})`}
+                </button>
+              ) : null}
               <button
                 type="button"
                 className="more-sheet-action"

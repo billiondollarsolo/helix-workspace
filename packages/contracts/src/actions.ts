@@ -39,6 +39,18 @@ export const pendingMailReviewResultSchema = z.object({
 
 export type PendingMailReviewResult = z.infer<typeof pendingMailReviewResultSchema>;
 
+export const pendingActionQueueSchema = z.object({
+  items: z
+    .array(
+      pendingMailReviewResultSchema.shape.action.extend({
+        toolId: z.string(),
+        preview: z.object({ consequence: z.string() }),
+      }),
+    )
+    .max(50),
+  total: z.number().int().nonnegative(),
+});
+
 export const pendingActionReviewResultSchema = z.union([
   pendingMailReviewResultSchema,
   z.object({

@@ -1,8 +1,9 @@
 import type { Actor } from "@helix/sdk-types";
+import { chatMessageCursorSchema } from "@helix/contracts";
 import type { MailStore } from "../mail/index.js";
 import type { DriveStore } from "../drive/index.js";
 import type { ChatStore } from "../chat/index.js";
-import { NotFoundError } from "../../api/api-error.js";
+import { BadRequestError, NotFoundError } from "../../api/api-error.js";
 import {
   withRequesterPostgresActor,
   withTenantPostgresContext,
@@ -82,20 +83,45 @@ export class BotWorkspaceReader {
             }
             case "chat": {
               if (!this.domains.chat) throw new NotFoundError("Chat is disabled.");
-              if (input.roomId)
-                return {
-                  messages: await this.domains.chat.listMessages({
-                    ...scope,
-                    roomId: input.roomId,
-                    limit: 50,
-                  }),
-                };
-              return {
-                rooms: await this.domains.chat.listRooms({
+              if (input.roomId) {
+                let before;
+                if (input.cursor) {
+                  try {
+                    const cursor = chatMessageCursorSchema.parse(
+                      JSON.parse(Buffer.from(input.cursor, "base64url").toString("utf8")),
+                    );
+                    before = { ...cursor, sentAt: new Date(cursor.sentAt) };
+                  } catch {
+                    throw new BadRequestError("Chat history cursor is invalid.");
+                  }
+                }
+                const page = await this.domains.chat.listMessages({
                   ...scope,
-                  query: input.query,
-                  limit: 50,
-                }),
+                  roomId: input.roomId,
+                  ...(before ? { before } : {}),
+                  limit: 51,
+                });
+                const messages = page.slice(0, 50);
+                const last = messages.at(-1);
+                return {
+                  messages,
+                  nextCursor:
+                    page.length > 50 && last
+                      ? Buffer.from(
+                          JSON.stringify({ sentAt: last.sentAt.toISOString(), id: last.id }),
+                        ).toString("base64url")
+                      : null,
+                };
+              }
+              const rooms = await this.domains.chat.listRooms({
+                ...scope,
+                query: input.query,
+                offset: input.offset,
+                limit: 51,
+              });
+              return {
+                rooms: rooms.slice(0, 50),
+                hasMore: rooms.length > 50,
               };
             }
             case "activity": {

@@ -1,8 +1,22 @@
-import { pendingActionReviewResultSchema } from "@helix/contracts";
+import { pendingActionReviewResultSchema, pendingActionQueueSchema } from "@helix/contracts";
 import { authenticatedFetch } from "@/lib/auth";
 import { responseError } from "@/lib/tool-call";
 import { z } from "zod";
 import { queryOptions } from "@tanstack/react-query";
+
+export function pendingActionsQueryOptions(offset = 0) {
+  return queryOptions({
+    queryKey: ["pending-actions", offset],
+    queryFn: async () => {
+      const response = await authenticatedFetch(`/actions?offset=${offset}&limit=50`);
+      const output: unknown = await response.json().catch(() => ({}));
+      if (!response.ok) throw responseError(response, output, "Action queue");
+      return pendingActionQueueSchema.parse(output);
+    },
+    throwOnError: false,
+    refetchInterval: 30_000,
+  });
+}
 
 export function pendingActionReviewQueryOptions(id: string) {
   return queryOptions({

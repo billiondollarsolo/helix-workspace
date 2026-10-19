@@ -33,7 +33,10 @@ export function isSettingsSectionId(value: unknown): value is SettingsSectionId 
   return (
     (SETTINGS_SECTION_IDS as readonly string[]).includes(section ?? "") &&
     rest.length === 0 &&
-    (tab === undefined || /^[a-z-]+$/u.test(tab))
+    (tab === undefined ||
+      (section === "bots"
+        ? /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(tab)
+        : /^[a-z-]+$/u.test(tab)))
   );
 }
 

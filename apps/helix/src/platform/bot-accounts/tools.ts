@@ -109,9 +109,38 @@ export function createBotAccountTools(
         "List bot workspaces you may observe. Human administrators see all tenant bots; other humans need an explicit observation grant. Does not grant control or sending authority.",
       permission: "platform.read",
       sideEffects: "read",
-      inputSchema: zodToolSchema(empty, json),
+      inputSchema: zodToolSchema(
+        z
+          .object({
+            botActorId: z.string().uuid().optional(),
+            offset: z.number().int().min(0).max(100000).default(0),
+          })
+          .strict(),
+        json,
+      ),
       outputSchema: output,
-      handler: async (_input, ctx) => ({ bots: await store.visible(ctx.actor) }),
+      handler: async (input, ctx) => {
+        const bots = await store.visible(ctx.actor, input);
+        return { bots: bots.slice(0, 100), hasMore: bots.length > 100 };
+      },
+    }),
+    defineTool({
+      id: "agent.workspace.access.list",
+      description:
+        "Human administrator only: list explicit read-only observers of one bot, including disabled people whose grants can be revoked. Administrator access is separate from these grants.",
+      permission: "admin.agents",
+      sideEffects: "read",
+      inputSchema: zodToolSchema(
+        z
+          .object({
+            botActorId: z.string().uuid(),
+            offset: z.number().int().min(0).max(100000).default(0),
+          })
+          .strict(),
+        json,
+      ),
+      outputSchema: output,
+      handler: async (input, ctx) => store.observers(ctx.actor, input.botActorId, input.offset),
     }),
     defineTool({
       id: "agent.workspace.access.set",

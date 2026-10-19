@@ -38,7 +38,7 @@ import { apiPath } from "@/lib/auth";
 
 /** Subscription filter -> the query keys an arriving frame invalidates.
  *
- *  Targeted keys, never a tree root. `use-mail-realtime.ts` invalidates the
+ *  Targeted keys, never a tree root. The workspace stream invalidates the
  *  whole `["mail"]` tree on any frame; the same pattern here would refetch
  *  roughly twenty admin queries on every quota event — turning a liveness
  *  feature into a request-budget problem against a 5 rps ceiling.

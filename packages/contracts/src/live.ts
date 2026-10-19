@@ -5,6 +5,7 @@ export const liveEventTypes = [
   "chat.mentioned",
   "chat.message",
   "mail.received",
+  "mail.updated",
   "approval.requested",
   "approval.updated",
   "notification",

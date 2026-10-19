@@ -9,7 +9,11 @@ import { callTool } from "@/lib/tool-call";
 import { AdminTable } from "./console/table";
 import { SettingToggle } from "./console/widgets";
 import { useActorPicker, ActorSearchField } from "./credentials-form-fields";
-import { botRequestsQueryOptions } from "@/features/bots/api";
+import {
+  botRequestsQueryOptions,
+  botObserversQueryOptions,
+  type BotObserver,
+} from "@/features/bots/api";
 
 export function BotAccountRequests() {
   const requests = useQuery(botRequestsQueryOptions());
@@ -84,6 +88,8 @@ function ReviewBotRequest({
   );
   const [reason, setReason] = useState("");
   const [observer, setObserver] = useState("");
+  const [observerOffset, setObserverOffset] = useState(0);
+  const observers = useQuery(botObserversQueryOptions(request.actorId, observerOffset));
   const picker = useActorPicker();
   const people = picker.actorsQuery.data?.users.filter((user) => user.type === "user") ?? [];
   const client = useQueryClient();
@@ -109,11 +115,10 @@ function ReviewBotRequest({
   const grant = useMutation({
     onMutate: () => undefined,
     onError: () => undefined,
-    mutationFn: (enabled: boolean) =>
+    mutationFn: (input: { observerActorId: string; enabled: boolean }) =>
       callTool("agent.workspace.access.set", {
         botActorId: request.actorId,
-        observerActorId: observer,
-        enabled,
+        ...input,
       }),
     onSuccess: () => client.invalidateQueries({ queryKey: ["bots"] }),
   });
@@ -238,14 +243,72 @@ function ReviewBotRequest({
               Observers can read this bot's mail, files and joined conversations, including messages
               from other participants. They cannot send as the bot or manage its credentials.
             </p>
+            <AdminTable<BotObserver>
+              label="Current bot observers"
+              rows={observers.data?.observers ?? []}
+              rowKey={(person) => person.actorId}
+              searchText={(person) => `${person.displayName} ${person.email ?? ""}`}
+              partialNote="Explicit observation grants; administrators also have oversight through their role."
+              empty={
+                <p>
+                  {observers.isPending
+                    ? "Loading observers…"
+                    : "No explicit observer grants on this page."}
+                </p>
+              }
+              columns={[
+                { id: "person", header: "Person", cell: (person) => person.displayName },
+                {
+                  id: "status",
+                  header: "Status",
+                  cell: (person) => (person.disabled ? "Disabled" : "Active"),
+                },
+                {
+                  id: "revoke",
+                  header: "Access",
+                  cell: (person) => (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={grant.isPending}
+                      aria-label={`Revoke observation access for ${person.displayName}`}
+                      onClick={() =>
+                        grant.mutate({ observerActorId: person.actorId, enabled: false })
+                      }
+                    >
+                      Revoke read access
+                    </Button>
+                  ),
+                },
+              ]}
+            />
+            {observers.error ? <p role="alert">{observers.error.message}</p> : null}
             <div className="flex gap-2">
-              <Button disabled={!observer || grant.isPending} onClick={() => grant.mutate(true)}>
+              {observerOffset > 0 ? (
+                <Button
+                  variant="outline"
+                  onClick={() => setObserverOffset(Math.max(0, observerOffset - 50))}
+                >
+                  Previous observers
+                </Button>
+              ) : null}
+              {observers.data?.hasMore ? (
+                <Button variant="outline" onClick={() => setObserverOffset(observerOffset + 50)}>
+                  Next observers
+                </Button>
+              ) : null}
+            </div>
+            <div className="flex gap-2">
+              <Button
+                disabled={!observer || grant.isPending}
+                onClick={() => grant.mutate({ observerActorId: observer, enabled: true })}
+              >
                 Grant reviewed read access
               </Button>
               <Button
                 variant="outline"
                 disabled={!observer || grant.isPending}
-                onClick={() => grant.mutate(false)}
+                onClick={() => grant.mutate({ observerActorId: observer, enabled: false })}
               >
                 Revoke read access
               </Button>

@@ -10,6 +10,8 @@ import { UnreadBadge, type AppUnreadCounts } from "@/components/shell/unread-bad
 import { useEnabledApps } from "@/features/apps/use-enabled-apps";
 import { Link, useLocation } from "@tanstack/react-router";
 import type { ReactNode } from "react";
+import { ClipboardCheck } from "lucide-react";
+import type { ActionQueueTrigger } from "@/features/approvals/action-queue";
 
 export interface RailProps {
   /** Open the app launcher popover. */
@@ -19,9 +21,10 @@ export interface RailProps {
   /** The app launcher, rendered inside the navigation landmark. */
   children?: ReactNode;
   unread?: AppUnreadCounts;
+  actions?: ActionQueueTrigger;
 }
 
-export function Rail({ onOpenLauncher, launcherOpen, children, unread }: RailProps) {
+export function Rail({ onOpenLauncher, launcherOpen, children, unread, actions }: RailProps) {
   const location = useLocation();
   const activeApp = appForRoute(location.pathname);
   const enabled = useEnabledApps();
@@ -69,6 +72,20 @@ export function Rail({ onOpenLauncher, launcherOpen, children, unread }: RailPro
         );
       })}
       <div className="rail-spacer" />
+      {actions ? (
+        <button
+          type="button"
+          className="rail-item"
+          aria-label={`Action required${actions.total === undefined ? "" : ` (${actions.total})`}`}
+          onClick={actions.onOpen}
+        >
+          <ClipboardCheck size={16} aria-hidden="true" />
+          <UnreadBadge count={actions.total ?? 0} id="rail-actions-count" />
+          <span className="rail-tip" aria-hidden="true">
+            Action required
+          </span>
+        </button>
+      ) : null}
       <HelpMenu />
     </nav>
   );

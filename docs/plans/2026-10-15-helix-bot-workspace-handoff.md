@@ -1288,3 +1288,28 @@ The DKIM control and its field both measured 236.5px. The temporary provider was
 removed; the temporary administrator is suspended, its password removed and all
 sessions revoked. Its subsequent admin request was denied. Sanitized receipts
 and logs are retained under `~/.local/share/helix-changes/20261020-mail/`.
+
+## Quick light/dark controls — 2026-10-20
+
+Native and hosted Workspace `95f70f0` and Bot `f0c06c0` now expose a sun/moon
+button beside their account controls. Workspace uses the existing resolved-theme
+hook and appearance store; Bot's existing menu action is now a standalone icon.
+One click chooses the opposite of the displayed theme, with an updated accessible
+label and tooltip. Existing per-browser persistence and the System option in
+settings remain available. No dependencies or new CSS were needed.
+
+All six Workspace checks passed, including 4,046 backend and 1,453 web tests
+(450 gated backend tests skipped). Bot's static checks, type checking, full unit
+run (820 passed, one optional skip), contract/recovery/portable checks and build
+passed. Twenty-three focused browser cases passed, including keyboard operation,
+reload persistence, accessibility and mobile layout. The hosted browser verified
+both toggle directions and persistence in both apps, with visible controls and
+zero page overflow at 320px. Bot used normal Workspace federation after a temporary
+viewer assignment; unassigned and local-password access correctly remained denied.
+
+Deployment preserved identity/model/work records and existing configuration.
+Both apps report ready and the directory is fresh; no schema changed. The encrypted
+pre-release checkpoint was authenticated off-server, without a restore drill.
+Temporary test assignments, passwords and sessions were removed; Workspace denied
+the suspended test administrator and Bot returned 401 after federation revocation.
+The private receipts are in `~/.local/share/helix-changes/20261020-theme/`.

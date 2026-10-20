@@ -518,3 +518,53 @@ current-schema upgrades, new-host ingress, host reboot or Kubernetes. Reconcile
 current identity and credential authority before allowing a restored copy to
 contact live peers. Hosted restore capabilities remain unenrolled; no restored
 volume was promoted or substituted for live state.
+
+## Administration redesign qualification — 2026-10-20
+
+Native and hosted Workspace now run `e7b990f`; Bot runs `17e3c81`.
+Workspace uses one administration search, shared compact controls, TanStack People
+and application tables, and linkable application Overview / People / Operations
+views. Provider routing uses divided rows instead of nested cards. Bot uses the
+same spacing and form conventions, a table for members, a concise Federation
+page and an ownership disclosure. Its Overview route now renders after navigation
+and reload. The [management standard](../architecture/helix-federation-management.md#administration-design-contract)
+records the conventions for additional apps.
+
+Validation:
+
+- Workspace format, typecheck, lint, build and boundaries passed. The full suite
+  passed 4,034 backend and 1,451 web tests; 448 database-fixture-gated tests remained
+  skipped. The final CSS/copy follow-up passed format, typecheck, lint, build and
+  17 targeted browser/accessibility cases at phone, tablet and desktop widths,
+  including light/dark provider panels and assignment-conflict draft retention.
+- Bot static checks, typechecks, build, contract, recovery and portable-core proofs
+  passed. Its unit run passed 819 tests with one failure and one skip; the corrected
+  federation visibility case then passed independently (820 passing cases total).
+  Nineteen targeted desktop/mobile browser cases passed; three existing mobile
+  scenarios were skipped. No paid model request was made.
+- Normal live sign-in verified both native apps and the hosted Workspace. A temporary
+  Workspace administrator received an explicit temporary Bot assignment, signed in
+  through the real Workspace SSO flow, and checked Overview reload, member tables,
+  Models and the authoritative Federation controls. Removing the assignment revoked
+  the Bot session (the protected membership request returned 401). Temporary local
+  and federated test access was revoked; generated password credentials and sessions
+  were removed. Existing user MFA and SSO policies were retained.
+- A live phone review found overlapping heading/actions despite no horizontal
+  overflow. The shared heading wrap was corrected and a geometry assertion added;
+  the final hosted 390px view passed both checks.
+- Encrypted native and off-server hosted pre-change checkpoints were authenticated.
+  The hosted mobile follow-up rolled back once when a whole-row consistency check
+  observed a concurrent change; the retry passed identical before/after business-data
+  digests. Both apps report readiness, the existing private federation network is
+  retained, recovery services are active, and the directory checkpoint is fresh.
+
+Hosted images: `helix/workspace:admin-e7b990f`,
+`helix/workspace-web:admin-e7b990f`, `helix/bot:admin-17e3c81`.
+Private builds, checkpoint receipts, browser screenshots and cleanup receipts are
+under `~/.local/share/helix-recovery/20261020/admin-redesign/`; hosted final rollout
+receipts are under `/srv/helix/admin-redesign-final-20261020/`.
+
+This is UI and routing qualification, with no schema migration. It does not repeat
+whole-application restore, host reboot, all unrelated browser journeys, or native
+AI/model acceptance. Managed backup-history and unenrolled restore-drill notices
+remain separate from the authenticated deployment checkpoints.

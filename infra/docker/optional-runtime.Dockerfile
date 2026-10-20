@@ -47,6 +47,7 @@ ENV NODE_OPTIONS=--use-openssl-ca \
 
 # Debian's Java hook can retain entries that update-ca-certificates has removed.
 RUN if [ -f /etc/ssl/certs/java/cacerts ]; then \
+      keytool -list -keystore /etc/ssl/certs/java/cacerts -storepass changeit >/dev/null || exit 1; \
       for alias in debian:comodo_aaa_services_root.pem debian:emsign_ecc_root_ca_-_g3.pem; do \
         if keytool -list -alias "$alias" -keystore /etc/ssl/certs/java/cacerts -storepass changeit >/dev/null 2>&1; then \
           keytool -delete -alias "$alias" -keystore /etc/ssl/certs/java/cacerts -storepass changeit || exit 1; \

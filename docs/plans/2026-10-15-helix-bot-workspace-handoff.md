@@ -1246,3 +1246,45 @@ additional app implementations remain future feature work.
 See the [review and recovery receipt](../runbooks/2026-10-17-hosted-federation-operations.md#federation-review-and-assignment-conflicts--2026-10-20)
 for scope, verification and deployment evidence. The separate daily whole-installation
 backup completed successfully today; manual worker-history alerts remain accurate.
+
+## Mail provider completion and admin layout sweep — 2026-10-20
+
+Workspace release `cf46858` completes provider-managed DKIM for HTTP providers,
+write-only encrypted sending/feedback credentials, provider lifecycle controls,
+connection checks that send no email, and native delivery-feedback verification.
+The provider UI supports SES, Mailgun, Postmark and SMTP presets for Cloudflare,
+SendGrid and Resend. Mutation responses now match the web client and preserve
+saved credential status. Default/domain/history references protect provider deletion;
+disabled providers can still receive feedback for earlier deliveries.
+
+Mail → General exposes system relay ownership, DNS evidence and a connection check
+under “System mail and delivery status.” Configured is distinct from verified.
+Unsupported AI PII redaction cannot be enabled; an existing enabled flag prevents
+remote model/embedding use until the administrator corrects it.
+
+The layout sweep fixes shared admin field sizing, including the overflowing DKIM
+select, long domains/selectors, routing forms, delivery diagnostics and journal
+settings. Routing and DMARC use the shared TanStack table with mobile cards. DNS
+rows retain visible field captions on phones. Regression checks measure controls
+against their own fields as well as page overflow, so panel clipping cannot hide
+the original defect. Forty-six browser cases cover 320/390/768/1440px, both themes,
+mail/AI provider panels, mail operations, domains/certificates and federation views.
+
+See [mail provider setup](../runbooks/mail-provider-setup.md) for the provider and
+credential setup paths. External inbox delivery, real-account provider feedback
+and the Cloudflare Queue bridge deployment still need the relevant provider
+credentials/account and an approved test recipient. No external email was sent.
+The encrypted pre-release checkpoints authenticated locally and off-server;
+these new checkpoints were not restored as part of this change.
+
+Native and hosted API/web run `cf46858` at schema 252. Both apps are ready and
+the federated directory is fresh; Bot's image and existing identities/model/work
+records were unchanged. All six required repository checks passed: the full test
+run includes 4,046 backend and 1,453 web tests (450 gated backend tests skipped),
+plus five isolated PostgreSQL integration cases. The hosted browser confirmed
+provider creation, encrypted credential save, enable/disable, expected rejection
+of an unreachable connection, provider deletion, and the system relay check.
+The DKIM control and its field both measured 236.5px. The temporary provider was
+removed; the temporary administrator is suspended, its password removed and all
+sessions revoked. Its subsequent admin request was denied. Sanitized receipts
+and logs are retained under `~/.local/share/helix-changes/20261020-mail/`.

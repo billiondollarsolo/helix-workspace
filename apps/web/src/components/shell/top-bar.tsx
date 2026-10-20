@@ -1,7 +1,9 @@
 import {
   Bell as BellIcon,
+  Moon as MoonIcon,
   Search as SearchIcon,
   Settings as SettingsIcon,
+  Sun as SunIcon,
   X as XIcon,
 } from "lucide-react";
 /* TopBar — navigation toggle, surface title, search, surface actions,
@@ -13,6 +15,7 @@ import {
    to the current app when its content is indexed. */
 
 import { appForRoute } from "@/components/apps";
+import { setAppearance, useResolvedTheme } from "@/components/settings-store";
 import { useShellOverlays } from "@/components/shell/overlay-context";
 import { ProfileMenu } from "@/components/shell/profile-menu";
 import { searchFilterForApp } from "@/features/search/route-search";
@@ -56,6 +59,8 @@ export function TopBar({
   onSearchSubmit,
 }: TopBarProps) {
   const overlays = useShellOverlays();
+  const nextTheme = useResolvedTheme() === "dark" ? "light" : "dark";
+  const themeLabel = `Switch to ${nextTheme} mode`;
   const navigate = useNavigate();
   const [draft, setDraft] = useState("");
   const surfaceOwnsSearch = typeof onSearchChange === "function";
@@ -162,6 +167,19 @@ export function TopBar({
           aria-haspopup="dialog"
         >
           <SettingsIcon size={16} aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          className="icon-btn"
+          onClick={() => setAppearance("theme", nextTheme)}
+          title={themeLabel}
+          aria-label={themeLabel}
+        >
+          {nextTheme === "light" ? (
+            <SunIcon size={16} aria-hidden="true" />
+          ) : (
+            <MoonIcon size={16} aria-hidden="true" />
+          )}
         </button>
         <ProfileMenu openSettings={overlays.openSettings} />
       </div>

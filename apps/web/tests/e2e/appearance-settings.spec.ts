@@ -34,6 +34,47 @@ function stored(page: Page) {
   return page.evaluate(() => JSON.parse(localStorage.getItem("helix-appearance") ?? "{}"));
 }
 
+for (const width of [320, 390, 1440]) {
+  test(`account theme button switches immediately and persists at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
+    await mockBackend(page);
+    await page.goto("/assistant");
+    const light = page.getByRole("button", { name: "Switch to light mode", exact: true });
+    await expect(light).toBeVisible();
+    await page.emulateMedia({ colorScheme: "light" });
+    const dark = page.getByRole("button", { name: "Switch to dark mode", exact: true });
+    await expect(dark).toBeVisible();
+    await dark.click();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+    expect(await stored(page)).toMatchObject({ theme: "dark" });
+    await page.reload();
+    await expect(light).toBeVisible();
+    expect(
+      await light.evaluate((button) =>
+        button.nextElementSibling?.classList.contains("topbar-avatar"),
+      ),
+    ).toBe(true);
+    await light.focus();
+    await page.keyboard.press("Enter");
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+    await expect(dark).toBeFocused();
+    expect(await stored(page)).toMatchObject({ theme: "light" });
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth - innerWidth),
+    ).toBeLessThanOrEqual(0);
+    await page.addScriptTag({ content: axe.source });
+    expect(
+      await page.evaluate(async () =>
+        (await (window as typeof window & { axe: typeof axe }).axe.run(".topbar")).violations.map(
+          (violation) => violation.id,
+        ),
+      ),
+    ).toEqual([]);
+    await page.screenshot({ path: test.info().outputPath("theme-button.png") });
+  });
+}
+
 test("System theme follows the device and explicit choices persist", async ({ page }) => {
   await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
   await mockBackend(page);

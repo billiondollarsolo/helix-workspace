@@ -294,6 +294,7 @@ function Assignments({
   const [query, setQuery] = useState(""),
     [search, setSearch] = useState(""),
     [draft, setDraft] = useState<Record<string, FederationRole>>({}),
+    [revision, setRevision] = useState<string | null>(null),
     [dirty, setDirty] = useState(false);
   const initialized = useRef(false);
   const matching = useQuery({
@@ -301,15 +302,20 @@ function Assignments({
     enabled: expanded && search.length > 0,
   });
   const queries = useQueryClient();
-  // shortcut: this API replaces the list; add revision checks before supporting concurrent editors.
   const save = useMutation({
-    mutationFn: () =>
-      setFederationAssignments(
+    mutationFn: () => {
+      if (revision === null) throw new Error("Load assignments before saving.");
+      return setFederationAssignments(
         appId,
         Object.entries(draft).map(([actorId, role]) => ({ actorId, role })),
-      ),
+        revision,
+      );
+    },
     onMutate: () => setDirty(true),
-    onError: () => setDirty(true),
+    onError: async () => {
+      setDirty(true);
+      await queries.invalidateQueries({ queryKey: assignmentKey, exact: true });
+    },
     onSuccess: async () => {
       await queries.invalidateQueries({ queryKey: assignmentKey, exact: true });
       await queries.invalidateQueries({
@@ -326,10 +332,12 @@ function Assignments({
           assignments.data.assignments.map((entry) => [entry.actorId, entry.role]),
         ),
       );
+      setRevision(assignments.data.revision);
       initialized.current = true;
     }
   }, [assignments.data, dirty]);
   if (!expanded) return null;
+  const changed = revision !== null && assignments.data?.revision !== revision;
   const people = search.length > 0 ? matching.data?.users : users.data?.users;
   const candidates = new Map((people ?? []).map((person) => [person.id, person]));
   const assigned = new Map(
@@ -419,11 +427,26 @@ function Assignments({
         retains assignments outside the current search. Refreshing keeps unsaved changes.
       </p>
       {save.error ? <p role="alert">{save.error.message}</p> : null}
+      {dirty && changed ? (
+        <p role="status">
+          The directory or assignments changed. Your draft is retained.{" "}
+          <Button
+            variant="secondary"
+            disabled={save.isPending || assignments.isFetching || assignments.isError}
+            onClick={() => {
+              save.reset();
+              setDirty(false);
+            }}
+          >
+            Use current assignments
+          </Button>
+        </p>
+      ) : null}
       {save.isSuccess && !dirty ? (
         <p role="status">Assignments saved. Directory synchronization is pending.</p>
       ) : null}
       <Button
-        disabled={disabled || !dirty || save.isPending || assignments.isError}
+        disabled={disabled || !dirty || changed || save.isPending || assignments.isError}
         onClick={() => save.mutate()}
       >
         {save.isPending ? "Saving…" : "Save assignments"}

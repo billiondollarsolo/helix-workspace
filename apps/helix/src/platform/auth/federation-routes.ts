@@ -40,12 +40,13 @@ export function registerFederationRoutes(
       fromNodeHeaders(request.headers),
     );
   });
-  app.get("/api/admin/federation-applications/:appId/assignments", async (request) => ({
-    assignments: await federation.assignments(await admin(request), appId(request)),
-  }));
+  app.get("/api/admin/federation-applications/:appId/assignments", async (request) =>
+    federation.assignments(await admin(request), appId(request)),
+  );
   app.put("/api/admin/federation-applications/:appId/assignments", async (request) => {
     const input = z
       .object({
+        revision: z.string().regex(/^(0|[1-9][0-9]{0,18})$/u),
         assignments: z
           .array(
             z
@@ -56,7 +57,12 @@ export function registerFederationRoutes(
       })
       .strict()
       .parse(request.body);
-    await federation.assign(await admin(request), appId(request), input.assignments);
+    await federation.assign(
+      await admin(request),
+      appId(request),
+      input.assignments,
+      input.revision,
+    );
     return { updated: true };
   });
   app.post("/api/admin/federation-applications/:appId/rotate", async (request) => {

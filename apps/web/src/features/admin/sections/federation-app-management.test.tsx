@@ -245,7 +245,7 @@ describe("Federated app management", () => {
           }));
           return jsonResponse({ updated: true });
         }
-        return jsonResponse({ assignments });
+        return jsonResponse({ assignments, revision: "1" });
       }
       if (path.includes("/admin/users?")) {
         if (failSearch && new URL(path, "https://fixture.test").searchParams.get("query") === "Jo")
@@ -284,7 +284,7 @@ describe("Federated app management", () => {
     await settle();
     expect(mounted.container.textContent).not.toContain("People could not be loaded");
     expect(jo.value).toBe("admin");
-    assignments = [{ ...people[0]!, role: "admin" }, people[1]!];
+    assignments = [...people];
     act(() => buttonNamed("Refresh assigned people")?.click());
     await settle();
     await settle();
@@ -302,6 +302,7 @@ describe("Federated app management", () => {
     await settle();
     expect(writes).toEqual(
       [0, 1].map(() => ({
+        revision: "1",
         assignments: [
           { actorId: people[0]!.actorId, role: "viewer" },
           { actorId: people[1]!.actorId, role: "admin" },
@@ -311,6 +312,87 @@ describe("Federated app management", () => {
     expect(mounted.container.textContent).toContain(
       "Assignments saved. Directory synchronization is pending",
     );
+    expect(await axeViolations(mounted.container)).toEqual([]);
+  });
+
+  it("keeps the original revision on a racing save and requires an explicit reload after conflict", async () => {
+    document.cookie = `helix_csrf=${"x".repeat(43)}; Path=/`;
+    let revision = "1";
+    let assignments = people;
+    const writes: unknown[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const path = route(input);
+      if (path.endsWith("/assignments")) {
+        if (init?.method === "PUT") {
+          if (typeof init.body !== "string") throw new Error("Expected JSON");
+          const body = JSON.parse(init.body);
+          writes.push(body);
+          if (body.revision !== revision)
+            return jsonResponse(
+              { error: { message: "The directory or assignments changed." } },
+              { status: 409 },
+            );
+          assignments = body.assignments.map((entry: { actorId: string; role: string }) => ({
+            ...people.find((person) => person.actorId === entry.actorId),
+            ...entry,
+          }));
+          revision = "3";
+          return jsonResponse({ updated: true });
+        }
+        return jsonResponse({ assignments, revision });
+      }
+      if (path.includes("/admin/users?")) return jsonResponse({ users: [], nextCursor: null });
+      return jsonResponse({ applications: [app] });
+    });
+    const mounted = await render();
+    act(() => buttonNamed("Manage assigned people")?.click());
+    await settle();
+    await settle();
+    const jo = assignedControl("jo@example.test");
+    act(() => {
+      jo.value = "admin";
+      jo.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    // Another editor saves after this draft was loaded, before our next poll.
+    assignments = [{ ...people[0]!, role: "admin" }, people[1]!];
+    revision = "2";
+    act(() => buttonNamed("Save assignments")?.click());
+    await settle();
+    await settle();
+    await settle();
+    expect(writes).toEqual([
+      {
+        revision: "1",
+        assignments: [
+          { actorId: people[0]!.actorId, role: "viewer" },
+          { actorId: people[1]!.actorId, role: "admin" },
+        ],
+      },
+    ]);
+    expect(jo.value).toBe("admin");
+    expect(assignedControl("ada@example.test").value).toBe("viewer");
+    expect(buttonNamed("Save assignments")?.disabled).toBe(true);
+    expect(mounted.container.textContent).toContain("Your draft is retained");
+    act(() => buttonNamed("Use current assignments")?.click());
+    await settle();
+    expect(jo.value).toBe("member");
+    expect(assignedControl("ada@example.test").value).toBe("admin");
+    act(() => {
+      jo.value = "admin";
+      jo.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    act(() => buttonNamed("Save assignments")?.click());
+    await settle();
+    await settle();
+    await settle();
+    expect(writes[1]).toEqual({
+      revision: "2",
+      assignments: [
+        { actorId: people[0]!.actorId, role: "admin" },
+        { actorId: people[1]!.actorId, role: "admin" },
+      ],
+    });
+    expect(mounted.container.textContent).toContain("Assignments saved");
     expect(await axeViolations(mounted.container)).toEqual([]);
   });
 });

@@ -380,6 +380,7 @@ export class FederationPairing {
     actor: Actor,
     appId: string,
     assignments: readonly { actorId: string; role: "viewer" | "member" | "admin" }[],
+    revision: string,
   ) {
     this.admin(actor);
     if (new Set(assignments.map((entry) => entry.actorId)).size !== assignments.length)
@@ -388,14 +389,20 @@ export class FederationPairing {
       this.sql,
       { orgId: actor.orgId, actorId: actor.id },
       async (tx) => {
-        const [row] =
-          await tx`select id from federation_applications where org_id=${actor.orgId} and id=${appId} and status in ('prepared','awaiting-peer','active') for update`;
+        const [row] = await tx<{ directory_revision: string }[]>`
+          select directory_revision from federation_applications where org_id=${actor.orgId} and id=${appId} and status in ('prepared','awaiting-peer','active') for update`;
         if (!row) throw new NotFoundError("Application is unavailable.");
+        if (row.directory_revision !== revision)
+          throw new ConflictError(
+            "The directory or assignments changed. Your draft was not saved. Load current assignments and review your changes.",
+          );
         for (const entry of assignments) {
           const [person] =
             await tx`select a.id from actors a join organization_memberships m on m.org_id=a.org_id and m.actor_id=a.id join identity_subjects s on s.id=m.subject_id and s.status='active' where a.org_id=${actor.orgId} and a.id=${entry.actorId} and a.type='user' and a.disabled_at is null and m.status='active'`;
           if (!person) throw new BadRequestError("Choose active people in this organization.");
         }
+        // Prepared apps and empty lists also need to invalidate other editors.
+        await tx`update federation_applications set directory_revision=directory_revision+1 where org_id=${actor.orgId} and id=${appId}`;
         await tx`delete from federation_app_assignments where org_id=${actor.orgId} and application_id=${appId}`;
         for (const entry of assignments)
           await tx`insert into federation_app_assignments(org_id,application_id,actor_id,role,identity_generation)
@@ -418,6 +425,9 @@ export class FederationPairing {
       this.sql,
       { orgId: actor.orgId, actorId: actor.id },
       async (tx) => {
+        const [application] = await tx<{ directory_revision: string }[]>`
+          select directory_revision from federation_applications where org_id=${actor.orgId} and id=${appId} for share`;
+        if (!application) throw new NotFoundError("Application is unavailable.");
         const rows = await tx<
           {
             actor_id: string;
@@ -430,12 +440,15 @@ export class FederationPairing {
         join organization_memberships m on m.org_id=assigned.org_id and m.actor_id=assigned.actor_id and m.status='active'
         join identity_subjects s on s.id=m.subject_id and s.status='active' and s.federation_generation=assigned.identity_generation
         where assigned.org_id=${actor.orgId} and assigned.application_id=${appId} order by assigned.actor_id`;
-        return rows.map((row) => ({
-          actorId: row.actor_id,
-          role: row.role,
-          displayName: row.display_name,
-          email: row.email,
-        }));
+        return {
+          revision: application.directory_revision,
+          assignments: rows.map((row) => ({
+            actorId: row.actor_id,
+            role: row.role,
+            displayName: row.display_name,
+            email: row.email,
+          })),
+        };
       },
     );
   }

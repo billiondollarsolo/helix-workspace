@@ -75,6 +75,7 @@ for (const width of [1440, 390]) {
     let failedSave = true;
     const writes: unknown[] = [];
     let assignments = [person];
+    let revision = "1";
     await page.route("**/api/**", async (route) => {
       if (await fulfillCoreAppsRoute(route)) return;
       const path = new URL(route.request().url()).pathname;
@@ -113,7 +114,7 @@ for (const width of [1440, 390]) {
           }));
           return route.fulfill({ json: { updated: true } });
         }
-        return route.fulfill({ json: { assignments } });
+        return route.fulfill({ json: { assignments, revision } });
       }
       return route.fulfill({
         json: { applications: [], targets: [], jobs: [], users: [], nextCursor: null },
@@ -163,8 +164,22 @@ for (const width of [1440, 390]) {
       page.getByText("Assignments saved. Directory synchronization is pending.", { exact: true }),
     ).toBeVisible();
     expect(writes).toEqual(
-      [0, 1].map(() => ({ assignments: [{ actorId: person.actorId, role: "admin" }] })),
+      [0, 1].map(() => ({
+        revision: "1",
+        assignments: [{ actorId: person.actorId, role: "admin" }],
+      })),
     );
+    await assigned.selectOption("viewer");
+    assignments = [{ ...person, role: "member" }];
+    revision = "2";
+    await page.getByRole("button", { name: "Refresh assigned people" }).click();
+    await expect(
+      page.getByText("The directory or assignments changed.", { exact: false }),
+    ).toBeVisible();
+    await expect(assigned).toHaveValue("viewer");
+    await expect(page.getByRole("button", { name: "Save assignments" })).toBeDisabled();
+    await page.getByRole("button", { name: "Use current assignments" }).click();
+    await expect(assigned).toHaveValue("member");
     await accessible(page);
   });
 }

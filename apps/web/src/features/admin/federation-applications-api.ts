@@ -83,20 +83,21 @@ export function federationAssignmentsQueryOptions(appId: string, enabled: boolea
           "Application connection",
           "Application assignments could not be loaded.",
         );
-      return response.json() as Promise<{ assignments: FederationAssignment[] }>;
+      return response.json() as Promise<{ revision: string; assignments: FederationAssignment[] }>;
     },
   });
 }
 export async function setFederationAssignments(
   appId: string,
   assignments: Pick<FederationAssignment, "actorId" | "role">[],
+  revision: string,
 ) {
   const response = await authenticatedFetch(
     `/api/admin/federation-applications/${encodeURIComponent(appId)}/assignments`,
     {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ assignments }),
+      body: JSON.stringify({ assignments, revision }),
     },
   );
   if (!response.ok)

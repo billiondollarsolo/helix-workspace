@@ -3,6 +3,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import postgres from "postgres";
+import fastify from "fastify";
+import { ZodError } from "zod";
 import { hashPassword } from "better-auth/crypto";
 import { describe, expect, it, vi } from "vitest";
 import { skipUnlessLiveDatabase } from "../../test-support/live-suite.js";
@@ -14,6 +16,8 @@ import { PostgresAdminUserInviteStore } from "../auth/admin-user-invites.js";
 import { createCredentialUserForActor } from "../signup/verification.js";
 import { PostgresAgentCredentialStore } from "../auth/postgres-store.js";
 import { FederationPairing } from "../auth/federation-pairing.js";
+import { registerFederationRoutes } from "../auth/federation-routes.js";
+import { ApiError } from "../../api/api-error.js";
 import { TenantEnvelopeCipher } from "../secrets/envelope.js";
 import { canonicalJson } from "../audit/hash.js";
 import { createHash } from "node:crypto";
@@ -46,6 +50,7 @@ describe.skipIf(skipUnlessLiveDatabase("federation backup control plane"))(
       });
       const servers: ReturnType<typeof recoveryServer>[] = [];
       const workers: FederationBackupWorker[] = [];
+      const api = fastify();
       async function worker(application: "workspace" | "bot") {
         const root = join(directory, application);
         const management = join(directory, `${application}.key`),
@@ -145,12 +150,35 @@ describe.skipIf(skipUnlessLiveDatabase("federation backup control plane"))(
         const service = new FederationBackupManagement(federation, orgId, (error) => {
           throw error;
         });
-        await federation.assign(operator, appId, [{ actorId: approver.id, role: "member" }]);
+        api.setErrorHandler((error, _request, reply) => {
+          if (error instanceof ApiError)
+            return reply.code(error.statusCode).send({ message: error.message });
+          if (error instanceof ZodError) return reply.code(400).send({ message: "Invalid input" });
+          throw error;
+        });
+        registerFederationRoutes(api, federation, () => Promise.resolve(operator));
+        const assignmentUrl = `/api/admin/federation-applications/${appId}/assignments`;
+        const initial = await federation.assignments(operator, appId);
+        expect((await api.inject({ url: assignmentUrl })).json()).toEqual(initial);
+        for (const revision of [undefined, 0, "-1", "01"]) {
+          const invalid = await api.inject({
+            method: "PUT",
+            url: assignmentUrl,
+            payload: { assignments: [], revision },
+          });
+          expect(invalid.statusCode).toBe(400);
+        }
+        await federation.assign(
+          operator,
+          appId,
+          [{ actorId: approver.id, role: "member" }],
+          initial.revision,
+        );
         const assignments = await federation.assignments(
           { ...operator, scopes: ["admin.agents"] },
           appId,
         );
-        expect(assignments).toEqual([
+        expect(assignments.assignments).toEqual([
           {
             actorId: approver.id,
             role: "member",
@@ -162,9 +190,56 @@ describe.skipIf(skipUnlessLiveDatabase("federation backup control plane"))(
         await expect(
           federation.assignments({ ...operator, type: "agent" }, appId),
         ).rejects.toThrow();
-        expect(await federation.assignments({ ...operator, orgId: otherOrg }, appId)).toEqual([]);
+        await expect(
+          federation.assignments({ ...operator, orgId: otherOrg }, appId),
+        ).rejects.toThrow("Application is unavailable");
+        const competing = await Promise.allSettled([
+          federation.assign(
+            operator,
+            appId,
+            [{ actorId: approver.id, role: "viewer" }],
+            assignments.revision,
+          ),
+          federation.assign(
+            operator,
+            appId,
+            [{ actorId: approver.id, role: "admin" }],
+            assignments.revision,
+          ),
+        ]);
+        expect(competing.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+        expect(competing.filter((result) => result.status === "rejected")).toHaveLength(1);
+        const winner = await federation.assignments(operator, appId);
+        expect(
+          (
+            await api.inject({
+              method: "PUT",
+              url: assignmentUrl,
+              payload: { assignments: [], revision: assignments.revision },
+            })
+          ).statusCode,
+        ).toBe(409);
+        await expect(federation.assign(operator, appId, [], assignments.revision)).rejects.toThrow(
+          "directory or assignments changed",
+        );
+        expect(await federation.assignments(operator, appId)).toEqual(winner);
+        await admin`update federation_applications set status='prepared' where org_id=${orgId} and id=${appId}`;
+        await federation.assign(operator, appId, [], winner.revision);
+        const empty = await federation.assignments(operator, appId);
+        await federation.assign(operator, appId, [], empty.revision);
+        await expect(federation.assign(operator, appId, [], empty.revision)).rejects.toThrow(
+          "directory or assignments changed",
+        );
+        const prepared = await federation.assignments(operator, appId);
+        await federation.assign(
+          operator,
+          appId,
+          [{ actorId: approver.id, role: "member" }],
+          prepared.revision,
+        );
+        await admin`update federation_applications set status='active' where org_id=${orgId} and id=${appId}`;
         await admin`update actors set disabled_at=now() where org_id=${orgId} and id=${approver.id}`;
-        expect(await federation.assignments(operator, appId)).toEqual([]);
+        expect((await federation.assignments(operator, appId)).assignments).toEqual([]);
         await admin`update actors set disabled_at=null where org_id=${orgId} and id=${approver.id}`;
         const selfId = randomUUID(),
           botId = randomUUID();
@@ -294,6 +369,7 @@ describe.skipIf(skipUnlessLiveDatabase("federation backup control plane"))(
         expect(bot.instance.state.owner).toBe("local");
         expect(bot.instance.state.policy.enabled).toBe(true);
       } finally {
+        await api.close();
         for (const server of servers)
           await new Promise<void>((resolve) =>
             server.close(() => {

@@ -57,3 +57,23 @@ containers, independently installed model CLIs, or desktop browsers.
 Private build logs, encrypted checkpoint and verification receipts are retained at
 `~/.local/share/helix-changes/20261020-ca-incident/`; hosted artifacts are under
 `/srv/helix/ca-incident-20261020/`. The trust change does not migrate application data.
+
+## Qualified deployment
+
+Workspace API and edge images `ca-42fde1e` and Bot image `ca-b31dba4` were
+deployed. All required repository checks passed: Workspace's backend had 4,046
+passing tests and 450 gated skips; its web app had 1,453 passing tests. Both native
+Node versions, both hosted APIs and both recovery workers rejected all 12 published
+chains through `https` and `fetch`, with four successful HTTPS controls each. The
+deployed Caddy image rejected all 12 upstream chains and passed its positive control.
+Private RustFS TLS returned ready, federation synchronization was fresh, and both
+public readiness endpoints passed. No schema or model-account configuration changed.
+
+The first rollout automatically reverted after a whole-row invariant mismatch.
+That attempt did not save field-level snapshots, so the changed field was not
+identified. Authentication can update credential usage timestamps, but that is not
+a confirmed diagnosis of the first mismatch. The retry recorded every guarded
+column and passed with zero differences, including timestamps. The strict
+all-fields comparison remains in the deployment helper. An encrypted post-change
+checkpoint includes current source bundles, configuration, host CA policy and
+recovery-worker trust drop-ins; it was authenticated off-server.

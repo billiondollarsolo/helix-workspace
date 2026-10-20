@@ -8,6 +8,17 @@ ARG SOURCE_IMAGE=clamav/clamav:1.5.4@sha256:ebec5bc138401b36ae987caa1a3fa3c3b2a2
 
 FROM ${SOURCE_IMAGE}
 
+RUN apk add --no-cache ca-certificates
+# shortcut: distrust incident anchors until all runtime libraries reject the compromised keys.
+RUN sed -i \
+      -e 's|^mozilla/emSign_ECC_Root_CA_-_G3.crt$|!mozilla/emSign_ECC_Root_CA_-_G3.crt|' \
+      -e 's|^mozilla/Comodo_AAA_Services_root.crt$|!mozilla/Comodo_AAA_Services_root.crt|' \
+      /etc/ca-certificates.conf \
+    && update-ca-certificates --fresh \
+    && mkdir -p /etc/ssl/helix-empty
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
+    SSL_CERT_DIR=/etc/ssl/helix-empty
+
 LABEL org.opencontainers.image.title="helix-clamav" \
       org.opencontainers.image.description="ClamAV 1.5.4 with patched runtime packages" \
       org.opencontainers.image.vendor="Helix" \

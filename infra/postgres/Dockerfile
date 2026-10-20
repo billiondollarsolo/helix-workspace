@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.25.0@sha256:0adf442eae370b6087e08edc7c50b552d80ddf261576f4ebd6421006b2461f12
 
 ARG POSTGRES_BASE=postgres:18.6-alpine3.24@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
-ARG GOSU_BUILD_BASE=golang:1.26.9-alpine3.24@sha256:3082400e369fa24d5fc60bca20edab3f6d604e0c5a690ec66b295eff4dd87ade
+ARG GOSU_BUILD_BASE=golang:1.26.10-alpine3.24@sha256:9ce231b28998b32e116927c61aa5c406183061d4f3f2d61b292c88e7f6bdf7ca
 
 FROM ${POSTGRES_BASE} AS build
 
@@ -45,6 +45,17 @@ RUN tar -xzf /tmp/gosu.tar.gz --strip-components=1 \
       .
 
 FROM ${POSTGRES_BASE} AS runtime
+
+RUN apk add --no-cache ca-certificates
+# shortcut: distrust incident anchors until all runtime libraries reject the compromised keys.
+RUN sed -i \
+      -e 's|^mozilla/emSign_ECC_Root_CA_-_G3.crt$|!mozilla/emSign_ECC_Root_CA_-_G3.crt|' \
+      -e 's|^mozilla/Comodo_AAA_Services_root.crt$|!mozilla/Comodo_AAA_Services_root.crt|' \
+      /etc/ca-certificates.conf \
+    && update-ca-certificates --fresh \
+    && mkdir -p /etc/ssl/helix-empty
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
+    SSL_CERT_DIR=/etc/ssl/helix-empty
 
 RUN apk add --no-cache c-ares=1.34.8-r0
 

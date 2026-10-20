@@ -2,7 +2,7 @@
 # Development remediation for pinned upstream Meet and inbound-mail images.
 # Scan the resulting image and record its digest before deploying it.
 ARG SOURCE_IMAGE=jitsi/prosody:stable-11031@sha256:926c508c0d9198bf9d0b6adb88ce9092461e9a79e2895fb57fe4ef5f44ff3523
-ARG BUILD_BASE=golang:1.26.9-alpine3.24@sha256:3082400e369fa24d5fc60bca20edab3f6d604e0c5a690ec66b295eff4dd87ade
+ARG BUILD_BASE=golang:1.26.10-alpine3.24@sha256:9ce231b28998b32e116927c61aa5c406183061d4f3f2d61b292c88e7f6bdf7ca
 
 FROM ${BUILD_BASE} AS tpl-build
 WORKDIR /src
@@ -33,6 +33,27 @@ RUN if command -v apk >/dev/null; then apk upgrade --no-cache; \
     else apt-get update \
       && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-install-recommends \
       && rm -rf /var/lib/apt/lists/*; fi
+# shortcut: distrust incident anchors until all runtime libraries reject the compromised keys.
+RUN sed -i \
+      -e 's|^mozilla/emSign_ECC_Root_CA_-_G3.crt$|!mozilla/emSign_ECC_Root_CA_-_G3.crt|' \
+      -e 's|^mozilla/Comodo_AAA_Services_root.crt$|!mozilla/Comodo_AAA_Services_root.crt|' \
+      /etc/ca-certificates.conf \
+    && update-ca-certificates --fresh \
+    && mkdir -p /etc/ssl/helix-empty
+ENV NODE_OPTIONS=--use-openssl-ca \
+    SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
+    SSL_CERT_DIR=/etc/ssl/helix-empty
+
+
+# Debian's Java hook can retain entries that update-ca-certificates has removed.
+RUN if [ -f /etc/ssl/certs/java/cacerts ]; then \
+      for alias in debian:comodo_aaa_services_root.pem debian:emsign_ecc_root_ca_-_g3.pem; do \
+        if keytool -list -alias "$alias" -keystore /etc/ssl/certs/java/cacerts -storepass changeit >/dev/null 2>&1; then \
+          keytool -delete -alias "$alias" -keystore /etc/ssl/certs/java/cacerts -storepass changeit || exit 1; \
+        fi; \
+      done; \
+    fi
+
 ARG RUNTIME_USER=0:0
 USER ${RUNTIME_USER}
 

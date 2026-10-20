@@ -8,6 +8,17 @@ ARG RULES_ASC_SHA256=0465aff61b900fc20b99a8b83db8e8801efe2204814c6f6897c94539b6f
 
 FROM ${SOURCE_IMAGE}
 
+RUN apk add --no-cache ca-certificates
+# shortcut: distrust incident anchors until all runtime libraries reject the compromised keys.
+RUN sed -i \
+      -e 's|^mozilla/emSign_ECC_Root_CA_-_G3.crt$|!mozilla/emSign_ECC_Root_CA_-_G3.crt|' \
+      -e 's|^mozilla/Comodo_AAA_Services_root.crt$|!mozilla/Comodo_AAA_Services_root.crt|' \
+      /etc/ca-certificates.conf \
+    && update-ca-certificates --fresh \
+    && mkdir -p /etc/ssl/helix-empty
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
+    SSL_CERT_DIR=/etc/ssl/helix-empty
+
 ARG RULES_URL
 ARG RULES_SHA256
 ARG RULES_ASC_URL

@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.25.0@sha256:0adf442eae370b6087e08edc7c50b552d80ddf261576f4ebd6421006b2461f12
 
-ARG BUILD_BASE=golang:1.26.9-alpine3.24@sha256:3082400e369fa24d5fc60bca20edab3f6d604e0c5a690ec66b295eff4dd87ade
+ARG BUILD_BASE=golang:1.26.10-alpine3.24@sha256:9ce231b28998b32e116927c61aa5c406183061d4f3f2d61b292c88e7f6bdf7ca
 ARG RUNTIME_BASE=alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
 
 FROM ${BUILD_BASE} AS build
@@ -25,6 +25,17 @@ RUN tar -xzf /tmp/nats-server.tar.gz --strip-components=1 \
       .
 
 FROM ${RUNTIME_BASE} AS runtime
+
+RUN apk add --no-cache ca-certificates
+# shortcut: distrust incident anchors until all runtime libraries reject the compromised keys.
+RUN sed -i \
+      -e 's|^mozilla/emSign_ECC_Root_CA_-_G3.crt$|!mozilla/emSign_ECC_Root_CA_-_G3.crt|' \
+      -e 's|^mozilla/Comodo_AAA_Services_root.crt$|!mozilla/Comodo_AAA_Services_root.crt|' \
+      /etc/ca-certificates.conf \
+    && update-ca-certificates --fresh \
+    && mkdir -p /etc/ssl/helix-empty
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
+    SSL_CERT_DIR=/etc/ssl/helix-empty
 
 RUN apk add --no-cache \
       libcrypto3=3.5.9-r0 \

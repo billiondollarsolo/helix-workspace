@@ -1,3 +1,4 @@
+import { Button } from "@/components/ui/button";
 import { authenticatedFetch } from "@/lib/auth";
 import {
   Table,
@@ -7,7 +8,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { queryOptions, useQuery } from "@tanstack/react-query";
+import { queryOptions, useQuery, useMutation } from "@tanstack/react-query";
 import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from "@tanstack/react-table";
 import {
   CheckCircle2,
@@ -109,6 +110,17 @@ export async function prefetchAdminMailConfigurationQuery(
 
 export function MailConfiguration() {
   const mailConfigQuery = useQuery(adminMailConfigurationQueryOptions());
+  const systemCheck = useMutation({
+    onMutate: () => undefined,
+    onError: () => undefined,
+    mutationFn: async () => {
+      const response = await authenticatedFetch("/api/admin/mail/config/check", { method: "POST" });
+      const output: unknown = await response.json();
+      if (!response.ok)
+        throw new Error(errorMessageFromOutput(output) ?? "System relay check failed.");
+      return "System relay connection verified. No email was sent; inbox delivery is unverified.";
+    },
+  });
   const config = mailConfigQuery.data;
   const dnsRows = useMemo(() => domainRecordRows(config?.domains ?? []), [config?.domains]);
   const dnsColumns = useMemo<ColumnDef<DNSRecordRow>[]>(
@@ -181,7 +193,7 @@ export function MailConfiguration() {
         />
         <MailStatusCard
           icon={Send}
-          title="Outbound relay"
+          title="System mail relay"
           status={config?.outboundRelay.status ?? "unknown"}
           rows={[
             ["Provider", providerLabel(config?.outboundRelay.provider)],
@@ -219,6 +231,22 @@ export function MailConfiguration() {
         />
       </div>
 
+      <div className="panel p-4 grid gap-3">
+        <p>
+          The deployment administrator controls system mail for invitations and authentication.
+          Tenant outbound providers do not change this relay; they are managed in Outbound
+          providers.
+        </p>
+        <Button
+          variant="outline"
+          disabled={!config?.outboundRelay.configured || systemCheck.isPending}
+          onClick={() => systemCheck.mutate()}
+        >
+          {systemCheck.isPending ? "Checking…" : "Check system mail connection"}
+        </Button>
+        {systemCheck.data ? <p role="status">{systemCheck.data}</p> : null}
+        {systemCheck.error ? <p role="alert">{systemCheck.error.message}</p> : null}
+      </div>
       {config === undefined ? null : (
         <div className="admin-ai-cost-grid">
           <MailStatusCard

@@ -214,10 +214,11 @@ retrieval, bounds and labels untrusted sources, and keeps tool authorization out
 Prompt injection can propose an action but cannot grant scope, confirmation, or automation
 authority.
 
-PII-aware classification heuristics exist, but the configured `redactPIIBeforeSend` policy is not
-implemented as a deterministic transformation before provider transmission. Provider routing can
-block a classification, but allowed cloud-provider requests may still contain PII. This remains a
-privacy gap and must be resolved or explicitly accepted with provider/data-handling constraints.
+PII-aware classification heuristics exist; automatic PII redaction is not implemented. Configuration
+updates reject `redactPIIBeforeSend: true`, and persisted requests for that policy fail closed when
+constructing configured chat and embedding providers. Allowed provider requests may contain PII.
+Use classification gating and approved provider/data-handling restrictions; no redaction guarantee
+is made.
 
 ### Mail
 

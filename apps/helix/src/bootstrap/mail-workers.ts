@@ -1,3 +1,5 @@
+import { PostgresMailProviderCredentials } from "../platform/mail/provider-credentials.js";
+import type { OutboundProviderConfig } from "../platform/mail/providers.js";
 import { KMSClient } from "@aws-sdk/client-kms";
 import { readFile } from "node:fs/promises";
 import {
@@ -107,7 +109,25 @@ export async function installMailWorkers(context: Awaited<ReturnType<typeof inst
         .map((domain) => ({ ...domain, isDefault: domain.isPrimary })),
   };
 
+  const mailProviderCredentials = new PostgresMailProviderCredentials(sql, tenantSecretCipher);
   const mailSecretProvider = {
+    resolveProviderSecret: async (
+      provider: OutboundProviderConfig,
+      purpose: "sending" | "feedback",
+    ) => {
+      const stored = await mailProviderCredentials.read(provider.orgId, provider.id, purpose);
+      if (stored !== undefined) return stored;
+      const reference = purpose === "sending" ? provider.secretRef : provider.webhookSecretRef;
+      return reference === null
+        ? undefined
+        : (
+            await tenantStorageSecretReader?.read({
+              orgId: provider.orgId,
+              scope: "mail-provider",
+              handle: reference,
+            })
+          )?.credential;
+    },
     resolveSecret: async (reference: string, orgId: string): Promise<string | undefined> =>
       (await tenantStorageSecretReader?.read({ orgId, scope: "mail-provider", handle: reference }))
         ?.credential,
@@ -119,9 +139,9 @@ export async function installMailWorkers(context: Awaited<ReturnType<typeof inst
         providerStore: outboundProviderStore,
         domainStore: sendingDomainStore,
         secrets: mailSecretProvider,
-        dkimResolver: (orgId, providerKind) => (from) =>
+        dkimResolver: (orgId) => (from) =>
           withTenantPostgresContext(sql, { orgId }, () =>
-            mailDkimKeyStore.resolveSigningKey(orgId, from, providerKind !== "ses"),
+            mailDkimKeyStore.resolveSigningKey(orgId, from, true),
           ),
         cacheTtlMs: 0,
         ...(outboundMailConfig === undefined
@@ -378,6 +398,7 @@ export async function installMailWorkers(context: Awaited<ReturnType<typeof inst
     outboundProviderStore,
     mailDeliveryEventStore,
     mailSecretProvider,
+    mailProviderCredentials,
     mailDecisionStore,
     mailDecisionWorker,
     outboundMailWorker,

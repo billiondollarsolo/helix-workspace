@@ -226,6 +226,14 @@ function routedFetch(): ReturnType<typeof vi.fn<typeof fetch>> {
     if (url.includes("/api/auth/csrf-token")) {
       return Promise.resolve(jsonResponse({ csrfToken: "test-csrf-token" }));
     }
+    if (url.endsWith("/credentials")) return Promise.resolve(jsonResponse({ saved: true }));
+    if (url.endsWith("/check"))
+      return Promise.resolve(
+        jsonResponse({
+          message: "Connection verified. No email was sent.",
+          checkedAt: "2026-10-20T12:00:00Z",
+        }),
+      );
     if (url.includes("/api/admin/mail/providers")) {
       if (init?.method === "POST" || init?.method === "PATCH") {
         const inputBody = requestJsonBody(init);
@@ -451,56 +459,93 @@ describe("MailAdminSection", () => {
         name: "New SES",
         kind: "ses",
         config: { host: "email-smtp.us-east-2.amazonaws.com", region: "us-east-2", secure: false },
-        secretRef: null,
       });
     });
-    await waitFor(() =>
-      expect(document.body.querySelector('input[aria-label="Provider name"]')).toBeNull(),
-    );
+    await waitFor(() => expect(document.body.textContent).toContain("Credentials and connection"));
   });
 
-  it.each([
-    ["resend", "smtp.resend.com", "resend"],
-    ["sendgrid", "smtp.sendgrid.net", "apikey"],
-  ])("creates the %s SMTP preset with STARTTLS", async (preset, host, user) => {
+  it("saves a write-only credential, checks the connection and toggles provider availability", async () => {
     const fetchMock = routedFetch();
     vi.stubGlobal("fetch", fetchMock);
     routerMocks.search = { tab: "providers" };
     await render(createElement(MailAdminSection));
     await waitFor(() => expect(container.textContent).toContain("Primary SES"));
-    await clickButton("Add provider");
-    act(() => {
-      const kind = document.body.querySelector<HTMLSelectElement>(
-        'select[aria-label="Provider kind"]',
-      );
-      if (!kind) throw new Error("Kind field missing");
-      kind.value = preset;
-      kind.dispatchEvent(new Event("change", { bubbles: true }));
+    await clickButton("Primary SES");
+    const password = document.body.querySelector<HTMLInputElement>('input[type="password"]')!;
+    await act(() => {
+      setInputValue(password, "test-only-secret");
+      return Promise.resolve();
     });
-    act(() => {
-      const name = document.body.querySelector<HTMLInputElement>(
-        'input[aria-label="Provider name"]',
-      );
-      if (!name) throw new Error("Name missing");
-      setInputValue(name, preset);
-    });
-    act(() => {
-      document.body
-        .querySelector<HTMLFormElement>('[role="dialog"] form')
-        ?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-    });
-    await waitFor(() => {
-      const post = fetchMock.mock.calls.find((call) => call[1]?.method === "POST");
-      expect(requestJsonBody(post?.[1])).toMatchObject({
-        name: preset,
-        kind: "smtp",
-        config: { host, user, port: 587, secure: false },
-      });
-    });
+    await clickButton("Save credential");
+    await waitFor(() => expect(password.value).toBe(""));
+    expect(
+      fetchMock.mock.calls.some(
+        ([input, init]) =>
+          requestUrlOf(input).endsWith("/p-ses/credentials") &&
+          requestJsonBody(init).value === "test-only-secret",
+      ),
+    ).toBe(true);
+    await clickButton("Check connection");
+    await waitFor(() => expect(document.body.textContent).toContain("No email was sent"));
+    await clickButton("Disable provider");
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(
+          ([input, init]) =>
+            requestUrlOf(input).endsWith("/p-ses") &&
+            init?.method === "PATCH" &&
+            requestJsonBody(init).enabled === false,
+        ),
+      ).toBe(true),
+    );
   });
 
+  it.each([
+    ["resend", "smtp.resend.com", "resend", 587, false],
+    ["sendgrid", "smtp.sendgrid.net", "apikey", 587, false],
+    ["cloudflare", "smtp.mx.cloudflare.net", "api_token", 465, true],
+  ] as const)(
+    "creates the %s SMTP preset with its required TLS settings",
+    async (preset, host, user, port, secure) => {
+      const fetchMock = routedFetch();
+      vi.stubGlobal("fetch", fetchMock);
+      routerMocks.search = { tab: "providers" };
+      await render(createElement(MailAdminSection));
+      await waitFor(() => expect(container.textContent).toContain("Primary SES"));
+      await clickButton("Add provider");
+      act(() => {
+        const kind = document.body.querySelector<HTMLSelectElement>(
+          'select[aria-label="Provider kind"]',
+        );
+        if (!kind) throw new Error("Kind field missing");
+        kind.value = preset;
+        kind.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      act(() => {
+        const name = document.body.querySelector<HTMLInputElement>(
+          'input[aria-label="Provider name"]',
+        );
+        if (!name) throw new Error("Name missing");
+        setInputValue(name, preset);
+      });
+      act(() => {
+        document.body
+          .querySelector<HTMLFormElement>('[role="dialog"] form')
+          ?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      });
+      await waitFor(() => {
+        const post = fetchMock.mock.calls.find((call) => call[1]?.method === "POST");
+        expect(requestJsonBody(post?.[1])).toMatchObject({
+          name: preset,
+          kind: "smtp",
+          config: { host, user, port, secure, dkimMode: "provider", feedbackProvider: preset },
+        });
+      });
+    },
+  );
+
   it.each(["Primary SES", "Backup Mailgun"])(
-    "edits %s without dropping SMTP security, secret handles or regional API endpoints",
+    "edits %s without changing credentials, SMTP security or regional API endpoints",
     async (name) => {
       const fetchMock = routedFetch();
       vi.stubGlobal("fetch", fetchMock);
@@ -531,9 +576,10 @@ describe("MailAdminSection", () => {
       );
       const patch = fetchMock.mock.calls.find((call) => call[1]?.method === "PATCH");
       const body = requestJsonBody(patch?.[1]);
+      expect(body).not.toHaveProperty("secretRef");
+      expect(body).not.toHaveProperty("webhookSecretRef");
       if (name === "Primary SES")
         expect(body).toMatchObject({
-          secretRef: "ses-password",
           config: {
             host: "email-smtp.us-east-1.amazonaws.com",
             port: 2465,
@@ -544,7 +590,6 @@ describe("MailAdminSection", () => {
         });
       else
         expect(body).toMatchObject({
-          secretRef: "mailgun-key",
           config: { domain: "mg.helix.io", baseUrl: "https://api.eu.mailgun.net" },
         });
       await waitFor(() =>

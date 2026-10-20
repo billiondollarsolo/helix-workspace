@@ -518,6 +518,8 @@ export const mailOutboundProviders = pgTable(
     config: jsonb("config").default({}).notNull(),
     secretRef: text("secret_ref"),
     webhookSecretRef: text("webhook_secret_ref"),
+    credentialCiphertext: text("credential_ciphertext"),
+    feedbackCredentialCiphertext: text("feedback_credential_ciphertext"),
     createdBy: uuid("created_by"),
     ...timestamps,
   },
@@ -536,14 +538,25 @@ export const mailOutboundProviders = pgTable(
       "mail_outbound_providers_webhook_secret_handle",
       sql`${table.webhookSecretRef} is null or ${table.webhookSecretRef} ~ '^[a-z0-9]([a-z0-9._-]{0,98}[a-z0-9])?$'`,
     ),
+    credentialCiphertextCheck: check(
+      "mail_outbound_providers_credential_ciphertext_check",
+      sql`${table.credentialCiphertext} is null or ${table.credentialCiphertext} like 'helix$1$%'`,
+    ),
+    feedbackCredentialCiphertextCheck: check(
+      "mail_outbound_providers_feedback_credential_ciphertext_check",
+      sql`${table.feedbackCredentialCiphertext} is null or ${table.feedbackCredentialCiphertext} like 'helix$1$%'`,
+    ),
     publicConfigCheck: check(
       "mail_outbound_providers_public_config",
       sql`jsonb_typeof(${table.config}) = 'object' and case ${table.kind}
-        when 'ses' then ${table.config} - array['host', 'port', 'secure', 'user', 'region'] = '{}'::jsonb
-        when 'smtp' then ${table.config} - array['host', 'port', 'secure', 'user'] = '{}'::jsonb
-        when 'mailgun' then ${table.config} - array['domain', 'baseUrl'] = '{}'::jsonb
-        when 'postmark' then ${table.config} - array['baseUrl', 'messageStream'] = '{}'::jsonb
+        when 'ses' then ${table.config} - array['host', 'port', 'secure', 'user', 'region', 'feedbackTopicArn', 'dkimMode', 'feedbackProvider'] = '{}'::jsonb
+        when 'smtp' then ${table.config} - array['host', 'port', 'secure', 'user', 'feedbackTopicArn', 'dkimMode', 'feedbackProvider'] = '{}'::jsonb
+        when 'mailgun' then ${table.config} - array['domain', 'baseUrl', 'dkimMode'] = '{}'::jsonb
+        when 'postmark' then ${table.config} - array['baseUrl', 'messageStream', 'dkimMode'] = '{}'::jsonb
         else false end
+        and (not (${table.config} ? 'dkimMode') or (jsonb_typeof(${table.config}->'dkimMode') = 'string' and ${table.config}->>'dkimMode' in ('provider', 'tenant') and (${table.kind} in ('ses', 'smtp') or ${table.config}->>'dkimMode' = 'provider')))
+        and (not (${table.config} ? 'feedbackProvider') or (jsonb_typeof(${table.config}->'feedbackProvider') = 'string' and ${table.config}->>'feedbackProvider' in ('sendgrid', 'resend', 'cloudflare')))
+        and (not (${table.config} ? 'feedbackTopicArn') or jsonb_typeof(${table.config}->'feedbackTopicArn') = 'string')
         and (not (${table.config} ? 'host') or (jsonb_typeof(${table.config}->'host') = 'string' and ${table.config}->>'host' !~ '[@/]'))
         and (not (${table.config} ? 'port') or jsonb_typeof(${table.config}->'port') = 'number')
         and (not (${table.config} ? 'secure') or jsonb_typeof(${table.config}->'secure') = 'boolean')

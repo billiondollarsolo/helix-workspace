@@ -147,7 +147,7 @@ export function AIObservabilityDashboard() {
     <>
       <PageHeading
         title="AI observability"
-        subtitle="Spend, audit, and privacy controls for AI usage, and where to find its metrics."
+        subtitle="Spend, audit, classification controls and AI metrics. Automatic PII redaction is unavailable; restrict providers and data classifications before sending sensitive content."
       />
 
       {platformConfigQuery.isPending ? (

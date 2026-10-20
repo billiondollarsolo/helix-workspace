@@ -1,12 +1,27 @@
+import { verifyProviderFeedback } from "./provider-feedback.js";
 import { describe, expect, it, vi } from "vitest";
-import { signWebhookPayload } from "../webhooks/signatures.js";
+import { createHmac } from "node:crypto";
+function signed(raw: Buffer, secret: string, timestamp: Date): Buffer {
+  const stamp = String(Math.floor(timestamp.getTime() / 1000));
+  return Buffer.from(
+    JSON.stringify({
+      ...JSON.parse(raw.toString()),
+      signature: {
+        timestamp: stamp,
+        token: "test-token",
+        signature: createHmac("sha256", secret)
+          .update(stamp + "test-token")
+          .digest("hex"),
+      },
+    }),
+  );
+}
 import {
   clearMailSuppressionWithAudit,
   InMemoryMailDeliveryEventStore,
   MailDeliveryAlertMonitor,
   normalizeMailgunDeliveryEvent,
   ProviderWebhookVerificationError,
-  verifyAndIngestProviderWebhook,
 } from "./provider-delivery-events.js";
 
 const orgA = "11111111-1111-4111-8111-111111111111";
@@ -16,20 +31,16 @@ const providerB = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const occurredAt = new Date("2026-07-28T12:00:00.000Z");
 
 describe("signed managed-provider delivery webhooks", () => {
-  it("verifies exact raw bytes and rejects modified or expired payloads", async () => {
+  it("verifies native Mailgun signatures and rejects wrong keys or expired payloads", async () => {
     const raw = mailgunPayload("event-1", "failed", "permanent");
-    const signature = signWebhookPayload({
-      payload: raw,
-      secret: "webhook-secret",
-      timestamp: occurredAt,
-    });
+    const signedRaw = signed(raw, "webhook-secret", occurredAt);
     const store = new InMemoryMailDeliveryEventStore();
     const valid = await verifyAndIngestProviderWebhook({
       orgId: orgA,
       providerId: providerA,
       providerKind: "mailgun",
-      rawBody: raw,
-      signatureHeader: signature.header,
+      rawBody: signedRaw,
+
       signingSecret: "webhook-secret",
       store,
       now: occurredAt,
@@ -41,8 +52,8 @@ describe("signed managed-provider delivery webhooks", () => {
         orgId: orgA,
         providerId: providerA,
         providerKind: "mailgun",
-        rawBody: Buffer.concat([raw, Buffer.from(" ")]),
-        signatureHeader: signature.header,
+        rawBody: signed(raw, "wrong-secret", occurredAt),
+
         signingSecret: "webhook-secret",
         store,
         now: occurredAt,
@@ -54,8 +65,8 @@ describe("signed managed-provider delivery webhooks", () => {
         orgId: orgA,
         providerId: providerA,
         providerKind: "mailgun",
-        rawBody: raw,
-        signatureHeader: signature.header,
+        rawBody: signedRaw,
+
         signingSecret: "webhook-secret",
         store,
         now: new Date(occurredAt.getTime() + 301_000),
@@ -65,11 +76,7 @@ describe("signed managed-provider delivery webhooks", () => {
 
   it("is durably idempotent and tenant/provider scoped", async () => {
     const raw = mailgunPayload("duplicate-id", "delivered");
-    const signature = signWebhookPayload({
-      payload: raw,
-      secret: "secret",
-      timestamp: occurredAt,
-    });
+    const signedRaw = signed(raw, "secret", occurredAt);
     const store = new InMemoryMailDeliveryEventStore([
       {
         id: "out-a",
@@ -88,8 +95,8 @@ describe("signed managed-provider delivery webhooks", () => {
       orgId: orgA,
       providerId: providerA,
       providerKind: "mailgun",
-      rawBody: raw,
-      signatureHeader: signature.header,
+      rawBody: signedRaw,
+
       signingSecret: "secret",
       store,
       now: occurredAt,
@@ -98,8 +105,8 @@ describe("signed managed-provider delivery webhooks", () => {
       orgId: orgA,
       providerId: providerA,
       providerKind: "mailgun",
-      rawBody: raw,
-      signatureHeader: signature.header,
+      rawBody: signedRaw,
+
       signingSecret: "secret",
       store,
       now: occurredAt,
@@ -221,4 +228,24 @@ function mailgunPayload(id: string, event: string, severity?: "temporary" | "per
       },
     }),
   );
+}
+
+async function verifyAndIngestProviderWebhook(input: {
+  orgId: string;
+  providerId: string;
+  providerKind: "mailgun";
+  rawBody: Buffer;
+  signingSecret: string;
+  store: InMemoryMailDeliveryEventStore;
+  now: Date;
+}) {
+  const [event] = verifyProviderFeedback({
+    kind: input.providerKind,
+    rawBody: input.rawBody,
+    secret: input.signingSecret,
+    headers: {},
+    now: input.now.getTime(),
+  });
+  if (!event) throw new Error("Missing test event");
+  return input.store.ingestEvent({ orgId: input.orgId, providerId: input.providerId, event });
 }

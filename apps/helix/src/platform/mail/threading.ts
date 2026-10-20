@@ -91,6 +91,24 @@ export function smtpDeliveryMessageId(
   );
 }
 
+/** Managed SMTP services return their feedback correlation ID in the final acknowledgement. */
+export function managedSmtpDeliveryMessageId(
+  info: { readonly messageId: string; readonly response?: string | undefined },
+  host: string,
+): string {
+  if (host.toLowerCase() === "smtp.mx.cloudflare.net")
+    return (
+      /^250\s+2\.0\.0\s+Ok\s+<([^<>\s]+)>\s*$/iu.exec(info.response ?? "")?.[1] ?? info.messageId
+    );
+  if (host.toLowerCase() === "smtp.resend.com")
+    return (
+      /^250\s+(?:2\.0\.0\s+)?(?:Ok\s+)?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\s*$/iu.exec(
+        info.response ?? "",
+      )?.[1] ?? info.messageId
+    );
+  return smtpDeliveryMessageId(info, isSesSmtpHost(host));
+}
+
 /** Prepare the immutable RFC threading headers persisted with an outbound queue record. */
 export function prepareOutboundEnvelope(envelope: MailOutboundEnvelope): MailOutboundEnvelope {
   const messageId =

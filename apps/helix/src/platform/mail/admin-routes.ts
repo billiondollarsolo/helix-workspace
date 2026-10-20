@@ -1,3 +1,5 @@
+import { serializeProvider, deleteUnusedMailProvider } from "./provider-admin-routes.js";
+import type { MailProviderCredentials } from "./provider-credentials.js";
 import type { Actor, JsonObject } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
@@ -30,19 +32,7 @@ import {
   type OutboundProviderConfig,
 } from "./providers.js";
 
-/**
- * Mail delivery admin routes.
- *
- * Org admins manage the outbound delivery provider, mail domains, DKIM
- * signing keys, DMARC deliverability reports, and inbound routing rules. Every
- * route is scope-gated through the shared admin-console helpers
- * (`admin.console.read` / `admin.console.write`, with `admin.*` and the
- * `mail.admin` scope honoured) and every mutation is audited.
- *
- * Secrets (provider API keys, SMTP passwords) are referenced by an env-var
- * name (`secretRef`) and are never accepted or returned inline.
- */
-
+/** Tenant-scoped mail administration; all mutations are authorized and audited. */
 const mailAdminScope = "mail.admin";
 
 /** Mail-admin read access — admin-console read, `admin.*`, or `mail.admin`. */
@@ -232,25 +222,6 @@ function isRoutingValidationError(error: unknown): boolean {
 // Serialization
 // ---------------------------------------------------------------------------
 
-function serializeProvider(provider: OutboundProviderConfig): Record<string, unknown> {
-  return {
-    id: provider.id,
-    orgId: provider.orgId,
-    name: provider.name,
-    kind: provider.kind,
-    enabled: provider.enabled,
-    isDefault: provider.isDefault,
-    config: provider.config,
-    // Only opaque tenant secret handles are surfaced.
-    secretRef: provider.secretRef,
-    hasSecret: provider.secretRef !== null,
-    webhookSecretRef: provider.webhookSecretRef,
-    hasWebhookSecret: provider.webhookSecretRef !== null,
-    createdAt: provider.createdAt,
-    updatedAt: provider.updatedAt,
-  };
-}
-
 /**
  * Project a DKIM key for the API. The private key is redacted — only its
  * presence is reported. The public key and the DNS record (which the admin
@@ -342,6 +313,7 @@ function serializeDmarcReport(report: MailDmarcReportRecord): Record<string, unk
 
 export interface RegisterMailDeliveryAdminRoutesOptions {
   readonly providerStore: OutboundProviderStore;
+  readonly credentials?: MailProviderCredentials;
   readonly domainStore: Pick<DomainsStore, "listDomains" | "getDomain" | "setDomainCapabilities">;
   readonly dkimStore: MailDkimKeyStore;
   readonly dmarcStore: MailDmarcReportStore;
@@ -398,7 +370,18 @@ export async function registerMailDeliveryAdminRoutes(
     if (!canReadMailDeliveryAdmin(actor)) {
       return sendForbidden(reply, adminConsoleReadScope);
     }
-    return { providers: (await providerStore.listProviders(actor.orgId)).map(serializeProvider) };
+    return {
+      providers: await Promise.all(
+        (await providerStore.listProviders(actor.orgId)).map(async (provider) => {
+          const saved = await options.credentials?.status(actor.orgId, provider.id);
+          return {
+            ...serializeProvider(provider),
+            hasSecret: saved?.sending === true || provider.secretRef !== null,
+            hasWebhookSecret: saved?.feedback === true || provider.webhookSecretRef !== null,
+          };
+        }),
+      ),
+    };
   });
 
   app.post("/api/admin/mail/providers", async (request, reply) => {
@@ -506,7 +489,19 @@ export async function registerMailDeliveryAdminRoutes(
     if (!params.success) {
       return reply.code(400).send(invalidRequest("Invalid provider id."));
     }
-    const deleted = await providerStore.deleteProvider(actor.orgId, params.data.id);
+    let deleted: boolean;
+    try {
+      deleted = await deleteUnusedMailProvider(
+        providerStore,
+        domainStore,
+        actor.orgId,
+        params.data.id,
+      );
+    } catch (error) {
+      if (error instanceof MailAdminConflictError)
+        return reply.code(409).send({ error: error.message });
+      throw error;
+    }
     if (!deleted) {
       return reply.code(404).send(notFound("Provider not found."));
     }

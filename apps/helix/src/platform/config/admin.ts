@@ -187,7 +187,14 @@ const aiConfigUpdateSchema = z
       .optional(),
     privacy: z
       .object({
-        redactPIIBeforeSend: z.boolean().optional(),
+        redactPIIBeforeSend: z
+          .literal(false, {
+            errorMap: () => ({
+              message:
+                "Automatic PII redaction is not supported. Use provider and classification restrictions instead.",
+            }),
+          })
+          .optional(),
         classificationGating: z.boolean().optional(),
         blockExternalForClassifications: z.array(dataClassificationSchema).optional(),
       })
@@ -837,7 +844,7 @@ function partialConfigFromRow(row: PlatformConfigRow): PartialHelixConfig {
     return { modules: normalizeModulesConfig(row.value, "platform_config.modules") };
   }
   if (row.key === "ai") {
-    return { ai: normalizeAiConfig(row.value, "platform_config.ai") };
+    return { ai: normalizeAiConfig(row.value, "platform_config.ai", true) };
   }
   if (row.key === "observability") {
     return {
@@ -938,9 +945,20 @@ function normalizeModulesConfig(
   );
 }
 
-function normalizeAiConfig(value: unknown, label: string): NonNullable<PartialHelixConfig["ai"]> {
+function normalizeAiConfig(
+  value: unknown,
+  label: string,
+  stored = false,
+): NonNullable<PartialHelixConfig["ai"]> {
   const parsed = aiConfigUpdateSchema
     .extend({
+      // Persisted unsupported requests must remain visible so admins can disable them.
+      privacy: stored
+        ? aiConfigUpdateSchema.shape.privacy
+            .unwrap()
+            .extend({ redactPIIBeforeSend: z.boolean().optional() })
+            .optional()
+        : aiConfigUpdateSchema.shape.privacy,
       vectorStore: aiPluginRefSchema.optional(),
       embeddingProvider: aiPluginRefSchema.optional(),
     })

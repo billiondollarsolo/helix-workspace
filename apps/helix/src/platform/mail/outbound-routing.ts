@@ -11,6 +11,7 @@ import { MailProviderConfigurationError } from "./errors.js";
 import type { DkimOptionsResolver, OutboundMailTransport } from "./outbound.js";
 import {
   ProviderMailTransport,
+  providerSignsMail,
   createOutboundMailProvider,
   type FetchLike,
   type OutboundMailProviderKind,
@@ -36,6 +37,10 @@ export type OutboundTransportFor = (
 /** Secret values are fetched for each dispatch call and are never cached. */
 export interface MailSecretProvider {
   resolveSecret(ref: string, orgId: string): Promise<string | undefined>;
+  resolveProviderSecret?(
+    provider: OutboundProviderConfig,
+    purpose: "sending" | "feedback",
+  ): Promise<string | undefined>;
 }
 
 interface ManagedEnvironmentMailProvider {
@@ -168,26 +173,20 @@ export class DispatchTimeTransportResolver {
     fromDomain: string,
     source: Exclude<OutboundProviderDecisionSource, "environment">,
   ): Promise<ResolvedOutboundTransport> {
-    const secret =
-      config.secretRef === null
-        ? undefined
-        : await this.options.secrets.resolveSecret(config.secretRef, config.orgId);
+    const secret = await resolveMailProviderSecret(this.options.secrets, config, "sending");
+    const resolveDkim = providerSignsMail(config)
+      ? undefined
+      : this.options.dkimResolver?.(config.orgId, config.kind);
     const provider = createOutboundMailProvider(
       config,
       (ref) => (ref === config.secretRef ? secret : undefined),
       {
         ...(this.options.fetch === undefined ? {} : { fetch: this.options.fetch }),
-        ...(this.options.dkimResolver === undefined
-          ? {}
-          : { dkimResolver: this.options.dkimResolver(config.orgId, config.kind) }),
+        ...(resolveDkim === undefined ? {} : { dkimResolver: resolveDkim }),
       },
     );
     return {
-      transport: new ProviderMailTransport(
-        provider,
-        config.id,
-        this.options.dkimResolver?.(config.orgId, config.kind),
-      ),
+      transport: new ProviderMailTransport(provider, config.id, resolveDkim),
       providerId: config.id,
       providerKind: config.kind,
       source,
@@ -286,4 +285,15 @@ export function withOutboundRoutingInvalidation(
       },
     },
   };
+}
+
+export async function resolveMailProviderSecret(
+  secrets: MailSecretProvider,
+  provider: OutboundProviderConfig,
+  purpose: "sending" | "feedback",
+): Promise<string | undefined> {
+  if (secrets.resolveProviderSecret !== undefined)
+    return secrets.resolveProviderSecret(provider, purpose);
+  const ref = purpose === "sending" ? provider.secretRef : provider.webhookSecretRef;
+  return ref === null ? undefined : secrets.resolveSecret(ref, provider.orgId);
 }

@@ -74,7 +74,7 @@ describe("mail admin configuration status", () => {
     });
     expect(status.outboundRelay).toMatchObject({
       configured: true,
-      status: "ready",
+      status: "configured",
       provider: "smtp",
       host: "smtp.example.com",
       port: 587,

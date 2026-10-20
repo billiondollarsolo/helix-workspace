@@ -2,6 +2,11 @@ import type { Actor } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { actorHasScope } from "../../api/scopes.js";
 import { actorRoleDecision } from "../permissions/roles.js";
+import {
+  auditAdminAction,
+  canWriteAdminConsole,
+  type AdminConsoleAuditSink,
+} from "../admin/console-shared.js";
 import type { MailOutboundStatus } from "./types.js";
 
 const adminConfigReadScope = "admin.config.read";
@@ -107,12 +112,46 @@ export class MailAdminStatusService {
 export interface RegisterMailAdminRoutesOptions {
   readonly service: MailAdminStatusService;
   readonly actorFromRequest: (request: FastifyRequest) => Promise<Actor> | Actor;
+  readonly checkSystemRelay?: () => Promise<boolean>;
+  readonly auditSink?: AdminConsoleAuditSink;
 }
 
 export async function registerMailAdminRoutes(
   app: FastifyInstance,
   options: RegisterMailAdminRoutesOptions,
 ): Promise<void> {
+  app.post("/api/admin/mail/config/check", async (request, reply) => {
+    const actor = await options.actorFromRequest(request);
+    if (
+      !canWriteAdminConsole(actor, "mail.admin", {
+        type: "product",
+        id: "mail",
+        orgId: actor.orgId,
+      })
+    )
+      return reply.code(403).send({ error: "Missing mail administration scope." });
+    const ok = (await options.checkSystemRelay?.().catch(() => false)) ?? false;
+    if (options.auditSink)
+      await auditAdminAction(options.auditSink, {
+        orgId: actor.orgId,
+        actorId: actor.id,
+        verb: "mail.system-relay.checked",
+        objectType: "mail_configuration",
+        objectId: actor.orgId,
+        metadata: { ok },
+      });
+    return reply.code(ok ? 200 : 422).send(
+      ok
+        ? {
+            message:
+              "System relay connection verified. No email was sent; inbox delivery is unverified.",
+          }
+        : {
+            error:
+              "System relay is missing or unreachable. Ask the deployment administrator to check its SMTP settings and credentials.",
+          },
+    );
+  });
   app.get("/api/admin/mail/config", async (request, reply) => {
     const actor = await options.actorFromRequest(request);
     if (!canReadMailAdminStatus(actor)) {
@@ -179,13 +218,14 @@ function outboundRelayStatus(env: NodeJS.ProcessEnv): MailAdminStatus["outboundR
   const pass = env.MAIL_SMTP_PASS ?? env.SES_SMTP_PASS;
   return {
     configured: true,
-    status: "ready",
+    status: "configured",
     provider: env.SES_SMTP_HOST !== undefined && env.MAIL_SMTP_HOST === undefined ? "ses" : "smtp",
     host,
     port,
     secure: secureEnv === undefined ? null : envValueFlag(secureEnv, false),
     authConfigured: user !== undefined && user.length > 0 && pass !== undefined && pass.length > 0,
-    evidence: "Outbound SMTP relay host is configured; credentials are not exposed.",
+    evidence:
+      "Deployment-managed system mail for invitations, authentication and fallback delivery. Host configured; connection and inbox delivery have not been checked. Tenant providers are managed separately.",
   };
 }
 

@@ -8,7 +8,7 @@ import { verifyWebhookSignature } from "../webhooks/signatures.js";
 import { normalizeMailboxAddress } from "./address-normalization.js";
 import type { OutboundProviderStore } from "./admin-store.js";
 import {
-  ProviderWebhookPayloadError,
+  ProviderWebhookUnmatchedError,
   type IngestMailDeliveryEventResult,
   type MailDeliveryEventType,
   type NormalizedMailDeliveryEvent,
@@ -144,10 +144,7 @@ export class PostgresMailDeliveryEventStore
       occurredAt: input.event.occurredAt,
       providerEventType: input.event.type,
     });
-    if (event === null)
-      throw new ProviderWebhookPayloadError(
-        "Delivery event does not match this provider's outbound message and recipient.",
-      );
+    if (event === null) throw new ProviderWebhookUnmatchedError();
     return {
       event: {
         ...input.event,
@@ -160,7 +157,7 @@ export class PostgresMailDeliveryEventStore
       },
       duplicate: event.duplicate,
       outboundMatched: true,
-      suppressed: kind === "bounced" || kind === "complained",
+      suppressed: input.event.type === "hard_bounce" || input.event.type === "complaint",
     };
   }
 
@@ -327,7 +324,10 @@ export class PostgresMailDeliveryEventStore
           updated_at = now()
         where org_id = ${input.orgId} and id = ${outbound[0].id}
       `;
-      if (input.kind === "bounced" || input.kind === "complained") {
+      if (
+        (input.kind === "bounced" || input.kind === "complained") &&
+        input.providerEventType !== "rejected"
+      ) {
         await tx`
           insert into mail_suppressions (org_id, address, reason, source_event_id)
           values (

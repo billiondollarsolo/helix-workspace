@@ -165,6 +165,15 @@ describe("outbound provider admin routes", () => {
     expect(updated.statusCode).toBe(200);
     expect(updated.body<{ provider: ProviderView }>().provider.enabled).toBe(false);
 
+    expect(
+      (await inject({ method: "DELETE", url: `/api/admin/mail/providers/${provider.id}` }))
+        .statusCode,
+    ).toBe(409);
+    await inject({
+      method: "PATCH",
+      url: `/api/admin/mail/providers/${provider.id}`,
+      payload: { isDefault: false },
+    });
     const removed = await inject({
       method: "DELETE",
       url: `/api/admin/mail/providers/${provider.id}`,
@@ -172,6 +181,7 @@ describe("outbound provider admin routes", () => {
     expect(removed.statusCode).toBe(200);
     expect(audited.map((entry) => entry.verb)).toEqual([
       "mail.provider.created",
+      "mail.provider.updated",
       "mail.provider.updated",
       "mail.provider.deleted",
     ]);

@@ -381,7 +381,7 @@ describe("platform config admin schema", () => {
           perAgentPerDayUSD: 10,
         },
         privacy: {
-          redactPIIBeforeSend: true,
+          redactPIIBeforeSend: false,
           classificationGating: true,
           blockExternalForClassifications: ["confidential", "restricted"],
         },
@@ -711,7 +711,7 @@ describe("PostgresPlatformConfigStore", () => {
         ai: {
           costLimits: { perUserPerDayUSD: 5, perOrgPerDayUSD: 500 },
           privacy: {
-            redactPIIBeforeSend: true,
+            redactPIIBeforeSend: false,
             classificationGating: true,
             blockExternalForClassifications: ["confidential", "restricted"],
           },
@@ -756,7 +756,7 @@ describe("PostgresPlatformConfigStore", () => {
       },
       costLimits: { perUserPerDayUSD: 5, perOrgPerDayUSD: 500 },
       privacy: {
-        redactPIIBeforeSend: true,
+        redactPIIBeforeSend: false,
         classificationGating: true,
         blockExternalForClassifications: ["confidential", "restricted"],
       },

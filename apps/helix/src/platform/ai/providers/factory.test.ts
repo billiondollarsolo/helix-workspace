@@ -97,3 +97,19 @@ it("refreshes saved model choices and routing without restarting or inventing an
     });
   }
 });
+
+it("fails closed for persisted redaction requests before creating external providers", () => {
+  expect(
+    createAssistantProviders({
+      enabled: true,
+      privacy: { redactPIIBeforeSend: true },
+      providers: [
+        {
+          id: "external",
+          plugin: "com.helix.ai-provider-openai-compat@^1.0.0",
+          config: { baseUrl: "https://example.com/v1", apiKey: "test" },
+        },
+      ],
+    }),
+  ).toEqual([]);
+});

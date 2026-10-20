@@ -558,7 +558,12 @@ async function waitForMailpit(baseUrl, query, timeoutMs) {
 
 async function postProviderEvent(config, input) {
   const timestamp = Math.floor(Date.now() / 1000);
+  const token = String(input.eventId);
+  const signature = createHmac("sha256", config.providerWebhookSecret)
+    .update(String(timestamp) + token)
+    .digest("hex");
   const raw = JSON.stringify({
+    signature: { timestamp: String(timestamp), token, signature },
     "event-data": {
       id: input.eventId,
       event: input.event,
@@ -569,9 +574,6 @@ async function postProviderEvent(config, input) {
       "delivery-status": { code: input.event === "complained" ? 0 : 550, description: "M7 probe" },
     },
   });
-  const digest = createHmac("sha256", config.providerWebhookSecret)
-    .update(`${String(timestamp)}.${raw}`)
-    .digest("hex");
   const response = await fetch(
     new URL(
       `/webhooks/mail/providers/${encodeURIComponent(config.providerOrgId)}/${encodeURIComponent(config.providerId)}`,
@@ -582,13 +584,12 @@ async function postProviderEvent(config, input) {
       headers: {
         accept: "application/json",
         "content-type": "application/json",
-        "x-helix-signature": `t=${String(timestamp)},v1=${digest}`,
       },
       body: raw,
     },
   );
   const parsed = await jsonResponse(response, "provider webhook");
-  if (response.status !== 202 || parsed.accepted !== true) {
+  if (response.status !== 200 || parsed.accepted !== true) {
     throw new Error(`provider webhook returned HTTP ${String(response.status)}`);
   }
   return parsed;

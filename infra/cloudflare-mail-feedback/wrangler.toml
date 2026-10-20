@@ -1,0 +1,17 @@
+name = "helix-mail-feedback"
+main = "worker.mjs"
+compatibility_date = "2026-10-20"
+workers_dev = false
+preview_urls = false
+
+# Create a queue, attach this consumer, and subscribe your sending domain's events.
+[[queues.consumers]]
+queue = "helix-mail-feedback"
+max_batch_size = 10
+max_retries = 10
+dead_letter_queue = "helix-mail-feedback-dead-letter"
+
+[vars]
+HELIX_FEEDBACK_URL = "https://workspace.example.com/webhooks/mail/providers/ORG_UUID/PROVIDER_UUID"
+CLOUDFLARE_SENDING_DOMAIN = "example.com"
+# Set HELIX_FEEDBACK_SECRET with `wrangler secret put`, never in this file.

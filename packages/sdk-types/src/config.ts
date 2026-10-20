@@ -75,6 +75,7 @@ export interface AiCostLimitsConfig {
 }
 
 export interface AiPrivacyConfig {
+  /** Unsupported: configuration writes reject true; existing true values disable configured providers. */
   readonly redactPIIBeforeSend?: boolean;
   readonly classificationGating?: boolean;
   readonly blockExternalForClassifications?: readonly DataClassification[];

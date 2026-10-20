@@ -12,7 +12,7 @@ import {
   toNodemailerMail,
 } from "./outbound-format.js";
 import { mailgunMessageBody, postmarkMessageBody } from "./provider-http-payloads.js";
-import { isSesSmtpHost, smtpDeliveryMessageId } from "./threading.js";
+import { isSesSmtpHost, smtpDeliveryMessageId, managedSmtpDeliveryMessageId } from "./threading.js";
 import { sesFeedbackTopicArnSchema } from "./ses-feedback.js";
 import type { MailOutboundDeliveryResult, MailOutboundEnvelope } from "./types.js";
 
@@ -58,6 +58,8 @@ export interface OutboundProviderConfig {
 }
 
 const smtpSettings = {
+  dkimMode: z.enum(["provider", "tenant"]).optional(),
+  feedbackProvider: z.enum(["sendgrid", "resend", "cloudflare"]).optional(),
   host: z
     .string()
     .trim()
@@ -78,6 +80,7 @@ const providerPublicConfigs = {
   smtp: z.object(smtpSettings).strict(),
   mailgun: z
     .object({
+      dkimMode: z.literal("provider").optional(),
       domain: z
         .string()
         .trim()
@@ -88,7 +91,11 @@ const providerPublicConfigs = {
     })
     .strict(),
   postmark: z
-    .object({ baseUrl: httpsUrl.optional(), messageStream: z.string().max(200).optional() })
+    .object({
+      baseUrl: httpsUrl.optional(),
+      messageStream: z.string().max(200).optional(),
+      dkimMode: z.literal("provider").optional(),
+    })
     .strict(),
 } satisfies Record<OutboundMailProviderKind, z.ZodTypeAny>;
 
@@ -97,6 +104,14 @@ export function parseOutboundProviderPublicConfig(
   value: unknown,
 ): JsonObject {
   return providerPublicConfigs[kind].parse(value) as JsonObject;
+}
+
+/** SMTP relays require tenant signing unless the administrator selects provider signing. */
+export function providerSignsMail(config: OutboundProviderConfig): boolean {
+  return (
+    config.config.dkimMode === "provider" ||
+    (config.config.dkimMode === undefined && config.kind !== "smtp")
+  );
 }
 
 function isCredentialFreeHttpsUrl(value: string): boolean {
@@ -281,7 +296,7 @@ export class SmtpRelayMailProvider implements OutboundMailProvider {
       toNodemailerMail(message, dkim, isSesSmtpHost(this.#host)),
     );
     return {
-      providerMessageId: smtpDeliveryMessageId(info, isSesSmtpHost(this.#host)),
+      providerMessageId: managedSmtpDeliveryMessageId(info, this.#host),
       metadata: {
         provider: "smtp",
         host: this.#host,
@@ -529,18 +544,19 @@ export async function resolveOutboundTransport(input: {
           scope: "mail-provider",
           handle: config.secretRef,
         });
+  const resolveDkim = providerSignsMail(config) ? undefined : input.dkimResolver;
   let provider: OutboundMailProvider;
   try {
     provider = createOutboundMailProvider(config, () => secret?.credential, {
       ...(input.fetch === undefined ? {} : { fetch: input.fetch }),
-      ...(input.dkimResolver === undefined ? {} : { dkimResolver: input.dkimResolver }),
+      ...(resolveDkim === undefined ? {} : { dkimResolver: resolveDkim }),
     });
   } catch (error) {
     throw new MailDeliveryError("Outbound mail provider configuration is invalid.", false, {
       cause: error,
     });
   }
-  return new ProviderMailTransport(provider, config.id, input.dkimResolver);
+  return new ProviderMailTransport(provider, config.id, resolveDkim);
 }
 
 // ---------------------------------------------------------------------------
@@ -616,6 +632,9 @@ export function createSmtpTransport(options: {
     secure: options.secure ?? false,
     // Same rule as the environment relay: STARTTLS must not be downgradable.
     requireTLS: options.secure !== true,
+    connectionTimeout: 10_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 15_000,
     ...(options.user === undefined
       ? {}
       : { auth: { user: options.user, pass: options.pass ?? "" } }),

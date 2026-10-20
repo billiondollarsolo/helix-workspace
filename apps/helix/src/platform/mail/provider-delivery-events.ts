@@ -2,7 +2,6 @@ import type { JsonObject } from "@helix/sdk-types";
 import { randomUUID } from "node:crypto";
 import type { AdminConsoleAuditSink } from "../admin/console-shared.js";
 import { auditAdminAction } from "../admin/console-shared.js";
-import { verifyWebhookSignature } from "../webhooks/signatures.js";
 import { normalizeMailboxAddress } from "./address-normalization.js";
 
 export const MAIL_DELIVERY_EVENT_TYPES = [
@@ -328,57 +327,18 @@ export async function clearMailSuppressionWithAudit(input: {
   return cleared;
 }
 
-export interface VerifyAndIngestProviderWebhookInput {
-  readonly orgId: string;
-  readonly providerId: string;
-  readonly providerKind: "mailgun";
-  readonly rawBody: Buffer;
-  readonly signatureHeader: string;
-  readonly signingSecret: string;
-  readonly store: ProviderDeliveryEventStore;
-  readonly now?: Date | number;
-  readonly replayToleranceSeconds?: number;
-  readonly onSignatureFailure?: (input: {
-    readonly orgId: string;
-    readonly providerId: string;
-  }) => void;
-  readonly alertMonitor?: MailDeliveryAlertMonitor;
-}
-
-/**
- * Verify the exact request bytes before parsing, enforce the timestamp window,
- * normalize the provider payload, and rely on the durable event key for replay
- * idempotency inside that window.
- */
-export async function verifyAndIngestProviderWebhook(
-  input: VerifyAndIngestProviderWebhookInput,
-): Promise<IngestMailDeliveryEventResult> {
-  const verified = verifyWebhookSignature({
-    payload: input.rawBody,
-    secret: input.signingSecret,
-    header: input.signatureHeader,
-    toleranceSeconds: input.replayToleranceSeconds ?? 300,
-    ...(input.now === undefined ? {} : { now: input.now }),
-  });
-  if (!verified) {
-    input.onSignatureFailure?.({ orgId: input.orgId, providerId: input.providerId });
-    throw new ProviderWebhookVerificationError();
-  }
-  const raw: unknown = JSON.parse(input.rawBody.toString("utf8"));
-  const event = normalizeMailgunDeliveryEvent(raw);
-  const result = await input.store.ingestEvent({
-    orgId: input.orgId,
-    providerId: input.providerId,
-    event,
-  });
-  await input.alertMonitor?.observe(input.orgId, event.type);
-  return result;
-}
-
 export class ProviderWebhookVerificationError extends Error {
   constructor() {
     super("Provider webhook signature is invalid, expired, or malformed.");
     this.name = "ProviderWebhookVerificationError";
+  }
+}
+
+export class ProviderWebhookUnmatchedError extends Error {
+  readonly statusCode = 503;
+  constructor() {
+    super("Delivery event does not match this provider's outbound message and recipient.");
+    this.name = "ProviderWebhookUnmatchedError";
   }
 }
 

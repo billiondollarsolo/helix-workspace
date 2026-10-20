@@ -4,6 +4,7 @@ import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { tenantAwarePostgresSql, withTenantPostgresContext } from "../tenancy/postgres-roles.js";
 import { PostgresMailDeliveryEventStore } from "./delivery-events.js";
+import { verifyProviderFeedback } from "./provider-feedback.js";
 import { normalizeSesFeedback } from "./ses-feedback.js";
 import { PostgresMailStore } from "./store.js";
 
@@ -207,5 +208,54 @@ describe.skipIf(databaseUrl === undefined)("mail feedback during a leased dispat
     expect(
       (await sql`select status from mail_outbound_messages where id=${outbound.id}`)[0]?.status,
     ).toBe("complained");
+  });
+  it("correlates Postmark metadata before acknowledgement and does not suppress policy rejections", async () => {
+    const recipient = "postmark-recipient@example.test";
+    const outbound = await withTenantPostgresContext(tenantSql, { orgId, actorId }, () =>
+      store.createOutbound({
+        orgId,
+        actorId,
+        idempotencyKey: randomUUID(),
+        undoUntil: new Date(),
+        outboxSubject: "mail.outbound.queued",
+        envelope: {
+          from: { address: "sender@example.test" },
+          to: [{ address: recipient }],
+          cc: [],
+          bcc: [],
+          subject: "Postmark fixture",
+          text: "Body",
+          attachments: [],
+        },
+      }),
+    );
+    await sql`update mail_outbound_messages set provider_id=${providerId} where id=${outbound.id}`;
+    const [event] = verifyProviderFeedback({
+      kind: "postmark",
+      secret: "test-secret",
+      headers: { authorization: `Basic ${Buffer.from("helix:test-secret").toString("base64")}` },
+      rawBody: Buffer.from(
+        JSON.stringify({
+          RecordType: "Delivery",
+          MessageID: "postmark-accepted-id",
+          Recipient: recipient,
+          DeliveredAt: new Date().toISOString(),
+          Metadata: { helixHandoffKey: outbound.handoffKey },
+        }),
+      ),
+    });
+    assert(event);
+    expect(await feedback.ingestEvent({ orgId, providerId, event })).toMatchObject({
+      outboundMatched: true,
+      suppressed: false,
+    });
+    expect(
+      await feedback.ingestEvent({
+        orgId,
+        providerId,
+        event: { ...event, providerEventId: randomUUID(), type: "rejected" },
+      }),
+    ).toMatchObject({ suppressed: false });
+    expect(await feedback.findActiveSuppressions(orgId, [recipient])).toEqual([]);
   });
 });

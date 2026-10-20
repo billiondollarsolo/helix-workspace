@@ -1,3 +1,4 @@
+import { installMailRoutes } from "./mail-routes.js";
 import { installFederationConnections } from "./federation.js";
 import { installMeetCapture } from "./meet-capture.js";
 import { registerAgentRuntimeRoutes } from "../platform/agent-runtime/admin-routes.js";
@@ -10,7 +11,6 @@ import swagger from "@fastify/swagger";
 import websocket from "@fastify/websocket";
 import type { CreateFastifyContextOptions } from "@trpc/server/adapters/fastify";
 import { fastifyTRPCPlugin } from "@trpc/server/adapters/fastify";
-import { resolveTxt } from "node:dns/promises";
 import { join } from "node:path";
 import { unauthenticatedActor } from "../api/actor.js";
 import { buildErrorEnvelope } from "../api/error-envelope.js";
@@ -80,21 +80,6 @@ import { registerDriveScanAdminRoutes } from "../platform/drive/index.js";
 import { registerEventRoutes } from "../platform/events/routes.js";
 import { EventStreamLimiter } from "../platform/events/stream-limit.js";
 import { PostgresGovernanceStore, registerGovernanceRoutes } from "../platform/governance/index.js";
-import {
-  MailAdminStatusService,
-  MailDeliveryAlertMonitor,
-  PostgresMailDmarcReportStore,
-  PostgresMailRoutingRuleStore,
-  PostgresOutboundProviderStore,
-  registerMailAdminRoutes,
-  registerMailDeliveryAdminRoutes,
-  registerMailDeliveryEventAdminRoutes,
-  registerMailProviderWebhookRoutes,
-  registerMailQuarantineAdminRoutes,
-  registerOutboundMailAdminRoutes,
-} from "../platform/mail/index.js";
-import { registerMailDecisionAdminRoutes } from "../platform/mail/decision/admin-routes.js";
-import { buildDecisionModelReport } from "../platform/mail/decision/report.js";
 import { registerPersonLimitRoutes } from "../platform/limits/person-limits-routes.js";
 import { registerMeetRoutes } from "../platform/meet/index.js";
 import { registerSearchAdminRoutes } from "../platform/search/index.js";
@@ -102,9 +87,7 @@ import { registerInviteRoutes } from "../platform/signup/routes.js";
 import {
   buildEffectiveTenantConfig,
   createPostgresTenantExportManifestPlanner,
-  detachedFromTenantPostgresContext,
   registerTenantLifecycleRoutes,
-  withTenantPostgresContext,
 } from "../platform/tenancy/index.js";
 import {
   registerWebhookRoutes,
@@ -180,20 +163,11 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
     recoveryCodes,
     aiCostLimitStore,
     clamavScanner,
-    inboundMailScanners,
     driveStorageResolver,
     tenantStorageMigrationJobStore,
-    mailStore,
-    mailQuarantineStore,
     driveStore,
     chatAttachmentStore,
     searchReindexJobService,
-    mailDkimKeyStore,
-    outboundProviderStore,
-    mailDeliveryEventStore,
-    mailSecretProvider,
-    mailDecisionStore,
-    spamdScanner,
     tools,
     calendarInvitationSender,
     leaderGatedWorkers,
@@ -375,81 +349,7 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
   });
 
-  if (coreApps.shouldRegister("mail")) {
-    await registerMailAdminRoutes(app, {
-      service: new MailAdminStatusService({
-        env: runtimeEnvironment(),
-        deliveryHealthStore: mailStore,
-      }),
-      actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
-    });
-    await registerMailDeliveryAdminRoutes(app, {
-      providerStore: new PostgresOutboundProviderStore(sql),
-      domainStore: domainsStore,
-      dkimStore: mailDkimKeyStore,
-      dmarcStore: new PostgresMailDmarcReportStore(sql),
-      routingStore: new PostgresMailRoutingRuleStore(sql),
-      actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
-      auditSink: auditStore,
-      verifyDkimDns: async ({ host, record }) =>
-        (await resolveTxt(host)).some((parts) => parts.join("") === record),
-    });
-    registerMailQuarantineAdminRoutes(app, {
-      store: mailQuarantineStore,
-      mailStore,
-      scanners: inboundMailScanners,
-      resolveRecipient: (address) => mailStore.resolveInboundAddress(address),
-      runForTenant: (orgId, operation) =>
-        detachedFromTenantPostgresContext(() =>
-          withTenantPostgresContext(sql, { orgId }, async () => operation()),
-        ),
-      actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
-      auditSink: auditStore,
-    });
-    registerOutboundMailAdminRoutes(app, {
-      store: mailStore,
-      deliveryStore: mailDeliveryEventStore,
-      actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
-      auditSink: auditStore,
-    });
-    registerMailDecisionAdminRoutes(app, {
-      store: mailDecisionStore,
-      orgs: orgStore,
-      buildReport: (input) => buildDecisionModelReport(sql, input),
-      actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
-      auditSink: auditStore,
-      spamd: spamdScanner,
-    });
-    const mailDeliveryAlertMonitor = new MailDeliveryAlertMonitor({
-      store: mailDeliveryEventStore,
-      emit: (alert) => {
-        app.log.warn(
-          {
-            orgId: alert.orgId,
-            category: alert.category,
-            count: alert.count,
-            threshold: alert.threshold,
-            windowMinutes: alert.windowMinutes,
-          },
-          "Managed mail provider delivery threshold reached",
-        );
-      },
-    });
-    await registerMailProviderWebhookRoutes(app, {
-      providerStore: outboundProviderStore,
-      deliveryStore: mailDeliveryEventStore,
-      secrets: mailSecretProvider,
-      alertMonitor: mailDeliveryAlertMonitor,
-      onSignatureFailure: ({ orgId, providerId }) => {
-        app.log.warn({ orgId, providerId }, "Rejected managed mail provider webhook signature");
-      },
-    });
-    await registerMailDeliveryEventAdminRoutes(app, {
-      store: mailDeliveryEventStore,
-      actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
-      auditSink: auditStore,
-    });
-  }
+  await installMailRoutes(context);
 
   // Core-app enablement admin API: org admins view/toggle which core apps are
   // enabled org-wide. Toggling writes `config.modules[appId].enabled` through

@@ -177,7 +177,7 @@ export function createAssistantEmbeddingProvider(
   fetch?: typeof globalThis.fetch,
   security?: HelixConfig["security"],
 ): MemoryEmbeddingProvider {
-  if (aiConfig?.enabled === false) {
+  if (aiConfig?.enabled === false || aiConfig?.privacy?.redactPIIBeforeSend === true) {
     return createDeterministicEmbeddingProvider();
   }
   const configured = createConfiguredEmbeddingProvider(aiConfig, env, fetch, true);
@@ -191,7 +191,8 @@ export function createSemanticSearchEmbeddingProvider(
   env: NodeJS.ProcessEnv = process.env,
   fetch?: typeof globalThis.fetch,
 ): MemoryEmbeddingProvider | undefined {
-  if (aiConfig?.enabled === false) return undefined;
+  if (aiConfig?.enabled === false || aiConfig?.privacy?.redactPIIBeforeSend === true)
+    return undefined;
   const configured = createConfiguredEmbeddingProvider(aiConfig, env, fetch, false);
   if (configured !== undefined) return configured;
   if (!localEmbeddingsEnabled(env)) return undefined;
@@ -595,7 +596,7 @@ function deterministicEmbedding(text: string): readonly number[] {
 export function createAssistantProviders(
   aiConfig: AiConfig | undefined,
 ): readonly LLMProviderCapability[] {
-  if (aiConfig?.enabled === false) return [];
+  if (aiConfig?.enabled === false || aiConfig?.privacy?.redactPIIBeforeSend === true) return [];
   const providers: LLMProviderCapability[] = [];
   // Admin platform-config overlay (operator LLM) wins over process env bootstrap.
   const aiEnv = resolveAiEnv(runtimeEnvironment());

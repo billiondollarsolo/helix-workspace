@@ -4,7 +4,22 @@ import { createTestCertificateAuthority } from "../../test-support/tls-fixtures.
 import fastify from "fastify";
 import { Readable } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
-import { signWebhookPayload } from "../webhooks/signatures.js";
+import { createHmac } from "node:crypto";
+function signedMailgun(raw: Buffer, secret: string): Buffer {
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  return Buffer.from(
+    JSON.stringify({
+      ...JSON.parse(raw.toString()),
+      signature: {
+        timestamp,
+        token: "test-token",
+        signature: createHmac("sha256", secret)
+          .update(timestamp + "test-token")
+          .digest("hex"),
+      },
+    }),
+  );
+}
 import { InMemoryOutboundProviderStore } from "./admin-store.js";
 import { InMemoryMailDeliveryEventStore } from "./delivery-events.js";
 import { OutboundMailDispatcher } from "./outbound.js";
@@ -148,11 +163,7 @@ describe("managed provider webhook route", () => {
         },
       }),
     );
-    const signature = signWebhookPayload({
-      payload: rawBody,
-      secret: "rotated-at-call-time",
-      timestamp: Date.now(),
-    });
+    const signedBody = signedMailgun(rawBody, "rotated-at-call-time");
     const resolveSecret = vi.fn().mockResolvedValue("rotated-at-call-time");
     const app = fastify();
     await registerMailProviderWebhookRoutes(app, {
@@ -167,22 +178,29 @@ describe("managed provider webhook route", () => {
       url: `/webhooks/mail/providers/${orgA}/${provider.id}`,
       headers: {
         "content-type": "application/json",
-        "x-helix-signature": signature.header,
       },
-      payload: rawBody,
+      payload: signedBody,
     });
-    expect(accepted.statusCode).toBe(202);
+    expect(accepted.statusCode).toBe(200);
     expect(accepted.json()).toMatchObject({ accepted: true, duplicate: false });
     expect(resolveSecret).toHaveBeenCalledWith("WEBHOOK_SECRET", orgA);
+    await providerStore.updateProvider({ orgId: orgA, id: provider.id, enabled: false });
+    const disabledFeedback = await app.inject({
+      method: "POST",
+      url: `/webhooks/mail/providers/${orgA}/${provider.id}`,
+      headers: { "content-type": "application/json" },
+      payload: signedBody,
+    });
+    expect(disabledFeedback.statusCode).toBe(200);
+    expect(disabledFeedback.json()).toMatchObject({ duplicate: true });
 
     const crossOrg = await app.inject({
       method: "POST",
       url: `/webhooks/mail/providers/${orgB}/${provider.id}`,
       headers: {
         "content-type": "application/json",
-        "x-helix-signature": signature.header,
       },
-      payload: rawBody,
+      payload: signedBody,
     });
     expect(crossOrg.statusCode).toBe(404);
     await app.close();
@@ -216,11 +234,7 @@ describe("managed provider webhook route", () => {
         },
       }),
     );
-    const signature = signWebhookPayload({
-      payload: rawBody,
-      secret: "webhook-secret",
-      timestamp: Date.now(),
-    });
+    const signedBody = signedMailgun(rawBody, "webhook-secret");
     const app = fastify();
     await registerMailProviderWebhookRoutes(app, {
       providerStore,
@@ -234,11 +248,10 @@ describe("managed provider webhook route", () => {
       url: `/webhooks/mail/providers/${orgA}/${provider.id}`,
       headers: {
         "content-type": "application/json",
-        "x-helix-signature": signature.header,
       },
-      payload: rawBody,
+      payload: signedBody,
     });
-    expect(accepted.statusCode).toBe(202);
+    expect(accepted.statusCode).toBe(200);
     expect(accepted.json()).toMatchObject({
       accepted: true,
       duplicate: false,

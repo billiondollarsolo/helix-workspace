@@ -13,12 +13,13 @@ import type { OutboundProviderStore } from "./admin-store.js";
 import {
   clearMailSuppressionWithAudit,
   ProviderWebhookPayloadError,
+  ProviderWebhookUnmatchedError,
   ProviderWebhookVerificationError,
-  verifyAndIngestProviderWebhook,
   type MailDeliveryAlertMonitor,
   type ProviderDeliveryEventStore,
 } from "./delivery-events.js";
-import type { MailSecretProvider } from "./outbound-routing.js";
+import { resolveMailProviderSecret, type MailSecretProvider } from "./outbound-routing.js";
+import { verifyProviderFeedback, type FeedbackProvider } from "./provider-feedback.js";
 import { verifySesFeedback } from "./ses-feedback.js";
 import { isSesSmtpHost } from "./threading.js";
 
@@ -92,7 +93,7 @@ export async function registerMailProviderWebhookRoutes(
       params.data.orgId,
       params.data.providerId,
     );
-    if (provider === null || !provider.enabled) {
+    if (provider === null) {
       return reply.code(404).send({ error: "Unknown provider webhook." });
     }
     if (
@@ -141,52 +142,63 @@ export async function registerMailProviderWebhookRoutes(
         throw error;
       }
     }
-    if (provider.webhookSecretRef === null)
-      return reply.code(503).send({ error: "Provider webhook signing is not configured." });
-    if (provider.kind !== "mailgun") {
-      return reply.code(422).send({ error: "Provider does not support signed delivery webhooks." });
-    }
-    const signingSecret = await options.secrets.resolveSecret(
-      provider.webhookSecretRef,
-      provider.orgId,
-    );
-    if (signingSecret === undefined || signingSecret.length === 0) {
-      return reply.code(503).send({ error: "Provider webhook signing is not configured." });
-    }
-    const signatureHeader = firstHeader(request.headers["x-helix-signature"]);
-    if (signatureHeader === undefined) {
-      options.onSignatureFailure?.({
-        orgId: provider.orgId,
-        providerId: provider.id,
-      });
-      return reply.code(401).send({ error: "Invalid provider webhook signature." });
-    }
+    const feedbackKind =
+      provider.kind === "smtp" ? provider.config.feedbackProvider : provider.kind;
+    if (
+      typeof feedbackKind !== "string" ||
+      !["mailgun", "postmark", "sendgrid", "resend", "cloudflare"].includes(feedbackKind)
+    )
+      return reply
+        .code(422)
+        .send({ error: "Configure a supported delivery feedback provider first." });
+    const signingSecret = await resolveMailProviderSecret(options.secrets, provider, "feedback");
+    if (!signingSecret)
+      return reply.code(503).send({ error: "Provider feedback credential is not configured." });
     try {
-      const result = await verifyAndIngestProviderWebhook({
-        orgId: provider.orgId,
-        providerId: provider.id,
-        providerKind: "mailgun",
+      const normalized = verifyProviderFeedback({
+        kind: feedbackKind as FeedbackProvider,
         rawBody: rawProviderWebhookBodies.get(request) ?? bodyToBuffer(request.body),
-        signatureHeader,
-        signingSecret,
-        store: options.deliveryStore,
+        secret: signingSecret,
+        headers: Object.fromEntries(
+          Object.entries(request.headers).map(([key, value]) => [key, firstHeader(value)]),
+        ),
         ...(options.replayToleranceSeconds === undefined
           ? {}
-          : { replayToleranceSeconds: options.replayToleranceSeconds }),
-        ...(options.onSignatureFailure === undefined
-          ? {}
-          : { onSignatureFailure: options.onSignatureFailure }),
-        ...(options.alertMonitor === undefined ? {} : { alertMonitor: options.alertMonitor }),
+          : { toleranceSeconds: options.replayToleranceSeconds }),
       });
-      return await reply.code(202).send({
-        accepted: true,
-        duplicate: result.duplicate,
-        eventId: result.event.id,
-        outboundMatched: result.outboundMatched,
-        suppressed: result.suppressed,
-      });
+      const events = [];
+      for (const event of normalized) {
+        let result;
+        try {
+          result = await options.deliveryStore.ingestEvent({
+            orgId: provider.orgId,
+            providerId: provider.id,
+            event,
+          });
+        } catch (error) {
+          // Postmark setup probes and other applications have no Helix handoff metadata.
+          if (
+            feedbackKind === "postmark" &&
+            event.handoffKey === undefined &&
+            error instanceof ProviderWebhookUnmatchedError
+          )
+            continue;
+          throw error;
+        }
+        if (!result.duplicate) await options.alertMonitor?.observe(provider.orgId, event.type);
+        events.push({
+          duplicate: result.duplicate,
+          eventId: result.event.id,
+          outboundMatched: result.outboundMatched,
+          suppressed: result.suppressed,
+        });
+      }
+      return await reply
+        .code(200)
+        .send({ accepted: true, ...(events.length === 1 ? events[0] : {}), events });
     } catch (error) {
       if (error instanceof ProviderWebhookVerificationError) {
+        options.onSignatureFailure?.({ orgId: provider.orgId, providerId: provider.id });
         return reply.code(401).send({ error: "Invalid provider webhook signature." });
       }
       if (error instanceof ProviderWebhookPayloadError || error instanceof SyntaxError) {

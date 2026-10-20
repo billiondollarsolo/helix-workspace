@@ -34,6 +34,8 @@ export const mailProviderKindLabels: Record<MailProviderKind, string> = {
 };
 
 const mailProviderConfigSchema = z.object({
+  dkimMode: z.enum(["provider", "tenant"]).optional(),
+  feedbackProvider: z.enum(["sendgrid", "resend", "cloudflare"]).optional(),
   user: z.string().nullish(),
   secure: z.boolean().nullish(),
   feedbackTopicArn: z.string().nullish(),
@@ -52,6 +54,8 @@ const mailProviderSchema = z.object({
   orgId: z.string().optional(),
   name: z.string(),
   kind: z.enum(MAIL_PROVIDER_KINDS),
+  hasSecret: z.boolean().optional(),
+  hasWebhookSecret: z.boolean().optional(),
   isDefault: z.boolean(),
   enabled: z.boolean(),
   config: mailProviderConfigSchema,
@@ -450,6 +454,39 @@ export async function patchMailProvider(
     body: JSON.stringify(input),
   });
   return parseResponse(response, "update mail provider", mailProviderSchema);
+}
+
+export async function saveMailProviderCredential(
+  id: string,
+  purpose: "sending" | "feedback",
+  value: string | null,
+): Promise<void> {
+  const response = await authenticatedFetch(
+    `/api/admin/mail/providers/${encodeURIComponent(id)}/credentials`,
+    { method: "POST", headers: jsonHeaders, body: JSON.stringify({ purpose, value }) },
+  );
+  await parseResponse(response, "save credential", z.object({ saved: z.literal(true) }));
+}
+
+export async function checkMailProvider(
+  id: string,
+): Promise<{ message: string; checkedAt: string }> {
+  const response = await authenticatedFetch(
+    `/api/admin/mail/providers/${encodeURIComponent(id)}/check`,
+    { method: "POST" },
+  );
+  return parseResponse(
+    response,
+    "check provider",
+    z.object({ message: z.string(), checkedAt: z.string() }),
+  );
+}
+
+export async function deleteMailProvider(id: string): Promise<void> {
+  const response = await authenticatedFetch(`/api/admin/mail/providers/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+  await parseResponse(response, "delete provider", z.object({ status: z.literal("deleted") }));
 }
 
 export async function setDefaultMailProvider(

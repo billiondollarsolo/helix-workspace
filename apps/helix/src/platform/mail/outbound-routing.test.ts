@@ -30,7 +30,7 @@ describe("DispatchTimeTransportResolver", () => {
         kind,
         enabled: true,
         isDefault: true,
-        config: { host: "email-smtp.us-east-2.amazonaws.com" },
+        config: { host: "email-smtp.us-east-2.amazonaws.com", dkimMode: "tenant" },
         secretRef: null,
         webhookSecretRef: null,
         createdBy: actor,
@@ -184,3 +184,55 @@ async function createMailgun(
     createdBy: actor,
   });
 }
+
+it.each(["mailgun", "postmark"] as const)(
+  "allows %s provider signing with or without a local DKIM key",
+  async (kind) => {
+    for (const hasLocalKey of [false, true]) {
+      const providers = new InMemoryOutboundProviderStore();
+      await providers.createProvider({
+        orgId: orgA,
+        name: kind,
+        kind,
+        enabled: true,
+        isDefault: true,
+        config: kind === "mailgun" ? { domain: "example.com" } : {},
+        secretRef: "test-key",
+        webhookSecretRef: null,
+        createdBy: actor,
+      });
+      const resolveKey = vi.fn(async () => {
+        if (!hasLocalKey) throw new Error("Verified domain has no active tenant key");
+        return { domainName: "example.com", keySelector: "s1", privateKey: "unused-tenant-key" };
+      });
+      const fetch = vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        text: async () => "",
+        json: async () => ({ id: "mailgun-id", MessageID: "postmark-id", ErrorCode: 0 }),
+      }));
+      const resolver = new DispatchTimeTransportResolver({
+        providerStore: providers,
+        domainStore: new InMemorySendingDomainStore(),
+        secrets: { resolveSecret: async () => "sending-key" },
+        dkimResolver: () => resolveKey,
+        fetch,
+      });
+      const decision = await resolver.transportFor(orgA, "example.com");
+      await decision.transport.send(
+        {
+          from: { address: "sender@example.com" },
+          to: [{ address: "recipient@example.net" }],
+          cc: [],
+          bcc: [],
+          subject: "Regression",
+          text: "Test",
+          attachments: [],
+        },
+        { idempotencyKey: "test" },
+      );
+      expect(resolveKey).not.toHaveBeenCalled();
+      expect(fetch).toHaveBeenCalledTimes(1);
+    }
+  },
+);

@@ -113,6 +113,9 @@ export function postmarkMessageBody(
     Subject: message.subject,
     TextBody: message.text,
     MessageStream: messageStream,
+    ...(message.headers?.["X-Helix-Idempotency-Key"]
+      ? { Metadata: { helixHandoffKey: message.headers["X-Helix-Idempotency-Key"] } }
+      : {}),
     ...(message.cc.length > 0 ? { Cc: message.cc.map(formatMailboxAddress).join(", ") } : {}),
     ...(message.bcc.length > 0 ? { Bcc: message.bcc.map(formatMailboxAddress).join(", ") } : {}),
     ...(message.html === undefined ? {} : { HtmlBody: message.html }),

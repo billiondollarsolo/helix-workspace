@@ -1,9 +1,23 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
+import { FormPanel } from "@/components/ui/form-panel";
+import { AdminTable } from "@/features/admin/console/table";
+import { AdminTabs } from "@/features/admin/console/tabs";
+import {
+  useAdminSectionSearch,
+  resolveClosedSearchParam,
+} from "@/features/admin/admin-section-search";
 import { randomId } from "@/lib/random-id";
 import { Button } from "@/components/ui/button";
 import { AdminField, AdminInput, AdminSelect } from "@/features/admin/console/controls";
-import { PageHeading, LoadingState } from "@/features/admin/console/primitives";
+import {
+  PageHeading,
+  PanelHeading,
+  LoadingState,
+  ErrorNotice,
+  EmptyRow,
+} from "@/features/admin/console/primitives";
 import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
 import { adminUsersQueryOptions } from "@/features/admin/admin-users";
 import {
@@ -24,50 +38,142 @@ import {
 export function FederationApplications() {
   const apps = useQuery(federationApplicationsQueryOptions());
   const queryClient = useQueryClient();
+  const { search, patchSearch } = useAdminSectionSearch("federation-applications");
   const [adding, setAdding] = useState(false),
     [prepared, setPrepared] = useState<{ pairingCode: string; expiresAt: string } | null>(null);
+  const applications = apps.data?.applications ?? [];
+  const selected = applications.find((app) => app.id === search.application);
+  const tab = resolveClosedSearchParam(
+    search.tab,
+    ["overview", "people", "operations"] as const,
+    "overview",
+  );
+  const refresh = () =>
+    void queryClient.invalidateQueries({
+      queryKey: ["admin", "federation-applications"],
+      exact: true,
+    });
   return (
     <>
-      <PageHeading
-        title="Federated apps"
-        subtitle="Connect applications to this Workspace organization and assign the people who may use them."
-        actions={
-          <Button
-            disabled={apps.data?.enabled !== true}
-            onClick={() => setAdding((value) => !value)}
-          >
-            + Add application
-          </Button>
-        }
-      />
-      {apps.isPending ? <LoadingState label="Loading application connections" /> : null}
-      {apps.error ? <p role="alert">Connection status unavailable. {apps.error.message}</p> : null}
-      <Button
-        variant="secondary"
-        disabled={apps.isFetching}
-        onClick={() =>
-          void queryClient.invalidateQueries({
-            queryKey: ["admin", "federation-applications"],
-            exact: true,
-          })
-        }
-      >
-        {apps.isFetching ? "Refreshing…" : "Refresh connections"}
-      </Button>
-      {apps.data?.enabled === false ? (
-        <p>Application connections are not enabled. Ask your operator to enable them.</p>
-      ) : null}
+      <div hidden={Boolean(selected)}>
+        {!selected ? (
+          <PageHeading
+            title="Federated apps"
+            subtitle="Manage connected applications and who can use them."
+            meta={
+              apps.data ? (
+                <span className="admin-muted">{applications.length} applications</span>
+              ) : undefined
+            }
+            actions={
+              <>
+                <Button variant="ghost" disabled={apps.isFetching} onClick={refresh}>
+                  Refresh connections
+                </Button>
+                <Button disabled={apps.data?.enabled !== true} onClick={() => setAdding(true)}>
+                  + Add application
+                </Button>
+              </>
+            }
+          />
+        ) : null}
+        {apps.isPending ? <LoadingState label="Loading application connections" /> : null}
+        {apps.error ? (
+          <ErrorNotice>Connection status unavailable. {apps.error.message}</ErrorNotice>
+        ) : null}
+        {search.application && !selected && apps.isSuccess ? (
+          <ErrorNotice>The application is no longer available.</ErrorNotice>
+        ) : null}
+        {apps.data?.enabled === false ? (
+          <p>Application connections are not enabled. Ask your operator to enable them.</p>
+        ) : null}
+        {apps.data ? (
+          <AdminTable
+            label="Federated applications"
+            rows={applications}
+            rowKey={(app) => app.id}
+            searchText={(app) => `Helix Bot ${app.origin} ${app.status}`}
+            empty={
+              <EmptyRow>
+                No federated apps are connected. Add an application to get started.
+              </EmptyRow>
+            }
+            columns={[
+              {
+                id: "application",
+                header: "Application",
+                sortValue: (app) => app.origin,
+                cell: (app) => (
+                  <>
+                    <Link
+                      className="admin-record-link"
+                      to="/admin/$section"
+                      params={{ section: "federation-applications" }}
+                      search={{ application: app.id }}
+                    >
+                      Helix Bot
+                    </Link>
+                    <div className="admin-muted">{app.origin}</div>
+                  </>
+                ),
+              },
+              {
+                id: "connection",
+                header: "Connection and directory",
+                cell: (app) => (
+                  <>
+                    <ApplicationSynchronization application={app} compact />
+                    {app.error ? <p role="alert">{app.error}</p> : null}
+                  </>
+                ),
+              },
+              {
+                id: "actions",
+                header: "Actions",
+                headerHidden: true,
+                cell: (app) => (
+                  <Button
+                    variant="ghost"
+                    onClick={() => patchSearch({ application: app.id, tab: undefined })}
+                  >
+                    View app details
+                  </Button>
+                ),
+              },
+            ]}
+          />
+        ) : null}
+        <p className="admin-muted">
+          Workspace governs sign-in and assigned access. Each application manages its own tools and
+          resources.
+        </p>
+      </div>
+      {applications.map((app) => (
+        <div key={app.id} hidden={selected?.id !== app.id}>
+          <Application
+            application={app}
+            active={selected?.id === app.id}
+            tab={tab}
+            onTab={(next) => patchSearch({ tab: next === "overview" ? undefined : next })}
+            onBack={() => patchSearch({ application: undefined, tab: undefined })}
+          />
+        </div>
+      ))}
       {adding ? (
-        <Registration
-          onPrepared={async (result) => {
-            setPrepared(result);
-            setAdding(false);
-            await queryClient.invalidateQueries({ queryKey: ["admin", "federation-applications"] });
-          }}
-        />
+        <FormPanel title="Connect Helix Bot" onClose={() => setAdding(false)}>
+          <Registration
+            onPrepared={async (result) => {
+              setPrepared(result);
+              setAdding(false);
+              await queryClient.invalidateQueries({
+                queryKey: ["admin", "federation-applications"],
+              });
+            }}
+          />
+        </FormPanel>
       ) : null}
       {prepared ? (
-        <section className="admin-card grid gap-3" aria-label="Complete application pairing">
+        <FormPanel title="Complete application pairing" onClose={() => setPrepared(null)}>
           <p>
             Paste this code into Bot's reviewed Workspace connection before{" "}
             {new Date(prepared.expiresAt).toLocaleTimeString()}. It completes only the installation
@@ -79,13 +185,7 @@ export function FederationApplications() {
           <Button variant="secondary" onClick={() => setPrepared(null)}>
             Dismiss code
           </Button>
-        </section>
-      ) : null}
-      {(apps.data?.applications ?? []).map((app) => (
-        <Application key={app.id} application={app} />
-      ))}
-      {apps.data?.enabled && apps.data.applications.length === 0 ? (
-        <p>No federated apps are connected.</p>
+        </FormPanel>
       ) : null}
     </>
   );
@@ -150,8 +250,7 @@ function Registration({
     });
   };
   return (
-    <section className="admin-card grid gap-3" aria-labelledby="federation-register-title">
-      <h2 id="federation-register-title">Connect Helix Bot</h2>
+    <section className="grid gap-3" aria-label="Application registration">
       <p>
         First prepare the connection while signed in to Bot as its local recovery owner. Copy the
         address, connection ID and installation proof here. Workspace will manage assigned people;
@@ -202,10 +301,20 @@ function Registration({
     </section>
   );
 }
-function Application({ application }: { readonly application: FederationApplication }) {
-  const [expanded, setExpanded] = useState(false),
-    [details, setDetails] = useState(false),
-    [confirming, setConfirming] = useState(false);
+function Application({
+  application,
+  active,
+  tab,
+  onTab,
+  onBack,
+}: {
+  readonly application: FederationApplication;
+  readonly active: boolean;
+  readonly tab: "overview" | "people" | "operations";
+  readonly onTab: (tab: "overview" | "people" | "operations") => void;
+  readonly onBack: () => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
   const queryClient = useQueryClient();
   const revoke = useMutation({
     mutationFn: () => revokeFederationApplication(application.id),
@@ -217,51 +326,96 @@ function Application({ application }: { readonly application: FederationApplicat
     },
   });
   return (
-    <section className="admin-card grid gap-3" aria-labelledby={`federation-app-${application.id}`}>
-      <h2 id={`federation-app-${application.id}`}>Helix Bot · {application.origin}</h2>
+    <section>
+      <Button variant="ghost" onClick={onBack}>
+        ← Federated apps
+      </Button>
+      {active ? (
+        <PageHeading
+          title="Helix Bot"
+          subtitle={application.origin}
+          actions={
+            <a href={application.origin} target="_blank" rel="noopener noreferrer">
+              Open application ↗
+            </a>
+          }
+        />
+      ) : null}
       <ApplicationSynchronization application={application} />
-      {application.error ? <p role="alert">{application.error}</p> : null}
-      <p>
-        <strong>Managed by Workspace:</strong> assigned people, their Bot roles (Viewer, Member or
-        Admin), managed profile names and email addresses, groups and the application's sign-in
-        connection. Workspace sign-in policies apply when people sign in through Workspace.
-      </p>
-      <p>
-        <strong>Managed in Helix Bot:</strong> local accounts, recovery ownership, password-account
-        MFA, models, bots, conversations, Work and resource grants. Assigning someone here does not
-        grant bots access to Workspace Mail, Chat or Drive.
-      </p>
-      <div className="flex flex-wrap gap-2">
-        <Button
-          variant="secondary"
-          aria-expanded={details}
-          onClick={() => setDetails((value) => !value)}
-        >
-          {details ? "Hide app details" : "View app details"}
-        </Button>
-        <Button
-          variant="secondary"
-          onClick={() => setExpanded((value) => !value)}
-          aria-expanded={expanded}
-        >
-          Manage assigned people
-        </Button>
-        <Button
-          variant="secondary"
-          disabled={application.status === "revoked"}
-          onClick={() => setConfirming(true)}
-        >
-          Disconnect application
-        </Button>
-      </div>
-      {details ? <FederationApplicationDetails application={application} /> : null}
-      <Assignments
-        appId={application.id}
-        expanded={expanded}
-        disabled={["revoked", "expired", "failed"].includes(application.status)}
-      />
-      {revoke.error ? <p role="alert">{revoke.error.message}</p> : null}
-      {application.status === "active" ? <CredentialRotation application={application} /> : null}
+      {application.error ? <ErrorNotice>{application.error}</ErrorNotice> : null}
+      <AdminTabs
+        label="Application sections"
+        idPrefix={`app-${application.id}`}
+        selected={tab}
+        onSelect={onTab}
+        tabs={[
+          { id: "overview", label: "Overview" },
+          { id: "people", label: "People" },
+          { id: "operations", label: "Operations" },
+        ]}
+      >
+        <div hidden={tab !== "overview"}>
+          <section className="admin-section">
+            <PanelHeading title="Setting ownership" />
+            <dl className="admin-facts">
+              <div>
+                <dt>Managed by Workspace</dt>
+                <dd>
+                  Assigned people, Bot roles, profile names and email addresses, groups and the
+                  sign-in connection.
+                </dd>
+              </div>
+              <div>
+                <dt>Managed in Helix Bot</dt>
+                <dd>
+                  Local accounts, recovery ownership, password-account MFA, models, bots,
+                  conversations, Work and resource grants.
+                </dd>
+              </div>
+            </dl>
+            <p className="admin-muted">
+              Workspace sign-in policies apply through Workspace. Assigning a person does not grant
+              bots access to Mail, Chat or Drive.
+            </p>
+          </section>
+        </div>
+        <div hidden={tab !== "people"}>
+          <Assignments
+            appId={application.id}
+            expanded={active && tab === "people"}
+            disabled={["revoked", "expired", "failed"].includes(application.status)}
+          />
+        </div>
+        <div hidden={tab !== "operations"}>
+          {active && tab === "operations" ? (
+            <FederationApplicationDetails application={application} />
+          ) : null}
+          <section className="admin-section">
+            <PanelHeading title="Connection credentials" />
+            {application.status === "active" ? (
+              <CredentialRotation application={application} />
+            ) : (
+              <p>Credentials can be rotated for active connections.</p>
+            )}
+          </section>
+          <section className="admin-section">
+            <PanelHeading
+              title="Disconnect application"
+              subtitle="Managed sign-ins and delegated work will stop. The local recovery owner remains available."
+            />
+            <div className="admin-section-actions">
+              <Button
+                variant="outline"
+                disabled={application.status === "revoked"}
+                onClick={() => setConfirming(true)}
+              >
+                Disconnect application
+              </Button>
+            </div>
+            {revoke.error ? <ErrorNotice>{revoke.error.message}</ErrorNotice> : null}
+          </section>
+        </div>
+      </AdminTabs>
       <ConfirmDestructive
         open={confirming}
         onOpenChange={setConfirming}
@@ -297,6 +451,7 @@ function Assignments({
     [revision, setRevision] = useState<string | null>(null),
     [dirty, setDirty] = useState(false);
   const initialized = useRef(false);
+  const [addingPeople, setAddingPeople] = useState(false);
   const matching = useQuery({
     ...adminUsersQueryOptions({ type: "user", includeDisabled: false, limit: 50, query: search }),
     enabled: expanded && search.length > 0,
@@ -343,14 +498,35 @@ function Assignments({
   const assigned = new Map(
     (assignments.data?.assignments ?? []).map((person) => [person.actorId, person]),
   );
-  const ids = new Set([...Object.keys(draft), ...assigned.keys(), ...candidates.keys()]);
+  const ids = new Set([
+    ...Object.keys(draft),
+    ...assigned.keys(),
+    ...(addingPeople ? candidates.keys() : []),
+  ]);
   return (
     <div className="grid gap-3">
-      <p>
-        Assign only the people who need Bot. Admin access grants Bot team administration; ownership
-        stays with the local recovery account.
-      </p>
+      <PanelHeading
+        title="Assigned people"
+        subtitle="Bot ownership remains with its local recovery account."
+        actions={
+          <div className="admin-section-actions">
+            <Button
+              variant="ghost"
+              disabled={assignments.isFetching || save.isPending}
+              onClick={() =>
+                void queries.invalidateQueries({ queryKey: assignmentKey, exact: true })
+              }
+            >
+              Refresh assigned people
+            </Button>
+            <Button onClick={() => setAddingPeople((value) => !value)}>
+              {addingPeople ? "Done adding people" : "+ Add people"}
+            </Button>
+          </div>
+        }
+      />
       <form
+        hidden={!addingPeople}
         className="flex gap-2"
         onSubmit={(event) => {
           event.preventDefault();
@@ -380,51 +556,66 @@ function Assignments({
       </form>
       {assignments.error ? <p role="alert">{assignments.error.message}</p> : null}
       {assignments.isPending ? <LoadingState label="Loading assigned people" /> : null}
-      <Button
-        variant="secondary"
-        disabled={assignments.isFetching || save.isPending}
-        onClick={() => void queries.invalidateQueries({ queryKey: assignmentKey, exact: true })}
-      >
-        Refresh assigned people
-      </Button>
       {(users.error ?? matching.error) ? (
         <p role="alert">People could not be loaded. Try again.</p>
       ) : null}
-      {[...ids].map((id) => {
-        const person = assigned.get(id) ?? candidates.get(id);
-        return (
-          <AdminField key={id} label={person?.email ?? person?.displayName ?? id}>
-            <AdminSelect
-              disabled={
-                disabled ||
-                !initialized.current ||
-                save.isPending ||
-                (candidates.get(id)?.status !== undefined &&
-                  candidates.get(id)?.status !== "active")
-              }
-              value={draft[id] ?? "unassigned"}
-              onChange={(event) => {
-                const role = event.target.value as FederationRole | "unassigned";
-                setDirty(true);
-                setDraft((previous) => {
-                  const next = { ...previous };
-                  if (role === "unassigned") delete next[id];
-                  else next[id] = role;
-                  return next;
-                });
-              }}
-            >
-              <option value="unassigned">Not assigned</option>
-              <option value="viewer">Viewer</option>
-              <option value="member">Member</option>
-              <option value="admin">Admin</option>
-            </AdminSelect>
-          </AdminField>
-        );
-      })}
-      <p>
-        {Object.keys(draft).length} people assigned. Search to find additional people; saving
-        retains assignments outside the current search. Refreshing keeps unsaved changes.
+      <AdminTable
+        label="Application assignments"
+        rows={[...ids].map((id) => ({ id, person: assigned.get(id) ?? candidates.get(id) }))}
+        rowKey={(row) => row.id}
+        empty={<EmptyRow>No people assigned. Use + Add people to grant access.</EmptyRow>}
+        columns={[
+          {
+            id: "person",
+            header: "Person",
+            sortValue: (row) => row.person?.displayName ?? row.person?.email ?? row.id,
+            cell: ({ id, person }) => (
+              <>
+                <span className="admin-record-link">
+                  {person?.displayName ?? person?.email ?? id}
+                </span>
+                <div className="admin-muted">{person?.email}</div>
+              </>
+            ),
+          },
+          {
+            id: "role",
+            header: "Bot role",
+            cell: ({ id, person }) => (
+              <AdminSelect
+                aria-label={person?.email ?? person?.displayName ?? id}
+                disabled={
+                  disabled ||
+                  !initialized.current ||
+                  save.isPending ||
+                  (candidates.get(id)?.status !== undefined &&
+                    candidates.get(id)?.status !== "active")
+                }
+                value={draft[id] ?? "unassigned"}
+                onChange={(event) => {
+                  const role = event.target.value as FederationRole | "unassigned";
+                  setDirty(true);
+                  setDraft((previous) => {
+                    const next = { ...previous };
+                    if (role === "unassigned") delete next[id];
+                    else next[id] = role;
+                    return next;
+                  });
+                }}
+              >
+                <option value="unassigned">Not assigned</option>
+                <option value="viewer">Viewer</option>
+                <option value="member">Member</option>
+                <option value="admin">Admin</option>
+              </AdminSelect>
+            ),
+          },
+        ]}
+      />
+      <p className="admin-muted">
+        {Object.keys(draft).length} {Object.keys(draft).length === 1 ? "person" : "people"}{" "}
+        assigned.
+        {dirty ? " Unsaved changes are retained when you search or refresh." : ""}
       </p>
       {save.error ? <p role="alert">{save.error.message}</p> : null}
       {dirty && changed ? (
@@ -445,12 +636,24 @@ function Assignments({
       {save.isSuccess && !dirty ? (
         <p role="status">Assignments saved. Directory synchronization is pending.</p>
       ) : null}
-      <Button
-        disabled={disabled || !dirty || changed || save.isPending || assignments.isError}
-        onClick={() => save.mutate()}
-      >
-        {save.isPending ? "Saving…" : "Save assignments"}
-      </Button>
+      <div className="admin-section-actions">
+        <Button
+          variant="secondary"
+          disabled={!dirty || save.isPending}
+          onClick={() => {
+            save.reset();
+            setDirty(false);
+          }}
+        >
+          Cancel changes
+        </Button>
+        <Button
+          disabled={disabled || !dirty || changed || save.isPending || assignments.isError}
+          onClick={() => save.mutate()}
+        >
+          {save.isPending ? "Saving…" : "Save assignments"}
+        </Button>
+      </div>
     </div>
   );
 }

@@ -36,6 +36,8 @@ export interface AdminSectionSearch {
   readonly group?: string;
   /** Focused domain id (domains section). */
   readonly domain?: string;
+  /** Federated application whose details are open. */
+  readonly application?: string;
 }
 
 const ADMIN_SECTION_SEARCH_KEYS = [
@@ -49,6 +51,7 @@ const ADMIN_SECTION_SEARCH_KEYS = [
   "user",
   "group",
   "domain",
+  "application",
 ] as const satisfies readonly (keyof AdminSectionSearch)[];
 
 export function validateAdminSectionSearch(search: Record<string, unknown>): AdminSectionSearch {
@@ -60,6 +63,7 @@ export function validateAdminSectionSearch(search: Record<string, unknown>): Adm
   const actorType = optionalStringSearchParam(search.actorType);
   const status = optionalStringSearchParam(search.status);
   const user = optionalUuidSearchParam(search.user) ?? optionalStringSearchParam(search.user);
+  const application = optionalUuidSearchParam(search.application);
   const domain = optionalStringSearchParam(search.domain);
   const group = optionalUuidSearchParam(search.group) ?? optionalStringSearchParam(search.group);
 
@@ -73,6 +77,7 @@ export function validateAdminSectionSearch(search: Record<string, unknown>): Adm
     ...(status === undefined ? {} : { status }),
     ...(user === undefined ? {} : { user }),
     ...(group === undefined ? {} : { group }),
+    ...(application === undefined ? {} : { application }),
     ...(domain === undefined ? {} : { domain }),
   };
 }

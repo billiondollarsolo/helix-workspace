@@ -56,12 +56,10 @@ export function AdminConsole({ section: id }: { readonly section: AdminSectionId
       title={`Administration · ${adminSectionLabel(id)}`}
       icon={<ShieldIcon size={16} />}
       navigationKey={id}
+      searchContent={<AdminSearch />}
     >
       <AdminSidebar section={id} onPreloadSection={preloadAdminSection} />
       <div className="admin-main">
-        <div className="admin-searchbar">
-          <AdminSearch />
-        </div>
         {/* Keyed on the section so the previous page is torn down instead of
             held while the next one's code loads. */}
         <div className="admin-page" tabIndex={0} key={id}>

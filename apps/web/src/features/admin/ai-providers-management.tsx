@@ -342,10 +342,7 @@ export function AIProvidersManagement() {
         </Dialog>
       ) : null}
 
-      <section
-        aria-labelledby="ai-providers-routing-heading"
-        className="grid gap-3 rounded-lg border border-border bg-card p-4 text-card-foreground"
-      >
+      <section aria-labelledby="ai-providers-routing-heading" className="admin-section">
         <h2
           className="m-0 flex items-center gap-2 text-sm font-semibold"
           id="ai-providers-routing-heading"
@@ -371,10 +368,7 @@ export function AIProvidersManagement() {
             const selected = routeProviders.find((provider) => provider.id === route.providerId);
             const modelChoices = selected ? parseModelsCsv(selected.modelsCsv) : [];
             return (
-              <div
-                key={slot.feature}
-                className="grid gap-2 rounded-md border border-border/80 p-3 sm:grid-cols-[1.4fr_1fr_1fr]"
-              >
+              <div key={slot.feature} className="admin-routing-row">
                 <div>
                   <div className="text-xs font-semibold">{slot.label}</div>
                   <div className="type-caption text-muted-foreground">{slot.hint}</div>
@@ -456,10 +450,7 @@ export function AIProvidersManagement() {
         </label>
       </section>
 
-      <section
-        aria-labelledby="assistant-tool-settings-heading"
-        className="grid gap-3 rounded-lg border border-border bg-card p-4 text-card-foreground"
-      >
+      <section aria-labelledby="assistant-tool-settings-heading" className="admin-section">
         <h2 id="assistant-tool-settings-heading" className="m-0 text-sm font-semibold">
           Assistant tool use
         </h2>

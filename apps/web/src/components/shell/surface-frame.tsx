@@ -28,6 +28,8 @@ export interface SurfaceFrameProps {
   icon?: ReactNode;
   /** Search placeholder text. */
   searchPlaceholder?: string;
+  /** A surface-specific search control, such as the administration directory. */
+  searchContent?: ReactNode;
   /** Surface-specific TopBar action buttons. */
   actions?: ReactNode;
   /** Surface-owned query — supply with `onSearchChange`. */
@@ -48,6 +50,7 @@ export function SurfaceFrame({
   icon,
   searchPlaceholder,
   actions,
+  searchContent,
   searchValue,
   onSearchChange,
   onSearchSubmit,
@@ -87,6 +90,7 @@ export function SurfaceFrame({
         title={title}
         icon={icon}
         searchPlaceholder={searchPlaceholder}
+        searchContent={searchContent}
         actions={actions}
         notifUnread={unreadData?.count ?? 0}
         searchValue={searchValue}

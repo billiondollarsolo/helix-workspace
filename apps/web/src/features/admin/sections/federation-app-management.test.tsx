@@ -4,12 +4,14 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   createMemoryHistory,
   createRootRoute,
+  createRoute,
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mount, settle, unmountAll, axeViolations } from "@/test/ui";
 import { buttonNamed, control, typeInto } from "@/features/mail/settings/test-support";
+import { validateAdminSectionSearch } from "@/features/admin/admin-section-search";
 import { FederationApplications } from "./federation-applications";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
@@ -89,8 +91,14 @@ async function render() {
     ),
   });
   const router = createRouter({
-    routeTree: root,
-    history: createMemoryHistory({ initialEntries: ["/"] }),
+    routeTree: root.addChildren([
+      createRoute({
+        getParentRoute: () => root,
+        path: "/admin/$section",
+        validateSearch: validateAdminSectionSearch,
+      }),
+    ]),
+    history: createMemoryHistory({ initialEntries: ["/admin/federation-applications"] }),
   });
   const mounted = mount(<RouterProvider router={router} />);
   await settle();
@@ -99,10 +107,7 @@ async function render() {
   return { ...mounted, query };
 }
 function assignedControl(email: string) {
-  const label = [...document.querySelectorAll("label")].find(
-    (node) => node.querySelector(".admin-field-label")?.textContent === email,
-  );
-  const select = label?.querySelector("select");
+  const select = document.querySelector<HTMLSelectElement>(`select[aria-label="${email}"]`);
   if (!select) throw new Error(`Assigned person missing: ${email}`);
   return select;
 }
@@ -147,6 +152,8 @@ describe("Federated app management", () => {
     expect(calls.some((path) => path.endsWith("federation-backups"))).toBe(false);
     act(() => buttonNamed("View app details")?.click());
     await settle();
+    act(() => buttonNamed("Operations")?.click());
+    await settle();
     await settle();
     const text = mounted.container.textContent;
     expect(text).toContain(
@@ -185,6 +192,8 @@ describe("Federated app management", () => {
     expect(mounted.container.textContent).toContain("Directory: verification overdue");
     act(() => buttonNamed("View app details")?.click());
     await settle();
+    act(() => buttonNamed("Operations")?.click());
+    await settle();
     await settle();
     expect(mounted.container.textContent).not.toContain("Application health: healthy");
     expect(mounted.container.textContent).toContain("Observation overdue");
@@ -205,6 +214,8 @@ describe("Federated app management", () => {
     );
     const mounted = await render();
     act(() => buttonNamed("View app details")?.click());
+    await settle();
+    act(() => buttonNamed("Operations")?.click());
     await settle();
     await settle();
     expect(mounted.container.textContent).toContain("Backup status unavailable");
@@ -258,7 +269,9 @@ describe("Federated app management", () => {
       return jsonResponse({ applications: [app] });
     });
     const mounted = await render();
-    act(() => buttonNamed("Manage assigned people")?.click());
+    act(() => buttonNamed("View app details")?.click());
+    await settle();
+    act(() => buttonNamed("People")?.click());
     await settle();
     await settle();
     const jo = assignedControl("jo@example.test");
@@ -267,6 +280,8 @@ describe("Federated app management", () => {
       jo.value = "admin";
       jo.dispatchEvent(new Event("change", { bubbles: true }));
     });
+    act(() => buttonNamed("+ Add people")?.click());
+    await settle();
     typeInto(control("Find people"), "Jo");
     const searchForm = control("Find people")?.closest("form");
     if (!searchForm) throw new Error("Search form missing");
@@ -345,7 +360,9 @@ describe("Federated app management", () => {
       return jsonResponse({ applications: [app] });
     });
     const mounted = await render();
-    act(() => buttonNamed("Manage assigned people")?.click());
+    act(() => buttonNamed("View app details")?.click());
+    await settle();
+    act(() => buttonNamed("People")?.click());
     await settle();
     await settle();
     const jo = assignedControl("jo@example.test");

@@ -11,8 +11,10 @@ import {
 
 export function ApplicationSynchronization({
   application,
+  compact = false,
 }: {
   readonly application: FederationApplication;
+  readonly compact?: boolean;
 }) {
   const overdue =
     application.status === "active" &&
@@ -30,12 +32,14 @@ export function ApplicationSynchronization({
               : "recently verified"}
         .
       </p>
-      <p>
-        Last directory verification:{" "}
-        <RelativeTime value={application.lastSyncedAt} fallback="not yet verified" />.
-      </p>
+      {!compact ? (
+        <p>
+          Last directory verification:{" "}
+          <RelativeTime value={application.lastSyncedAt} fallback="not yet verified" />.
+        </p>
+      ) : null}
       {application.rotationPending ? <p>Connection credential delivery is pending.</p> : null}
-      {overdue ? (
+      {overdue && !compact ? (
         <p>
           Managed access requires current directory authority. Check the app and connection if
           verification does not resume.
@@ -56,26 +60,29 @@ export function FederationApplicationDetails({
     backups.data?.targets.filter((target) => target.applicationId === application.id) ?? [];
   return (
     <div className="grid min-w-0 gap-4" aria-label="Application details" role="region">
-      <dl className="grid min-w-0 gap-2">
-        <div>
-          <dt>Application ID</dt>
-          <dd>
-            <CopyableId label="application ID" value={application.id} />
-          </dd>
-        </div>
-        <div>
-          <dt>Installation ID</dt>
-          <dd>
-            <CopyableId label="installation ID" value={application.installationId} />
-          </dd>
-        </div>
-        <div>
-          <dt>App tenancy ID</dt>
-          <dd>
-            <CopyableId label="app tenancy ID" value={application.tenantId} />
-          </dd>
-        </div>
-      </dl>
+      <details className="admin-disclosure">
+        <summary>Connection identifiers</summary>
+        <dl className="admin-facts">
+          <div>
+            <dt>Application ID</dt>
+            <dd>
+              <CopyableId label="application ID" value={application.id} />
+            </dd>
+          </div>
+          <div>
+            <dt>Installation ID</dt>
+            <dd>
+              <CopyableId label="installation ID" value={application.installationId} />
+            </dd>
+          </div>
+          <div>
+            <dt>App tenancy ID</dt>
+            <dd>
+              <CopyableId label="app tenancy ID" value={application.tenantId} />
+            </dd>
+          </div>
+        </dl>
+      </details>
       <p>
         Workspace manages sign-in and directory access through this connection. App-specific
         policies and controls are managed in the application.
@@ -85,8 +92,8 @@ export function FederationApplicationDetails({
           Open application
         </a>
       </p>
-      <section className="grid min-w-0 gap-3" aria-label="Backup capability">
-        <h3>Backup capability</h3>
+      <section className="admin-section" aria-label="Backup capability">
+        <h2>Backup capability</h2>
         <p>
           Backup management requires separate enrollment and permissions. These observations do not
           change app access or authorize recovery operations.
@@ -141,9 +148,9 @@ function BackupCapability({
     .find((job) => job.status === "completed" && job.receipt)?.receipt;
   return (
     <section className="grid min-w-0 gap-2" aria-label={`Backup worker ${target.id}`}>
-      <h4>
+      <h3>
         Worker <CopyableId label="backup target ID" value={target.id} />
-      </h4>
+      </h3>
       <p>
         Status: {target.status.replaceAll("_", " ")}. {stale ? "Observation overdue." : ""} Last
         observed: <RelativeTime value={target.observedAt} fallback="never" />.

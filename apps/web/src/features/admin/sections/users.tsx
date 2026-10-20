@@ -12,7 +12,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
-import { SelectableList, SelectAllCheckbox } from "@/components/ui/selectable-list";
+import { SelectAllCheckbox } from "@/components/ui/selectable-list";
 import { notify } from "@/components/ui/toast";
 import {
   adminScopesOf,
@@ -32,6 +32,7 @@ import {
   type AdminUser,
   type AdminUsersQueryInput,
 } from "@/features/admin/admin-users";
+import { AdminTable } from "@/features/admin/console/table";
 import { AdminInput, AdminSelect, AdminToolbar } from "@/features/admin/console/controls";
 import { formatCount } from "@/features/admin/console/format";
 import {
@@ -410,61 +411,105 @@ export function AdminUsers() {
         />
       ) : (
         <div className="admin-list">
-          <div className="admin-list-header admin-user-row" aria-hidden="true">
-            <span>Name</span>
-            <span>Role</span>
-            <span>Status</span>
-            <span>Last sign-in</span>
-            <span />
-          </div>
-          <SelectableList
-            items={filtered}
-            getKey={(user) => user.id}
-            getItemLabel={(user) => user.name}
+          <AdminTable
             label="Users"
-            selectedKeys={selected}
-            onSelectedKeysChange={setSelected}
-            onOpen={(user) => setOpenUser(user)}
-            renderItem={(user, state) => (
-              <div className="admin-user-row">
-                <span className="admin-user-name">
-                  <Avatar name={user.name} size={32} />
-                  <span className="min-w-0">
-                    <span className="admin-row-title">{user.name}</span>
-                    <span className="admin-row-detail">{user.email ?? "No email address"}</span>
-                  </span>
-                </span>
-                <span className="admin-row-cell">
-                  <span
-                    className={user.role === "Admin" ? "chip accent" : "chip"}
-                    title={
-                      user.adminScopes.length === 0
-                        ? undefined
-                        : `Admin access: ${user.adminScopes.join(", ")}`
-                    }
-                  >
-                    {user.role}
-                  </span>
-                  {user.actorType === "user" ? null : (
-                    <span className="admin-row-detail">{actorTypeLabel(user.actorType)}</span>
-                  )}
-                </span>
-                <span className="admin-row-cell">
-                  <UserStatusChip status={user.status} />
-                </span>
-                <span className="admin-row-cell admin-row-detail">
-                  <RelativeTime value={user.lastSignInAt} fallback="Never" />
-                </span>
-                <span className="admin-row-actions">
-                  <RowMenu label={`Actions for ${user.name}`} tabIndex={state.tabIndex}>
+            rows={filtered}
+            rowKey={(user) => user.id}
+            partialNote={
+              hasMorePages
+                ? "Only loaded users are sorted. Load more to include additional users."
+                : undefined
+            }
+            columns={[
+              {
+                id: "selection",
+                header: "Select",
+                headerHidden: true,
+                width: "44px",
+                cell: (user) => (
+                  <input
+                    type="checkbox"
+                    aria-label={`Select ${user.name}`}
+                    checked={selected.has(user.id)}
+                    onChange={(event) => {
+                      const checked = event.target.checked;
+                      setSelected((previous) => {
+                        const next = new Set(previous);
+                        if (checked) next.add(user.id);
+                        else next.delete(user.id);
+                        return next;
+                      });
+                    }}
+                  />
+                ),
+              },
+              {
+                id: "name",
+                header: "Name",
+                sortValue: (user) => user.name,
+                cell: (user) => (
+                  <div className="admin-user-name">
+                    <Avatar name={user.name} size={32} />
+                    <span className="min-w-0">
+                      <Button
+                        variant="link"
+                        className="admin-record-link h-auto p-0"
+                        onClick={() => setOpenUser(user)}
+                      >
+                        {user.name}
+                      </Button>
+                      <span className="admin-row-detail">{user.email ?? "No email address"}</span>
+                    </span>
+                  </div>
+                ),
+              },
+              {
+                id: "role",
+                header: "Role",
+                sortValue: (user) => user.role,
+                cell: (user) => (
+                  <>
+                    <span
+                      title={
+                        user.adminScopes.length
+                          ? `Admin access: ${user.adminScopes.join(", ")}`
+                          : undefined
+                      }
+                    >
+                      {user.role}
+                    </span>
+                    {user.actorType === "user" ? null : (
+                      <span className="admin-row-detail">{actorTypeLabel(user.actorType)}</span>
+                    )}
+                  </>
+                ),
+              },
+              {
+                id: "status",
+                header: "Status",
+                sortValue: (user) => user.status,
+                cell: (user) => <UserStatusChip status={user.status} />,
+              },
+              {
+                id: "lastSignIn",
+                header: "Last sign-in",
+                sortValue: (user) => user.lastSignInAt,
+                cell: (user) => <RelativeTime value={user.lastSignInAt} fallback="Never" />,
+              },
+              {
+                id: "actions",
+                header: "Actions",
+                headerHidden: true,
+                cell: (user) => (
+                  <RowMenu label={`Actions for ${user.name}`}>
                     <UserActionMenuItems
                       user={user}
                       onAction={(action) => startAction(user, action)}
                     />
                   </RowMenu>
-                </span>
-              </div>
-            )}
+                ),
+              },
+            ]}
           />
           {hasMorePages ? (
             <div className="admin-list-footer">

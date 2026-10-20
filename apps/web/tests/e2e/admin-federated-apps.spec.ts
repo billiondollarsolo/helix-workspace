@@ -123,19 +123,23 @@ for (const width of [1440, 390]) {
     await page.goto("/admin/federation-applications");
     await expect(page.getByRole("heading", { name: "Federated apps", exact: true })).toBeVisible();
     await expect(
-      page.getByText("Connection credential delivery is pending.", { exact: true }),
+      page
+        .getByRole("table")
+        .getByText("Connection credential delivery is pending.", { exact: true }),
     ).toBeVisible();
     await expect(
-      page.getByText("Directory: verification overdue.", { exact: false }),
+      page.getByRole("table").getByText("Directory: verification overdue.", { exact: false }),
     ).toBeVisible();
     await page.getByRole("button", { name: "View app details", exact: true }).click();
+    await expect(page).toHaveURL(/application=/);
+    await page.getByRole("tab", { name: "Operations", exact: true }).click();
     const details = page.getByRole("region", { name: "Application details" });
     await expect(details).toContainText("Last acknowledged policy: revision 2");
     await expect(details).toContainText("Desired Workspace policy: revision 3. Delivery pending");
     await expect(details).toContainText("Isolated restore: not enrolled");
     await expect(details).not.toContainText("unrelated-private-marker");
     await expect(
-      details.getByRole("link", { name: "Open application", exact: true }),
+      page.getByRole("link", { name: "Open application ↗", exact: true }),
     ).toHaveAttribute("href", app.origin);
     await expect(details).toContainText("Application health: healthy");
     unavailable = true;
@@ -146,7 +150,7 @@ for (const width of [1440, 390]) {
     unavailable = false;
     await details.getByRole("button", { name: "Refresh backup status" }).click();
     await expect(details).toContainText("Application health: healthy");
-    await page.getByRole("button", { name: "Manage assigned people", exact: true }).click();
+    await page.getByRole("tab", { name: "People", exact: true }).click();
     const assigned = page.getByRole("combobox", { name: person.email, exact: true });
     await expect(assigned).toHaveValue("member");
     await assigned.selectOption("admin");
@@ -155,8 +159,8 @@ for (const width of [1440, 390]) {
     await page.getByRole("button", { name: "Save assignments" }).click();
     await expect(page.getByRole("alert")).toContainText("Assignments were not saved");
     await expect(assigned).toHaveValue("admin");
-    await page.getByRole("button", { name: "Manage assigned people", exact: true }).click();
-    await page.getByRole("button", { name: "Manage assigned people", exact: true }).click();
+    await page.getByRole("tab", { name: "Overview", exact: true }).click();
+    await page.getByRole("tab", { name: "People", exact: true }).click();
     await expect(assigned).toHaveValue("admin");
     failedSave = false;
     await page.getByRole("button", { name: "Save assignments" }).click();
@@ -181,5 +185,6 @@ for (const width of [1440, 390]) {
     await page.getByRole("button", { name: "Use current assignments" }).click();
     await expect(assigned).toHaveValue("member");
     await accessible(page);
+    await page.screenshot({ path: test.info().outputPath("federation-people.png") });
   });
 }

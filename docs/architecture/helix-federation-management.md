@@ -63,6 +63,25 @@ their editor link. Show the source and effective value when a policy constrains 
 app setting. Recovery-owner controls are explicitly identified and separately
 authorized. Never enable a restricted operation merely because its control is visible.
 
+## Administration design contract
+
+Use a 24px page gutter and compact 36px default controls, with semantic theme tokens
+for spacing, focus, text and status. A page has one heading and one administration
+search. Keep actions beside their section heading; refresh actions are secondary.
+Use labelled + Add / + Invite controls, never an unexplained plus icon.
+
+People and application directories use the existing TanStack table components.
+Provide sorting, explicit empty/error states, accessible row actions and a compact
+caption/value layout on small screens. Sorting a loaded subset must say so.
+Creation and editing use nonmodal panels or dedicated routes; blocking dialogs
+are reserved for confirmation. Retain drafts through errors and section changes.
+
+A federated application has a linkable detail view with Overview, People and
+Operations sections. Keep connection failures visible outside disclosures; place
+technical identifiers, ownership reference information and recovery operations
+behind an explicit detail choice. Use dividers and whitespace for ordinary settings,
+reserving cards and status treatments for information that needs grouping or attention.
+
 ## Setting ownership inventory
 
 The current integration inherits the fields below. It does not yet propagate a

@@ -99,8 +99,8 @@ test("admin suspends and restores a person after confirming, with last sign-in s
 }) => {
   const { lifecycle } = await mockAdminProfiles(page);
   await page.goto("/admin/users");
-  const row = page.locator(".admin-user-row").filter({ hasText: "Morgan Lee" });
-  await expect(page.locator(".admin-list-header")).toContainText("Last sign-in");
+  const row = page.locator(".admin-table tbody tr").filter({ hasText: "Morgan Lee" });
+  await expect(page.locator(".admin-table thead")).toContainText("Last sign-in");
   await expect(row.locator("time")).toHaveAttribute("datetime", "2026-09-30T08:00:00Z");
   await expect(row.locator(".chip.success")).toHaveText("Active");
 

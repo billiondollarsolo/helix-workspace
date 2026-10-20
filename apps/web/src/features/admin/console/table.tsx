@@ -267,7 +267,7 @@ export function AdminTable<TRow>({
                           : undefined
                       }
                     >
-                      {column.cell(row)}
+                      <div className="admin-table-value">{column.cell(row)}</div>
                     </TableCell>
                   ))}
                 </TableRow>

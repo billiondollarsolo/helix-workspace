@@ -29,6 +29,8 @@ export interface TopBarProps {
   icon?: ReactNode;
   /** Search placeholder text, also the field's accessible name. */
   searchPlaceholder?: string;
+  /** A surface-specific search control, such as the administration directory. */
+  searchContent?: ReactNode;
   /** Surface-specific action buttons rendered before the shell controls. */
   actions?: ReactNode;
   /** Unread notification count — drives the bell badge. */
@@ -47,6 +49,7 @@ export function TopBar({
   icon,
   searchPlaceholder = "Search Helix",
   actions,
+  searchContent,
   notifUnread = 0,
   searchValue,
   onSearchChange,
@@ -59,8 +62,12 @@ export function TopBar({
   const value = surfaceOwnsSearch ? (searchValue ?? "") : draft;
   const setValue = surfaceOwnsSearch ? onSearchChange : setDraft;
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const customSearchRef = useRef<HTMLDivElement | null>(null);
   useShortcuts("global", {
-    "global.focus-search": () => searchInputRef.current?.focus(),
+    "global.focus-search": () => {
+      if (searchContent) customSearchRef.current?.querySelector("input")?.focus();
+      else searchInputRef.current?.focus();
+    },
   });
 
   return (
@@ -70,57 +77,63 @@ export function TopBar({
         {icon}
         <span>{title}</span>
       </div>
-      <form
-        role="search"
-        className="search"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (surfaceOwnsSearch) {
-            onSearchSubmit?.(value);
-            return;
-          }
-          const q = value.trim();
-          if (q.length === 0) return;
-          // Read at submit time: the app the person is in when they press Enter.
-          const scope = searchFilterForApp(appForRoute(window.location.pathname)?.id);
-          void navigate({ to: "/search", search: { q, ...(scope ? { type: scope } : {}) } });
-        }}
-      >
-        <SearchIcon size={16} aria-hidden="true" />
-        <input
-          ref={searchInputRef}
-          type="text"
-          name={`${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-search`}
-          autoComplete="off"
-          enterKeyHint="search"
-          value={value}
-          onChange={(event) => setValue(event.target.value)}
-          placeholder={searchPlaceholder}
-          aria-label={searchPlaceholder}
-        />
-        {value ? (
-          <button
-            type="button"
-            className="icon-btn search-clear"
-            onClick={() => setValue("")}
-            aria-label="Clear search"
-          >
-            <XIcon size={16} aria-hidden="true" />
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="search-palette"
-            onClick={overlays.openPalette}
-            aria-label="Open command palette"
-            title="Command palette"
-          >
-            <span className="kbd" aria-hidden="true">
-              ⌘K
-            </span>
-          </button>
-        )}
-      </form>
+      {searchContent ? (
+        <div className="topbar-surface-search" ref={customSearchRef}>
+          {searchContent}
+        </div>
+      ) : (
+        <form
+          role="search"
+          className="search"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (surfaceOwnsSearch) {
+              onSearchSubmit?.(value);
+              return;
+            }
+            const q = value.trim();
+            if (q.length === 0) return;
+            // Read at submit time: the app the person is in when they press Enter.
+            const scope = searchFilterForApp(appForRoute(window.location.pathname)?.id);
+            void navigate({ to: "/search", search: { q, ...(scope ? { type: scope } : {}) } });
+          }}
+        >
+          <SearchIcon size={16} aria-hidden="true" />
+          <input
+            ref={searchInputRef}
+            type="text"
+            name={`${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-search`}
+            autoComplete="off"
+            enterKeyHint="search"
+            value={value}
+            onChange={(event) => setValue(event.target.value)}
+            placeholder={searchPlaceholder}
+            aria-label={searchPlaceholder}
+          />
+          {value ? (
+            <button
+              type="button"
+              className="icon-btn search-clear"
+              onClick={() => setValue("")}
+              aria-label="Clear search"
+            >
+              <XIcon size={16} aria-hidden="true" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="search-palette"
+              onClick={overlays.openPalette}
+              aria-label="Open command palette"
+              title="Command palette"
+            >
+              <span className="kbd" aria-hidden="true">
+                ⌘K
+              </span>
+            </button>
+          )}
+        </form>
+      )}
       <div className="topbar-actions">
         {actions}
         <button

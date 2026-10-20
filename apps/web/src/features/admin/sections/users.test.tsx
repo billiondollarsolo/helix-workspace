@@ -199,7 +199,7 @@ describe("AdminUsers", () => {
 
   /** The role chip text of each rendered row, in row order. */
   function visibleRoles(): readonly string[] {
-    return [...container.querySelectorAll('[role="row"] .chip')]
+    return [...container.querySelectorAll('tbody td[data-label="Role"]')]
       .map((chip) => chip.textContent?.trim() ?? "")
       .filter((value) => /^(Admin|Scoped admin|Member)$/u.test(value));
   }
@@ -362,12 +362,14 @@ describe("AdminUsers", () => {
       apiUser({ id: "u-2", displayName: "Two" }),
     ]);
 
-    const grid = container.querySelector('[role="grid"][aria-label="Users"]');
+    const grid = container.querySelector('table[aria-label="Users"]');
     expect(grid).not.toBeNull();
-    expect(grid?.querySelectorAll('[role="row"]')).toHaveLength(2);
+    expect(grid?.querySelectorAll("tbody tr")).toHaveLength(2);
     expect(
-      [...container.querySelectorAll(".admin-list-header span")].map((span) => span.textContent),
-    ).toEqual(["Name", "Role", "Status", "Last sign-in", ""]);
+      [...container.querySelectorAll("thead th")].map(
+        (span) => (span.querySelector("button") ?? span).textContent,
+      ),
+    ).toEqual(["Select", "Name", "Role", "Status", "Last sign-in", "Actions"]);
     expect(text()).toContain("Active");
   });
 
@@ -458,7 +460,7 @@ describe("AdminUsers", () => {
       apiUser({ id: "u-1", displayName: "Live One" }),
       apiUser({ id: "u-2", displayName: "Pending Two", status: "invited" }),
     ]);
-    expect(container.querySelector(".admin-user-row .chip.info")?.textContent).toBe("Invited");
+    expect(container.querySelector(".admin-table .chip.info")?.textContent).toBe("Invited");
 
     await selectValue("Status", "invited");
     await waitFor(() => {
@@ -551,7 +553,7 @@ describe("AdminUsers", () => {
       apiUser({ id: "u-1", displayName: "Signed In", lastSignInAt: "2026-01-02T09:00:00Z" }),
       apiUser({ id: "u-2", displayName: "Never Signed In" }),
     ]);
-    const times = [...container.querySelectorAll(".admin-user-row time")].map((time) =>
+    const times = [...container.querySelectorAll(".admin-table time")].map((time) =>
       time.getAttribute("datetime"),
     );
     expect(times).toEqual(["2026-01-02T09:00:00Z"]);
@@ -615,16 +617,14 @@ describe("AdminUsers", () => {
     await confirmIn("Suspend");
     await waitFor(() => {
       expect(posts).toEqual(["/v1/api/admin/users/u-1/suspend"]);
-      expect(container.querySelector(".admin-user-row .chip.warning")?.textContent).toBe(
-        "Suspended",
-      );
+      expect(container.querySelector(".admin-table .chip.warning")?.textContent).toBe("Suspended");
     });
 
     await choose("Restore user…");
     await confirmIn("Restore");
     await waitFor(() => {
       expect(posts).toEqual(["/v1/api/admin/users/u-1/suspend", "/v1/api/admin/users/u-1/restore"]);
-      expect(container.querySelector(".admin-user-row .chip.success")?.textContent).toBe("Active");
+      expect(container.querySelector(".admin-table .chip.success")?.textContent).toBe("Active");
     });
   });
 
@@ -670,7 +670,7 @@ describe("AdminUsers", () => {
   it("opens a person's details in a side sheet and keeps it in the URL", async () => {
     await renderWith([apiUser({ id: "u-1", displayName: "Person", scopes: ["admin.audit"] })]);
 
-    const row = container.querySelector<HTMLElement>('[role="row"]');
+    const row = container.querySelector<HTMLElement>("tbody .admin-record-link");
     await click(row as HTMLElement);
 
     expect(routerSearch.current).toMatchObject({ user: "u-1" });

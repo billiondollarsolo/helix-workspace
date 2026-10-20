@@ -356,8 +356,9 @@ describe("AdminConsole", () => {
     /* The bar is console chrome, outside the section's Suspense boundary, so
        it is there before the page's own code has loaded. */
     await waitFor(() => {
-      const search = container.querySelector('.admin-searchbar [role="combobox"]');
+      const search = container.querySelector('.topbar-surface-search [role="combobox"]');
       expect(search?.getAttribute("aria-label")).toBe("Search admin settings, users, and groups");
+      expect(container.querySelectorAll('.topbar [role="combobox"]')).toHaveLength(1);
     });
   });
 

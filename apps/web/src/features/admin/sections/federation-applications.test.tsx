@@ -1,4 +1,12 @@
 // @vitest-environment jsdom
+import {
+  createRootRoute,
+  createRoute,
+  createRouter,
+  createMemoryHistory,
+  RouterProvider,
+} from "@tanstack/react-router";
+import { validateAdminSectionSearch } from "@/features/admin/admin-section-search";
 import { act } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -12,6 +20,29 @@ afterEach(() => {
   unmountAll();
   vi.restoreAllMocks();
 });
+
+function render(queries: QueryClient) {
+  const root = createRootRoute({
+    component: () => (
+      <QueryClientProvider client={queries}>
+        <FederationApplications />
+      </QueryClientProvider>
+    ),
+  });
+  const route = createRoute({
+    getParentRoute: () => root,
+    path: "/admin/$section",
+    validateSearch: validateAdminSectionSearch,
+  });
+  return mount(
+    <RouterProvider
+      router={createRouter({
+        routeTree: root.addChildren([route]),
+        history: createMemoryHistory({ initialEntries: ["/admin/federation-applications"] }),
+      })}
+    />,
+  );
+}
 
 describe("Federated apps", () => {
   it("identifies Workspace assignments and preserves local Bot control ownership", async () => {
@@ -33,16 +64,14 @@ describe("Federated apps", () => {
       }),
     );
     const queries = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const mounted = mount(
-      <QueryClientProvider client={queries}>
-        <FederationApplications />
-      </QueryClientProvider>,
-    );
+    const mounted = render(queries);
     await settle();
     await settle();
-    expect(mounted.container.textContent).toContain("Managed by Workspace:");
-    expect(mounted.container.textContent).toContain("their Bot roles (Viewer, Member or Admin)");
-    expect(mounted.container.textContent).toContain("Managed in Helix Bot:");
+    act(() => buttonNamed("View app details")?.click());
+    await settle();
+    expect(mounted.container.textContent).toContain("Managed by Workspace");
+    expect(mounted.container.textContent).toContain("Assigned people, Bot roles");
+    expect(mounted.container.textContent).toContain("Managed in Helix Bot");
     expect(mounted.container.textContent).toContain("recovery ownership");
     expect(await axeViolations(mounted.container)).toEqual([]);
     queries.clear();
@@ -64,18 +93,14 @@ describe("Federated apps", () => {
     const queries = new QueryClient({
       defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
     });
-    const mounted = mount(
-      <QueryClientProvider client={queries}>
-        <FederationApplications />
-      </QueryClientProvider>,
-    );
+    const mounted = render(queries);
     await settle();
     await settle();
     expect(mounted.container.querySelector("h1")?.textContent).toBe("Federated apps");
     act(() => buttonNamed("+ Add application")?.click());
     await settle();
     expect(await axeViolations(mounted.container)).toEqual([]);
-    const form = mounted.container.querySelector("form");
+    const form = document.querySelector("form");
     if (!form) throw new Error("Registration form missing");
     await act(() => form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
     await settle();

@@ -25,7 +25,10 @@ RUN mkdir -p /out \
 
 # shortcut: distrust both incident anchors until Node releases its intermediate-key blocklist.
 FROM ${BUILD_BASE} AS trusted-base
-RUN sed -i \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && sed -i \
       -e 's|^mozilla/emSign_ECC_Root_CA_-_G3.crt$|!mozilla/emSign_ECC_Root_CA_-_G3.crt|' \
       -e 's|^mozilla/Comodo_AAA_Services_root.crt$|!mozilla/Comodo_AAA_Services_root.crt|' \
       /etc/ca-certificates.conf \

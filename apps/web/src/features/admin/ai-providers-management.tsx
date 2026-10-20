@@ -9,6 +9,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AiProviderForm } from "./ai-provider-form";
 import { AdminTable } from "./console/table";
+import { pluralize } from "./console/format";
 import { AdminInput, AdminSelect, AdminToolbar } from "./console/controls";
 import { Dialog } from "@/components/ui/helix-dialog";
 import { Plus, Save, Shield, Trash2 } from "lucide-react";
@@ -182,7 +183,7 @@ export function AIProvidersManagement() {
             value={search}
             onChange={(event) => setSearch(event.target.value)}
           />
-          <span className="admin-muted">{editor.providers.length} providers</span>
+          <span className="admin-muted">{pluralize(editor.providers.length, "provider")}</span>
           <Button
             type="button"
             size="sm"

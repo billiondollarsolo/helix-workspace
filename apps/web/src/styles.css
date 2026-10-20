@@ -2923,6 +2923,9 @@
       grid-template-columns: minmax(0, 1fr);
       gap: 4px;
     }
+    .topbar:has(.topbar-surface-search) .topbar-title {
+      display: none;
+    }
     .topbar-surface-search {
       min-width: 100px;
     }
@@ -2978,7 +2981,7 @@
   }
   .admin-panel-header-text {
     min-width: 0;
-    flex: 1;
+    flex: 1 1 240px;
   }
   .admin-panel-header h2 {
     margin: 0;

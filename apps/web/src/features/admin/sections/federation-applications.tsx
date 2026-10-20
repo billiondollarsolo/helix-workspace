@@ -1,3 +1,4 @@
+import { pluralize } from "../console/format";
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
@@ -62,7 +63,7 @@ export function FederationApplications() {
             subtitle="Manage connected applications and who can use them."
             meta={
               apps.data ? (
-                <span className="admin-muted">{applications.length} applications</span>
+                <span className="admin-muted">{pluralize(applications.length, "application")}</span>
               ) : undefined
             }
             actions={

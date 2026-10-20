@@ -184,6 +184,14 @@ for (const width of [1440, 390]) {
     await expect(page.getByRole("button", { name: "Save assignments" })).toBeDisabled();
     await page.getByRole("button", { name: "Use current assignments" }).click();
     await expect(assigned).toHaveValue("member");
+    const heading = page.locator(".admin-panel-header").filter({ hasText: "Assigned people" });
+    const text = await heading.locator(".admin-panel-header-text").boundingBox();
+    const actions = await heading.locator(".admin-page-actions").boundingBox();
+    expect(text).not.toBeNull();
+    expect(actions).not.toBeNull();
+    expect(
+      text!.y + text!.height <= actions!.y + 1 || text!.x + text!.width <= actions!.x + 1,
+    ).toBe(true);
     await accessible(page);
     await page.screenshot({ path: test.info().outputPath("federation-people.png") });
   });

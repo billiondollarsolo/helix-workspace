@@ -70,7 +70,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import { PeoplePicker } from "@/components/people/people-picker";
 import type { PersonRef } from "@/features/people/person-ref";
 import { ProviderForm } from "./mail-provider-form";
-import { AdminInput } from "./console/controls";
+import { AdminField, AdminInput, AdminSelect } from "./console/controls";
 import { adminUsersQueryOptions, type AdminUser } from "./admin-users";
 
 /* ------------------------------------------------------------------ */
@@ -379,11 +379,11 @@ function MailDomains() {
       ) : (
         domains.map((domain) => (
           <div key={domain.id} className="panel p-4 mb-3">
-            <div className="flex items-center gap-2.5">
+            <div className="flex flex-wrap items-center gap-2.5">
               <span className="text-muted-foreground">
                 <GlobeIcon size={16} />
               </span>
-              <span className="type-body font-semibold">{domain.domain}</span>
+              <span className="min-w-0 type-body font-semibold wrap-anywhere">{domain.domain}</span>
               {domain.isPrimary ? <span className="chip success">Primary</span> : null}
               <Button
                 type="button"
@@ -425,9 +425,9 @@ function MailDomains() {
               domain.dkimKeys.map((key) => (
                 <div
                   key={key.id}
-                  className="grid [grid-template-columns:1fr_120px] items-center h-7.5 type-meta [border-top:1px_solid_var(--border)]"
+                  className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 items-center min-h-7.5 py-1 type-meta [border-top:1px_solid_var(--border)]"
                 >
-                  <span className="mono type-caption">{key.selector}</span>
+                  <span className="min-w-0 mono type-caption wrap-anywhere">{key.selector}</span>
                   <span className="[justify-self:flex-end]">
                     <span className={`chip ${dkimStatusVariant(key.status)}`.trim()}>
                       <span className="chip-dot" />
@@ -486,7 +486,7 @@ function Deliverability() {
       ) : null}
 
       {summary ? (
-        <div className="grid [grid-template-columns:repeat(3,_1fr)] gap-3 mb-4">
+        <div className="grid gap-3 mb-4 sm:grid-cols-3">
           {rateCards.map((card) => (
             <div key={card.label} className="panel p-4">
               <span className="type-caption text-muted-foreground font-semibold uppercase [letter-spacing:.06em]">
@@ -498,39 +498,42 @@ function Deliverability() {
         </div>
       ) : null}
 
-      <div className="panel overflow-hidden">
-        <div className="grid [grid-template-columns:1fr_1fr_1.4fr_90px_90px_90px] [padding:0_12px] h-8 items-center [border-bottom:1px_solid_var(--border)] bg-muted type-caption text-muted-foreground font-semibold uppercase [letter-spacing:.06em]">
-          <span>Reporter</span>
-          <span>Domain</span>
-          <span>Window</span>
-          <span>Messages</span>
-          <span>Pass</span>
-          <span>Fail</span>
-        </div>
-        {reports.length === 0 ? (
+      <AdminTable
+        label="DMARC reports"
+        rows={reports}
+        rowKey={(report) => report.id}
+        empty={
           <EmptyRow>
             {dmarcQuery.isPending ? "Loading reports…" : "No DMARC aggregate reports yet."}
           </EmptyRow>
-        ) : (
-          reports.map((report) => (
-            <div
-              key={report.id}
-              className="grid [grid-template-columns:1fr_1fr_1.4fr_90px_90px_90px] [padding:0_12px] [height:var(--rd-list-row-h)] items-center type-row [border-bottom:1px_solid_var(--border)]"
-            >
-              <span className="font-medium">{report.reporter}</span>
-              <span className="[color:var(--text-2)]">{report.domain}</span>
-              <span className="mono type-caption text-muted-foreground">
-                {report.rangeStart} → {report.rangeEnd}
-              </span>
-              <span>{report.total}</span>
-              <span className="[color:var(--success)]">{report.passCount}</span>
+        }
+        columns={[
+          { id: "reporter", header: "Reporter", cell: (report) => report.reporter },
+          { id: "domain", header: "Domain", cell: (report) => report.domain },
+          {
+            id: "window",
+            header: "Window",
+            cell: (report) => `${report.rangeStart} → ${report.rangeEnd}`,
+          },
+          { id: "total", header: "Messages", align: "right", cell: (report) => report.total },
+          {
+            id: "pass",
+            header: "Pass",
+            align: "right",
+            cell: (report) => <span className="[color:var(--success)]">{report.passCount}</span>,
+          },
+          {
+            id: "fail",
+            header: "Fail",
+            align: "right",
+            cell: (report) => (
               <span className={cn(report.failCount > 0 ? "text-destructive" : "")}>
                 {report.failCount}
               </span>
-            </div>
-          ))
-        )}
-      </div>
+            ),
+          },
+        ]}
+      />
     </>
   );
 }
@@ -598,30 +601,25 @@ function RoutingForm({ onCancel, onSubmit, pending }: RoutingFormProps) {
       }}
     >
       <div className="font-semibold type-body-sm">Add inbound routing rule</div>
-      <div className="grid [grid-template-columns:1fr_1.4fr_1fr_1.4fr_80px] gap-2.5">
-        <label>
-          <span className="type-caption text-muted-foreground block">Name</span>
-          <input
+      <div className="grid sm:grid-cols-2 gap-2.5">
+        <AdminField label="Name">
+          <AdminInput
             aria-label="Rule name"
             value={name}
             onChange={(event) => setName(event.target.value)}
             placeholder="Support catch-all"
-            className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] type-meta w-full"
           />
-        </label>
-        <label>
-          <span className="type-caption text-muted-foreground block">Recipient pattern</span>
-          <input
+        </AdminField>
+        <AdminField label="Recipient pattern">
+          <AdminInput
             aria-label="Recipient pattern"
             value={recipientPattern}
             onChange={(event) => setRecipientPattern(event.target.value)}
             placeholder="*@support.helix.io"
-            className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] type-meta w-full"
           />
-        </label>
-        <label>
-          <span className="type-caption text-muted-foreground block">Action</span>
-          <select
+        </AdminField>
+        <AdminField label="Action">
+          <AdminSelect
             aria-label="Routing action"
             value={action}
             onChange={(event) => {
@@ -630,15 +628,14 @@ function RoutingForm({ onCancel, onSubmit, pending }: RoutingFormProps) {
               setDestination("");
               setRecipient(null);
             }}
-            className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] type-meta w-full"
           >
             {ROUTING_ACTIONS.map((value) => (
               <option key={value} value={value}>
                 {routingActionLabels[value]}
               </option>
             ))}
-          </select>
-        </label>
+          </AdminSelect>
+        </AdminField>
         {action === "alias" ? (
           <PeoplePicker
             label="Deliver to"
@@ -653,68 +650,56 @@ function RoutingForm({ onCancel, onSubmit, pending }: RoutingFormProps) {
             }}
           />
         ) : (
-          <label>
-            <span className="type-caption text-muted-foreground block">Destination</span>
-            <input
+          <AdminField label="Destination">
+            <AdminInput
               aria-label="Destination"
               value={destination}
               onChange={(event) => setDestination(event.target.value)}
               disabled={action === "drop"}
               placeholder={action === "tag" ? "Tag" : "Mailbox or forwarding address"}
-              className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] type-meta w-full"
             />
-          </label>
+          </AdminField>
         )}
-        <label>
-          <span className="type-caption text-muted-foreground block">Priority</span>
-          <input
+        <AdminField label="Priority">
+          <AdminInput
             aria-label="Priority"
             type="number"
             value={priority}
             onChange={(event) => setPriority(event.target.value)}
-            className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] type-meta w-full"
           />
-        </label>
+        </AdminField>
       </div>
-      <div className="grid [grid-template-columns:1fr_1fr_1fr_1fr_auto] gap-2.5">
-        <label>
-          <span className="type-caption text-muted-foreground block">Sender pattern</span>
-          <input
+      <div className="grid sm:grid-cols-2 gap-2.5">
+        <AdminField label="Sender pattern">
+          <AdminInput
             aria-label="Sender pattern"
             value={senderPattern}
             onChange={(event) => setSenderPattern(event.target.value)}
             placeholder="*@customer.example"
-            className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] type-meta w-full"
           />
-        </label>
-        <label>
-          <span className="type-caption text-muted-foreground block">Subject contains</span>
-          <input
+        </AdminField>
+        <AdminField label="Subject contains">
+          <AdminInput
             aria-label="Subject contains"
             value={subjectContains}
             onChange={(event) => setSubjectContains(event.target.value)}
-            className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] type-meta w-full"
           />
-        </label>
-        <label>
-          <span className="type-caption text-muted-foreground block">Header name</span>
-          <input
+        </AdminField>
+        <AdminField label="Header name">
+          <AdminInput
             aria-label="Header name"
             value={headerName}
             onChange={(event) => setHeaderName(event.target.value)}
             placeholder="X-Project"
-            className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] type-meta w-full"
           />
-        </label>
-        <label>
-          <span className="type-caption text-muted-foreground block">Header contains</span>
-          <input
+        </AdminField>
+        <AdminField label="Header contains">
+          <AdminInput
             aria-label="Header contains"
             value={headerContains}
             onChange={(event) => setHeaderContains(event.target.value)}
-            className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] type-meta w-full"
           />
-        </label>
+        </AdminField>
         <SettingToggle
           label="Stop processing later rules"
           checked={stopProcessing}
@@ -852,40 +837,44 @@ function RoutingRules() {
         />
       ) : null}
 
-      <div className="panel overflow-hidden">
-        <div className="grid [grid-template-columns:60px_1.4fr_130px_1.4fr_90px_150px] [padding:0_12px] h-8 items-center [border-bottom:1px_solid_var(--border)] bg-muted type-caption text-muted-foreground font-semibold uppercase [letter-spacing:.06em]">
-          <span>Priority</span>
-          <span>Match</span>
-          <span>Action</span>
-          <span>Destination</span>
-          <span>Status</span>
-          <span />
-        </div>
-        {rules.length === 0 ? (
+      <AdminTable
+        label="Inbound routing rules"
+        rows={rules}
+        rowKey={(rule) => rule.id}
+        empty={
           <EmptyRow>
             {rulesQuery.isPending ? "Loading rules…" : "No inbound routing rules defined."}
           </EmptyRow>
-        ) : (
-          rules.map((rule) => (
-            <div
-              key={rule.id}
-              className="grid [grid-template-columns:60px_1.4fr_130px_1.4fr_90px_150px] [padding:0_12px] [height:var(--rd-list-row-h)] items-center type-row [border-bottom:1px_solid_var(--border)]"
-            >
-              <span className="mono type-caption text-muted-foreground">{rule.priority}</span>
-              <span className="mono truncate type-caption">{routingRuleMatch(rule)}</span>
-              <span>
-                <span className="chip">{routingActionLabels[rule.actionKind]}</span>
+        }
+        columns={[
+          { id: "priority", header: "Priority", cell: (rule) => rule.priority },
+          { id: "match", header: "Match", cell: routingRuleMatch },
+          {
+            id: "action",
+            header: "Action",
+            cell: (rule) => <span className="chip">{routingActionLabels[rule.actionKind]}</span>,
+          },
+          {
+            id: "destination",
+            header: "Destination",
+            cell: (rule) => routingRuleDestination(rule, directory),
+          },
+          {
+            id: "status",
+            header: "Status",
+            cell: (rule) => (
+              <span className={`chip ${rule.isEnabled ? "success" : "warning"}`}>
+                <span className="chip-dot" />
+                {rule.isEnabled ? "Active" : "Off"}
               </span>
-              <span className="truncate [color:var(--text-2)]">
-                {routingRuleDestination(rule, directory)}
-              </span>
-              <span>
-                <span className={`chip ${rule.isEnabled ? "success" : "warning"}`}>
-                  <span className="chip-dot" />
-                  {rule.isEnabled ? "Active" : "Off"}
-                </span>
-              </span>
-              <div className="flex gap-1.5 [justify-self:flex-end]">
+            ),
+          },
+          {
+            id: "actions",
+            header: "Actions",
+            headerHidden: true,
+            cell: (rule) => (
+              <div className="flex flex-wrap gap-1.5">
                 <Button
                   type="button"
                   variant="outline"
@@ -907,10 +896,10 @@ function RoutingRules() {
                   <TrashIcon size={16} />
                 </Button>
               </div>
-            </div>
-          ))
-        )}
-      </div>
+            ),
+          },
+        ]}
+      />
     </>
   );
 }
@@ -928,7 +917,7 @@ function JournalSettings({
   const [retentionDays, setRetentionDays] = useState(String(journal.retentionDays));
   return (
     <form
-      className="panel p-4 mb-3 flex gap-3 [align-items:end]"
+      className="panel p-4 mb-3 flex flex-wrap gap-3 items-end"
 
       onSubmit={(event) => {
         event.preventDefault();
@@ -939,17 +928,9 @@ function JournalSettings({
       }}
     >
       <SettingToggle
-        label={`<span>
-          <strong>Immutable compliance journal</strong>
-          <span className="block text-muted-foreground">
-            ${String(journal.entryCount)} captured messages
-            ${
-              journal.lastJournaledAt === null
-                ? ""
-                : ` · last ${formatRelativeTime(journal.lastJournaledAt)}`
-            }
-          </span>
-        </span>`}
+        label="Immutable compliance journal"
+        description={`${String(journal.entryCount)} captured messages${journal.lastJournaledAt === null ? "" : ` · last ${formatRelativeTime(journal.lastJournaledAt)}`}`}
+        className="min-w-0 flex-1"
         checked={enabled}
         onCheckedChange={(checked) => setEnabled(checked)}
       />
@@ -1038,9 +1019,9 @@ function MailOperations() {
         {operations.data?.deadLetters.map((message) => (
           <div
             key={message.id}
-            className="flex gap-3 items-center [padding:8px_0] [border-top:1px_solid_var(--border)]"
+            className="flex flex-wrap gap-3 items-center [padding:8px_0] [border-top:1px_solid_var(--border)]"
           >
-            <div className="flex-1">
+            <div className="min-w-0 flex-1 wrap-anywhere">
               <strong>{message.messageId}</strong>
               <div className="text-muted-foreground">
                 {message.lastError ?? "No diagnostic"} · {String(message.attemptCount)} attempts
@@ -1063,7 +1044,10 @@ function MailOperations() {
         <h2 className="mt-0">Delivery trace</h2>
         {operations.data?.events.length === 0 ? <EmptyRow>No delivery events.</EmptyRow> : null}
         {operations.data?.events.map((event) => (
-          <div key={event.id} className="[padding:8px_0] [border-top:1px_solid_var(--border)]">
+          <div
+            key={event.id}
+            className="wrap-anywhere [padding:8px_0] [border-top:1px_solid_var(--border)]"
+          >
             <strong>{event.kind}</strong> · {event.recipient} ·{" "}
             <RelativeTime value={event.occurredAt} />
             {event.diagnostic === null ? null : (
@@ -1081,9 +1065,9 @@ function MailOperations() {
         {operations.data?.suppressions.map((suppression) => (
           <div
             key={suppression.id}
-            className="flex gap-3 items-center [padding:8px_0] [border-top:1px_solid_var(--border)]"
+            className="flex flex-wrap gap-3 items-center [padding:8px_0] [border-top:1px_solid_var(--border)]"
           >
-            <div className="flex-1">
+            <div className="min-w-0 flex-1 wrap-anywhere">
               <strong>{suppression.address}</strong> · {suppression.reason}
             </div>
             <Button

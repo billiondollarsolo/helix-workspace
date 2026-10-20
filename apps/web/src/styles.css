@@ -3215,7 +3215,10 @@
 
   .admin-field {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    min-width: 0;
     gap: 4px;
+    overflow-wrap: anywhere;
   }
   .admin-field-label {
     font-size: var(--text-caption);
@@ -3225,6 +3228,8 @@
   /* Replaces the exported `INPUT_STYLE` object. Same metrics, but now it can
    carry a focus ring — which an inline style never could. */
   .admin-control {
+    min-width: 0;
+    max-width: 100%;
     min-height: var(--admin-control-height);
     height: auto;
     border-radius: var(--radius);
@@ -3233,6 +3238,10 @@
     color: var(--text);
     padding: 6px 10px;
     font-size: var(--text-body-sm);
+  }
+  select.admin-control {
+    width: 100%;
+    text-overflow: ellipsis;
   }
   .admin-control:focus-visible {
     outline: 2px solid var(--focus-ring-color);

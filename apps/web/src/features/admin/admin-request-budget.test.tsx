@@ -476,10 +476,11 @@ describe("admin console request budget", () => {
           ],
         },
         "mail": {
-          "requestCount": 2,
+          "requestCount": 3,
           "settled": true,
           "urls": [
             "/v1/api/admin/core-apps",
+            "/v1/api/admin/mail/config",
             "/v1/api/admin/tenant-config",
           ],
         },

@@ -374,11 +374,7 @@ export async function registerMailDeliveryAdminRoutes(
       providers: await Promise.all(
         (await providerStore.listProviders(actor.orgId)).map(async (provider) => {
           const saved = await options.credentials?.status(actor.orgId, provider.id);
-          return {
-            ...serializeProvider(provider),
-            hasSecret: saved?.sending === true || provider.secretRef !== null,
-            hasWebhookSecret: saved?.feedback === true || provider.webhookSecretRef !== null,
-          };
+          return serializeProvider(provider, saved);
         }),
       ),
     };
@@ -477,7 +473,12 @@ export async function registerMailDeliveryAdminRoutes(
       objectId: provider.id,
       metadata: { name: provider.name, isDefault: provider.isDefault, enabled: provider.enabled },
     });
-    return { provider: serializeProvider(provider) };
+    return {
+      provider: serializeProvider(
+        provider,
+        await options.credentials?.status(actor.orgId, provider.id),
+      ),
+    };
   });
 
   app.delete("/api/admin/mail/providers/:id", async (request, reply) => {

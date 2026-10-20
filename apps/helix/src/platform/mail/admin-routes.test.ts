@@ -28,6 +28,7 @@ let app: FastifyInstance;
 let currentActor: Actor;
 let domainStore: InMemoryDomainsStore;
 let dkimDnsVerified: boolean;
+let credentialStatus: { sending: boolean; feedback: boolean };
 const audited: { verb: string; objectType: string }[] = [];
 
 /** A Fastify inject response narrowed to a status code and a JSON payload. */
@@ -73,6 +74,7 @@ beforeEach(async () => {
   currentActor = adminActor;
   audited.length = 0;
   dkimDnsVerified = true;
+  credentialStatus = { sending: false, feedback: false };
   app = fastify();
   domainStore = new InMemoryDomainsStore();
   await registerMailDeliveryAdminRoutes(app, {
@@ -89,6 +91,11 @@ beforeEach(async () => {
       },
     },
     verifyDkimDns: async () => dkimDnsVerified,
+    credentials: {
+      read: async () => undefined,
+      write: async () => true,
+      status: async () => credentialStatus,
+    },
   });
   await app.ready();
 });
@@ -132,6 +139,28 @@ interface DmarcSummaryView {
 }
 
 describe("outbound provider admin routes", () => {
+  it("retains encrypted credential status when connection settings change", async () => {
+    const created = await inject({
+      method: "POST",
+      url: "/api/admin/mail/providers",
+      payload: { name: "SMTP", kind: "smtp", config: { host: "smtp.example.test" } },
+    });
+    expect(created.statusCode).toBe(201);
+    const { id } = created.body<{ provider: ProviderView }>().provider;
+    credentialStatus = { sending: true, feedback: true };
+    const updated = await inject({
+      method: "PATCH",
+      url: `/api/admin/mail/providers/${id}`,
+      payload: { enabled: false },
+    });
+    expect(updated.statusCode).toBe(200);
+    expect(updated.body<{ provider: ProviderView }>().provider).toMatchObject({
+      enabled: false,
+      hasSecret: true,
+      hasWebhookSecret: true,
+      secretRef: null,
+    });
+  });
   it("creates, lists, updates, and deletes a provider; secrets are never echoed", async () => {
     const created = await inject({
       method: "POST",

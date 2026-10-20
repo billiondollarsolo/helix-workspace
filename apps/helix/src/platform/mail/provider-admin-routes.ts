@@ -104,7 +104,10 @@ export async function registerMailProviderAdminRoutes(
   }
 }
 
-export function serializeProvider(provider: OutboundProviderConfig): Record<string, unknown> {
+export function serializeProvider(
+  provider: OutboundProviderConfig,
+  saved?: { readonly sending: boolean; readonly feedback: boolean },
+): Record<string, unknown> {
   return {
     id: provider.id,
     orgId: provider.orgId,
@@ -115,9 +118,9 @@ export function serializeProvider(provider: OutboundProviderConfig): Record<stri
     config: provider.config,
     // Only opaque tenant secret handles are surfaced.
     secretRef: provider.secretRef,
-    hasSecret: provider.secretRef !== null,
+    hasSecret: saved?.sending === true || provider.secretRef !== null,
     webhookSecretRef: provider.webhookSecretRef,
-    hasWebhookSecret: provider.webhookSecretRef !== null,
+    hasWebhookSecret: saved?.feedback === true || provider.webhookSecretRef !== null,
     createdAt: provider.createdAt,
     updatedAt: provider.updatedAt,
   };

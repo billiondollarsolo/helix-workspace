@@ -70,6 +70,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import { PeoplePicker } from "@/components/people/people-picker";
 import type { PersonRef } from "@/features/people/person-ref";
 import { ProviderForm } from "./mail-provider-form";
+import { MailConfiguration } from "./mail-configuration";
 import { AdminField, AdminInput, AdminSelect } from "./console/controls";
 import { adminUsersQueryOptions, type AdminUser } from "./admin-users";
 
@@ -1148,6 +1149,10 @@ function MailGeneral() {
     <div className="admin-stack">
       <AppStatusPanel appId="mail" />
       <WorkspaceFlagsPanel title="Sending" flags={MAIL_FLAGS} />
+      <details className="admin-disclosure">
+        <summary>System mail and delivery status</summary>
+        <MailConfiguration />
+      </details>
     </div>
   );
 }

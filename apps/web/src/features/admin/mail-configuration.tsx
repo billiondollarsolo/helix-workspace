@@ -302,7 +302,15 @@ export function MailConfiguration() {
             dnsTable.getRowModel().rows.map((row) => (
               <TableRow key={row.id} role="row">
                 {row.getVisibleCells().map((cell) => (
-                  <TableCell key={cell.id} role="cell">
+                  <TableCell
+                    key={cell.id}
+                    role="cell"
+                    data-label={
+                      typeof cell.column.columnDef.header === "string"
+                        ? cell.column.columnDef.header
+                        : undefined
+                    }
+                  >
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </TableCell>
                 ))}

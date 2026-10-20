@@ -189,6 +189,63 @@ for (const width of [320, 390, 768, 1440]) {
       const address = `${long}@${long}.example.test`;
       const timestamp = "2026-10-20T12:00:00Z";
       const responses: Record<string, unknown> = {
+        config: {
+          generatedAt: timestamp,
+          inboundReceiver: {
+            enabled: true,
+            status: "ready",
+            host: "0.0.0.0",
+            port: 2525,
+            orgId: "00000000-0000-0000-0000-000000000000",
+            evidence: "Receiver enabled.",
+          },
+          outboundRelay: {
+            configured: true,
+            status: "configured",
+            provider: "smtp",
+            host: `${long}.${long}.example.test`,
+            port: 587,
+            secure: false,
+            authConfigured: true,
+            evidence: "Deployment-managed system mail. Inbox delivery is unverified.",
+          },
+          domains: [
+            {
+              domain: `${long}.test`,
+              defaultFrom: true,
+              records: [
+                {
+                  type: "DKIM",
+                  status: "unknown",
+                  expected: `v=DKIM1; p=${long.repeat(6)}`,
+                  evidence: "Publish the signing key.",
+                },
+              ],
+            },
+          ],
+          quotas: { maxMessageBytes: null, evidence: "Managed in Limits." },
+          deliveryHealth: {
+            since: timestamp,
+            counts: {
+              queued: 0,
+              cancelled: 0,
+              sending: 0,
+              accepted: 0,
+              delivered: 0,
+              deferred: 0,
+              bounced: 0,
+              complained: 0,
+              failed: 0,
+            },
+            failedLast24h: 0,
+            lastFailureAt: null,
+            lastError: null,
+          },
+        },
+        check: {
+          message:
+            "System relay connection verified. No email was sent; inbox delivery is unverified.",
+        },
         "routing-rules": {
           rules: [
             {
@@ -270,9 +327,20 @@ for (const width of [320, 390, 768, 1440]) {
         const name = new URL(route.request().url()).pathname.split("/").at(-1) ?? "";
         return route.fulfill({ json: responses[name] ?? {} });
       });
-      for (const tab of ["routing", "deliverability", "operations"]) {
+      for (const tab of ["general", "routing", "deliverability", "operations"]) {
         await page.goto(`/admin/mail?tab=${tab}`);
-        if (tab === "routing") {
+        if (tab === "general") {
+          await page.getByText("System mail and delivery status", { exact: true }).click();
+          await expect(
+            page.getByRole("heading", { name: "System mail relay", exact: true }),
+          ).toBeVisible();
+          await page
+            .getByRole("button", { name: "Check system mail connection", exact: true })
+            .click();
+          await expect(
+            page.getByRole("status").filter({ hasText: "System relay connection verified." }),
+          ).toBeVisible();
+        } else if (tab === "routing") {
           await expect(page.getByRole("table", { name: "Inbound routing rules" })).toContainText(
             address,
           );

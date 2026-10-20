@@ -143,6 +143,9 @@ connection binding, directory observations, complete assigned-person labels and
 the separately enrolled backup capability's health, acknowledged policy and pending
 delivery. Details load on request through the existing scoped APIs. See the
 [app management qualification](../runbooks/2026-10-17-hosted-federation-operations.md#federated-app-management-qualification--2026-10-19).
+Assignment saves now require the directory revision originally loaded by the editor;
+conflicting saves retain the draft and require an explicit current-state reload.
+See the [conflict and recovery follow-up](../runbooks/2026-10-17-hosted-federation-operations.md#federation-review-and-assignment-conflicts--2026-10-20).
 Additional app types still require their own contract implementation and
 qualification. General Workspace policy propagation is not implemented.
 

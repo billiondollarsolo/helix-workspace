@@ -1222,3 +1222,27 @@ The worker reports stale managed-backup history and no recorded restore drill;
 its artifact version is historical. The newer encrypted deployment checkpoint is
 separate and has not yet been restored. Assignment conflict protection also remains
 pending. See the [live review receipt](../runbooks/2026-10-17-hosted-federation-operations.md#authenticated-live-admin-review--2026-10-19).
+
+## Federation review, conflict protection and checkpoint restoration — 2026-10-20
+
+Reviewed the current federation and management changes across Workspace and Bot.
+Workspace `a314e1f` fixes simultaneous assignment editors overwriting each other:
+reads carry a directory revision, saves compare it under the application lock, and
+conflicts retain the draft until the administrator explicitly loads current values.
+Prepared apps and empty lists also invalidate old drafts. No schema migration or
+Bot runtime change is required. Full Workspace checks and targeted database/API,
+source/built browser/accessibility and Bot ownership checks pass.
+
+The previously pending October 19 deployment checkpoint and a fresh October 20
+pre-rollout checkpoint both restored in isolated, network-disabled PostgreSQL.
+All 944 foreign-key constraints validated. Recovered keys decrypted both federation
+records and their bindings/credentials matched; source bundles verified. This
+supersedes the assignment-concurrency and checkpoint-restoration gaps above.
+Whole-app startup against current objects, live restored-authority reconciliation,
+reboot/Kubernetes and production replacement remain outside this logical-checkpoint
+drill. Native AI credentials remain deferred; general shared-policy enforcement and
+additional app implementations remain future feature work.
+
+See the [review and recovery receipt](../runbooks/2026-10-17-hosted-federation-operations.md#federation-review-and-assignment-conflicts--2026-10-20)
+for scope, verification and deployment evidence. The separate daily whole-installation
+backup completed successfully today; manual worker-history alerts remain accurate.

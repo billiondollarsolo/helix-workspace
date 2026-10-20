@@ -1,5 +1,100 @@
 # Hosted federation deployment and recovery enrollment
 
+## Federation review and assignment conflicts — 2026-10-20
+
+Review covered the federation naming cutover, management navigation and context,
+setting ownership, scoped assignment access, directory freshness, backup status
+semantics and recovery evidence for the current Workspace/Bot installation. The
+concrete assignment overwrite gap is fixed in Workspace `a314e1f`. Bot runtime
+remains `92b5ae9`; no schema, dependency or general policy protocol was added.
+
+Assignment reads now return the existing directory revision while holding a shared
+application lock. Saves require that original revision and compare it under the
+application's write lock before modifying assignments. A stale save returns 409
+without replacing another administrator's changes. Every successful save advances
+the revision, including empty lists and prepared apps. Missing or malformed
+revisions are rejected; unavailable/cross-organization applications return 404.
+The same scoped-admin and active-person checks still apply.
+
+The browser keeps the draft's original revision through refreshes and failures.
+When current directory state differs, Save is disabled and **Use current assignments**
+explicitly discards the old draft and loads current values. A save racing ahead of
+polling is rejected by the server and refreshes the current state. This conservatively
+conflicts on other directory changes too; it does not automatically merge roles or
+reuse an old draft against a newer revision. Previously opened pages must reload
+after this API/web release. This supersedes the single-editor limitation below.
+
+### Validation
+
+Workspace format, types, lint, full tests, build and dependency boundaries passed:
+4,034 backend tests and 1,451 web tests; 448 database/resource-gated backend tests
+remain skipped in that unconfigured full run. The two targeted database/HTTP
+fixtures ran separately against a freshly migrated disposable PostgreSQL instance
+and passed. They cover simultaneous writers, stale-write rollback, empty/prepared
+apps, required revision input, scoped/denied access, identity filtering, OIDC/PKCE
+and the existing recovery protocol. Five assignment/management UI unit tests pass.
+Two source browser/accessibility cases and three built cases pass, including desktop
+and 390px conflict handling, retained drafts, explicit reload and backup enrollment.
+Browser fixture lint and type checks pass. Bot's three focused federation/setting
+ownership/link checks pass; its unchanged runtime did not require a full rerun.
+
+### Rollout
+
+Workspace API/web `a314e1f` are deployed hosted and native. Bot remains on runtime
+`92b5ae9`; schemas remain 251 / 13. Public/native readiness, fresh directory authority,
+private federation networking and independent recovery workers pass. Native Bot
+providers/executor and Local Claude remain ready; hosted providers remain ready
+and its executor remains unconfigured. Anonymous application inventory/assignments
+return 403 and worker status returns 401 with JSON application denials. Native
+configuration fingerprints did not change. The pre-native checkpoint authenticated;
+its databases were not separately restored in this run.
+
+Shared Preview reached Workspace's normal **Confirm it’s you** gate. Authenticated
+post-rollout visual review was therefore not repeated; no authentication gate was
+bypassed and no live assignment, credential, policy or paid model request was made.
+The built-browser fixtures exercised the new conflict/reload flow. All disposable
+database containers, extracted checkpoint plaintext and temporary fixture credentials
+were removed; encrypted archives and receipts remain private. Previously opened
+Workspace pages should reload to use the new revision-bearing assignment API.
+
+### Checkpoint restore evidence
+
+The previously untested October 19 checkpoint
+`hosted-after-app-management.tar.gz.age` (SHA-256
+`2c9a9dd07e9af0e2b5a243872b3e105c7e09195ae674b38c0a795849428d1c01`)
+was authenticated and restored into isolated PostgreSQL containers using the
+recorded images. Ownership and grants were restored; all 445 Workspace and 499
+Bot foreign-key constraints were re-created and validated against the recovered
+rows. Schema counts are 251 / 13. Both full-history source bundles verify at their
+recorded revisions (`6bfbf55` / `92b5ae9`). Recovered application keys decrypt both
+federation records; installation/organization/tenancy bindings, OIDC credentials
+and the directory token match between apps. No decrypted credentials were logged.
+
+A fresh pre-rollout checkpoint, `hosted-before-federation-review.tar.gz.age`
+(SHA-256 `64c28dab53b100eee52a7711d7c4ed32ca9814b7df79a6a5ed6aa1dfa2e2e8e0`),
+was then authenticated and passed the same database/constraint/key/binding checks.
+Both drills used network mode `none`, no published ports and no live volumes.
+The first Bot drill attempt lacked the database-owner role in its empty bootstrap;
+adding the required `helix_bot` role allowed a clean repeat with owners/grants intact.
+Database role bootstrap remains a prerequisite of logical restore, not data inside
+`pg_dump`.
+
+These checkpoints cover logical databases, configuration, application keys and
+source. They do not include a new full object/private-file snapshot or independent
+operator runtime/key/journal custody. Keep the earlier full snapshots and operator
+checkpoint. This drill does not qualify full application startup against the latest
+object store, restored authority reconciliation with live peers, host reboot,
+Kubernetes or production replacement. Restore capability remains unenrolled.
+
+The independent whole-installation backup service completed successfully at
+2026-10-20 03:42:40 UTC, and its daily timer and minute-level off-server custodian
+remain active. Worker alerts `backup_stale` and `restore_drill_missing` describe
+its older manual snapshot history; these independent checkpoint drills do not
+forge worker receipts or change scheduling authority.
+
+Private scripts, checks and receipts are under
+`~/.local/share/helix-recovery/20261020/federation-review/`.
+
 ## Federated app management qualification — 2026-10-19
 
 Workspace API and web `6bfbf55` are hosted and native ready. Bot runtime remains

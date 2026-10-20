@@ -440,7 +440,12 @@ export async function createMailProvider(
     headers: jsonHeaders,
     body: JSON.stringify(input),
   });
-  return parseResponse(response, "create mail provider", mailProviderSchema);
+  const result = await parseResponse(
+    response,
+    "create mail provider",
+    z.object({ provider: mailProviderSchema }),
+  );
+  return result.provider;
 }
 
 export async function patchMailProvider(
@@ -453,7 +458,12 @@ export async function patchMailProvider(
     headers: jsonHeaders,
     body: JSON.stringify(input),
   });
-  return parseResponse(response, "update mail provider", mailProviderSchema);
+  const result = await parseResponse(
+    response,
+    "update mail provider",
+    z.object({ provider: mailProviderSchema }),
+  );
+  return result.provider;
 }
 
 export async function saveMailProviderCredential(

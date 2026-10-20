@@ -61,12 +61,14 @@ describe("mail-admin-api", () => {
   it("POSTs a new provider with kind-specific config", async () => {
     fetchImpl.mockResolvedValue(
       jsonResponse({
-        id: "p-2",
-        name: "SMTP relay",
-        kind: "smtp",
-        isDefault: false,
-        enabled: true,
-        config: { host: "smtp.example", port: 587 },
+        provider: {
+          id: "p-2",
+          name: "SMTP relay",
+          kind: "smtp",
+          isDefault: false,
+          enabled: true,
+          config: { host: "smtp.example", port: 587 },
+        },
       }),
     );
 
@@ -87,12 +89,14 @@ describe("mail-admin-api", () => {
   it("PATCHes the provider to set its default status", async () => {
     fetchImpl.mockResolvedValue(
       jsonResponse({
-        id: "p-9",
-        name: "SMTP",
-        kind: "smtp",
-        config: {},
-        isDefault: true,
-        enabled: true,
+        provider: {
+          id: "p-9",
+          name: "SMTP",
+          kind: "smtp",
+          config: {},
+          isDefault: true,
+          enabled: true,
+        },
       }),
     );
 

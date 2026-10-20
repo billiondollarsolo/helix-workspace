@@ -240,12 +240,14 @@ function routedFetch(): ReturnType<typeof vi.fn<typeof fetch>> {
         const existing = providersPayload.providers.find((provider) => url.endsWith(provider.id));
         return Promise.resolve(
           jsonResponse({
-            id: "new-provider",
-            kind: "ses",
-            enabled: true,
-            isDefault: false,
-            ...existing,
-            ...inputBody,
+            provider: {
+              id: "new-provider",
+              kind: "ses",
+              enabled: true,
+              isDefault: false,
+              ...existing,
+              ...inputBody,
+            },
           }),
         );
       }

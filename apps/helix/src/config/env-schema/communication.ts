@@ -12,6 +12,8 @@ export const communicationEnv = {
   LIVEKIT_INTERNAL_URL: optionalUrl,
   /** Bearer secret for internal capture services (live transcription audio, recordings). */
   MEET_CAPTURE_SECRET: optionalString,
+  /** Directory shared with LiveKit Egress, at the same path in both containers; enables recording. */
+  MEET_RECORDING_DIR: optionalString,
   /** Region where the LiveKit media server runs, for residency checks. */
   MEET_MEDIA_REGION: optionalString,
   /** TURN hostname LiveKit serves (DNS-only, never proxied). */

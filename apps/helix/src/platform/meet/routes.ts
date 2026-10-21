@@ -13,6 +13,8 @@ import {
   type LiveKitOptions,
   type LiveKitWebhookEvent,
 } from "./livekit.js";
+import type { MeetEgressRecordingStore } from "./egress-store.js";
+import { handleEgressWebhook } from "./egress-webhook.js";
 import type { MeetRecordingScanner } from "./recording-files.js";
 import type { MeetMediaWebhookStore, MeetStore } from "./store.js";
 import { MEET_RECORDING_NOTICE_VERSION } from "./store.js";
@@ -44,6 +46,9 @@ export interface RegisterMeetRoutesOptions {
   readonly recordingScanner?: MeetRecordingScanner | undefined;
   readonly requireRecordingScanner?: boolean | undefined;
   readonly requireRecordingEncryption?: boolean | undefined;
+  /** Egress recordings: the upload records and the directory Egress writes into. */
+  readonly recordings?: MeetEgressRecordingStore | undefined;
+  readonly recordingDir?: string | undefined;
   readonly metrics?: PlatformMetrics | undefined;
   readonly now?: (() => Date) | undefined;
   readonly onError?: ((error: unknown) => void) | undefined;
@@ -169,7 +174,24 @@ export async function registerMeetRoutes(
       if (raw === null) return reply.code(401).send({ error: "Invalid Meet webhook signature." });
       if (raw === false) return reply.code(409).send({ error: "Meet webhook replay rejected." });
       try {
-        const event = liveKitMediaEvent(parseRawJson(raw) as LiveKitWebhookEvent);
+        const body = (parseRawJson(raw) ?? {}) as LiveKitWebhookEvent & { egressInfo?: unknown };
+        if (options.recordings !== undefined && options.recordingDir !== undefined) {
+          const egress = await handleEgressWebhook(
+            {
+              store: options.store,
+              recordings: options.recordings,
+              recordingDir: options.recordingDir,
+              storageResolver: options.storageResolver,
+              scanner: options.recordingScanner,
+              requireScanner: options.requireRecordingScanner,
+              now,
+              onError: options.onError,
+            },
+            body,
+          );
+          if (egress.handled) return egress.body;
+        }
+        const event = liveKitMediaEvent(body);
         if (event === null) return { ok: true, ignored: true };
         const lifecycle = await options.store.applyMediaEvent(event);
         if (lifecycle !== null && !lifecycle.duplicate)

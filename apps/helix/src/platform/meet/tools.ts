@@ -26,6 +26,9 @@ import type {
 import { applyHostControlToCall } from "./host-control-media.js";
 import { createLiveKitRooms, type LiveKitRooms } from "./livekit-rooms.js";
 import { meetJwtFeatures } from "./policy.js";
+import type { MeetEgressRecordingStore } from "./egress-store.js";
+import { createLiveKitEgress, type LiveKitEgress } from "./livekit-egress.js";
+import { createMeetRecordingTools } from "./recording-tools.js";
 export { meetJwtFeatures } from "./policy.js";
 
 const uuidSchema = z.string().uuid();
@@ -96,8 +99,6 @@ const joinByCodeSchema = z
     ...recordingConsentShape,
   })
   .strict();
-
-const authorizeRecordingSchema = z.object({ roomId: uuidSchema }).strict();
 
 const meetTelemetrySchema = z
   .discriminatedUnion("event", [
@@ -240,6 +241,10 @@ export interface CreateMeetToolDefinitionsOptions {
   readonly liveKit: LiveKitOptions;
   /** LiveKit's room service; defaults to the configured server. */
   readonly rooms?: LiveKitRooms | undefined;
+  /** Recording through LiveKit Egress; recording is unavailable without these. */
+  readonly recordings?: MeetEgressRecordingStore | undefined;
+  readonly egress?: LiveKitEgress | undefined;
+  readonly recordingDir?: string | undefined;
   readonly publicBaseUrl?: string | undefined;
   /** Live recorder readiness. Recording is unavailable when omitted or false. */
   readonly recordingAvailable?: (() => Promise<boolean>) | undefined;
@@ -255,6 +260,7 @@ function createMeetToolDefinitions(
 ): readonly ToolDefinition[] {
   let liveKitRooms = options.rooms;
   const rooms = () => (liveKitRooms ??= createLiveKitRooms(options.liveKit));
+  let liveKitEgress: LiveKitEgress | undefined;
   // Spread rather than pass `budget: undefined` so exactOptionalPropertyTypes holds.
   const budgetOption =
     options.rateLimitBudget === undefined ? {} : { budget: options.rateLimitBudget };
@@ -438,36 +444,6 @@ function createMeetToolDefinitions(
         return mintMemberJoin(options, open, ctx.actor, input, input.expiresInSeconds);
       },
     }),
-    defineTool<z.output<typeof authorizeRecordingSchema>, unknown>({
-      id: "meet.recording.authorize-start",
-      description:
-        "Authorize a recording start only after every participant currently in the meeting consented.",
-      permission: "meet.write",
-      sideEffects: "write",
-      confirmationRequired: true,
-      inputSchema: zodToolSchema(authorizeRecordingSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
-      handler: async (input, ctx) => {
-        if ((await options.recordingAvailable?.()) !== true) {
-          throw new Error("Meeting recording is unavailable.");
-        }
-        const authorization = await options.store.authorizeRecordingStart({
-          orgId: ctx.actor.orgId,
-          actorId: ctx.actor.id,
-          roomId: input.roomId,
-        });
-        if (authorization === null) {
-          throw new Error(
-            "Recording requires an active moderator and current consent from every participant.",
-          );
-        }
-        return {
-          authorizationId: authorization.id,
-          expiresAt: authorization.expiresAt.toISOString(),
-          participantSubjects: authorization.participantSubjects,
-        };
-      },
-    }),
     defineTool<z.output<typeof roomControlSchema>, unknown>({
       id: "meet.host-controls.get",
       description: "Read authoritative meeting controls and attendance.",
@@ -601,6 +577,13 @@ function createMeetToolDefinitions(
           );
         return { ...serializeRoom(room), callEnded };
       },
+    }),
+    ...createMeetRecordingTools({
+      store: options.store,
+      recordings: options.recordings,
+      egress: () => (liveKitEgress ??= options.egress ?? createLiveKitEgress(options.liveKit)),
+      recordingDir: options.recordingDir,
+      recordingAvailable: options.recordingAvailable,
     }),
   ];
 }

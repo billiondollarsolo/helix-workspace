@@ -89,8 +89,11 @@ export const meetRecordingUploads = pgTable(
     roomId: uuid("room_id").notNull(),
     storageKey: text("storage_key").notNull(),
     mimeType: text("mime_type").notNull(),
-    byteSize: bigint("byte_size", { mode: "number" }).notNull(),
-    sha256: text("sha256").notNull(),
+    // Unknown until an Egress recording ends (migration 0254).
+    byteSize: bigint("byte_size", { mode: "number" }),
+    sha256: text("sha256"),
+    source: text("source").notNull().default("upload"),
+    egressId: text("egress_id"),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     completedAt: timestamp("completed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),

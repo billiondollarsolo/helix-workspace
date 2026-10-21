@@ -91,6 +91,8 @@ import { PostgresAgentMailStore } from "../platform/mail/agent-mail/index.js";
 import {
   createMeetConferenceProvider,
   missingMeetSecrets,
+  PostgresMeetEgressRecordingStore,
+  recordingDirectoryReady,
   registerMeetStatusTool,
   registerMeetTools,
 } from "../platform/meet/index.js";
@@ -627,6 +629,9 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
       store: meetStore,
       liveKit: configuredMeetSecrets.liveKit,
       guestInviteSecret: configuredMeetSecrets.guestInviteSecret,
+      recordings: new PostgresMeetEgressRecordingStore(sql),
+      recordingDir: bootEnv.MEET_RECORDING_DIR,
+      recordingAvailable: () => recordingDirectoryReady(bootEnv.MEET_RECORDING_DIR),
       publicBaseUrl: bootEnv.PUBLIC_BASE_URL ?? "http://localhost:3000",
       metrics,
     });

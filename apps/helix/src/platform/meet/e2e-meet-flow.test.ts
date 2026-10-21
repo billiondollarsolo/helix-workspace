@@ -2,6 +2,7 @@ import type { Actor } from "@helix/sdk-types";
 import { describe, expect, it } from "vitest";
 import { createPlatformMetrics } from "../../api/metrics.js";
 import { createToolRegistry } from "../tool-registry.js";
+import { InMemoryMeetEgressRecordingStore } from "./egress-store.js";
 import { InMemoryMeetStore } from "./store.js";
 import { registerMeetTools } from "./tools.js";
 
@@ -14,6 +15,8 @@ describe("meet flow", () => {
     const store = new InMemoryMeetStore();
     const registry = createToolRegistry();
     const metrics = createPlatformMetrics();
+    const recordings = new InMemoryMeetEgressRecordingStore();
+    const egressFiles: string[] = [];
     registerMeetTools(registry, {
       store,
       metrics,
@@ -25,6 +28,15 @@ describe("meet flow", () => {
       },
       guestInviteSecret: "test-secret",
       recordingAvailable: async () => true,
+      recordings,
+      egress: {
+        startRoomRecording: async (_org, _room, filepath) => {
+          egressFiles.push(filepath);
+          return "EG_recording";
+        },
+        stopRecording: async () => undefined,
+      },
+      recordingDir: "/recordings",
     });
     const actor = userActor(["meet.read", "meet.write"]);
 
@@ -131,9 +143,24 @@ describe("meet flow", () => {
     if (participantToken.ok) {
       expect(jwtPayload(participantToken.output.token).video.roomAdmin).toBe(false);
     }
+    const started = await registry.invoke<{ readonly recordingId: string }>(
+      "meet.recording.start",
+      { roomId: created.output.id },
+      { actor },
+    );
+    expect(started.ok).toBe(true);
+    if (!started.ok) throw new Error(started.error);
+    // Egress writes only to a Helix-chosen path; one recording at a time.
+    expect(egressFiles).toEqual([`/recordings/${started.output.recordingId}.mp4`]);
     await expect(
-      registry.invoke("meet.recording.authorize-start", { roomId: created.output.id }, { actor }),
-    ).resolves.toMatchObject({ ok: true });
+      registry.invoke("meet.recording.start", { roomId: created.output.id }, { actor }),
+    ).resolves.toMatchObject({ ok: false });
+    await expect(
+      registry.invoke("meet.recording.stop", { roomId: created.output.id }, { actor: participant }),
+    ).resolves.toMatchObject({ ok: false });
+    await expect(
+      registry.invoke("meet.recording.stop", { roomId: created.output.id }, { actor }),
+    ).resolves.toMatchObject({ ok: true, output: { stopped: true } });
     await expect(
       registry.invoke("meet.end-room", { roomId: created.output.id }, { actor: participant }),
     ).resolves.toMatchObject({ ok: false });

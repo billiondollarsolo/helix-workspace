@@ -34,7 +34,7 @@ export const CORE_APPS: readonly CoreAppDefinition[] = [
   { id: "chat", name: "Chat", description: "Realtime channels, presence, read receipts." },
   { id: "drive", name: "Drive", description: "File storage, folders, sharing, previews." },
   { id: "calendar", name: "Calendar", description: "Events, invitations, free/busy, CalDAV." },
-  { id: "meet", name: "Meet", description: "Video meetings via Jitsi." },
+  { id: "meet", name: "Meet", description: "Video meetings." },
   {
     id: "assistant",
     name: "Assistant",

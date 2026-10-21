@@ -682,15 +682,11 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
   await installDriveRoutes(context);
 
   if (configuredMeetSecrets !== null) {
-    await installMeetCapture(context, configuredMeetSecrets.webhookSecret);
+    await installMeetCapture(context, configuredMeetSecrets.captureSecret);
     await registerMeetRoutes(app, {
       store: meetStore,
-      webhookSecret: configuredMeetSecrets.webhookSecret,
-      jwtSecret: configuredMeetSecrets.jwtSecret,
-      jwtIssuer: bootEnv.MEET_JITSI_JWT_ISSUER ?? "helix",
-      jwtAudience: bootEnv.MEET_JITSI_JWT_AUDIENCE ?? "jitsi",
-      jwtSubject: bootEnv.MEET_JITSI_DOMAIN ?? "meet.localhost",
-      jitsiPublicUrl: bootEnv.MEET_JITSI_PUBLIC_URL,
+      liveKit: configuredMeetSecrets.liveKit,
+      guestInviteSecret: configuredMeetSecrets.guestInviteSecret,
       storageResolver: driveStorageResolver,
       ...(clamavScanner === undefined ? {} : { recordingScanner: clamavScanner }),
       requireRecordingScanner: bootEnv.NODE_ENV === "production" || securityTier !== "personal",

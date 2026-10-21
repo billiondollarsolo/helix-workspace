@@ -32,7 +32,7 @@ describe("Meet media lifecycle", { skip: process.env.DATABASE_URL === undefined 
       orgId: ORG,
       actorId: HOST,
       subject: "Lifecycle",
-      jitsiDomain: "meet.example.test",
+      mediaDomain: "meet.example.test",
       status: "scheduled",
     });
     const event = (input: {

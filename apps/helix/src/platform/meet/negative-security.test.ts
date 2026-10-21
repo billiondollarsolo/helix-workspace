@@ -26,7 +26,7 @@ describe("Meet negative-security / tenant isolation (MT.5 / MT.6)", () => {
       orgId,
       actorId,
       subject: "Private sync",
-      jitsiDomain: "meet.helix.test",
+      mediaDomain: "meet.helix.test",
     });
 
     await expect(
@@ -64,10 +64,19 @@ describe("Meet negative-security / tenant isolation (MT.5 / MT.6)", () => {
       orgId,
       actorId,
       subject: "Org A room",
-      jitsiDomain: "meet.helix.test",
+      mediaDomain: "meet.helix.test",
     });
     const registry = createToolRegistry();
-    registerMeetTools(registry, { store, jwtSecret: "test-secret" });
+    registerMeetTools(registry, {
+      store,
+      liveKit: {
+        apiKey: "helix",
+        apiSecret: "test-livekit-secret-with-32-plus-chars",
+        publicUrl: "wss://meet.helix.test",
+        internalUrl: "http://livekit:7880",
+      },
+      guestInviteSecret: "test-secret",
+    });
 
     const foreignActor: Actor = {
       id: actorId,
@@ -97,10 +106,19 @@ describe("Meet negative-security / tenant isolation (MT.5 / MT.6)", () => {
       orgId,
       actorId,
       subject: "Invite-only",
-      jitsiDomain: "meet.helix.test",
+      mediaDomain: "meet.helix.test",
     });
     const registry = createToolRegistry();
-    registerMeetTools(registry, { store, jwtSecret: "test-secret" });
+    registerMeetTools(registry, {
+      store,
+      liveKit: {
+        apiKey: "helix",
+        apiSecret: "test-livekit-secret-with-32-plus-chars",
+        publicUrl: "wss://meet.helix.test",
+        internalUrl: "http://livekit:7880",
+      },
+      guestInviteSecret: "test-secret",
+    });
     const outsider: Actor = {
       id: outsiderId,
       orgId,
@@ -130,7 +148,13 @@ describe("Meet negative-security / tenant isolation (MT.5 / MT.6)", () => {
     const registry = createToolRegistry();
     registerMeetTools(registry, {
       store,
-      jwtSecret: "test-secret",
+      liveKit: {
+        apiKey: "helix",
+        apiSecret: "test-livekit-secret-with-32-plus-chars",
+        publicUrl: "wss://meet.helix.test",
+        internalUrl: "http://livekit:7880",
+      },
+      guestInviteSecret: "test-secret",
       rateLimiter,
     });
     const actor: Actor = {
@@ -179,7 +203,7 @@ describe("Meet negative-security / tenant isolation (MT.5 / MT.6)", () => {
       orgId,
       actorId,
       subject: "Busy room",
-      jitsiDomain: "meet.helix.test",
+      mediaDomain: "meet.helix.test",
     });
     const rateLimiter = new InMemoryMeetRateLimiter({
       budget: { createRoomLimit: 50, joinRoomLimit: 2, windowMs: 60_000 },
@@ -187,7 +211,13 @@ describe("Meet negative-security / tenant isolation (MT.5 / MT.6)", () => {
     const registry = createToolRegistry();
     registerMeetTools(registry, {
       store,
-      jwtSecret: "test-secret",
+      liveKit: {
+        apiKey: "helix",
+        apiSecret: "test-livekit-secret-with-32-plus-chars",
+        publicUrl: "wss://meet.helix.test",
+        internalUrl: "http://livekit:7880",
+      },
+      guestInviteSecret: "test-secret",
       rateLimiter,
     });
     const actor: Actor = {

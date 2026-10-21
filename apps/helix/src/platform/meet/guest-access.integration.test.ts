@@ -48,7 +48,7 @@ describe("Meet explicit join identity", { skip: process.env.DATABASE_URL === und
         orgId: ORG,
         actorId: HOST,
         subject: "Foreign",
-        jitsiDomain: "meet.example.test",
+        mediaDomain: "meet.example.test",
         participantActorIds: [FOREIGN],
       }),
     ).rejects.toThrow("participants are unavailable");
@@ -57,7 +57,7 @@ describe("Meet explicit join identity", { skip: process.env.DATABASE_URL === und
         orgId: ORG,
         actorId: HOST,
         subject: "Disabled",
-        jitsiDomain: "meet.example.test",
+        mediaDomain: "meet.example.test",
         participantActorIds: [DISABLED],
       }),
     ).rejects.toThrow("participants are unavailable");
@@ -66,7 +66,7 @@ describe("Meet explicit join identity", { skip: process.env.DATABASE_URL === und
       orgId: ORG,
       actorId: HOST,
       subject: "External review",
-      jitsiDomain: "meet.example.test",
+      mediaDomain: "meet.example.test",
       participantActorIds: [MEMBER],
       guestPolicy: "domain",
       guestDomains: ["example.com"],

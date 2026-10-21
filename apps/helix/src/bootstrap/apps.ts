@@ -144,7 +144,7 @@ export async function installApps(context: Awaited<ReturnType<typeof installAuth
       siemEnabled: envFlag("AUDIT_SIEM_SYSLOG_ENABLED", false),
       siemRegion: bootEnv.HELIX_SIEM_REGION,
       meetConfigured: meetDeploymentConfigured(bootEnv),
-      meetRegion: bootEnv.MEET_JITSI_REGION,
+      meetRegion: bootEnv.MEET_MEDIA_REGION,
       ai: config.ai,
     });
   };

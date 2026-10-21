@@ -353,8 +353,8 @@ export class PostgresAdminServiceStatusStore implements AdminServiceRuntimeStatu
         counter("endedRooms", "Ended rooms", countValue(endedRows[0])),
       ],
       checks: [
-        envCheck("jitsiDomain", "Jitsi domain", this.#env, ["MEET_JITSI_DOMAIN"], false),
-        envCheck("jitsiJwt", "Jitsi JWT secret", this.#env, ["MEET_JITSI_JWT_SECRET"], true),
+        envCheck("liveKitKey", "LiveKit API key", this.#env, ["LIVEKIT_API_KEY"], false),
+        envCheck("liveKitSecret", "LiveKit API secret", this.#env, ["LIVEKIT_API_SECRET"], true),
       ],
       lastActivityAt: timestampValue(lastActivityRows[0]),
     });

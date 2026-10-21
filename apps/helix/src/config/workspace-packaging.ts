@@ -43,23 +43,23 @@ function appsSet(raw: string | undefined | null): ReadonlySet<string> {
  */
 export function validateFullWorkspaceDependencyGates(input: {
   readonly apps: string;
-  readonly meetJitsiDomain?: string | undefined;
-  readonly meetJitsiJwtSecret?: string | undefined;
+  readonly liveKitApiKey?: string | undefined;
+  readonly liveKitApiSecret?: string | undefined;
   readonly driveScannerKind?: string | undefined;
   readonly securityTier?: string | undefined;
 }): readonly PackagingIssue[] {
   const issues: PackagingIssue[] = [];
   const apps = appsSet(input.apps);
   if (apps.has("meet")) {
-    if (input.meetJitsiDomain === undefined || input.meetJitsiDomain.trim().length === 0) {
+    if (input.liveKitApiKey === undefined || input.liveKitApiKey.trim().length === 0) {
       issues.push({
-        variable: "MEET_JITSI_DOMAIN",
+        variable: "LIVEKIT_API_KEY",
         message: "is required when meet is in HELIX_APPS (Full Workspace)",
       });
     }
-    if (input.meetJitsiJwtSecret === undefined || input.meetJitsiJwtSecret.trim().length < 32) {
+    if (input.liveKitApiSecret === undefined || input.liveKitApiSecret.trim().length < 32) {
       issues.push({
-        variable: "MEET_JITSI_JWT_SECRET",
+        variable: "LIVEKIT_API_SECRET",
         message: "must be a strong secret (≥32 chars) when meet is enabled",
       });
     }

@@ -35,7 +35,7 @@ describe("Postgres Meet store recording attachments", () => {
       mimeType: "video/mp4",
       byteSize: 4096,
       sha256: "a".repeat(64),
-      metadata: { source: "jibri" },
+      metadata: { source: "livekit" },
     });
 
     expect(attachment).toMatchObject({
@@ -170,7 +170,7 @@ describe("Postgres Meet store recording attachments", () => {
               createdAt: now,
               startedAt: "2026-05-20T12:00:00.000Z",
               endedAt: "2026-05-20T12:30:00.000Z",
-              metadata: { source: "jibri" },
+              metadata: { source: "livekit" },
             },
           ],
         },
@@ -223,7 +223,7 @@ function roomRow() {
     thread_id: threadId,
     room_name: "launch-review",
     subject: "Launch review",
-    jitsi_domain: "meet.helix.test",
+    media_domain: "meet.helix.test",
     created_by_actor_id: actorId,
     started_at: now,
     ended_at: null,

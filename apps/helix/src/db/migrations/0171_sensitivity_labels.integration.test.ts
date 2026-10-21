@@ -56,7 +56,7 @@ describe.skipIf(process.env.DATABASE_URL === undefined)("sensitivity-label polic
     await sql`insert into threads(id, org_id, kind, subject, created_by_actor_id)
       values (${thread}, ${org}, 'call', 'Labelled call', ${owner})`;
     await sql`insert into meet_rooms(
-      id, org_id, thread_id, room_name, join_code, subject, jitsi_domain,
+      id, org_id, thread_id, room_name, join_code, subject, media_domain,
       created_by_actor_id, host_actor_id
     ) values (
       ${room}, ${org}, ${thread}, 'labels-room', 'abcd-efgh-ijkl', 'Labelled call',

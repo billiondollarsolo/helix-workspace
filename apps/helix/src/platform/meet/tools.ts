@@ -8,7 +8,7 @@ import { defineTool } from "../tools/define-tool.js";
 import { toJsonObject } from "../util/json.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import { meetGuestInviteTokenHash, mintMeetGuestInviteToken } from "./guest-invites.js";
-import { mintJitsiJwt } from "./jwt.js";
+import { liveKitJoin, type LiveKitOptions } from "./livekit.js";
 import {
   InMemoryMeetRateLimiter,
   meetRateLimitError,
@@ -235,22 +235,12 @@ const unknownOutputSchema = zodToolSchema(z.unknown(), genericObjectJsonSchema);
 
 export interface CreateMeetToolDefinitionsOptions {
   readonly store: MeetStore;
-  readonly jwtSecret: string;
-  readonly jwtAppId?: string | undefined;
-  readonly jwtIssuer?: string | undefined;
-  readonly jwtAudience?: string | undefined;
-  readonly jwtSubject?: string | undefined;
+  readonly liveKit: LiveKitOptions;
   readonly publicBaseUrl?: string | undefined;
-  /** Full public origin (including port) where the Jitsi instance serves
-   *  the participant UI — e.g. `https://meet.localhost:28452` in dev,
-   *  `https://meet.acme.com` in prod. Used to build the joinUrl. When
-   *  unset, falls back to constructing `https://<jitsiDomain>/<room>`
-   *  without a port. */
-  readonly jitsiPublicUrl?: string | undefined;
   /** Live recorder readiness. Recording is unavailable when omitted or false. */
   readonly recordingAvailable?: (() => Promise<boolean>) | undefined;
   readonly metrics?: PlatformMetrics | undefined;
-  readonly guestInviteSecret?: string | undefined;
+  readonly guestInviteSecret: string;
   /** Abuse rate limiter for create/join (MT.6). Defaults to in-memory. */
   readonly rateLimiter?: MeetRateLimiter | undefined;
   readonly rateLimitBudget?: Partial<MeetRateLimitBudget> | undefined;
@@ -259,8 +249,6 @@ export interface CreateMeetToolDefinitionsOptions {
 function createMeetToolDefinitions(
   options: CreateMeetToolDefinitionsOptions,
 ): readonly ToolDefinition[] {
-  const jitsiOrigin = deploymentJitsiOrigin(options);
-  const jitsiDomain = new URL(jitsiOrigin).hostname;
   // Spread rather than pass `budget: undefined` so exactOptionalPropertyTypes holds.
   const budgetOption =
     options.rateLimitBudget === undefined ? {} : { budget: options.rateLimitBudget };
@@ -268,7 +256,7 @@ function createMeetToolDefinitions(
   return [
     defineTool<z.output<typeof createRoomSchema>, unknown>({
       id: "meet.create-room",
-      description: "Create a Jitsi-backed Meet room and call thread.",
+      description: "Create a Meet room and call thread.",
       permission: "meet.write",
       sideEffects: "write",
       inputSchema: zodToolSchema(createRoomSchema, genericObjectJsonSchema),
@@ -289,7 +277,7 @@ function createMeetToolDefinitions(
             actorId: ctx.actor.id,
             subject: input.subject,
             ...(input.roomName === undefined ? {} : { roomName: input.roomName }),
-            jitsiDomain,
+            mediaDomain: new URL(options.liveKit.publicUrl).hostname,
             participantActorIds: input.participantActorIds,
             ...(input.scheduledStartAt === undefined
               ? {}
@@ -365,7 +353,7 @@ function createMeetToolDefinitions(
         if (room === null || room.status === "ended")
           throw new NotFoundError("Unknown active meeting.");
         const open = await openRoomForMemberJoin(options.store, room, ctx.actor.id);
-        return mintMemberJoin(options, open, ctx.actor, input, jitsiOrigin);
+        return mintMemberJoin(options, open, ctx.actor, input);
       },
     }),
     defineTool<z.output<typeof createGuestInviteSchema>, unknown>({
@@ -379,7 +367,7 @@ function createMeetToolDefinitions(
       handler: async (input, ctx) => {
         const id = randomUUID();
         const expiresAt = new Date(Date.now() + input.expiresInSeconds * 1000);
-        const token = mintMeetGuestInviteToken(options.guestInviteSecret ?? options.jwtSecret, {
+        const token = mintMeetGuestInviteToken(options.guestInviteSecret, {
           inviteId: id,
           orgId: ctx.actor.orgId,
           roomId: input.roomId,
@@ -416,7 +404,7 @@ function createMeetToolDefinitions(
     }),
     defineTool<z.output<typeof mintTokenSchema>, unknown>({
       id: "meet.mint-token",
-      description: "Mint a signed Jitsi JWT for the current actor to join a Meet room.",
+      description: "Mint a short-lived media token for the current actor to join a Meet room.",
       permission: "meet.read",
       sideEffects: "read",
       inputSchema: zodToolSchema(mintTokenSchema, genericObjectJsonSchema),
@@ -441,7 +429,7 @@ function createMeetToolDefinitions(
           throw meetRateLimitError(decision);
         }
         const open = await openRoomForMemberJoin(options.store, room, ctx.actor.id);
-        return mintMemberJoin(options, open, ctx.actor, input, jitsiOrigin, input.expiresInSeconds);
+        return mintMemberJoin(options, open, ctx.actor, input, input.expiresInSeconds);
       },
     }),
     defineTool<z.output<typeof authorizeRecordingSchema>, unknown>({
@@ -535,7 +523,7 @@ function createMeetToolDefinitions(
     }),
     defineTool<z.output<typeof meetTelemetrySchema>, unknown>({
       id: "meet.telemetry.record",
-      description: "Record a bounded privacy-safe Jitsi quality or device event.",
+      description: "Record a bounded privacy-safe call quality or device event.",
       permission: "meet.read",
       sideEffects: "write",
       confirmationRequired: false,
@@ -594,21 +582,6 @@ function createMeetToolDefinitions(
   ];
 }
 
-export function deploymentJitsiOrigin(
-  options: Pick<CreateMeetToolDefinitionsOptions, "jitsiPublicUrl" | "jwtSubject">,
-): string {
-  const configured = options.jitsiPublicUrl ?? `https://${options.jwtSubject ?? "meet.localhost"}`;
-  const url = new URL(configured);
-  if (
-    url.protocol !== "https:" &&
-    url.hostname !== "localhost" &&
-    !url.hostname.endsWith(".localhost")
-  ) {
-    throw new TypeError("Jitsi public URL must use HTTPS outside localhost.");
-  }
-  return url.origin;
-}
-
 export function registerMeetTools(
   registry: RuntimeToolRegistry,
   options: CreateMeetToolDefinitionsOptions,
@@ -616,24 +589,6 @@ export function registerMeetTools(
   for (const tool of createMeetToolDefinitions(options)) {
     registry.register(tool);
   }
-}
-
-export function buildJoinUrl(
-  jitsiDomain: string,
-  roomName: string,
-  token: string,
-  publicUrl?: string,
-): string {
-  // `publicUrl` (env: MEET_JITSI_PUBLIC_URL) is preferred — it carries
-  // the protocol + non-default port (e.g. `https://meet.localhost:28452`),
-  // which `jitsiDomain` alone doesn't. We append the room name to that
-  // origin. Without publicUrl, we fall back to `https://<domain>/<room>`,
-  // which drops the port and breaks dev where Jitsi runs on :28452.
-  const base =
-    publicUrl !== undefined && publicUrl.length > 0 ? publicUrl : `https://${jitsiDomain}`;
-  const url = new URL(`${base.replace(/\/$/, "")}/${encodeURIComponent(roomName)}`);
-  url.searchParams.set("jwt", token);
-  return url.toString();
 }
 
 async function mintMemberJoin(
@@ -646,7 +601,6 @@ async function mintMemberJoin(
     readonly deviceId: string;
     readonly joinGrantId: string;
   },
-  jitsiOrigin: string,
   ttlSeconds = 5 * 60,
 ) {
   const controls = await options.store.authorizeJoin?.({
@@ -676,33 +630,23 @@ async function mintMemberJoin(
   ) {
     throw new Error("Recording notice consent could not be recorded.");
   }
-  const minted = mintJitsiJwt({
-    secret: options.jwtSecret,
-    issuer: options.jwtIssuer ?? options.jwtAppId ?? "helix",
-    audience: options.jwtAudience,
-    subject: options.jwtSubject ?? new URL(jitsiOrigin).hostname,
-    room: room.roomName,
-    ttlSeconds,
-    user: {
-      id: actor.id,
-      helixOrgId: actor.orgId,
-      helixRoomId: room.id,
-      helixCaptureConsent: MEET_RECORDING_NOTICE_VERSION,
-      name: actor.displayName ?? actor.id,
-      email: actor.email ?? "",
-      moderator,
-    },
+  const join = liveKitJoin(options.liveKit, {
+    orgId: actor.orgId,
+    roomId: room.id,
+    identity: actor.id,
+    name: actor.displayName ?? actor.id,
+    moderator,
     features: meetJwtFeatures(controls, actor.id, moderator),
+    consentVersion: MEET_RECORDING_NOTICE_VERSION,
+    ttlSeconds,
   });
   return {
     roomId: room.id,
     roomName: room.roomName,
     subject: room.subject,
     code: room.joinCode,
-    jitsiDomain: room.jitsiDomain,
-    token: minted.token,
-    joinUrl: buildJoinUrl(room.jitsiDomain, room.roomName, minted.token, jitsiOrigin),
-    expiresAt: minted.expiresAt.toISOString(),
+    mediaDomain: room.mediaDomain,
+    ...join,
     recordingAvailable: (await options.recordingAvailable?.()) === true,
     canStartRecording: moderator,
     recordingNoticeVersion: MEET_RECORDING_NOTICE_VERSION,
@@ -755,7 +699,7 @@ function serializeMeeting(meeting: MeetMeetingRecord) {
     roomName: meeting.roomName,
     subject: meeting.subject,
     title: meeting.subject,
-    jitsiDomain: meeting.jitsiDomain,
+    mediaDomain: meeting.mediaDomain,
     status: meeting.status,
     code: meeting.code,
     host: meeting.host,

@@ -95,8 +95,9 @@ export async function seedCalendar(
     people.find((person) => person.department === key && person.managerKey === "person-0");
   const conference = createMeetConferenceProvider({
     store: runtime.meet,
-    jwtSubject: runtime.env.MEET_JITSI_DOMAIN ?? "meet.localhost",
-    jitsiPublicUrl: runtime.env.MEET_JITSI_PUBLIC_URL,
+    mediaDomain: runtime.env.LIVEKIT_PUBLIC_URL
+      ? new URL(runtime.env.LIVEKIT_PUBLIC_URL).hostname
+      : "localhost",
     publicBaseUrl:
       runtime.env.HELIX_PUBLIC_URL ?? runtime.env.PUBLIC_BASE_URL ?? "http://localhost:3000",
   });
@@ -577,7 +578,7 @@ function rsvp(plan: EventPlan, random: SeedRandom, past: boolean): CalendarRespo
   ]);
 }
 
-/** Replays the Jitsi media events of a meeting that already happened. */
+/** Replays the media events of a meeting that already happened. */
 async function holdMeeting(
   runtime: DemoRuntime,
   roomId: string,

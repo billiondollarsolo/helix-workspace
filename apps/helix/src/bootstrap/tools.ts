@@ -89,7 +89,6 @@ import {
 } from "../platform/mail/index.js";
 import { PostgresAgentMailStore } from "../platform/mail/agent-mail/index.js";
 import {
-  createJibriRecorderHealthCheck,
   createMeetConferenceProvider,
   missingMeetSecrets,
   registerMeetStatusTool,
@@ -598,8 +597,7 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
         : {
             conference: createMeetConferenceProvider({
               store: meetStore,
-              jwtSubject: bootEnv.MEET_JITSI_DOMAIN ?? "meet.localhost",
-              jitsiPublicUrl: bootEnv.MEET_JITSI_PUBLIC_URL,
+              mediaDomain: new URL(configuredMeetSecrets.liveKit.publicUrl).hostname,
               publicBaseUrl:
                 bootEnv.HELIX_PUBLIC_URL ?? bootEnv.PUBLIC_BASE_URL ?? "http://localhost:3000",
             }),
@@ -625,24 +623,12 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
             .filter(Boolean),
         ).enabled,
     });
-    const recordingAvailable =
-      bootEnv.MEET_JIBRI_HEALTH_URL === undefined
-        ? undefined
-        : createJibriRecorderHealthCheck(bootEnv.MEET_JIBRI_HEALTH_URL);
     registerMeetTools(tools, {
       store: meetStore,
-      jwtSecret: configuredMeetSecrets.jwtSecret,
-      jwtAppId: bootEnv.MEET_JITSI_JWT_APP_ID ?? "helix",
-      jwtIssuer: bootEnv.MEET_JITSI_JWT_ISSUER ?? "helix",
-      jwtAudience: bootEnv.MEET_JITSI_JWT_AUDIENCE ?? "jitsi",
-      jwtSubject: bootEnv.MEET_JITSI_DOMAIN ?? "meet.localhost",
+      liveKit: configuredMeetSecrets.liveKit,
+      guestInviteSecret: configuredMeetSecrets.guestInviteSecret,
       publicBaseUrl: bootEnv.PUBLIC_BASE_URL ?? "http://localhost:3000",
-      // Full Jitsi origin (with port). Without this, joinUrls drop the
-      // port and break in dev (Jitsi runs on :28452 via docker compose
-      // --profile meet, not on the default :443).
-      jitsiPublicUrl: bootEnv.MEET_JITSI_PUBLIC_URL,
       metrics,
-      ...(recordingAvailable === undefined ? {} : { recordingAvailable }),
     });
   }
 

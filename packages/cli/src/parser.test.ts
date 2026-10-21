@@ -515,8 +515,6 @@ describe("parseCliArgs", () => {
         "Weekly sync",
         "--room-name",
         "weekly-sync",
-        "--jitsi-domain",
-        "meet.example.com",
         "--participant",
         "11111111-1111-4111-8111-111111111111,22222222-2222-4222-8222-222222222222",
       ]),
@@ -526,7 +524,7 @@ describe("parseCliArgs", () => {
       json: {
         source: "inline",
         value:
-          '{"subject":"Weekly sync","roomName":"weekly-sync","jitsiDomain":"meet.example.com","participantActorIds":["11111111-1111-4111-8111-111111111111","22222222-2222-4222-8222-222222222222"]}',
+          '{"subject":"Weekly sync","roomName":"weekly-sync","participantActorIds":["11111111-1111-4111-8111-111111111111","22222222-2222-4222-8222-222222222222"]}',
       },
     });
     expect(parseCliArgs(["meet", "list", "--status", "active", "--limit", "10"])).toEqual({

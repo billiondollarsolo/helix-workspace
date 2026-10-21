@@ -71,16 +71,16 @@ describe("workspace packaging profiles (PKG)", () => {
   it("documents MVP modules that production must force-disable", () => {
     expect([...PRODUCTION_MVP_DISABLED_MODULES]).toEqual(["calendar", "meet"]);
   });
-  it("rejects meet without Jitsi config (fail-closed)", () => {
+  it("rejects meet without LiveKit config (fail-closed)", () => {
     const issues = validateFullWorkspaceDependencyGates({
       apps: PRODUCTION_FULL_APPS_ALLOWLIST,
-      meetJitsiDomain: undefined,
-      meetJitsiJwtSecret: "short",
+      liveKitApiKey: undefined,
+      liveKitApiSecret: "short",
       driveScannerKind: "clamav",
       securityTier: "business",
     });
-    expect(issues.some((issue) => issue.variable === "MEET_JITSI_DOMAIN")).toBe(true);
-    expect(issues.some((issue) => issue.variable === "MEET_JITSI_JWT_SECRET")).toBe(true);
+    expect(issues.some((issue) => issue.variable === "LIVEKIT_API_KEY")).toBe(true);
+    expect(issues.some((issue) => issue.variable === "LIVEKIT_API_SECRET")).toBe(true);
   });
   it("rejects business drive without clamav when scanner kind is known", () => {
     const issues = validateFullWorkspaceDependencyGates({

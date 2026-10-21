@@ -11,11 +11,7 @@ import {
 } from "../../api/api-error.js";
 import { canWriteAdminConsole } from "../admin/console-shared.js";
 import { privateLinkView, withPrivateFallback } from "./federation-private-link.js";
-import {
-  createOutboundHttpClient,
-  OutboundHttpError,
-  type OutboundRoute,
-} from "../outbound-http.js";
+import { createOutboundHttpClient, type OutboundRoute } from "../outbound-http.js";
 import type { TenantEnvelopeCipher } from "../secrets/envelope.js";
 import {
   withTenantIoSagaPostgresContext,

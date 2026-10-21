@@ -56,7 +56,7 @@ export function registerMeetTranscriptTools(
     defineTool({
       id: "meet.transcription.set",
       description:
-        "Start or stop native Jitsi transcription as a meeting host. Requires administrator enablement and participant capture consent; stores the finished transcript in the owner's Drive and sends attendees private links.",
+        "Start or stop live transcription as a meeting host. Requires administrator enablement and participant capture consent; stores the finished transcript in the owner's Drive and sends attendees private links.",
       permission: "meet.write",
       sideEffects: "write",
       inputSchema: zodToolSchema(room.extend({ enabled: z.boolean() }), { type: "object" }),

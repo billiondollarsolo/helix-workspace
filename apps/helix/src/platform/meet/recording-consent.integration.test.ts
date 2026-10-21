@@ -38,7 +38,7 @@ describe("Meet recording consent", { skip: process.env.DATABASE_URL === undefine
       orgId: ORG,
       actorId: HOST,
       subject: "Consent proof",
-      jitsiDomain: "meet.example.test",
+      mediaDomain: "meet.example.test",
       participantActorIds: [MEMBER],
       guestPolicy: "invite",
     });

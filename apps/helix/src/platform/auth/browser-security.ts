@@ -6,10 +6,7 @@ const csrfCookieNames = ["__Host-helix_csrf", "helix_csrf"] as const;
 
 export function browserSecurityHeaders(input: {
   readonly production: boolean;
-  readonly jitsiPublicUrl?: string | undefined;
 }): Readonly<Record<string, string>> {
-  const frameOrigin = configuredOrigin(input.jitsiPublicUrl);
-  const frameSources = ["'self'", ...(frameOrigin === null ? [] : [frameOrigin])].join(" ");
   return {
     ...(input.production
       ? { "strict-transport-security": "max-age=31536000; includeSubDomains; preload" }
@@ -27,7 +24,7 @@ export function browserSecurityHeaders(input: {
       "media-src 'self' blob:",
       "connect-src 'self' https: wss:",
       "worker-src 'self' blob:",
-      `frame-src ${frameSources}`,
+      "frame-src 'self'",
     ].join("; "),
     "permissions-policy":
       "camera=(self), microphone=(self), display-capture=(self), fullscreen=(self), geolocation=(), payment=(), usb=()",
@@ -134,14 +131,4 @@ function hasSessionCookie(cookie: string | undefined): boolean {
 
 function validCsrfToken(value: string | undefined): value is string {
   return value !== undefined && CSRF_TOKEN_PATTERN.test(value);
-}
-
-function configuredOrigin(value: string | undefined): string | null {
-  if (value === undefined) return null;
-  try {
-    const url = new URL(value);
-    return url.protocol === "https:" ? url.origin : null;
-  } catch {
-    return null;
-  }
 }

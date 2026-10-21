@@ -14,9 +14,9 @@ export const MEET_UNAVAILABLE_MEMBER_MESSAGE =
 /** What an administrator does to turn Meet on, naming the secrets still missing. */
 function meetUnavailableAdminMessage(missingSecrets: readonly string[]): string {
   return (
-    `Meet needs a Jitsi meeting server. Set ${missingSecrets.join(" and ")} to the secrets ` +
-    "your Jitsi deployment shares with Helix (with MEET_JITSI_DOMAIN and MEET_JITSI_PUBLIC_URL " +
-    "for its address), then restart Helix. Admin → Meet shows the meeting server status."
+    `Meet needs a LiveKit media server. Set ${missingSecrets.join(", ")} (the LiveKit API ` +
+    "key and secret your LiveKit server uses, plus a capture secret), then restart Helix. " +
+    "Admin → Meet shows the meeting server status."
   );
 }
 

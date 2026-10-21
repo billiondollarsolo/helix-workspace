@@ -29,12 +29,17 @@ describe("joining Calendar conferencing rooms", { skip }, () => {
     registry = createToolRegistry();
     registerMeetTools(registry, {
       store,
-      jwtSecret: "meet-scheduled-join-secret-long-enough",
-      jitsiPublicUrl: "https://meet.helix.test",
+      liveKit: {
+        apiKey: "helix",
+        apiSecret: "test-livekit-secret-with-32-plus-chars",
+        publicUrl: "wss://meet.helix.test",
+        internalUrl: "http://livekit:7880",
+      },
+      guestInviteSecret: "test-secret",
     });
     conference = createMeetConferenceProvider({
       store,
-      jitsiPublicUrl: "https://meet.helix.test",
+      mediaDomain: "meet.helix.test",
       publicBaseUrl: "https://helix.test",
     });
     await cleanup(sql);

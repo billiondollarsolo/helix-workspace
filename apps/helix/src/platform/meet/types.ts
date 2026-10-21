@@ -109,7 +109,7 @@ export interface MeetRoomRecord {
   readonly roomName: string;
   readonly joinCode: string;
   readonly subject: string;
-  readonly jitsiDomain: string;
+  readonly mediaDomain: string;
   readonly status: MeetRoomStatus;
   readonly guestPolicy: MeetGuestPolicy;
   readonly guestDomains: readonly string[];
@@ -137,7 +137,7 @@ export interface MeetMeetingRecord {
   readonly threadId: string;
   readonly roomName: string;
   readonly subject: string;
-  readonly jitsiDomain: string;
+  readonly mediaDomain: string;
   readonly status: MeetRoomStatus;
   /** Mono join code shown in the UI as `helix.meet/<code>`. */
   readonly code: string;

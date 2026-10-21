@@ -1,13 +1,12 @@
-import type { JsonObject, StorageObject } from "@helix/sdk-types";
+import type { JsonObject } from "@helix/sdk-types";
 import fastify, { type FastifyInstance } from "fastify";
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { createPlatformMetrics, type PlatformMetrics } from "../../api/metrics.js";
 import { MEET_WEBHOOK_BODY_LIMIT_BYTES } from "../../api/request-body.js";
-import type { TenantStorageClient } from "../storage/tenant-resolver.js";
-import { signWebhookPayload } from "../webhooks/signatures.js";
 import { mintMeetGuestInviteToken } from "./guest-invites.js";
-import { registerMeetRoutes, type MeetRecordingScanner } from "./routes.js";
+import type { LiveKitOptions } from "./livekit.js";
+import { registerMeetRoutes } from "./routes.js";
 import type {
   AttachMeetRecordingInput,
   MeetMediaEventInput,
@@ -28,87 +27,104 @@ import type {
 const orgId = "22222222-2222-4222-8222-222222222222";
 const otherOrgId = "99999999-9999-4999-8999-999999999999";
 const roomId = "33333333-3333-4333-8333-333333333333";
-const otherRoomId = "88888888-8888-4888-8888-888888888888";
 const threadId = "44444444-4444-4444-8444-444444444444";
 const objectId = "55555555-5555-4555-8555-555555555555";
 const messageId = "66666666-6666-4666-8666-666666666666";
 const now = new Date("2026-05-20T12:00:00.000Z");
-const webhookSecret = "meet-test-webhook-secret-with-at-least-32-characters";
-const validWebmBytes = Buffer.from([
-  0x1a, 0x45, 0xdf, 0xa3, 0x42, 0x86, 0x81, 0x01, 0x42, 0xf7, 0x81, 0x01,
-]);
-const validWebmSha256 = createHash("sha256").update(validWebmBytes).digest("hex");
+const liveKit: LiveKitOptions = {
+  apiKey: "helix-test",
+  apiSecret: "livekit-test-secret-with-at-least-32-characters",
+  publicUrl: "wss://meet.example.com",
+  internalUrl: "http://livekit:7880",
+};
+const roomName = `${orgId}.${roomId}`;
 
-describe("Meet media webhook routes", () => {
-  it("applies signed lifecycle events and requires participant session identity", async () => {
+describe("Meet LiveKit webhook", () => {
+  it("applies signed room and participant events", async () => {
     const store = new FakeMeetStore();
-    const app = await createApp(store, new RecordingStorageClient());
-    const started = await injectSigned(app, "/webhook/jitsi", {
-      event: "conference.started",
-      eventId: "conference-start-1",
-      orgId,
-      roomId,
-      roomName: "Launch Review",
-      occurredAt: now.toISOString(),
+    const app = await createApp(store);
+    const started = await injectLiveKit(app, {
+      event: "room_started",
+      id: "EV_start",
+      createdAt: now.getTime() / 1000,
+      room: { name: roomName, sid: "RM_1" },
     });
-    const missingSession = await injectSigned(
-      app,
-      "/webhook/jitsi",
-      {
-        event: "participant.joined",
-        eventId: "participant-join-1",
-        orgId,
-        roomId,
-        occurredAt: now.toISOString(),
-      },
-      new Date(now.getTime() + 1_000),
-    );
+    const joined = await injectLiveKit(app, {
+      event: "participant_joined",
+      id: "EV_join",
+      room: { name: roomName },
+      participant: { sid: "PA_1", identity: "user-1" },
+    });
 
     expect(started.statusCode).toBe(200);
     expect(started.json()).toMatchObject({
       lifecycle: { roomId, status: "active", version: 1, duplicate: false },
     });
-    expect(store.lifecycleEvents).toHaveLength(1);
-    expect(missingSession.statusCode).toBe(400);
+    expect(joined.statusCode).toBe(200);
+    expect(store.lifecycleEvents).toEqual([
+      expect.objectContaining({
+        event: "conference.started",
+        eventId: "livekit:EV_start",
+        orgId,
+        roomId,
+      }),
+      expect.objectContaining({
+        event: "participant.joined",
+        eventId: "livekit:EV_join",
+        sessionId: "PA_1",
+        participantId: "user-1",
+      }),
+    ]);
   });
 
-  it("records participant duration and bridge load only from signed media lifecycle events", async () => {
-    const metrics = createPlatformMetrics();
-    const app = await createApp(new FakeMeetStore(), new RecordingStorageClient(), [], { metrics });
-    await injectSigned(app, "/webhook/jitsi", {
-      event: "participant.joined",
-      eventId: "quality-join",
-      orgId,
-      roomId,
-      sessionId: "quality-session",
-      occurredAt: now.toISOString(),
+  it("ignores events Meet does not track and participant events without a session", async () => {
+    const store = new FakeMeetStore();
+    const app = await createApp(store);
+    const track = await injectLiveKit(app, {
+      event: "track_published",
+      id: "EV_track",
+      room: { name: roomName },
     });
-    await injectSigned(
-      app,
-      "/webhook/jitsi",
-      {
-        event: "participant.left",
-        eventId: "quality-left",
-        orgId,
-        roomId,
-        sessionId: "quality-session",
-        occurredAt: new Date(now.getTime() + 10_000).toISOString(),
-      },
-      new Date(now.getTime() + 1_000),
-    );
-    await injectSigned(
-      app,
-      "/webhook/jitsi",
-      {
-        event: "participant.joined",
-        eventId: "quality-rejoin",
-        orgId,
-        roomId,
-        sessionId: "quality-session-2",
-        occurredAt: new Date(now.getTime() + 20_000).toISOString(),
-      },
-      new Date(now.getTime() + 2_000),
-    );
+    const noSession = await injectLiveKit(app, {
+      event: "participant_joined",
+      id: "EV_nosession",
+      room: { name: roomName },
+    });
+    const foreignRoom = await injectLiveKit(app, {
+      event: "room_started",
+      id: "EV_foreign",
+      room: { name: "not-a-helix-room" },
+    });
+    for (const response of [track, noSession, foreignRoom]) {
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({ ignored: true });
+    }
+    expect(store.lifecycleEvents).toEqual([]);
+  });
+
+  it("returns 404 for a room that does not exist", async () => {
+    const app = await createApp(new FakeMeetStore());
+    const response = await injectLiveKit(app, {
+      event: "room_started",
+      id: "EV_other_org",
+      room: { name: `${otherOrgId}.${roomId}` },
+    });
+    expect(response.statusCode).toBe(404);
+  });
+
+  it("records participant duration and bridge load from signed events", async () => {
+    const metrics = createPlatformMetrics();
+    const app = await createApp(new FakeMeetStore(), { metrics });
+    const participant = (event: string, id: string, sid: string) =>
+      injectLiveKit(app, {
+        event,
+        id,
+        room: { name: roomName },
+        participant: { sid, identity: "user-1" },
+      });
+    await participant("participant_joined", "quality-join", "PA_1");
+    await participant("participant_left", "quality-left", "PA_1");
+    await participant("participant_joined", "quality-rejoin", "PA_2");
 
     const output = await metrics.registry.metrics();
     expect(output).toContain('helix_meet_participant_events_total{event="joined",device="none"} 2');
@@ -120,360 +136,83 @@ describe("Meet media webhook routes", () => {
     expect(output).toContain("helix_meet_bridge_participant_load_count 3");
   });
 
-  it("rejects hidden recording starts and accepts a consent-authorized recording lifecycle", async () => {
+  it("rejects missing, wrong-key, expired and body-tampered signatures before state changes", async () => {
     const store = new FakeMeetStore();
-    store.recordingStartAuthorized = false;
-    const app = await createApp(store, new RecordingStorageClient());
-    const body = {
-      event: "recording.started",
-      eventId: "recording-start-1",
-      orgId,
-      roomId,
-      occurredAt: now.toISOString(),
-    };
+    const app = await createApp(store);
+    const body = JSON.stringify({ event: "room_started", id: "EV_sig", room: { name: roomName } });
+    const post = (authorization: string | undefined, payload = body) =>
+      app.inject({
+        method: "POST",
+        url: "/webhook/livekit",
+        headers: {
+          "content-type": "application/webhook+json",
+          ...(authorization === undefined ? {} : { authorization }),
+        },
+        payload,
+      });
 
-    const denied = await injectSigned(app, "/webhook/jitsi", body);
-    store.recordingStartAuthorized = true;
-    const accepted = await injectSigned(
-      app,
-      "/webhook/jitsi",
-      { ...body, eventId: "recording-start-2" },
-      new Date(now.getTime() + 1_000),
-    );
-
-    expect(denied.statusCode).toBe(403);
-    expect(accepted.statusCode).toBe(200);
-    expect(store.lifecycleEvents).toEqual([
-      expect.objectContaining({ event: "recording.started", eventId: "recording-start-2" }),
+    const responses = await Promise.all([
+      post(undefined),
+      post(liveKitAuthorization(body, { secret: `${liveKit.apiSecret}-wrong` })),
+      post(liveKitAuthorization(body, { apiKey: "someone-else" })),
+      post(liveKitAuthorization(body, { exp: now.getTime() / 1000 - 120 })),
+      post(liveKitAuthorization(body), body.replace("EV_sig", "EV_forged")),
     ]);
-  });
 
-  it("rejects an oversized signed body before claiming or changing state", async () => {
-    const store = new FakeMeetStore();
-    const app = await createApp(store, new RecordingStorageClient());
-
-    const response = await app.inject({
-      method: "POST",
-      url: "/webhook/jitsi",
-      headers: { "content-type": "application/json" },
-      payload: JSON.stringify({ padding: "x".repeat(MEET_WEBHOOK_BODY_LIMIT_BYTES) }),
-    });
-
-    expect(response.statusCode).toBe(413);
+    expect(responses.map((response) => response.statusCode)).toEqual([401, 401, 401, 401, 401]);
+    expect(store.lifecycleEvents).toEqual([]);
     expect(store.receipts.size).toBe(0);
-    expect(store.attachments).toEqual([]);
-  });
-
-  it("derives the recording tenant and room exclusively from signed prepared state", async () => {
-    const store = new FakeMeetStore();
-    const storage = new RecordingStorageClient();
-    const resolvedOrgIds: string[] = [];
-    const app = await createApp(store, storage, resolvedOrgIds);
-
-    const prepared = await injectSigned(app, "/internal/meet/recording-uploads", {
-      orgId,
-      roomId,
-      mimeType: "video/webm",
-      byteSize: validWebmBytes.byteLength,
-      sha256: validWebmSha256,
-      startedAt: "2026-05-20T11:00:00.000Z",
-    });
-
-    expect(prepared.statusCode).toBe(200);
-    const preparedBody = prepared.json<{
-      uploadId: string;
-      storageKey: string;
-      headers: Record<string, string>;
-    }>();
-    expect(preparedBody.headers).toMatchObject({
-      "content-type": "video/webm",
-      "x-amz-meta-orgid": orgId,
-      "x-amz-meta-roomid": roomId,
-      "x-amz-meta-uploadid": preparedBody.uploadId,
-    });
-    storage.objects.set(preparedBody.storageKey, {
-      key: preparedBody.storageKey,
-      body: validWebmBytes,
-      contentType: "video/webm",
-      metadata: {
-        uploadid: preparedBody.uploadId,
-        orgid: orgId,
-        roomid: roomId,
-      },
-    });
-
-    const completed = await injectSigned(app, "/webhook/jitsi", {
-      event: "recording.uploaded",
-      uploadId: preparedBody.uploadId,
-      startedAt: "2026-05-20T11:00:00.000Z",
-      endedAt: "2026-05-20T12:00:00.000Z",
-      metadata: { uploaded: true, source: "jibri" },
-    });
-
-    expect(completed.statusCode).toBe(200);
-    expect(resolvedOrgIds).toEqual([orgId, orgId]);
-    expect(store.attachments).toEqual([
-      expect.objectContaining({
-        orgId,
-        roomId,
-        storageKey: preparedBody.storageKey,
-        mimeType: "video/webm",
-        byteSize: validWebmBytes.byteLength,
-        sha256: validWebmSha256,
-        metadata: expect.objectContaining({ uploadId: preparedBody.uploadId, source: "jibri" }),
-      }),
-    ]);
-    expect(store.uploads.get(preparedBody.uploadId)?.completedAt).toEqual(now);
-    expect(store.validations).toEqual([
-      expect.objectContaining({ status: "ready", byteSize: validWebmBytes.byteLength }),
-    ]);
-  });
-
-  it("refuses recording storage when capture did not start under a consent authorization", async () => {
-    const store = new FakeMeetStore();
-    store.recordingStartAuthorized = false;
-    const storage = new RecordingStorageClient();
-    const app = await createApp(store, storage);
-
-    const response = await injectSigned(app, "/internal/meet/recording-uploads", prepareBody());
-
-    expect(response.statusCode).toBe(403);
-    expect(response.json()).toEqual({
-      error: "Meet recording start was not authorized by participant consent.",
-    });
-    expect(storage.presignedPuts).toEqual([]);
-  });
-
-  it("fails closed and deletes bytes when authoritative antivirus validation rejects media", async () => {
-    const store = new FakeMeetStore();
-    const storage = new RecordingStorageClient();
-    const uploadId = "77777777-7777-4777-8777-777777777777";
-    const prepared = store.seedUpload(uploadId);
-    storage.objects.set(prepared.storageKey, {
-      key: prepared.storageKey,
-      body: validWebmBytes,
-      contentType: prepared.mimeType,
-      metadata: { uploadid: uploadId, orgid: orgId, roomid: roomId },
-    });
-    const scanner: MeetRecordingScanner = {
-      async scan() {
-        return { infected: true, signature: "Eicar-Test", scanned: true, evidence: {} };
-      },
-      async scanStream() {
-        throw new Error("Unexpected stream scan");
-      },
-    };
-    const app = await createApp(store, storage, [], { scanner, requireScanner: true });
-
-    const response = await injectSigned(app, "/webhook/jitsi", completionBody(uploadId));
-
-    expect(response.statusCode).toBe(400);
-    expect(response.json()).toEqual({
-      error: "Prepared Meet recording failed antivirus scanning: Eicar-Test.",
-    });
-    expect(storage.objects.has(prepared.storageKey)).toBe(false);
-    expect(store.attachments).toEqual([]);
-    expect(store.validations).toEqual([]);
-  });
-
-  it("rejects missing, stale, invalid, and body-tampered HMAC signatures before state changes", async () => {
-    const store = new FakeMeetStore();
-    const storage = new RecordingStorageClient();
-    const app = await createApp(store, storage);
-    const body = prepareBody();
-    const raw = JSON.stringify(body);
-
-    const missing = await app.inject({
-      method: "POST",
-      url: "/internal/meet/recording-uploads",
-      headers: { "content-type": "application/json" },
-      payload: raw,
-    });
-    const stale = await injectSigned(
-      app,
-      "/internal/meet/recording-uploads",
-      body,
-      new Date(now.getTime() - 301_000),
-    );
-    const invalid = await app.inject({
-      method: "POST",
-      url: "/internal/meet/recording-uploads",
-      headers: {
-        "content-type": "application/json",
-        "x-helix-signature": signWebhookPayload({
-          payload: raw,
-          secret: `${webhookSecret}-wrong`,
-          timestamp: now,
-        }).header,
-      },
-      payload: raw,
-    });
-    const original = JSON.stringify({ ...body, byteSize: validWebmBytes.byteLength });
-    const tampered = await app.inject({
-      method: "POST",
-      url: "/internal/meet/recording-uploads",
-      headers: {
-        "content-type": "application/json",
-        "x-helix-signature": signWebhookPayload({
-          payload: original,
-          secret: webhookSecret,
-          timestamp: now,
-        }).header,
-      },
-      payload: JSON.stringify({ ...body, byteSize: validWebmBytes.byteLength + 1 }),
-    });
-
-    expect([missing.statusCode, stale.statusCode, invalid.statusCode, tampered.statusCode]).toEqual(
-      [401, 401, 401, 401],
-    );
-    expect(store.uploads.size).toBe(0);
-    expect(storage.presignedPuts).toEqual([]);
   });
 
   it("durably rejects an exact signed-request replay", async () => {
     const store = new FakeMeetStore();
-    const app = await createApp(store, new RecordingStorageClient());
-    const signed = signedRequest(prepareBody());
+    const app = await createApp(store);
+    const payload = JSON.stringify({
+      event: "room_started",
+      id: "EV_replay",
+      room: { name: roomName },
+    });
+    const request = {
+      method: "POST" as const,
+      url: "/webhook/livekit",
+      headers: {
+        "content-type": "application/webhook+json",
+        authorization: liveKitAuthorization(payload),
+      },
+      payload,
+    };
 
-    const first = await app.inject({
+    expect((await app.inject(request)).statusCode).toBe(200);
+    expect((await app.inject(request)).statusCode).toBe(409);
+    expect(store.lifecycleEvents).toHaveLength(1);
+  });
+
+  it("rejects caller-supplied tenant headers and oversized bodies", async () => {
+    const store = new FakeMeetStore();
+    const app = await createApp(store);
+    const tenantHeader = await injectLiveKit(
+      app,
+      { event: "room_started", id: "EV_tenant", room: { name: roomName } },
+      { "x-helix-org-id": otherOrgId },
+    );
+    const oversized = "x".repeat(MEET_WEBHOOK_BODY_LIMIT_BYTES + 1);
+    const tooLarge = await app.inject({
       method: "POST",
-      url: "/internal/meet/recording-uploads",
-      ...signed,
-    });
-    const replay = await app.inject({
-      method: "POST",
-      url: "/internal/meet/recording-uploads",
-      ...signed,
+      url: "/webhook/livekit",
+      headers: {
+        "content-type": "application/webhook+json",
+        authorization: liveKitAuthorization(oversized),
+      },
+      payload: oversized,
     });
 
-    expect(first.statusCode).toBe(200);
-    expect(replay.statusCode).toBe(409);
-    expect(store.uploads.size).toBe(1);
+    expect(tenantHeader.statusCode).toBe(400);
+    expect(tooLarge.statusCode).toBe(413);
+    expect(store.lifecycleEvents).toEqual([]);
   });
+});
 
-  it("requires storage-enforced encryption before issuing secure-tier upload capabilities", async () => {
-    const store = new FakeMeetStore();
-    const app = await createApp(store, new RecordingStorageClient(), [], {
-      requireEncryption: true,
-    });
-
-    const response = await injectSigned(app, "/internal/meet/recording-uploads", prepareBody());
-
-    expect(response.statusCode).toBe(503);
-    expect(response.json()).toEqual({
-      error: "Meet recording encrypted storage is not configured.",
-    });
-    expect(store.uploads.size).toBe(0);
-  });
-
-  it("rejects caller-controlled tenant and meeting overrides", async () => {
-    const store = new FakeMeetStore();
-    const app = await createApp(store, new RecordingStorageClient());
-    const uploadId = "77777777-7777-4777-8777-777777777777";
-    store.seedUpload(uploadId);
-
-    const tenantHeader = await injectSigned(app, "/webhook/jitsi", completionBody(uploadId), now, {
-      "x-helix-org-id": otherOrgId,
-    });
-    const tenantBody = await injectSigned(app, "/webhook/jitsi", {
-      ...completionBody(uploadId),
-      orgId: otherOrgId,
-    });
-    const wrongRoom = await injectSigned(app, "/webhook/jitsi", {
-      ...completionBody(uploadId),
-      roomId: otherRoomId,
-    });
-    const wrongKey = await injectSigned(app, "/webhook/jitsi", {
-      ...completionBody(uploadId),
-      storageKey: "recordings/another-room/forged.webm",
-    });
-
-    expect([
-      tenantHeader.statusCode,
-      tenantBody.statusCode,
-      wrongRoom.statusCode,
-      wrongKey.statusCode,
-    ]).toEqual([400, 400, 400, 400]);
-    expect(store.attachments).toEqual([]);
-  });
-
-  it("rejects unknown, expired, and already-completed prepared upload capabilities", async () => {
-    const store = new FakeMeetStore();
-    const app = await createApp(store, new RecordingStorageClient());
-    const unknownId = "77777777-7777-4777-8777-777777777777";
-    const expiredId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-    const completedId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
-    store.seedUpload(expiredId, { expiresAt: new Date(now.getTime() - 1) });
-    store.seedUpload(completedId, { completedAt: now });
-
-    const unknown = await injectSigned(app, "/webhook/jitsi", completionBody(unknownId), now);
-    const expired = await injectSigned(
-      app,
-      "/webhook/jitsi",
-      completionBody(expiredId),
-      new Date(now.getTime() + 1_000),
-    );
-    const completed = await injectSigned(
-      app,
-      "/webhook/jitsi",
-      completionBody(completedId),
-      new Date(now.getTime() + 2_000),
-    );
-
-    expect([unknown.statusCode, expired.statusCode, completed.statusCode]).toEqual([409, 409, 409]);
-    expect(store.attachments).toEqual([]);
-  });
-
-  it("validates uploaded object bytes and server-bound metadata before attaching", async () => {
-    const store = new FakeMeetStore();
-    const storage = new RecordingStorageClient();
-    const app = await createApp(store, storage);
-    const uploadId = "77777777-7777-4777-8777-777777777777";
-    const prepared = store.seedUpload(uploadId);
-    storage.objects.set(prepared.storageKey, {
-      key: prepared.storageKey,
-      body: Buffer.from("not a webm"),
-      contentType: prepared.mimeType,
-      metadata: { uploadid: uploadId, orgid: orgId, roomid: roomId },
-    });
-
-    const response = await injectSigned(app, "/webhook/jitsi", completionBody(uploadId));
-
-    expect(response.statusCode).toBe(400);
-    expect(response.json()).toEqual({
-      error: "Prepared Meet recording object bytes do not match the declared media type.",
-    });
-    expect(store.attachments).toEqual([]);
-  });
-
-  it("never promotes missing or truncated recording bytes", async () => {
-    const store = new FakeMeetStore();
-    const storage = new RecordingStorageClient();
-    const missingId = "77777777-7777-4777-8777-777777777777";
-    const truncatedId = "88888888-8888-4888-8888-888888888888";
-    store.seedUpload(missingId);
-    const truncated = store.seedUpload(truncatedId);
-    storage.objects.set(truncated.storageKey, {
-      key: truncated.storageKey,
-      body: validWebmBytes.subarray(0, 4),
-      contentType: truncated.mimeType,
-      metadata: { uploadid: truncatedId, orgid: orgId, roomid: roomId },
-    });
-
-    const app = await createApp(store, storage);
-    const missing = await injectSigned(app, "/webhook/jitsi", completionBody(missingId));
-    const short = await injectSigned(
-      app,
-      "/webhook/jitsi",
-      completionBody(truncatedId),
-      new Date(now.getTime() + 1_000),
-    );
-
-    expect([missing.statusCode, short.statusCode]).toEqual([400, 400]);
-    expect(store.attachments).toEqual([]);
-    expect(store.validations).toEqual([]);
-  });
-
+describe("Meet guest join", () => {
   it("mints a bounded non-moderator join only for a resolved signed guest invite", async () => {
     const store = new FakeMeetStore();
     const invite: MeetGuestInviteRecord = {
@@ -493,7 +232,7 @@ describe("Meet media webhook routes", () => {
       roomId,
       expiresAt: invite.expiresAt,
     });
-    const app = await createApp(store, new RecordingStorageClient());
+    const app = await createApp(store);
     const undisclosed = await app.inject({
       method: "POST",
       url: "/api/meet/guest/join",
@@ -516,10 +255,21 @@ describe("Meet media webhook routes", () => {
     expect(joined.statusCode).toBe(200);
     expect(store.guestConsents).toEqual(["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"]);
     expect(joined.json()).toMatchObject({ roomId, lobbyRequired: true });
-    const jwtPayload = JSON.parse(
+    expect(joined.json()).toMatchObject({
+      provider: "livekit",
+      serverUrl: liveKit.publicUrl,
+      mediaDomain: "meet.example.com",
+    });
+    const claims = JSON.parse(
       Buffer.from(String(joined.json().token).split(".")[1] ?? "", "base64url").toString("utf8"),
-    ) as { readonly context: { readonly user: { readonly moderator: boolean } } };
-    expect(jwtPayload.context.user.moderator).toBe(false);
+    ) as {
+      readonly iss: string;
+      readonly video: { readonly room: string; readonly roomAdmin: boolean };
+      readonly attributes: Record<string, string>;
+    };
+    expect(claims.iss).toBe(liveKit.apiKey);
+    expect(claims.video).toMatchObject({ room: `${orgId}.${roomId}`, roomAdmin: false });
+    expect(claims.attributes.helixRole).toBeUndefined();
 
     store.guestResolution = null;
     const revoked = await app.inject({
@@ -538,98 +288,64 @@ describe("Meet media webhook routes", () => {
     expect(revoked.statusCode).toBe(404);
   });
 
-  it("refuses to register without a webhook secret", async () => {
-    const app = fastify();
+  it("refuses to register without a guest invite secret", async () => {
     await expect(
-      registerMeetRoutes(app, {
-        store: new FakeMeetStore(),
-        webhookSecret: "",
-        jwtSecret: "x".repeat(32),
-        jwtSubject: "meet.example.com",
-      }),
-    ).rejects.toThrow("Meet webhook secret is required.");
+      registerMeetRoutes(fastify(), { store: new FakeMeetStore(), liveKit, guestInviteSecret: "" }),
+    ).rejects.toThrow("Meet guest invite secret is required.");
   });
 });
 
 async function createApp(
   store: FakeMeetStore,
-  storage: RecordingStorageClient,
-  resolvedOrgIds: string[] = [],
-  scanOptions: {
-    readonly scanner?: MeetRecordingScanner;
-    readonly requireScanner?: boolean;
-    readonly requireEncryption?: boolean;
-    readonly metrics?: PlatformMetrics;
-  } = {},
+  options: { readonly metrics?: PlatformMetrics } = {},
 ): Promise<FastifyInstance> {
   const app = fastify();
   await registerMeetRoutes(app, {
     store,
-    webhookSecret,
-    jwtSecret: "x".repeat(32),
-    jwtSubject: "meet.example.com",
+    liveKit,
+    guestInviteSecret: "x".repeat(32),
     now: () => now,
-    ...(scanOptions.scanner === undefined ? {} : { recordingScanner: scanOptions.scanner }),
-    requireRecordingScanner: scanOptions.requireScanner ?? false,
-    requireRecordingEncryption: scanOptions.requireEncryption ?? false,
-    ...(scanOptions.metrics === undefined ? {} : { metrics: scanOptions.metrics }),
-    storageResolver: ({ orgId: resolvedOrgId }) => {
-      resolvedOrgIds.push(resolvedOrgId);
-      return { client: storage, managedBy: "helix-default", prefix: "" };
-    },
+    ...(options.metrics === undefined ? {} : { metrics: options.metrics }),
   });
   return app;
 }
 
-function prepareBody(): Record<string, unknown> {
-  return {
-    orgId,
-    roomId,
-    mimeType: "video/webm",
-    byteSize: validWebmBytes.byteLength,
-    sha256: validWebmSha256,
-    startedAt: "2026-05-20T11:00:00.000Z",
-  };
+/** Signs a body the way the LiveKit server does. */
+function liveKitAuthorization(
+  body: string,
+  overrides: { readonly secret?: string; readonly apiKey?: string; readonly exp?: number } = {},
+): string {
+  const issuedAt = Math.floor(now.getTime() / 1000);
+  const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  const header = encode({ alg: "HS256", typ: "JWT" });
+  const payload = encode({
+    iss: overrides.apiKey ?? liveKit.apiKey,
+    nbf: issuedAt - 5,
+    exp: overrides.exp ?? issuedAt + 300,
+    sha256: createHash("sha256").update(body).digest("base64"),
+  });
+  const signature = createHmac("sha256", overrides.secret ?? liveKit.apiSecret)
+    .update(`${header}.${payload}`)
+    .digest("base64url");
+  return `${header}.${payload}.${signature}`;
 }
 
-function completionBody(uploadId: string): Record<string, unknown> {
-  return {
-    event: "recording.uploaded",
-    uploadId,
-    startedAt: "2026-05-20T11:00:00.000Z",
-    endedAt: "2026-05-20T12:00:00.000Z",
-    metadata: { uploaded: true },
-  };
-}
-
-function signedRequest(
-  body: unknown,
-  timestamp: Date = now,
-  extraHeaders: Record<string, string> = {},
-): { readonly headers: Record<string, string>; readonly payload: string } {
-  const payload = JSON.stringify(body);
-  return {
-    payload,
-    headers: {
-      "content-type": "application/json",
-      "x-helix-signature": signWebhookPayload({
-        payload,
-        secret: webhookSecret,
-        timestamp,
-      }).header,
-      ...extraHeaders,
-    },
-  };
-}
-
-function injectSigned(
+function injectLiveKit(
   app: FastifyInstance,
-  url: string,
   body: unknown,
-  timestamp: Date = now,
   extraHeaders: Record<string, string> = {},
 ) {
-  return app.inject({ method: "POST", url, ...signedRequest(body, timestamp, extraHeaders) });
+  const payload = JSON.stringify(body);
+  return app.inject({
+    method: "POST",
+    url: "/webhook/livekit",
+    headers: {
+      "content-type": "application/webhook+json",
+      authorization: liveKitAuthorization(payload),
+      ...extraHeaders,
+    },
+    payload,
+  });
 }
 
 class FakeMeetStore implements MeetStore, MeetMediaWebhookStore {
@@ -693,34 +409,13 @@ class FakeMeetStore implements MeetStore, MeetMediaWebhookStore {
       version: this.lifecycleEvents.length,
       activeParticipantCount: input.event === "participant.joined" ? 1 : 0,
       ...(input.event === "participant.left" ? { participantDurationSeconds: 10 } : {}),
-      ...(input.eventId === "quality-rejoin" ? { reconnected: true } : {}),
+      ...(input.eventId === "livekit:quality-rejoin" ? { reconnected: true } : {}),
       duplicate: false,
     };
   }
 
   async expireEmptyRooms(): Promise<number> {
     return 0;
-  }
-
-  seedUpload(
-    id: string,
-    overrides: Partial<MeetRecordingUploadRecord> = {},
-  ): MeetRecordingUploadRecord {
-    const upload: MeetRecordingUploadRecord = {
-      id,
-      orgId,
-      roomId,
-      roomName: "Launch Review",
-      storageKey: `recordings/Launch-Review/${id}.webm`,
-      mimeType: "video/webm",
-      byteSize: validWebmBytes.byteLength,
-      sha256: validWebmSha256,
-      expiresAt: new Date(now.getTime() + 900_000),
-      completedAt: null,
-      ...overrides,
-    };
-    this.uploads.set(id, upload);
-    return upload;
   }
 
   async createRoom(): Promise<MeetRoomRecord> {
@@ -833,7 +528,7 @@ function meetRoomRecord(): MeetRoomRecord {
     roomName: "Launch Review",
     joinCode: "abcd-ef01-2345",
     subject: "Launch Review",
-    jitsiDomain: "meet.example.com",
+    mediaDomain: "meet.example.com",
     status: "active",
     guestPolicy: "disabled",
     guestDomains: [],
@@ -847,43 +542,4 @@ function meetRoomRecord(): MeetRoomRecord {
     createdAt: now,
     updatedAt: now,
   };
-}
-
-class RecordingStorageClient implements TenantStorageClient {
-  readonly objects = new Map<string, StorageObject>();
-  readonly presignedPuts: string[] = [];
-
-  async put(): Promise<void> {
-    throw new Error("Not implemented for route tests.");
-  }
-
-  async get(key: string): Promise<StorageObject | null> {
-    return this.objects.get(key) ?? null;
-  }
-
-  async delete(key: string): Promise<void> {
-    this.objects.delete(key);
-  }
-
-  async presignPutRequest(
-    key: string,
-    options?: {
-      readonly contentType?: string;
-      readonly metadata?: Record<string, string>;
-    },
-  ): Promise<{ readonly url: string; readonly headers: Record<string, string> }> {
-    this.presignedPuts.push(key);
-    return {
-      url: `put://${key}`,
-      headers: {
-        ...(options?.contentType === undefined ? {} : { "content-type": options.contentType }),
-        ...Object.fromEntries(
-          Object.entries(options?.metadata ?? {}).map(([name, value]) => [
-            `x-amz-meta-${name.toLowerCase()}`,
-            value,
-          ]),
-        ),
-      },
-    };
-  }
 }

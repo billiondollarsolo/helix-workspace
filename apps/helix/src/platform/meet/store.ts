@@ -45,7 +45,7 @@ export interface CreateMeetRoomInput {
   readonly actorId: string;
   readonly subject: string;
   readonly roomName?: string | undefined;
-  readonly jitsiDomain: string;
+  readonly mediaDomain: string;
   readonly participantActorIds?: readonly string[] | undefined;
   readonly scheduledStartAt?: Date | null | undefined;
   readonly scheduledEndAt?: Date | null | undefined;
@@ -279,7 +279,7 @@ interface MeetRoomRow {
   readonly room_name: string;
   readonly join_code: string;
   readonly subject: string;
-  readonly jitsi_domain: string;
+  readonly media_domain: string;
   readonly created_by_actor_id: string | null;
   readonly started_at: Date;
   readonly ended_at: Date | null;
@@ -631,7 +631,7 @@ export class PostgresMeetStore implements MeetStore, MeetMediaWebhookStore {
           'call',
           ${subject},
           ${input.actorId},
-          ${tx.json(toSqlJson({ jitsiDomain: input.jitsiDomain, roomName }))}
+          ${tx.json(toSqlJson({ mediaDomain: input.mediaDomain, roomName }))}
         )
         returning id
       `;
@@ -640,7 +640,7 @@ export class PostgresMeetStore implements MeetStore, MeetMediaWebhookStore {
       const status = input.status ?? "active";
       const rows = await tx<MeetRoomRow[]>`
         insert into meet_rooms (
-          org_id, thread_id, room_name, subject, jitsi_domain, created_by_actor_id,
+          org_id, thread_id, room_name, subject, media_domain, created_by_actor_id,
           join_code, guest_policy, guest_domains, lobby_enabled,
           host_actor_id, admitted_participant_subjects,
           started_at, scheduled_start_at, scheduled_end_at, status, metadata
@@ -650,7 +650,7 @@ export class PostgresMeetStore implements MeetStore, MeetMediaWebhookStore {
           ${threadId},
           ${roomName},
           ${subject},
-          ${input.jitsiDomain},
+          ${input.mediaDomain},
           ${input.actorId},
           ${joinCode},
           ${guestPolicy},
@@ -1919,7 +1919,7 @@ export class InMemoryMeetStore implements MeetStore {
       roomName,
       joinCode: randomJoinCode(),
       subject,
-      jitsiDomain: input.jitsiDomain,
+      mediaDomain: input.mediaDomain,
       createdByActorId: input.actorId,
       startedAt: now,
       endedAt: null,
@@ -2598,7 +2598,7 @@ export class InMemoryMeetStore implements MeetStore {
       threadId: room.threadId,
       roomName: room.roomName,
       subject: room.subject,
-      jitsiDomain: room.jitsiDomain,
+      mediaDomain: room.mediaDomain,
       status: room.status,
       code: room.joinCode,
       host,
@@ -2848,7 +2848,7 @@ function mapRoom(row: MeetRoomRow | undefined): MeetRoomRecord {
     roomName: row.room_name,
     joinCode: row.join_code,
     subject: row.subject,
-    jitsiDomain: row.jitsi_domain,
+    mediaDomain: row.media_domain,
     createdByActorId: row.created_by_actor_id,
     startedAt: row.started_at,
     endedAt: row.ended_at,
@@ -2879,7 +2879,7 @@ function mapMeeting(row: MeetRoomRow | undefined): MeetMeetingRecord {
     threadId: row.thread_id,
     roomName: row.room_name,
     subject: row.subject,
-    jitsiDomain: row.jitsi_domain,
+    mediaDomain: row.media_domain,
     status: row.status,
     code: row.join_code,
     host,

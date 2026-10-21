@@ -10,17 +10,20 @@ const actorId = "11111111-1111-4111-8111-111111111111";
 const participantActorId = "55555555-5555-4555-8555-555555555555";
 
 describe("meet flow", () => {
-  it("creates rooms, enforces room access, mints Jitsi JWTs, ends rooms, and attaches recordings against the platform store", async () => {
+  it("creates rooms, enforces room access, mints LiveKit tokens, ends rooms, and attaches recordings against the platform store", async () => {
     const store = new InMemoryMeetStore();
     const registry = createToolRegistry();
     const metrics = createPlatformMetrics();
     registerMeetTools(registry, {
       store,
       metrics,
-      jwtSecret: "test-secret",
-      jwtAppId: "helix",
-      jwtIssuer: "helix",
-      jitsiPublicUrl: "https://meet.helix.test",
+      liveKit: {
+        apiKey: "helix",
+        apiSecret: "test-livekit-secret-with-32-plus-chars",
+        publicUrl: "wss://meet.helix.test",
+        internalUrl: "http://livekit:7880",
+      },
+      guestInviteSecret: "test-secret",
       recordingAvailable: async () => true,
     });
     const actor = userActor(["meet.read", "meet.write"]);
@@ -28,7 +31,7 @@ describe("meet flow", () => {
     await expect(
       registry.invoke(
         "meet.create-room",
-        { subject: "Spoofed deployment", jitsiDomain: "attacker.example" },
+        { subject: "Spoofed deployment", mediaDomain: "attacker.example" },
         { actor },
       ),
     ).resolves.toMatchObject({ ok: false });
@@ -70,7 +73,7 @@ describe("meet flow", () => {
     if (!token.ok) {
       throw new Error(token.error);
     }
-    expect(jwtPayload(token.output.token).context.user.moderator).toBe(true);
+    expect(jwtPayload(token.output.token).video.roomAdmin).toBe(true);
     expect(token.output.recordingAvailable).toBe(true);
 
     await expect(
@@ -126,7 +129,7 @@ describe("meet flow", () => {
     );
     expect(participantToken.ok).toBe(true);
     if (participantToken.ok) {
-      expect(jwtPayload(participantToken.output.token).context.user.moderator).toBe(false);
+      expect(jwtPayload(participantToken.output.token).video.roomAdmin).toBe(false);
     }
     await expect(
       registry.invoke("meet.recording.authorize-start", { roomId: created.output.id }, { actor }),
@@ -155,7 +158,7 @@ describe("meet flow", () => {
       roomName: created.output.roomName,
       storageKey: "recordings/launch-review.mp4",
       byteSize: 42,
-      metadata: { source: "jitsi" },
+      metadata: { source: "livekit" },
     });
     const roomsWithRecording = await registry.invoke<{
       readonly rooms: readonly {
@@ -176,11 +179,11 @@ describe("meet flow", () => {
       orgId,
       subject: "Launch review",
       roomName: "launch-review",
-      jitsiDomain: "meet.helix.test",
+      mediaDomain: "meet.helix.test",
     });
     expect(created.output.roomName).toBe("launch-review");
     expect(token.output.token.split(".")).toHaveLength(3);
-    expect(token.output.joinUrl).toContain("https://meet.helix.test/launch-review?jwt=");
+    expect(token.output).toMatchObject({ provider: "livekit", serverUrl: "wss://meet.helix.test" });
     expect(recording).toMatchObject({
       roomId: created.output.id,
       threadId: stored?.threadId,
@@ -206,27 +209,33 @@ describe("meet flow", () => {
     const registry = createToolRegistry();
     registerMeetTools(registry, {
       store,
-      jwtSecret: "test-secret",
+      liveKit: {
+        apiKey: "helix",
+        apiSecret: "test-livekit-secret-with-32-plus-chars",
+        publicUrl: "wss://meet.helix.test",
+        internalUrl: "http://livekit:7880",
+      },
+      guestInviteSecret: "test-secret",
     });
     const actor = userActor(["meet.read"]);
     const activeRoom = await store.createRoom({
       orgId,
       actorId,
       subject: "Active room",
-      jitsiDomain: "meet.helix.test",
+      mediaDomain: "meet.helix.test",
     });
     const endedRoom = await store.createRoom({
       orgId,
       actorId,
       subject: "Ended room",
-      jitsiDomain: "meet.helix.test",
+      mediaDomain: "meet.helix.test",
     });
     await store.endRoom({ orgId, actorId, roomId: endedRoom.id });
     const hiddenRoom = await store.createRoom({
       orgId,
       actorId: participantActorId,
       subject: "Hidden room",
-      jitsiDomain: "meet.helix.test",
+      mediaDomain: "meet.helix.test",
     });
 
     const activeList = await registry.invoke<{
@@ -254,14 +263,23 @@ describe("meet flow", () => {
     store.registerActor(actorId, { displayName: "Ada Lovelace", email: "ada@example.com" });
     store.registerActor(participantActorId, { displayName: "Mira Okafor" });
     const registry = createToolRegistry();
-    registerMeetTools(registry, { store, jwtSecret: "test-secret" });
+    registerMeetTools(registry, {
+      store,
+      liveKit: {
+        apiKey: "helix",
+        apiSecret: "test-livekit-secret-with-32-plus-chars",
+        publicUrl: "wss://meet.helix.test",
+        internalUrl: "http://livekit:7880",
+      },
+      guestInviteSecret: "test-secret",
+    });
     const actor = userActor(["meet.read", "meet.write"]);
 
     const scheduled = await store.createRoom({
       orgId,
       actorId,
       subject: "Q3 Roadmap working session",
-      jitsiDomain: "meet.helix.test",
+      mediaDomain: "meet.helix.test",
       participantActorIds: [participantActorId],
       status: "scheduled",
       scheduledStartAt: new Date("2026-05-22T10:00:00.000Z"),
@@ -271,7 +289,7 @@ describe("meet flow", () => {
       orgId,
       actorId,
       subject: "Eng standup",
-      jitsiDomain: "meet.helix.test",
+      mediaDomain: "meet.helix.test",
     });
     await store.attachRecording({
       orgId,
@@ -332,7 +350,16 @@ describe("meet flow", () => {
   it("creates a scheduled room via the create-room tool when a schedule window is given", async () => {
     const store = new InMemoryMeetStore();
     const registry = createToolRegistry();
-    registerMeetTools(registry, { store, jwtSecret: "test-secret" });
+    registerMeetTools(registry, {
+      store,
+      liveKit: {
+        apiKey: "helix",
+        apiSecret: "test-livekit-secret-with-32-plus-chars",
+        publicUrl: "wss://meet.helix.test",
+        internalUrl: "http://livekit:7880",
+      },
+      guestInviteSecret: "test-secret",
+    });
     const actor = userActor(["meet.read", "meet.write"]);
 
     const created = await registry.invoke<{ readonly id: string; readonly status: string }>(
@@ -366,11 +393,11 @@ function userActor(scopes: readonly string[]): Actor {
 }
 
 function jwtPayload(token: string): {
-  readonly context: { readonly user: { readonly moderator: boolean } };
+  readonly video: { readonly roomAdmin: boolean };
 } {
   const payload = token.split(".")[1];
   if (payload === undefined) throw new Error("JWT payload missing");
   return JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as {
-    readonly context: { readonly user: { readonly moderator: boolean } };
+    readonly video: { readonly roomAdmin: boolean };
   };
 }

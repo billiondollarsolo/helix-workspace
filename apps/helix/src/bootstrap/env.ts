@@ -64,26 +64,11 @@ export function tenantRootHostFromPublicUrl(value: string | undefined): readonly
   }
 }
 
-const ENABLED_FLAG_VALUES = new Set(["1", "true", "yes", "on"]);
-const DISABLED_FLAG_VALUES = new Set(["0", "false", "no", "off"]);
-
-/**
- * Whether this deployment runs Meet media and therefore must satisfy the Meet
- * residency checks. Production requires an explicit `MEET_JITSI_ENABLED=true`
- * (credentials are asserted separately); a Jitsi URL or domain inherited from a
- * shared base configuration never turns Meet on by itself. Outside production
- * a configured Jitsi URL or domain keeps the local Meet stack working unless
- * `MEET_JITSI_ENABLED` explicitly disables it.
- */
+/** Whether this deployment runs Meet media (LiveKit credentials are configured). */
 export function meetDeploymentConfigured(
-  env: Pick<Env, "NODE_ENV" | "MEET_JITSI_ENABLED" | "MEET_JITSI_PUBLIC_URL" | "MEET_JITSI_DOMAIN">,
+  env: Pick<Env, "LIVEKIT_API_KEY" | "LIVEKIT_API_SECRET">,
 ): boolean {
-  const flag = env.MEET_JITSI_ENABLED?.trim().toLowerCase();
-  if (flag !== undefined && DISABLED_FLAG_VALUES.has(flag)) return false;
-  if (env.NODE_ENV === "production" && (flag === undefined || !ENABLED_FLAG_VALUES.has(flag))) {
-    return false;
-  }
-  return env.MEET_JITSI_PUBLIC_URL !== undefined || env.MEET_JITSI_DOMAIN !== undefined;
+  return Boolean(env.LIVEKIT_API_KEY?.trim()) && Boolean(env.LIVEKIT_API_SECRET?.trim());
 }
 
 export function envFlag(name: string, defaultValue: boolean): boolean {

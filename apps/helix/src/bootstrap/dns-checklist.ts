@@ -27,7 +27,7 @@ export function deploymentDnsTargets(bootEnv: ReturnType<typeof env>): DnsCheckl
   if (web !== undefined) targets.push({ hostname: web, role: "web" });
   const mail = bootEnv.HELIX_MAIL_PUBLIC_HOSTNAME?.trim();
   if (mail !== undefined && mail !== "") targets.push({ hostname: mail, role: "mail" });
-  const turn = bootEnv.MEET_JITSI_DOMAIN?.trim() || hostnameOf(bootEnv.MEET_JITSI_PUBLIC_URL);
+  const turn = bootEnv.HELIX_MEET_TURN_DOMAIN?.trim();
   if (turn !== undefined && turn !== "") targets.push({ hostname: turn, role: "turn" });
   return targets;
 }

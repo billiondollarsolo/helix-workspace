@@ -46,7 +46,7 @@ describe("admin services catalog", () => {
         MEILI_MASTER_KEY: "meili-secret",
         MAIL_SMTP_HOST: "smtp.example.com",
         MAIL_SMTP_PASS: "mail-secret",
-        MEET_JITSI_JWT_SECRET: "jitsi-secret",
+        LIVEKIT_API_SECRET: "livekit-secret",
       },
       now: () => new Date("2026-05-21T14:00:00.000Z"),
     });
@@ -85,12 +85,12 @@ describe("admin services catalog", () => {
       expect.arrayContaining(["drive.upload", "drive.share", "drive.search"]),
     );
     expect(drive.apiRoutes).toEqual(expect.arrayContaining(["/v1/dav/files/*", "/v1/mcp"]));
-    expect(meet.capabilities).toEqual(expect.arrayContaining(["video:jitsi", "jwt-minting"]));
+    expect(meet.capabilities).toEqual(expect.arrayContaining(["video:livekit", "jwt-minting"]));
     expect(JSON.stringify(response)).not.toContain("secret-password");
     expect(JSON.stringify(response)).not.toContain("rustfs-secret");
     expect(JSON.stringify(response)).not.toContain("meili-secret");
     expect(JSON.stringify(response)).not.toContain("mail-secret");
-    expect(JSON.stringify(response)).not.toContain("jitsi-secret");
+    expect(JSON.stringify(response)).not.toContain("livekit-secret");
   });
 
   it("returns detail slices for service readiness, config, capabilities, tools, and actions", async () => {
@@ -168,7 +168,7 @@ describe("admin services catalog", () => {
       serviceId: "meet",
     });
     expect(capabilitiesJson.capabilities).toEqual(
-      expect.arrayContaining(["video:jitsi", "jwt-minting"]),
+      expect.arrayContaining(["video:livekit", "jwt-minting"]),
     );
 
     const tools = await app.inject({ method: "GET", url: "/api/admin/services/drive/tools" });

@@ -222,10 +222,8 @@ describe("assertProductionConfiguration", () => {
     ["MEILI_MASTER_KEY", "helix_dev_meili_master_key"],
     ["MAIL_SMTP_PASS", "helix_dev_mail_password"],
     ["MAIL_PROVIDER_WEBHOOK_SECRET", "helix_dev_mail_webhook_secret_change_me"],
-    ["MEET_JITSI_JWT_SECRET", "helix_dev_jitsi_jwt_secret_change_me"],
-    ["JITSI_JWT_SECRET", "helix_jitsi_dev_secret"],
-    ["MEET_JITSI_WEBHOOK_SHARED_SECRET", "helix_dev_jitsi_webhook_secret_change_me"],
-    ["JITSI_WEBHOOK_SECRET", "helix_dev_jitsi_webhook_secret_change_me"],
+    ["LIVEKIT_API_SECRET", "helix_dev_livekit_api_secret_change_me"],
+    ["MEET_CAPTURE_SECRET", "helix_dev_meet_capture_secret_change_me"],
     ["HELIX_DATA_ENCRYPTION_KEY", "helix_dev_encryption_key_change_me"],
     ["HELIX_LOCAL_DEMO_PASSWORD", "helix-local-dev-password"],
   ])("rejects the known development value for %s", (variable, value) => {
@@ -234,7 +232,8 @@ describe("assertProductionConfiguration", () => {
   it("rejects development credentials embedded in HELIX_CONFIG_JSON", () => {
     assertRejected(
       {
-        HELIX_CONFIG_JSON: '{"plugins":{"meet":{"secret":"helix_dev_jitsi_jwt_secret_change_me"}}}',
+        HELIX_CONFIG_JSON:
+          '{"plugins":{"meet":{"secret":"helix_dev_livekit_api_secret_change_me"}}}',
       },
       "HELIX_CONFIG_JSON",
     );
@@ -278,22 +277,20 @@ describe("assertProductionConfiguration", () => {
   ])("requires the signed Business MFA assertion setting %s", (variable, value) => {
     assertRejected({ [variable]: value }, variable);
   });
-  it("rejects weak Jitsi secrets when Meet is enabled", () => {
+  it("rejects weak LiveKit secrets when Meet is enabled", () => {
     assertRejected(
-      {
-        MEET_JITSI_ENABLED: "true",
-        MEET_JITSI_JWT_SECRET: "too-short",
-        MEET_JITSI_WEBHOOK_SHARED_SECRET: secret(),
-      },
-      "MEET_JITSI_JWT_SECRET",
+      { LIVEKIT_API_KEY: "helix", LIVEKIT_API_SECRET: "too-short", MEET_CAPTURE_SECRET: secret() },
+      "LIVEKIT_API_SECRET",
     );
+  });
+  it("requires a wss: LiveKit URL", () => {
+    assertRejected({ LIVEKIT_PUBLIC_URL: "ws://meet.example.test" }, "LIVEKIT_PUBLIC_URL");
   });
   it.each([
     ["HELIX_PUBLIC_URL", "http://workspace.example.test"],
     ["BETTER_AUTH_URL", "http://workspace.example.test"],
     ["PUBLIC_BASE_URL", "http://workspace.example.test"],
     ["HELIX_API_BASE_URL", "http://api.example.test"],
-    ["MEET_JITSI_PUBLIC_URL", "http://meet.example.test"],
   ])("rejects a public HTTP URL in %s", (variable, value) => {
     assertRejected({ [variable]: value }, variable);
   });
@@ -416,8 +413,9 @@ describe("assertProductionConfiguration", () => {
       HELIX_EDITORS_PIN_PRESENT: "true",
       HELIX_EDITORS_CORE_APP_ENTRY: "core-app",
       HELIX_EDITORS_CORE_APP_MODULE: "@helix/editors-core-app",
-      MEET_JITSI_DOMAIN: "meet.example.test",
-      MEET_JITSI_JWT_SECRET: jwtSecret,
+      LIVEKIT_API_KEY: "helix",
+      LIVEKIT_API_SECRET: jwtSecret,
+      MEET_CAPTURE_SECRET: secret(),
       HELIX_DRIVE_SCANNER_KIND: "clamav",
       HELIX_CONFIG_JSON: JSON.stringify({
         modules: {
@@ -433,15 +431,15 @@ describe("assertProductionConfiguration", () => {
       assertProductionConfiguration(env);
     }).not.toThrow();
   });
-  it("refuses Full Workspace meet without Jitsi secret (fail-closed)", () => {
+  it("refuses Full Workspace meet without LiveKit secret (fail-closed)", () => {
     assertRejected(
       {
         HELIX_WORKSPACE_PROFILE: "full",
         HELIX_APPS: "mail,drive,chat,assistant,calendar,meet",
         HELIX_EDITORS_MIGRATIONS_ENABLED: "true",
         HELIX_EDITORS_PIN_PRESENT: "true",
-        MEET_JITSI_DOMAIN: "meet.example.test",
-        MEET_JITSI_JWT_SECRET: undefined,
+        LIVEKIT_API_KEY: "helix",
+        LIVEKIT_API_SECRET: undefined,
         HELIX_DRIVE_SCANNER_KIND: "clamav",
         HELIX_CONFIG_JSON: JSON.stringify({
           modules: {
@@ -452,7 +450,7 @@ describe("assertProductionConfiguration", () => {
           },
         }),
       },
-      "MEET_JITSI_JWT_SECRET",
+      "LIVEKIT_API_SECRET",
     );
   });
 });

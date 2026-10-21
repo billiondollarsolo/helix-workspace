@@ -246,22 +246,8 @@ const calendarActionFlags: Record<string, readonly string[]> = {
 };
 
 const meetActionFlags: Record<string, readonly string[]> = {
-  "create-room": [
-    "--subject",
-    "--room-name",
-    "--jitsi-domain",
-    "--participant",
-    "--participant-actor-id",
-    "--json",
-  ],
-  create: [
-    "--subject",
-    "--room-name",
-    "--jitsi-domain",
-    "--participant",
-    "--participant-actor-id",
-    "--json",
-  ],
+  "create-room": ["--subject", "--room-name", "--participant", "--participant-actor-id", "--json"],
+  create: ["--subject", "--room-name", "--participant", "--participant-actor-id", "--json"],
   list: ["--status", "--limit", "--json"],
   rooms: ["--status", "--limit", "--json"],
   "mint-token": ["--room-id", "--expires-in-seconds", "--moderator", "--json"],

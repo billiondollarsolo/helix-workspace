@@ -47,10 +47,8 @@ const KNOWN_DEVELOPMENT_VALUES: Readonly<Record<string, readonly string[]>> = {
   MAIL_SMTP_PASS: ["password", "changeme", "helix_dev_mail_password"],
   SES_SMTP_PASS: ["password", "changeme", "helix_dev_mail_password"],
   MAIL_PROVIDER_WEBHOOK_SECRET: ["changeme", "helix_dev_mail_webhook_secret_change_me"],
-  MEET_JITSI_JWT_SECRET: ["helix_dev_jitsi_jwt_secret_change_me", "helix_jitsi_dev_secret"],
-  JITSI_JWT_SECRET: ["helix_dev_jitsi_jwt_secret_change_me", "helix_jitsi_dev_secret"],
-  MEET_JITSI_WEBHOOK_SHARED_SECRET: ["helix_dev_jitsi_webhook_secret_change_me"],
-  JITSI_WEBHOOK_SECRET: ["helix_dev_jitsi_webhook_secret_change_me"],
+  LIVEKIT_API_SECRET: ["helix_dev_livekit_api_secret_change_me"],
+  MEET_CAPTURE_SECRET: ["helix_dev_meet_capture_secret_change_me"],
   HELIX_DATA_ENCRYPTION_KEY: ["changeme", "helix_dev_encryption_key_change_me"],
   HELIX_LOCAL_DEMO_PASSWORD: ["helix-local-dev-password"],
 };
@@ -396,7 +394,7 @@ function validateProductionMvpScope(
     }
     return;
   }
-  // Full Workspace: refuse Meet without configured Jitsi credentials.
+  // Full Workspace: refuse Meet without configured LiveKit credentials.
   const scannerKind =
     normalized(environment.HELIX_DRIVE_SCANNER_KIND) ??
     (normalized(environment.DRIVE_CLAMAV_ENABLED)?.toLowerCase() === "true" ||
@@ -405,8 +403,8 @@ function validateProductionMvpScope(
       : undefined);
   for (const issue of validateFullWorkspaceDependencyGates({
     apps: environment.HELIX_APPS ?? "",
-    meetJitsiDomain: environment.MEET_JITSI_DOMAIN,
-    meetJitsiJwtSecret: environment.MEET_JITSI_JWT_SECRET ?? environment.JITSI_JWT_SECRET,
+    liveKitApiKey: environment.LIVEKIT_API_KEY,
+    liveKitApiSecret: environment.LIVEKIT_API_SECRET,
     driveScannerKind: scannerKind,
     securityTier: environment.HELIX_SECURITY_TIER,
   })) {
@@ -635,9 +633,12 @@ export function assertProductionConfiguration(environment: Env): void {
     validatePublicUrl("PUBLIC_BASE_URL", environment.PUBLIC_BASE_URL, false, issues),
     validatePublicUrl("HELIX_API_BASE_URL", environment.HELIX_API_BASE_URL, false, issues),
     validatePublicUrl("BETTER_AUTH_URL", environment.BETTER_AUTH_URL, true, issues),
-    validatePublicUrl("MEET_JITSI_PUBLIC_URL", environment.MEET_JITSI_PUBLIC_URL, false, issues),
   ].filter((url): url is URL => url !== undefined);
   validateTrustedOrigins(environment.BETTER_AUTH_TRUSTED_ORIGINS, publicUrls, issues);
+  const liveKitUrl = normalized(environment.LIVEKIT_PUBLIC_URL);
+  if (liveKitUrl !== undefined && !/^wss:\/\/[^/@\s]+\/?$/u.test(liveKitUrl)) {
+    issues.push({ variable: "LIVEKIT_PUBLIC_URL", message: "must be a wss: origin in production" });
+  }
   // The password manager is only linked to, so it is not a trusted origin.
   validatePublicUrl("HELIX_PASSWORDS_URL", environment.HELIX_PASSWORDS_URL, false, issues);
   const mailOutboundEnabled = flag(environment.MAIL_OUTBOUND_ENABLED) ?? true;
@@ -688,21 +689,9 @@ export function assertProductionConfiguration(environment: Env): void {
       issues,
     );
   }
-  if (flag(environment.MEET_JITSI_ENABLED) === true) {
-    requireStrongSecret(
-      environment.MEET_JITSI_JWT_SECRET === undefined
-        ? "JITSI_JWT_SECRET"
-        : "MEET_JITSI_JWT_SECRET",
-      environment.MEET_JITSI_JWT_SECRET ?? environment.JITSI_JWT_SECRET,
-      issues,
-    );
-    requireStrongSecret(
-      environment.MEET_JITSI_WEBHOOK_SHARED_SECRET === undefined
-        ? "JITSI_WEBHOOK_SECRET"
-        : "MEET_JITSI_WEBHOOK_SHARED_SECRET",
-      environment.MEET_JITSI_WEBHOOK_SHARED_SECRET ?? environment.JITSI_WEBHOOK_SECRET,
-      issues,
-    );
+  if (normalized(environment.LIVEKIT_API_KEY) !== undefined) {
+    requireStrongSecret("LIVEKIT_API_SECRET", environment.LIVEKIT_API_SECRET, issues);
+    requireStrongSecret("MEET_CAPTURE_SECRET", environment.MEET_CAPTURE_SECRET, issues);
   }
   if (BUSINESS_TIERS.has(securityTier)) {
     for (const variable of [

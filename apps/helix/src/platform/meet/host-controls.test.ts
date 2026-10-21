@@ -86,9 +86,10 @@ describe("Meet host controls", () => {
     const payload = JSON.parse(
       Buffer.from(token.output.token.split(".")[1] ?? "", "base64url").toString("utf8"),
     );
-    expect(payload.context).toMatchObject({
-      user: { moderator: false },
-      features: { "send-groupchat": false, "send-reactions": false, "screen-sharing": true },
+    expect(payload.video).toMatchObject({
+      roomAdmin: false,
+      canPublishData: false,
+      canPublishSources: ["camera", "microphone", "screen_share", "screen_share_audio"],
     });
 
     await expect(
@@ -125,14 +126,19 @@ async function setup() {
     orgId,
     actorId: hostId,
     subject: "Control room",
-    jitsiDomain: "meet.example.test",
+    mediaDomain: "meet.example.test",
     participantActorIds: [cohostId, attendeeId],
   });
   const registry = createToolRegistry();
   registerMeetTools(registry, {
     store,
-    jwtSecret: "test-secret",
-    jitsiPublicUrl: "https://meet.example.test",
+    liveKit: {
+      apiKey: "helix",
+      apiSecret: "test-livekit-secret-with-32-plus-chars",
+      publicUrl: "wss://meet.example.test",
+      internalUrl: "http://livekit:7880",
+    },
+    guestInviteSecret: "test-secret",
   });
   return { store, registry, roomId: room.id };
 }

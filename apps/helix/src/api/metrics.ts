@@ -348,7 +348,7 @@ export function createPlatformMetrics(): PlatformMetrics {
   });
   const meetParticipantEvents = new Counter({
     name: "helix_meet_participant_events_total",
-    help: "Privacy-safe Meet participant events from signed media or Jitsi lifecycle signals.",
+    help: "Privacy-safe Meet participant events from signed media lifecycle webhooks.",
     labelNames: ["event", "device"],
     registers: [registry],
   });
@@ -402,13 +402,13 @@ export function createPlatformMetrics(): PlatformMetrics {
   const meetConnectionQuality = meetHistogram(
     registry,
     "connection_quality_percent",
-    "Jitsi connection quality score.",
+    "Meet connection quality score.",
     [10, 25, 50, 75, 90, 100],
   );
   const meetBridgeLoad = meetHistogram(
     registry,
     "bridge_load_percent",
-    "Bounded Jitsi bridge load percentage reported with QoS.",
+    "Bounded media server load percentage reported with QoS.",
     [25, 50, 70, 85, 95, 100],
   );
   const meetBridgeParticipants = meetHistogram(

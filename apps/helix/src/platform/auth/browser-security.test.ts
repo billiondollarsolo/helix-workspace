@@ -87,14 +87,11 @@ describe("browser security response headers", () => {
   it("uses a narrow explicit frame origin and complete production defenses", () => {
     const headers = browserSecurityHeaders({
       production: true,
-      jitsiPublicUrl: "https://meet.example.com/room",
     });
 
     expect(headers["strict-transport-security"]).toContain("includeSubDomains");
     expect(headers["content-security-policy"]).toContain("frame-ancestors 'none'");
-    expect(headers["content-security-policy"]).toContain(
-      "frame-src 'self' https://meet.example.com",
-    );
+    expect(headers["content-security-policy"]).toContain("frame-src 'self'");
     expect(headers["permissions-policy"]).toContain("geolocation=()");
     expect(headers).toMatchObject({
       "referrer-policy": "no-referrer",
@@ -104,17 +101,15 @@ describe("browser security response headers", () => {
       "cross-origin-resource-policy": "same-origin",
       "origin-agent-cluster": "?1",
     });
-    // COEP blocks Jitsi and editor/preview resources that are not CORP-aware.
+    // COEP blocks media and editor/preview resources that are not CORP-aware.
     expect(headers).not.toHaveProperty("cross-origin-embedder-policy");
   });
 
   it("does not emit HSTS or trust insecure frame origins outside production", () => {
     const headers = browserSecurityHeaders({
       production: false,
-      jitsiPublicUrl: "http://localhost:28452",
     });
     expect(headers).not.toHaveProperty("strict-transport-security");
     expect(headers["content-security-policy"]).toContain("frame-src 'self'");
-    expect(headers["content-security-policy"]).not.toContain("http://localhost:28452");
   });
 });

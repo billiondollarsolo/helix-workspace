@@ -1320,7 +1320,7 @@ function parseMeetCommand(
 
 const meetUsage = "Usage: helix meet <create-room|list|mint-token|end-room> [--json [JSON]]";
 const meetCreateRoomUsage =
-  "Usage: helix meet create-room [--subject <text>] [--room-name <name>] [--jitsi-domain <domain>] [--participant <actor-id>] [--json [JSON]]";
+  "Usage: helix meet create-room [--subject <text>] [--room-name <name>] [--participant <actor-id>] [--json [JSON]]";
 const meetRoomListUsage =
   "Usage: helix meet list [--status <active|ended>] [--limit <n>] [--json [JSON]]";
 const meetMintTokenUsage =
@@ -1335,7 +1335,6 @@ const meetCreateRoomOptions = {
   strings: new Map([
     ["--subject", "subject"],
     ["--room-name", "roomName"],
-    ["--jitsi-domain", "jitsiDomain"],
   ]),
   numbers: new Map<string, string>(),
   booleans: new Map<string, string>(),

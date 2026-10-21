@@ -26,7 +26,7 @@ export const meetRooms = pgTable(
     roomName: text("room_name").notNull(),
     joinCode: text("join_code").notNull(),
     subject: text("subject").notNull(),
-    jitsiDomain: text("jitsi_domain").notNull(),
+    mediaDomain: text("media_domain").notNull(),
     createdByActorId: uuid("created_by_actor_id").references(() => actors.id),
     startedAt: timestamp("started_at", { withTimezone: true }).defaultNow().notNull(),
     endedAt: timestamp("ended_at", { withTimezone: true }),

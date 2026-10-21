@@ -36,7 +36,7 @@ describe("Meet recording promotion", { skip: process.env.DATABASE_URL === undefi
       orgId: ORG,
       actorId: HOST,
       subject: "Promotion",
-      jitsiDomain: "meet.example.test",
+      mediaDomain: "meet.example.test",
     });
     await expect(
       store.prepareRecordingUpload({
@@ -79,7 +79,7 @@ describe("Meet recording promotion", { skip: process.env.DATABASE_URL === undefi
       actorId: HOST,
       participantActorIds: [MEMBER],
       subject: "Governed",
-      jitsiDomain: "meet.example.test",
+      mediaDomain: "meet.example.test",
       metadata: {
         classification: "restricted",
         legalHold: true,

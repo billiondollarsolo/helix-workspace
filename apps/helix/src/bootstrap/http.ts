@@ -54,7 +54,6 @@ export async function installHttp() {
 
   const responseSecurityHeaders = browserSecurityHeaders({
     production: bootEnv.NODE_ENV === "production",
-    jitsiPublicUrl: bootEnv.MEET_JITSI_PUBLIC_URL,
   });
 
   // P1-10: advertise the API version on every response so clients can detect

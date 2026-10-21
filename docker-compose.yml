@@ -407,7 +407,7 @@ services:
         webhook:
           api_key: ${LIVEKIT_API_KEY:-helix}
           urls:
-            - http://helix:3000/webhook/livekit
+            - http://helix:3000/v1/webhook/livekit
     ports:
       - "127.0.0.1:${LIVEKIT_HTTP_PORT:-28451}:7880"
       - "${HELIX_MEET_BIND_IP:-127.0.0.1}:7881:7881/tcp"

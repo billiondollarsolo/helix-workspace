@@ -89,7 +89,7 @@ claim: nothing Helix stores can rebuild a lost vault.
 ## Optional Meet and Calendar
 
 Meet and Calendar are not enabled by default. Meet runs on a LiveKit server that this chart does
-not deploy. To opt in, run LiveKit (with its webhook pointed at `http://<helix service>:3000/webhook/livekit`),
+not deploy. To opt in, run LiveKit (with its webhook pointed at `http://<helix service>:3000/v1/webhook/livekit`),
 route `/rtc` on the Workspace host to it, then set `workspace.profile=full`, the Full Workspace
 `workspace.apps`, `workspace.modules.meet.enabled=true`, `workspace.modules.calendar.enabled=true`,
 and `workspace.meet.livekit` (`internalUrl`, and `secretName` for an existing Secret holding the

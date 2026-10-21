@@ -781,7 +781,7 @@ How it is put together:
 - One `livekit` container, pinned by version and digest, on the host network. WebRTC media
   through Docker's port forwarding loses packets and breaks TURN relaying, which is why it does
   not use a Compose network. A single node needs no Redis.
-- LiveKit sends room and participant events to Helix at `/webhook/livekit`, signed with the API
+- LiveKit sends room and participant events to Helix at `/v1/webhook/livekit`, signed with the API
   secret, through a port Helix publishes on 127.0.0.1 only (`HELIX_LIVEKIT_WEBHOOK_PORT`).
 - Caddy routes `/rtc` on the Workspace site to LiveKit through the Docker host gateway
   (`host.docker.internal`).

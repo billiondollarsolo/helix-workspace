@@ -7,13 +7,13 @@ Jitsi is removed from the hosted server; Meet media runs on one LiveKit containe
 and web are `helix/workspace:lk-bd6d56c` and `helix/workspace-web:lk-bd6d56c`; migration 0253
 renamed `meet_rooms.jitsi_domain` to `media_domain`.
 
-| Item       | Now                                                                                                              |
-| ---------- | ---------------------------------------------------------------------------------------------------------------- |
-| Signalling | `wss://workspace.helixapps.si/rtc` (Caddy route inside the Cloudflare-locked site)                               |
-| Media      | 7882/udp and 7881/tcp straight to 89.167.14.138 (`node_ip`)                                                      |
-| TURN       | `turn.workspace.helixapps.si` (DNS-only), 3478/udp and 5349/tcp                                                  |
-| Webhooks   | LiveKit → `http://127.0.0.1:33000/webhook/livekit` (Workspace port on loopback), signed with the API key `helix` |
-| Secrets    | `/srv/helix-data/secrets/meet/{livekit_api_secret,meet_capture_secret,turn_cert,turn_key}`                       |
+| Item       | Now                                                                                                                 |
+| ---------- | ------------------------------------------------------------------------------------------------------------------- |
+| Signalling | `wss://workspace.helixapps.si/rtc` (Caddy route inside the Cloudflare-locked site)                                  |
+| Media      | 7882/udp and 7881/tcp straight to 89.167.14.138 (`node_ip`)                                                         |
+| TURN       | `turn.workspace.helixapps.si` (DNS-only), 3478/udp and 5349/tcp                                                     |
+| Webhooks   | LiveKit → `http://127.0.0.1:33000/v1/webhook/livekit` (Workspace port on loopback), signed with the API key `helix` |
+| Secrets    | `/srv/helix-data/secrets/meet/{livekit_api_secret,meet_capture_secret,turn_cert,turn_key}`                          |
 
 `helix-turn-certificate.service` now copies Caddy's `turn.` certificate to `turn_cert`/`turn_key`
 (owned by LiveKit's user 65532) and recreates `livekit`. The firewall lost 10000/udp,

@@ -170,7 +170,7 @@ describe("optional Meet install", () => {
       "webhook:",
       "  api_key: helix",
       "  urls:",
-      "    - http://127.0.0.1:33000/webhook/livekit",
+      "    - http://127.0.0.1:33000/v1/webhook/livekit",
     ]);
     expect(withMeet.services.livekit.environment).not.toHaveProperty("SSL_CERT_FILE");
     expect(withMeet.services.livekit.depends_on).toBeUndefined();

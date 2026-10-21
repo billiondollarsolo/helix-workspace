@@ -26,8 +26,16 @@ x-jitsi-hardening: &jitsi-hardening
     - no-new-privileges:true
   restart: unless-stopped
 
+# Bounded container logs: without a cap one noisy service can fill the disk.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
 services:
   helix:
+    logging: *default-logging
     environment:
       # The Full Workspace profile: Calendar and Meet on top of the core apps.
       # Helix refuses to start on it without the Jitsi domain and secrets below.
@@ -50,6 +58,7 @@ services:
       - meet_webhook_secret
 
   caddy:
+    logging: *default-logging
     environment:
       # Lets the workspace embed the meeting page, and serves that page.
       HELIX_JITSI_ORIGIN: https://${HELIX_MEET_DOMAIN:?HELIX_MEET_DOMAIN is required for the Meet install}
@@ -59,6 +68,7 @@ services:
   # Java reads the private CA from a PKCS#12 trust store. It is built here from
   # the PEM file so the host needs no Java tooling.
   jitsi-truststore-init:
+    logging: *default-logging
     image: jitsi/jvb:stable-11031@sha256:3460de3541a8f96d007b8f2b4681ea8321cae64c17387338eabf776e73cd0f51
     entrypoint:
       - /bin/sh
@@ -78,6 +88,7 @@ services:
       - no-new-privileges:true
 
   jitsi-web:
+    logging: *default-logging
     <<: *jitsi-hardening
     environment:
       PUBLIC_URL: https://${HELIX_MEET_DOMAIN:?HELIX_MEET_DOMAIN is required for the Meet install}
@@ -100,6 +111,7 @@ services:
           pids: 256
 
   jitsi-prosody:
+    logging: *default-logging
     <<: *jitsi-hardening
     environment:
       PUBLIC_URL: https://${HELIX_MEET_DOMAIN:?HELIX_MEET_DOMAIN is required for the Meet install}
@@ -146,6 +158,7 @@ services:
           pids: 256
 
   jitsi-jicofo:
+    logging: *default-logging
     <<: *jitsi-hardening
     environment:
       ENABLE_RECORDING: "0"
@@ -176,6 +189,7 @@ services:
           pids: 512
 
   jitsi-jvb:
+    logging: *default-logging
     <<: *jitsi-hardening
     environment:
       JVB_AUTH_PASSWORD: !reset null
@@ -215,6 +229,7 @@ services:
 
   # TURN relays media for people whose network blocks UDP to the bridge.
   jitsi-turn:
+    logging: *default-logging
     <<: *jitsi-hardening
     environment:
       JITSI_TURN_REALM: ${HELIX_MEET_DOMAIN:?HELIX_MEET_DOMAIN is required for the Meet install}

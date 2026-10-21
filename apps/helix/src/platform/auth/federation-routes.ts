@@ -134,7 +134,7 @@ export function registerFederationRoutes(
         return {
           applications: rows.map((row) => ({
             id: row.id,
-            label: "Helix Bot",
+            label: "Helix Agentspace",
             url: row.public_origin,
           })),
         };

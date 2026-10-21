@@ -61,7 +61,7 @@ export function createFederationClientManager(
         const client = await api.adminCreateOAuthClient({
           headers,
           body: {
-            client_name: "Helix Bot",
+            client_name: "Helix Agentspace",
             client_uri: input.origin,
             redirect_uris: [new URL("/v1/auth/sso/callback", input.origin).href],
             scope: "openid profile email offline_access",

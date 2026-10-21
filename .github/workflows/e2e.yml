@@ -25,6 +25,10 @@ on:
     branches:
       - main
   workflow_dispatch:
+
+permissions:
+  contents: read
+
 jobs:
   e2e-mocked:
     runs-on: ubuntu-latest

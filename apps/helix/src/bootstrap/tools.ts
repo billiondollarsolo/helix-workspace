@@ -219,8 +219,7 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
     },
   });
 
-  // P0-4(b): leader-gated worker that transitions stale pending_confirmation
-  // actions to `expired` once their per-tier timeout elapses.
+  // P0-4(b): leader-gated worker that expires pending actions past their tier timeout.
   const pendingActionExpiryWorker = new PendingActionExpiryWorker({
     store: pendingActionStore,
     listOrgIds: async () =>
@@ -413,6 +412,7 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
       agentMail: new PostgresAgentMailStore(sql),
       quarantineStore: mailQuarantineStore,
       sendLimit: createPersonLimitStore(sql, orgStore),
+      maxRecipients: bootEnv.MAIL_SMTP_MAX_RECIPIENTS,
       draftsRunUnattended: async (orgId) =>
         (await loadEffectiveTenantConfig({ orgs: orgStore }, orgId))?.features
           .agent_mail_drafts_unattended !== false,

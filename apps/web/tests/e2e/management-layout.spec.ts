@@ -66,7 +66,7 @@ for (const width of [1440, 390]) {
     await expect(page.getByRole("heading", { name: "Federated apps", exact: true })).toBeVisible();
     await page.getByRole("button", { name: "View app details", exact: true }).click();
     await expect(page.getByText("Managed by Workspace", { exact: true })).toBeVisible();
-    await expect(page.getByText("Managed in Helix Bot", { exact: true })).toBeVisible();
+    await expect(page.getByText("Managed in Helix Agentspace", { exact: true })).toBeVisible();
     if (width < 600) {
       await expect(nav).toBeHidden();
       await page.getByRole("button", { name: "Main menu", exact: true }).click();

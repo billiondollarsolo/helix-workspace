@@ -1,4 +1,4 @@
-/** Operator-side bridge to the existing Bot cold backup and Workspace signed backup tools. */
+/** Operator-side bridge to the existing Agentspace cold backup and Workspace signed backup tools. */
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -137,7 +137,7 @@ export async function federationBackupTool(
       if (config.application === "bot") {
         if (!config.sourceDirectory)
           throw new Error(
-            "Bot full backup requires its private source directory and a stopped application",
+            "Agentspace full backup requires its private source directory and a stopped application",
           );
         await run([
           process.execPath,
@@ -151,7 +151,7 @@ export async function federationBackupTool(
           installationId: string;
         };
         if (manifest.installationId !== input.binding.installationId)
-          throw new Error("Bot snapshot belongs to another installation");
+          throw new Error("Agentspace snapshot belongs to another installation");
       } else {
         if (!config.configurationDirectory)
           throw new Error(
@@ -356,7 +356,7 @@ export async function federationBackupTool(
       } else {
         if (!config.restoreDatabaseUrlFile || !config.restoreDirectory)
           throw new Error(
-            "Bot recovery requires an isolated database operator and restore directory",
+            "Agentspace recovery requires an isolated database operator and restore directory",
           );
         mkdirSync(config.restoreDirectory, { recursive: true, mode: 0o700 });
         const url = new URL(protectedFile(config.restoreDatabaseUrlFile).trim());

@@ -9,23 +9,23 @@ disposable Docker volumes. The restored apps have no public ports or outbound
 network; Workspace outbound mail and SMTP reception are disabled.
 
 Both original restored apps started. Their restored databases then upgraded to
-Bot `7d5bdb6` (schema 7) and Workspace `d74ba3f` (251 migration rows). The packaged
+Agentspace `7d5bdb6` (schema 7) and Workspace `d74ba3f` (251 migration rows). The packaged
 Workspace migrator applied two migrations and skipped 249. Both current apps
 report ready. The current Workspace API downloaded an authenticated 1,875,041-byte
 restored object matching its stored SHA-256; unauthenticated access was denied.
 The original paired-app inventory also survived.
 
-A fresh post-pilot database copy exercised actual restored Bot identity services:
+A fresh post-pilot database copy exercised actual restored Agentspace identity services:
 installation/key checks, recovered federation-vault decryption, stale managed-access
 denial, authenticated directory checkpoint, session creation, assignment removal
 and rejection of that existing session. The local password-capable recovery Owner
-remained usable. This checks Bot's recovery behavior; the independent restored
-Workspace-to-Bot reconciliation delivery is still separate.
+remained usable. This checks Agentspace's recovery behavior; the independent restored
+Workspace-to-Agentspace reconciliation delivery is still separate.
 
 Backup operator metadata now records the current schemas, and full-server
 capture resolves each active release bundle from its operator configuration.
 A fresh authenticated encrypted off-server checkpoint includes operator keys,
-journals, deployment configuration and the reviewed API/web/Bot source bundles.
+journals, deployment configuration and the reviewed API/web/Agentspace source bundles.
 Fresh encrypted database dumps restored separately after the hosted pilot.
 Private evidence is under
 `~/.local/share/helix-recovery/20261019/integration-completion/`.
@@ -34,7 +34,7 @@ Production promotion, host reboot and live Kubernetes qualification remain
 unperformed. Do not promote a recovered managed identity before reconciling its
 current upstream assignment. Restoring a database dump into a new database must
 also preserve the original database owner; table ownership alone does not grant
-the runtime schema creation privileges needed by Bot's migration checks.
+the runtime schema creation privileges needed by Agentspace's migration checks.
 
 ## Original implementation qualification
 
@@ -55,18 +55,18 @@ Verified locally:
   command receipts are fixture receipts rather than real Workspace object backups.
 - The existing live federation identity/provider regression passed separately after
   extending the shared audit writer.
-- A real Bot adapter check captured and encrypted an actual PostgreSQL database
+- A real Agentspace adapter check captured and encrypted an actual PostgreSQL database
   and private file, checked ciphertext/manifest/file digests, and restored a
   conversation, file and installation identity into a separate database/directory.
   It deliberately claims neither off-host storage nor executor/coding volume recovery.
-- Bot's existing cold-backup regression passed; its optional coding-volume case
-  remains skipped by the existing fixture. Bot static checks, types and build passed.
+- Agentspace's existing cold-backup regression passed; its optional coding-volume case
+  remains skipped by the existing fixture. Agentspace static checks, types and build passed.
 - The new Workspace admin page passed Chromium enrollment/error/draft checks and
   an axe accessibility scan; focused React/request-budget tests passed too.
 - Both Helm charts rendered with the optional executor and rejected missing
   capabilities/network settings and conflicting scheduler ownership. Both Compose
   overlays rendered without a host port or automatic Docker socket. Existing
-  Workspace Helm/CNPG/Barman and Bot Helm checks passed. kubeconform was unavailable,
+  Workspace Helm/CNPG/Barman and Agentspace Helm checks passed. kubeconform was unavailable,
   so this does not assert live cluster admission/schema qualification.
 - Both Workspace Caddy configurations adapted with the recovery prefix using
   the existing built Caddy image. The new worker image built successfully and ran
@@ -87,13 +87,13 @@ node infra/scripts/federation-backup-worker-smoke.mjs helix-federation-backup-wo
 
 The database integration needs the existing migrated isolated test database and
 RLS role environment. Use both adjacent repositories for the cross-app deployment
-and real Bot recovery checks; the latter command is in Bot's backup runbook.
+and real Agentspace recovery checks; the latter command is in Agentspace's backup runbook.
 
 At the original 2026-10-17 implementation checkpoint this was not activated on the
 hosted installation. An operator must choose
 actual backup custody/storage, mount required snapshots, provide qualified commands,
 perform the scheduler handoff, route HTTPS and enroll separate capabilities.
 The 2026-10-19 evidence above supersedes the original isolated two-app startup,
-object recovery and Bot revocation-check gaps. Independent restored-peer
+object recovery and Agentspace revocation-check gaps. Independent restored-peer
 reconciliation, production promotion and live Kubernetes tests remain unqualified.
 The worker base image is not a preconfigured production backup toolchain.

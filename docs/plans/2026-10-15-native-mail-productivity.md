@@ -167,7 +167,7 @@ failure; restart recovery; accessible controls and preserved focus/scroll.
 
 ## Additional authorized scope: bot account requests and human oversight
 
-Added during implementation: Helix Bot must request a persistent Workspace
+Added during implementation: Helix Agentspace must request a persistent Workspace
 account and its desired capabilities through API, CLI and MCP. A Workspace
 administrator approves the concrete request before credentials or resources are
 usable. Users with explicit bot access and administrators need an authorized bot
@@ -194,9 +194,9 @@ workspace showing its email, files, chat and activity.
       authority distinct. Audit sensitive access and recheck revocation.
 - [ ] Test tenant separation, request ownership, concurrent approvals/retries,
       downscoping, disabled apps, duplicate accounts, expired requests and revoked
-      human access. Update the Helix Bot handoff with implemented contracts.
+      human access. Update the Helix Agentspace handoff with implemented contracts.
 
-Integration handoff: [Helix Bot → Workspace](2026-10-15-helix-bot-workspace-handoff.md).
+Integration handoff: [Helix Agentspace → Workspace](2026-10-15-helix-agentspace-workspace-handoff.md).
 It documents the current local request fields, supported scopes, credential
 activation, human oversight, native productivity tools and remaining gaps.
 Resource manifests, custom quota requests, complete oversight pagination and

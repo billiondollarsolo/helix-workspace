@@ -129,7 +129,7 @@ export class FederationPairing {
       throw new FederationPeerEndedError("The receiving application ended this connection.");
     if (!response.ok)
       throw new ConflictError(
-        `Bot refused the application operation (HTTP ${String(response.status)}). Check its connection status and retry.`,
+        `Agentspace refused the application operation (HTTP ${String(response.status)}). Check its connection status and retry.`,
       );
     return response.json() as Promise<unknown>;
   }
@@ -179,7 +179,7 @@ export class FederationPairing {
           ["localhost", "127.0.0.1", "[::1]"].includes(origin.hostname)
         ))
     )
-      throw new BadRequestError("Enter Bot's canonical HTTPS origin, without a path.");
+      throw new BadRequestError("Enter Agentspace's canonical HTTPS origin, without a path.");
     const existing = await withTenantIoSagaPostgresContext(
       this.sql,
       { orgId: actor.orgId, actorId: actor.id },
@@ -229,7 +229,7 @@ export class FederationPairing {
     if (proof.expiresAt <= Date.now())
       throw new ConflictError("The installation proof has expired.");
     if (proof.connectionId !== input.connectionId)
-      throw new ConflictError("Bot returned a different installation proof.");
+      throw new ConflictError("Agentspace returned a different installation proof.");
     return withTenantIoSagaPostgresContext(
       this.sql,
       { orgId: actor.orgId, actorId: actor.id },
@@ -276,7 +276,7 @@ export class FederationPairing {
         const [enrollment] = await tx<
           { id: string }[]
         >`insert into actors(org_id,type,display_name,parent_user_id,scopes,metadata)
-        values(${actor.orgId},'agent','Bot installation enrollment',${actor.id},${tx.array(scopes)},${tx.json({ federationApplicationId: input.id, enrollmentOnly: true })}) returning id`;
+        values(${actor.orgId},'agent','Agentspace installation enrollment',${actor.id},${tx.array(scopes)},${tx.json({ federationApplicationId: input.id, enrollmentOnly: true })}) returning id`;
         if (!enrollment) throw new Error("Enrollment identity was not created");
         const key = createApiKeyMaterial(),
           credentialExpiry = new Date(Date.now() + 90 * 24 * 3600_000);
@@ -285,7 +285,7 @@ export class FederationPairing {
           operatorActorId: actor.id,
           principalActorId: enrollment.id,
           credentialType: "api_key",
-          label: "Bot installation enrollment",
+          label: "Agentspace installation enrollment",
           purpose: "Request individually approved Bot accounts. No Mail, Chat or Drive grants.",
           scopes,
           expiresAt: credentialExpiry,

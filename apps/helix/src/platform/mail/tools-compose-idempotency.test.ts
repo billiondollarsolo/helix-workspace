@@ -46,4 +46,25 @@ describe("mail.send idempotency for agent and API callers", () => {
     await send?.handler({ ...input, idempotencyKey: "input-key-0001" }, ctx("cli-key-0001"));
     expect(created.at(-1)?.idempotencyKey).toBe("input-key-0001");
   });
+
+  it("refuses more recipients than one message may have", async () => {
+    const capped = createMailComposeToolDefinitions({
+      store,
+      defaultFromDomain: "example.com",
+      maxRecipients: 2,
+    }).find((tool) => tool.id === "mail.send");
+    const before = created.length;
+    await expect(
+      capped?.handler(
+        {
+          ...input,
+          cc: [{ address: "bo@example.com" }],
+          bcc: [{ address: "cy@example.com" }],
+          idempotencyKey: "cap-key-0001",
+        },
+        ctx(),
+      ),
+    ).rejects.toThrow(/at most 2 recipients/u);
+    expect(created).toHaveLength(before);
+  });
 });

@@ -1,7 +1,15 @@
 # Optional recovery executor. Supply an operator tool image pinned by digest and
 # private config/key files. Native operator workers can use the same API instead.
+# Bounded container logs: without a cap one noisy service can fill the disk.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
 services:
   backup-worker:
+    logging: *default-logging
     image: ${HELIX_BACKUP_WORKER_IMAGE:?Set an immutable recovery tool image}
     user: "${HELIX_BACKUP_WORKER_UID:-10001}:${HELIX_BACKUP_WORKER_GID:-10001}"
     command:

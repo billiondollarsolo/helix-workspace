@@ -45,7 +45,7 @@ function render(queries: QueryClient) {
 }
 
 describe("Federated apps", () => {
-  it("identifies Workspace assignments and preserves local Bot control ownership", async () => {
+  it("identifies Workspace assignments and preserves local Agentspace control ownership", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       Response.json({
         applications: [
@@ -70,8 +70,8 @@ describe("Federated apps", () => {
     act(() => buttonNamed("View app details")?.click());
     await settle();
     expect(mounted.container.textContent).toContain("Managed by Workspace");
-    expect(mounted.container.textContent).toContain("Assigned people, Bot roles");
-    expect(mounted.container.textContent).toContain("Managed in Helix Bot");
+    expect(mounted.container.textContent).toContain("Assigned people, Agentspace roles");
+    expect(mounted.container.textContent).toContain("Managed in Helix Agentspace");
     expect(mounted.container.textContent).toContain("recovery ownership");
     expect(await axeViolations(mounted.container)).toEqual([]);
     queries.clear();
@@ -84,7 +84,11 @@ describe("Federated apps", () => {
       return Promise.resolve(
         init?.method === "POST"
           ? Response.json(
-              { error: { message: "The installation proof expired. Prepare it again in Bot." } },
+              {
+                error: {
+                  message: "The installation proof expired. Prepare it again in Agentspace.",
+                },
+              },
               { status: 409 },
             )
           : Response.json({ applications: [] }),
@@ -106,7 +110,7 @@ describe("Federated apps", () => {
     await settle();
     expect(calls).not.toContain("POST");
     expect(document.activeElement?.getAttribute("role")).toBe("alert");
-    typeInto(control("Bot address"), "https://bot.example");
+    typeInto(control("Agentspace address"), "https://bot.example");
     typeInto(control("Connection ID"), "11111111-1111-4111-8111-111111111111");
     typeInto(control("Installation proof"), "a".repeat(64));
     await act(() => form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));

@@ -125,7 +125,7 @@ beforeAll(() => {
     );
   resolvedCompose = resolveCompose();
   resolvedAllProfilesCompose = resolveCompose(["--profile", "*"]);
-  resolvedBotCompose = resolveCompose(["-f", "docker-compose.bot.yml"]);
+  resolvedBotCompose = resolveCompose(["-f", "docker-compose.agentspace.yml"]);
 });
 afterAll(() => {
   if (secretsDirectory !== undefined) {
@@ -133,7 +133,7 @@ afterAll(() => {
   }
 });
 describe("production Compose overlay", () => {
-  it("joins Bot through only the API and signed-storage edge, keeping data services private", () => {
+  it("joins Agentspace through only the API and signed-storage edge, keeping data services private", () => {
     expect(resolvedCompose.networks["app-federation"]).toBeUndefined();
     expect(resolvedBotCompose.networks["app-federation"]).toMatchObject({
       name: "organization-federation",

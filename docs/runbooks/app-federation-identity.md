@@ -1,9 +1,9 @@
 # Workspace-managed applications
 
 Updated 2026-10-17. Optional identity connection for one Workspace organization;
-Bot remains independently installable. The identity feature defaults off.
-See the [cross-app identity protocol](../../../helix-bot/docs/reference/app-federation-identity-protocol.md)
-and [management/backup design](../../../helix-bot/docs/plans/2026-10-17-app-federation-management.md).
+Agentspace remains independently installable. The identity feature defaults off.
+See the [cross-app identity protocol](../../../helix-agentspace/docs/reference/app-federation-identity-protocol.md)
+and [management/backup design](../../../helix-agentspace/docs/plans/2026-10-17-app-federation-management.md).
 Optional backup management is implemented; see the [backup runbook](app-federation-backups.md).
 The [hosted activation record](2026-10-17-hosted-federation-operations.md) describes the
 current paired installation and its independently enrolled recovery workers.
@@ -18,16 +18,16 @@ current paired installation and its independently enrolled recovery workers.
 3. For explicitly trusted private HTTPS app addresses, also opt into
    `HELIX_FEDERATION_ALLOW_PRIVATE_NETWORK=true` / `federationIdentity.allowPrivateNetwork`.
    This permits protected outbound private routing, not HTTP or unverified TLS.
-   Bot has a corresponding `federation_identity.allow_private_networks` setting.
-4. As Bot's separate local recovery owner, open Team settings → Single sign-on →
+   Agentspace has a corresponding `federation_identity.allow_private_networks` setting.
+4. As Agentspace's separate local recovery owner, open Team settings → Single sign-on →
    Workspace federation, choose **+ Connect Workspace** and copy the address,
    connection ID and short-lived installation proof.
 5. As the Workspace organization administrator, open Admin → Federated apps →
    **+ Add application**. Enter those values and review the connection. Copy the
-   returned code directly into Bot's **Workspace pairing code** form and connect.
+   returned code directly into Agentspace's **Workspace pairing code** form and connect.
    Do not put proof/code/credentials in URLs, tickets, logs or assistant prompts.
 6. Assign people and explicit viewer/member/admin roles in Workspace. Verify
-   directory sync, then use **Continue with Helix Workspace** in Bot. Source
+   directory sync, then use **Continue with Helix Workspace** in Agentspace. Source
    identity is immutable issuer/subject; matching email never adopts a local owner.
 7. Connect model providers and create/approve each bot's Workspace account and
    resource grants separately. Human sign-in does not grant mail, chat or files.
@@ -35,10 +35,10 @@ current paired installation and its independently enrolled recovery workers.
 Version one reconciles the installation's default organization. Other tenants
 remain isolated; enabling this feature does not enroll them. Existing upstream
 OIDC/SAML sign-in can authenticate a linked Workspace user, subject to the same
-membership/assignment/assurance checks before Workspace issues a Bot identity.
+membership/assignment/assurance checks before Workspace issues an Agentspace identity.
 
 The provider issuer is the public origin plus `/v1/api/auth`; discovery is under
-`/.well-known/openid-configuration` relative to that issuer. Bot's exact callback
+`/.well-known/openid-configuration` relative to that issuer. Agentspace's exact callback
 is its public origin plus `/v1/auth/sso/callback`. Keep agent OAuth separate.
 Private transport must preserve public hostname/certificate validation.
 
@@ -77,11 +77,11 @@ normal account recovery, not bootstrap reuse.
 
 ## Directory status and outages
 
-Workspace reconciles every 15 seconds. Bot accepts bounded directory authority
+Workspace reconciles every 15 seconds. Agentspace accepts bounded directory authority
 for at most 45 seconds from its fresh challenge. It requires a new checkpoint
 after restart. Once that bound expires, managed users and affected owner-derived
 background work fail closed; local recovery and unconnected teams remain usable.
-Inspect the application's last-sync/error status in Workspace Admin and Bot's
+Inspect the application's last-sync/error status in Workspace Admin and Agentspace's
 federation panel. Check HTTPS reachability, host clocks, registered origins and
 protected credentials before retrying. Never bypass this by adding local passwords
 to managed users or increasing source revisions by hand.
@@ -89,7 +89,7 @@ to managed users or increasing source revisions by hand.
 Removing assignment or organization membership removes app access and derived
 grants. Reactivation needs a new explicit assignment and sign-in; old paused bots,
 sessions, revoked credentials and grants do not resume automatically. Local
-managed-member changes are rejected by Bot and link back to Workspace.
+managed-member changes are rejected by Agentspace and link back to Workspace.
 
 ## Credentials, disconnect and recovery
 
@@ -109,13 +109,13 @@ provider signing keys, pairing receipts, assignments and outbox state live in
 Workspace's database; encryption keys remain separately protected. Follow the
 [existing recovery runbook](backup-restore-recovery.md), including off-host copies.
 Do not restore a database and assume its old authority is current. A source
-checkpoint behind Bot's accepted revision fails closed and requires reviewed
+checkpoint behind Agentspace's accepted revision fails closed and requires reviewed
 re-pairing. Restoring both peers together still needs post-backup revocations
 reconciled from retained evidence before managed access opens.
 
 ## Evidence and limits
 
-The reproducible joined fixture in Bot's `tests/federation/run-joined.mjs` uses actual
+The reproducible joined fixture in Agentspace's `tests/federation/run-joined.mjs` uses actual
 source HTTP applications, maintained OAuth/JWKS and two disposable PostgreSQL
 instances over verified TLS. It covers lost pairing/rotation responses, two
 humans/two bots, roles/groups, tenant isolation, restart, a measured outage,

@@ -124,10 +124,14 @@ export async function registerWebhookRoutes(
         await options.store.markInboundReceived(webhook.id, receivedAt);
         return reply.code(202).send({ ok: true, deliveryId: delivery.id });
       }
+      // The caller is unauthenticated: the detailed reason stays in the delivery
+      // log for administrators.
       return reply.code(verified.accepted ? 422 : 401).send({
         ok: false,
         deliveryId: delivery.id,
-        error: failureError,
+        error: verified.accepted
+          ? "The webhook was received but its action failed."
+          : "The webhook could not be verified.",
       });
     },
   );

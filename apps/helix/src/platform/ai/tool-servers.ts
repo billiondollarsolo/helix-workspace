@@ -217,7 +217,11 @@ async function invokeOpenApiTool(
       typeof value === "string" || typeof value === "number" ? String(value) : "",
     );
   });
-  const url = new URL(path, server.baseUrl.endsWith("/") ? server.baseUrl : `${server.baseUrl}/`);
+  const base = new URL(server.baseUrl.endsWith("/") ? server.baseUrl : `${server.baseUrl}/`);
+  const url = new URL(path, base);
+  // A path in the remote spec must not move the request, and its key, to another host.
+  if (url.origin !== base.origin)
+    throw new BadRequestError("External tool path points outside its server.");
   const method = (tool.method ?? "post").toUpperCase();
   const send = createOutboundHttpClient({
     production: true,

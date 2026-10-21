@@ -1,11 +1,20 @@
 # Append after the production overlays; keep the data plane on its existing networks.
+# Bounded container logs: without a cap one noisy service can fill the disk.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
 services:
   helix:
+    logging: *default-logging
     networks:
       app-federation:
         aliases:
           - helix-workspace
   caddy:
+    logging: *default-logging
     networks:
       app-federation:
         aliases:

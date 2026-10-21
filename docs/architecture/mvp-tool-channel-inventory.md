@@ -15,7 +15,7 @@
 **2026-10-16 update:** The tables below describe the fallback firewall outcome
 without a standing authorization. Routine collaboration now has bounded
 scope-based standing authorizations in the actual registry. See the
-[current collaboration contract](../plans/2026-10-15-helix-bot-workspace-handoff.md#routine-collaboration-2026-10-16).
+[current collaboration contract](../plans/2026-10-15-helix-agentspace-workspace-handoff.md#routine-collaboration-2026-10-16).
 Resource ACLs, explicit always-confirm settings, DLP and emergency controls
 still apply; external mail and public links keep their approval boundaries.
 

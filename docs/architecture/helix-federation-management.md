@@ -5,7 +5,7 @@ the delivery stages distinguish it from currently shipped behavior.
 
 Helix Workspace governs a federation of Helix applications. Workspace is required
 to federate apps; each app may also operate independently. Workspace owns shared
-organization controls, while each app owns its tools, data and execution. Bot is
+organization controls, while each app owns its tools, data and execution. Agentspace is
 the first federated app. Additional apps follow the same management conventions.
 
 ## Authority and permissions
@@ -19,12 +19,12 @@ local authority during an outage.
 | -------------------------------------------------------------------- | ----------------------------------------------------------- |
 | Organization identity, managed people and groups, app assignments    | Workspace                                                   |
 | Shared policies, federation approvals and correlated activity        | Workspace, with capability-specific enforcement in each app |
-| Agents, models, projects, tool connections and execution permissions | Bot                                                         |
+| Agents, models, projects, tool connections and execution permissions | Agentspace                                                  |
 | Other app features and their resource permissions                    | The app that owns those resources                           |
 | Personal appearance, accessibility and app preferences               | Personal settings in the relevant app                       |
 | Independent recovery owner, service credentials and recovery tools   | The app and its operator                                    |
 
-App assignment grants entry to the assigned app. Federating Bot does not give
+App assignment grants entry to the assigned app. Federating Agentspace does not give
 every bot access to Workspace Mail, Chat or Drive. Individual bot accounts, resource
 grants, private Work ownership, malware scanning and external-mail approvals remain
 separate. Workspace policy cannot bypass an app's resource authorization.
@@ -32,9 +32,9 @@ separate. Workspace policy cannot bypass an app's resource authorization.
 Bindings remain scoped to an app tenancy and one governing Workspace organization.
 The first management experience shows that governing Workspace clearly. Existing
 tenant isolation, immutable subject identifiers and separate recovery ownership
-remain enforced. Matching email addresses never merge accounts. Preserve Bot's
+remain enforced. Matching email addresses never merge accounts. Preserve Agentspace's
 existing viewer/member/admin mappings; Workspace administration does not implicitly
-grant Bot ownership or access to private work.
+grant Agentspace ownership or access to private work.
 
 ## Shared management experience
 
@@ -85,24 +85,24 @@ reserving cards and status treatments for information that needs grouping or att
 ## Setting ownership inventory
 
 The current integration inherits the fields below. It does not yet propagate a
-general Workspace policy object into Bot. Shared policy enforcement must be
+general Workspace policy object into Agentspace. Shared policy enforcement must be
 advertised and qualified per capability before an app describes a field as inherited.
 
-| Fields / controls                                                                       | Standalone Bot                          | Federated Bot                                                                      | Authoritative editor                                                                          |
-| --------------------------------------------------------------------------------------- | --------------------------------------- | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| Managed person's name, email, active assignment and groups                              | Bot or its configured identity provider | Workspace directory; read-only in Bot                                              | Workspace Users / Groups; app access in Federated apps                                        |
-| Assigned person's Bot role                                                              | Bot or its configured identity provider | Workspace assignment: Viewer, Member or Admin; never ownership                     | Workspace Federated apps → assigned people                                                    |
-| App sign-in provider, installation OIDC credentials and directory provisioning          | Bot Single sign-on / operator           | Workspace connection and credential lifecycle; effective values shown in Bot       | Workspace Federated apps; local recovery owner approves pairing/disconnect in Bot             |
-| Local accounts and ownership                                                            | Bot                                     | Bot, independent of managed identities                                             | Bot Members / account security; existing owner restrictions apply                             |
-| Bot MFA enrolment and required-MFA flag                                                 | Bot password accounts                   | Bot password accounts; Workspace owns verification for Workspace SSO               | Bot Security / Personal settings for local MFA; Workspace identity controls for Workspace SSO |
-| Models, provider credentials, bot instructions and model selections                     | Bot                                     | Bot                                                                                | Bot Models / Bunnies                                                                          |
-| Tool connections, secrets, per-bot grants, project/Work access, spending and publishing | Bot                                     | Bot; federation assignment grants no resource access                               | Corresponding Bot controls                                                                    |
-| Appearance, accessibility, notifications and app preferences                            | Personal settings                       | Personal settings                                                                  | Personal settings in the owning app                                                           |
-| Optional federated backup policy and recovery operations                                | Independent operator                    | Workspace policy plus separately enrolled worker capabilities and operator consent | Workspace Federated backups / independent recovery operator                                   |
+| Fields / controls                                                                       | Standalone Agentspace                          | Federated Agentspace                                                                | Authoritative editor                                                                                 |
+| --------------------------------------------------------------------------------------- | ---------------------------------------------- | ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Managed person's name, email, active assignment and groups                              | Agentspace or its configured identity provider | Workspace directory; read-only in Agentspace                                        | Workspace Users / Groups; app access in Federated apps                                               |
+| Assigned person's Agentspace role                                                       | Agentspace or its configured identity provider | Workspace assignment: Viewer, Member or Admin; never ownership                      | Workspace Federated apps → assigned people                                                           |
+| App sign-in provider, installation OIDC credentials and directory provisioning          | Agentspace Single sign-on / operator           | Workspace connection and credential lifecycle; effective values shown in Agentspace | Workspace Federated apps; local recovery owner approves pairing/disconnect in Agentspace             |
+| Local accounts and ownership                                                            | Agentspace                                     | Agentspace, independent of managed identities                                       | Agentspace Members / account security; existing owner restrictions apply                             |
+| Agentspace MFA enrolment and required-MFA flag                                          | Agentspace password accounts                   | Agentspace password accounts; Workspace owns verification for Workspace SSO         | Agentspace Security / Personal settings for local MFA; Workspace identity controls for Workspace SSO |
+| Models, provider credentials, bot instructions and model selections                     | Agentspace                                     | Agentspace                                                                          | Agentspace Models / Bunnies                                                                          |
+| Tool connections, secrets, per-bot grants, project/Work access, spending and publishing | Agentspace                                     | Agentspace; federation assignment grants no resource access                         | Corresponding Agentspace controls                                                                    |
+| Appearance, accessibility, notifications and app preferences                            | Personal settings                              | Personal settings                                                                   | Personal settings in the owning app                                                                  |
+| Optional federated backup policy and recovery operations                                | Independent operator                           | Workspace policy plus separately enrolled worker capabilities and operator consent  | Workspace Federated backups / independent recovery operator                                          |
 
-Bot administrator roles do not grant Workspace administration. Management links
+Agentspace administrator roles do not grant Workspace administration. Management links
 open the governing Workspace's existing editors, which enforce that person's own
-Workspace session and scopes. Member-only Bot views identify the source without
+Workspace session and scopes. Member-only Agentspace views identify the source without
 presenting an administrator editor link. No cross-app permission is inferred from
 a matching email or a local owner role. Unavailable connection information never
 enables a local replacement editor for a managed field.
@@ -143,21 +143,21 @@ layers. Existing development data is converted once during a coordinated cutover
 Keep historical recovery evidence intact and label the source revision needed to
 restore it. New backups and fresh installations use federation names exclusively.
 
-## Delivery stages for Workspace and Bot
+## Delivery stages for Workspace and Agentspace
 
 Stage 1 was implemented and deployed on 2026-10-19, including the coordinated
 technical rename without aliases. See the [cutover receipt](../runbooks/2026-10-17-hosted-federation-operations.md#greenfield-terminology-cutover--2026-10-19)
 for validation and recovery limits. Stage 2 is implemented: both apps use
 Administration and Personal settings, app/organization context and the common
 navigation groups. Workspace distinguishes built-in Workspace apps from Federated
-apps. Bot has a dedicated Federation destination and a mobile section drawer;
+apps. Agentspace has a dedicated Federation destination and a mobile section drawer;
 its existing controls, routes and independent recovery-owner boundary are retained.
-Stage 3 is implemented and deployed: Bot identifies setting sources, shows effective
+Stage 3 is implemented and deployed: Agentspace identifies setting sources, shows effective
 managed sign-in values and links to the existing Workspace editors. Workspace's
-app card identifies its assignment authority and the controls Bot retains. SSO-only
-accounts use their provider's password, recovery and verification controls; Bot's
+app card identifies its assignment authority and the controls Agentspace retains. SSO-only
+accounts use their provider's password, recovery and verification controls; Agentspace's
 local recovery owner remains independent. See the [ownership qualification](../runbooks/2026-10-17-hosted-federation-operations.md#setting-ownership-qualification--2026-10-19).
-Stage 4 is implemented for the current Bot integration: Workspace exposes the
+Stage 4 is implemented for the current Agentspace integration: Workspace exposes the
 connection binding, directory observations, complete assigned-person labels and
 the separately enrolled backup capability's health, acknowledged policy and pending
 delivery. Details load on request through the existing scoped APIs. See the
@@ -172,19 +172,19 @@ qualification. General Workspace policy propagation is not implemented.
    recovery copy and active guide terminology. Rename the integration in code, routes,
    schema, configuration and worker protocols through one coordinated cutover.
 2. **Management structure:** align the administration entry points, organization
-   context, navigation patterns and common form/table behavior. Give Bot a clear
+   context, navigation patterns and common form/table behavior. Give Agentspace a clear
    Federation destination instead of embedding its connection within Single sign-on.
 3. **Setting ownership:** inventory inherited and local fields; make their sources
    visible and link to their authoritative editor. Preserve scoped-admin access and
    the separate local recovery owner.
 4. **Workspace app management:** expose authorized app details, assignments, effective
    policies, synchronization and capability-specific health through existing APIs.
-   Replace Bot-specific assumptions only as additional app support is implemented.
+   Replace Agentspace-specific assumptions only as additional app support is implemented.
 
 Relevant existing surfaces are Workspace's admin navigation, application-pairing
-and backup sections, and Bot's settings shell, member management and Workspace
-connection view. Continue the [Bot integration ledger](../../../helix-bot/docs/plans/helix-bot-workspace-integration.md)
-for dated qualification; the earlier [management plan](../../../helix-bot/docs/plans/2026-10-17-app-federation-management.md)
+and backup sections, and Agentspace's settings shell, member management and Workspace
+connection view. Continue the [Agentspace integration ledger](../../../helix-agentspace/docs/plans/helix-agentspace-workspace-integration.md)
+for dated qualification; the earlier [management plan](../../../helix-agentspace/docs/plans/2026-10-17-app-federation-management.md)
 retains recovery implementation history.
 
 Each stage qualifies standalone and federated behavior, existing deep links,

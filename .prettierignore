@@ -22,6 +22,10 @@
 # Generated source. This file explicitly instructs formatters not to edit it.
 /apps/web/src/routeTree.gen.ts
 
+# Brand previews written by docs/brand/build.mjs, and a saved design exploration.
+/docs/brand/index.html
+/docs/brand/explorations/
+
 # Raw Go-template YAML is validated after rendering by the Helm-specific gate.
 /infra/helm/helix/templates/**
 /infra/meet/ha/addons/templates/**

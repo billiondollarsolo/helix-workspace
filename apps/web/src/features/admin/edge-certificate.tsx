@@ -4,6 +4,7 @@
    certificates. Nothing renews an uploaded certificate, so its expiry is the
    most prominent thing here. */
 
+import { useDebouncedCallback } from "@tanstack/react-pacer/debouncer";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState, type ChangeEvent, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
@@ -58,14 +59,16 @@ function expiryText(days: number): string {
 export function EdgeCertificatePanel() {
   const headingId = useId();
   const queryClient = useQueryClient();
-  const [settleUntil, setSettleUntil] = useState(0);
+  // True for a short window after a change while the edge switches certificates.
+  const [settling, setSettling] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
-  const now = Date.now();
-  const query = useQuery(edgeCertificateQueryOptions(now < settleUntil));
+  const query = useQuery(edgeCertificateQueryOptions(settling));
+  const endSettling = useDebouncedCallback(() => setSettling(false), { wait: SETTLE_MS });
   const accept = (status: EdgeCertificateStatus) => {
     queryClient.setQueryData(edgeCertificateQueryKey, status);
-    setSettleUntil(Date.now() + SETTLE_MS);
+    setSettling(true);
+    endSettling();
   };
   const removeMutation = useMutation({
     mutationFn: () => removeEdgeCertificate(),
@@ -98,7 +101,7 @@ export function EdgeCertificatePanel() {
   }
 
   const shown = status.served ?? status.uploaded;
-  const days = shown === null ? null : daysLeft(shown, now);
+  const days = shown === null ? null : daysLeft(shown, Date.now());
   /* An automatic certificate renews itself about a month before it expires,
      so only one that nothing renews is worth a warning that early. */
   const renewsItself = status.source === "automatic" || status.source === "internal";
@@ -149,7 +152,7 @@ export function EdgeCertificatePanel() {
       ) : null}
       {status.uploaded !== null && status.applied === false ? (
         <Notice>
-          {now < settleUntil
+          {settling
             ? "Your certificate is saved. The server is switching to it now."
             : "Your certificate is saved, but the server is still showing a different one. Helix retries every minute."}
         </Notice>

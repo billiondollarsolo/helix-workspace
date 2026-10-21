@@ -28,7 +28,7 @@ vi.mock("@/features/apps/use-enabled-apps", () => ({
 
 vi.mock("@/features/apps/use-federation-apps", () => ({
   useFederationApps: () => ({
-    data: [{ id: "bot", label: "Helix Bot", url: "https://bot.example" }],
+    data: [{ id: "bot", label: "Helix Agentspace", url: "https://bot.example" }],
     error: null,
   }),
 }));

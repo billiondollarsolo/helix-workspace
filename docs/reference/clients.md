@@ -5,7 +5,7 @@ Each runner needs its own administrator-created identity and scoped, expiring
 credential. A URL or installation command does not grant resource access.
 
 For the complete external runner contract, follow the
-[Helix Bot integration guide](../../apps/web/public/agent-integration.md), published
+[Helix Agentspace integration guide](../../apps/web/public/agent-integration.md), published
 at `/agent-integration.md` on each workspace.
 
 ## Run the CLI from a source checkout

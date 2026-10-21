@@ -9,12 +9,21 @@
 #   tls_key   the private key (unencrypted)
 # The chain must cover HELIX_DOMAIN. Caddy runs as UID 10001 and must be able to
 # read both files. After replacing them, run: docker compose ... restart caddy
+# Bounded container logs: without a cap one noisy service can fill the disk.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
 services:
   # Admin → Domains shows this certificate but cannot replace it.
   helix:
+    logging: *default-logging
     environment:
       HELIX_EDGE_TLS_SOURCE: files
   caddy:
+    logging: *default-logging
     environment:
       HELIX_CADDY_TLS: /run/secrets/tls_cert /run/secrets/tls_key
     secrets:

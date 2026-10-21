@@ -6,6 +6,7 @@ import { DialogProvider, WebPlatformProvider, createWebPlatformHost } from "@hel
 import { useColorMode } from "@/components/color-mode";
 import { AppToaster } from "@/components/ui/toast";
 import { QUERY_RETRY_DEFAULTS } from "@/lib/query-retry";
+import { RouteErrorState, RouteNotFoundState } from "./routes/__root";
 import { routeTree } from "./routeTree.gen";
 import "./styles.css";
 // Side-effect import: hydrates the appearance store (theme/density/accent)
@@ -34,6 +35,9 @@ const router = createRouter({
   },
   defaultPreload: "intent",
   defaultPendingMinMs: 200,
+  // Contain a failed view inside the shell so the rail and navigation stay usable.
+  defaultErrorComponent: RouteErrorState,
+  defaultNotFoundComponent: RouteNotFoundState,
 });
 
 declare module "@tanstack/react-router" {

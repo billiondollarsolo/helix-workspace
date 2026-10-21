@@ -19,11 +19,15 @@ import {
   withTenantPostgresContext,
 } from "../platform/tenancy/postgres-roles.js";
 
-/** The edge's `tls` setting: empty or `automatic`, `internal`, or file paths. */
-function deploymentSource(value: string | undefined): EdgeTlsDeploymentSource {
+/**
+ * The edge's `tls` setting: empty, `automatic` or an ACME contact email
+ * (automatic HTTPS), `internal`, or "<cert> <key>" file paths.
+ */
+export function deploymentSource(value: string | undefined): EdgeTlsDeploymentSource {
   const source = value?.trim() ?? "";
   if (source === "" || source === "automatic") return "automatic";
-  return source === "internal" ? "internal" : "files";
+  if (source === "internal") return "internal";
+  return /^[^\s@]+@[^\s@]+$/u.test(source) ? "automatic" : "files";
 }
 
 /**

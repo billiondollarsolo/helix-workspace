@@ -1,7 +1,15 @@
 # Opt in: docker compose -f docker-compose.yml -f docker-compose.bootstrap.yml up -d
 # Pre-create the host directory as UID/GID 10001, mode 0700.
+# Bounded container logs: without a cap one noisy service can fill the disk.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
 services:
   helix:
+    logging: *default-logging
     environment:
       HELIX_BOOTSTRAP_ADMIN_ENABLED: ${HELIX_BOOTSTRAP_ADMIN_ENABLED:-false}
       HELIX_BOOTSTRAP_ADMIN_EMAIL: ${HELIX_BOOTSTRAP_ADMIN_EMAIL:-}

@@ -33,15 +33,7 @@ export async function parseResponse<T>(
       `Failed to ${action} (${String(response.status)}).`,
     );
   }
-  if (response.status === 202) {
-    const approval = z
-      .object({
-        code: z.literal("crown_jewel_approval_required"),
-        approval: z.object({ id: z.string() }),
-      })
-      .safeParse(payload);
-    if (approval.success) throw new Error(secondAdministratorRequired(approval.data.approval.id));
-  }
+  throwIfAwaitingApproval(response, payload);
   const parsed = schema.safeParse(payload);
   if (parsed.success) {
     return parsed.data;
@@ -57,11 +49,27 @@ export function secondAdministratorRequired(approvalId: string): string {
   return `A second administrator must approve this change (request ${approvalId}). The requested change has not been applied. To work without a second administrator, turn off “Require a second administrator for sensitive actions” under Admin → Policies.`;
 }
 
+/** A 202 that parks the change for a second administrator is not a success. */
+function throwIfAwaitingApproval(response: Response, payload: unknown): void {
+  if (response.status !== 202) return;
+  const approval = z
+    .object({
+      code: z.literal("crown_jewel_approval_required"),
+      approval: z.object({ id: z.string() }),
+    })
+    .safeParse(payload);
+  if (approval.success) throw new Error(secondAdministratorRequired(approval.data.approval.id));
+}
+
 export async function ensureOk(response: Response, action: string): Promise<void> {
-  if (response.ok) {
+  if (response.ok && response.status !== 202) {
     return;
   }
   const payload: unknown = await response.json().catch(() => ({}));
+  if (response.ok) {
+    throwIfAwaitingApproval(response, payload);
+    return;
+  }
   throw responseError(
     response,
     payload,

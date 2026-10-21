@@ -41,7 +41,7 @@ function faviconSvg(): string {
 }
 
 describe("the favicon", () => {
-  it("draws every segment of the shared Helix mark", () => {
+  it("draws every segment of the shared Workspace mark", () => {
     const svg = faviconSvg();
     // Each path individually, so a failure names the segment that drifted
     // rather than reporting that two long strings differ somewhere.
@@ -59,7 +59,7 @@ describe("the favicon", () => {
     expect(drawn).toEqual([...HELIX_MARK_PATHS]);
   });
 
-  it("strokes the glyph at Lucide's weight", () => {
+  it("strokes the glyph at the brand weight", () => {
     const svg = faviconSvg();
     expect(svg).toContain(`stroke-width='${String(HELIX_MARK_STROKE_WIDTH)}'`);
     expect(svg).toContain("fill='none'");

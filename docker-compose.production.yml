@@ -36,8 +36,16 @@ name: helix-production
 # RPO ≤ 24h / RTO ≤ 4h: node infra/scripts/rpo-rto-check.mjs …
 # ---------------------------------------------------------------------------
 
+# Bounded container logs: without a cap one noisy service can fill the disk.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
 services:
   helix-migrate:
+    logging: *default-logging
     image: ${HELIX_IMAGE:?immutable HELIX_IMAGE registry reference with digest is
       required}
     build: !reset "null"
@@ -103,6 +111,7 @@ services:
           memory: 128m
 
   helix:
+    logging: *default-logging
     image: ${HELIX_IMAGE:?immutable HELIX_IMAGE registry reference with digest is
       required}
     build: !reset "null"
@@ -346,6 +355,7 @@ services:
           memory: 512m
 
   postgres:
+    logging: *default-logging
     image: ${HELIX_POSTGRES_IMAGE:?immutable HELIX_POSTGRES_IMAGE registry reference
       with digest is required}
     build: !reset "null"
@@ -405,6 +415,7 @@ services:
           memory: 512m
 
   redis:
+    logging: *default-logging
     command:
       - redis-server
       - --appendonly
@@ -450,6 +461,7 @@ services:
           memory: 512m
 
   nats:
+    logging: *default-logging
     image: ${HELIX_NATS_IMAGE:?immutable HELIX_NATS_IMAGE registry reference with
       digest is required}
     build: !reset "null"
@@ -492,6 +504,7 @@ services:
           memory: 512m
 
   meilisearch:
+    logging: *default-logging
     image: ${HELIX_MEILISEARCH_IMAGE:?immutable HELIX_MEILISEARCH_IMAGE registry
       reference with digest is required}
     build: !reset "null"
@@ -526,6 +539,7 @@ services:
   # One-shot: the two volumes Helix and the edge share start out root-owned,
   # and both services run as the same unprivileged user.
   edge-volumes-init:
+    logging: *default-logging
     image: rustfs/rustfs:1.0.1@sha256:1803faef57627e2d9c2e7d89d655d712ddded5389040054987163043fecb6a3c
     user: "0:0"
     entrypoint:
@@ -550,6 +564,7 @@ services:
   # One-shot: the RustFS local KMS refuses a key directory it does not own with
   # mode 0700, and a new named volume is root-owned.
   rustfs-kms-init:
+    logging: *default-logging
     image: rustfs/rustfs:1.0.1@sha256:1803faef57627e2d9c2e7d89d655d712ddded5389040054987163043fecb6a3c
     user: "0:0"
     entrypoint:
@@ -571,6 +586,7 @@ services:
     restart: "no"
 
   rustfs:
+    logging: *default-logging
     environment:
       RUSTFS_ACCESS_KEY: !reset "null"
       RUSTFS_SECRET_KEY: !reset "null"
@@ -634,6 +650,7 @@ services:
   # One-shot: create the named KMS key Helix encrypts with. RustFS answers 200
   # the first time and 409 once the key exists.
   rustfs-kms-key:
+    logging: *default-logging
     image: rustfs/rustfs:1.0.1@sha256:1803faef57627e2d9c2e7d89d655d712ddded5389040054987163043fecb6a3c
     entrypoint:
       - /bin/sh
@@ -675,6 +692,7 @@ services:
   # One-shot: the application refuses to start unless its bucket enforces
   # versioning, the SSE-KMS key, and object-lock retention.
   helix-storage-init:
+    logging: *default-logging
     image: ${HELIX_IMAGE:?immutable HELIX_IMAGE registry reference with digest is
       required}
     pull_policy: always
@@ -714,6 +732,7 @@ services:
     restart: "no"
 
   cerbos:
+    logging: *default-logging
     image: ${HELIX_CERBOS_IMAGE:?immutable HELIX_CERBOS_IMAGE registry reference
       with digest is required}
     build: !reset "null"
@@ -735,6 +754,7 @@ services:
           memory: 256m
 
   mailpit:
+    logging: *default-logging
     profiles: !override
       - development-only
     ports: !override []
@@ -743,6 +763,7 @@ services:
 
   # Optional private search service; only it joins the outbound search network.
   searxng:
+    logging: *default-logging
     profiles: !override
       - web-search
     environment:
@@ -778,6 +799,7 @@ services:
   # people sign up with an address in the workspace's mail domain and confirm
   # it by email. The server administration page stays off (no ADMIN_TOKEN).
   vaultwarden:
+    logging: *default-logging
     profiles: !override
       - passwords
     environment:
@@ -812,6 +834,7 @@ services:
           pids: 256
 
   spamd:
+    logging: *default-logging
     image: ${HELIX_SPAMD_IMAGE:?immutable HELIX_SPAMD_IMAGE registry reference with
       digest is required}
     build: !reset "null"
@@ -833,6 +856,7 @@ services:
           memory: 1g
 
   clamav:
+    logging: *default-logging
     image: ${HELIX_CLAMAV_IMAGE:?immutable HELIX_CLAMAV_IMAGE registry reference with
       digest is required}
     build: !reset "null"
@@ -855,6 +879,7 @@ services:
           memory: 2g
 
   caddy:
+    logging: *default-logging
     image: ${HELIX_WEB_IMAGE:?immutable HELIX_WEB_IMAGE registry reference with
       digest is required}
     build: !reset "null"
@@ -937,46 +962,58 @@ services:
   # Optional profiles remain private even when an operator explicitly enables
   # them. Use a VPN, SSH tunnel, or separately authenticated admin ingress.
   jitsi-turn:
+    logging: *default-logging
     ports: !override []
   jitsi-web:
+    logging: *default-logging
     ports: !override []
     networks: !override
       - data-plane
   jitsi-prosody:
+    logging: *default-logging
     ports: !override []
     networks: !override
       - data-plane
   jitsi-jicofo:
+    logging: *default-logging
     networks: !override
       - data-plane
   jitsi-jvb:
+    logging: *default-logging
     ports: !override []
     networks: !override
       - data-plane
   jitsi-jibri:
+    logging: *default-logging
     networks: !override
       - data-plane
   otel-collector:
+    logging: *default-logging
     ports: !override []
     networks: !override
       - data-plane
   prometheus:
+    logging: *default-logging
     ports: !override []
     networks: !override
       - data-plane
   alertmanager:
+    logging: *default-logging
     ports: !override []
     networks: !override
       - data-plane
   tempo:
+    logging: *default-logging
     ports: !override []
     networks: !override
       - data-plane
   loki:
+    logging: *default-logging
     ports: !override []
     networks: !override
       - data-plane
   grafana:
+    logging: *default-logging
     ports: !override []
     networks: !override
       - data-plane

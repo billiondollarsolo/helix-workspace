@@ -72,7 +72,7 @@ export async function prepareFederationRotation(
           operatorActorId: actor.id,
           principalActorId: material.enrollmentActorId,
           credentialType: "api_key",
-          label: "Bot installation enrollment",
+          label: "Agentspace installation enrollment",
           purpose: "Request individually approved Bot accounts. No Mail, Chat or Drive grants.",
           scopes: ["platform.read", "agent.accounts.request"],
           expiresAt,

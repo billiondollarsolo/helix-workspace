@@ -1,7 +1,7 @@
 # Optional federated backup management
 
 Workspace's **Admin → Federated backups** manages independently enrolled recovery
-workers for its own installation and paired Bot installations. Identity pairing
+workers for its own installation and paired Agentspace installations. Identity pairing
 does not enroll recovery or grant access to backups. Only the default installation
 organization's administrators can manage physical installation backups.
 
@@ -83,7 +83,7 @@ silently change an existing worker's binding; review and re-enroll separately.
 Expose **only** `/v1/federation-operations/*` at the app's existing HTTPS origin,
 forwarding to the worker on port 3081. No new domain is required. Workspace's
 Caddy configurations already route this prefix; set
-`HELIX_BACKUP_WORKER_UPSTREAM` if the executor is elsewhere. For Bot add the same
+`HELIX_BACKUP_WORKER_UPSTREAM` if the executor is elsewhere. For Agentspace add the same
 prefix route to its existing edge, before its normal application route:
 
 ```caddyfile
@@ -114,7 +114,7 @@ under local ownership. Replacement keys are necessary to reconnect.
 
 ## Existing backup tools and destination custody
 
-`federation-backup-tool.js` is an optional fixed-command adapter to Bot's cold backup
+`federation-backup-tool.js` is an optional fixed-command adapter to Agentspace's cold backup
 CLI and Workspace's signed database/object backup and isolated restore scripts.
 Its private `tool.json` declares `application`, absolute `repository`,
 `workspaceRecoveryTools` (Workspace's `infra/scripts`), `appVersion`, and a
@@ -126,13 +126,13 @@ For a mounted off-host destination, `offHost: true` is an operator assertion;
 confirm the mount and external retention policy separately. Local fixtures must
 use false. Keep age identities outside the archive and recoverable without Workspace.
 
-Bot additionally requires `sourceDirectory`, `restoreDirectory` and an operator
+Agentspace additionally requires `sourceDirectory`, `restoreDirectory` and an operator
 `restoreDatabaseUrlFile`. PostgreSQL TLS defaults to `verify-full`; an optional
 `postgresCaFile` supplies a private CA. `postgresTls: "off"` is for isolated local
 test databases only. The adapter creates a **new** `helix_restore_*` database and
 uses the cold restore's checks; it never drops or replaces a live database.
 
-**Bot cold backups require a stopped app and its relevant writers.** Use a reviewed
+**Agentspace cold backups require a stopped app and its relevant writers.** Use a reviewed
 local maintenance wrapper, or an existing qualified online/snapshot operator that
 emits the protocol receipt. The worker does not stop production automatically.
 Fixed `backupArgs` and `restoreArgs` may configure existing executor/coding recovery
@@ -158,7 +158,7 @@ for Workspace). They never switch live traffic or the active object bucket.
 ## Docker and Kubernetes
 
 Optional overlays are `docker-compose.backup-worker.yml` in Workspace and
-`deploy/compose/compose.backup-worker.yaml` in Bot. Supply the documented image
+`deploy/compose/compose.backup-worker.yaml` in Agentspace. Supply the documented image
 and private config directory variables. They publish no host port, use a read-only
 root, drop capabilities, and persist the worker journal. Provision the state
 volume for UID/GID 10001 before starting; keep the actual journal in its `state`
@@ -180,13 +180,13 @@ SubPath Secrets require a pod restart to rotate. Storage and operator tooling ar
 explicit installation choices. `extraVolumes`/`extraVolumeMounts` attach approved
 snapshot or destination volumes. Do not attach a live ReadWriteOncePod app volume
 to a second pod: use a maintenance handoff or operator-produced snapshot/export. Workspace's chart adds the same HTTPS ingress path;
-Bot's existing external edge/Gateway must route the prefix to its worker Service.
+Agentspace's existing external edge/Gateway must route the prefix to its worker Service.
 
 There must be one schedule owner. Defaults preserve the existing schedules.
-Before choosing worker scheduling, disable Bot's original scheduler with
+Before choosing worker scheduling, disable Agentspace's original scheduler with
 `backup.scheduler: external` and stop any other cron/timer. Set
 `localSchedulerDisabled: true` only after that handoff. Helm's
-`backupWorker.ownsSchedule: true` enforces Bot's handoff and requires Workspace's
+`backupWorker.ownsSchedule: true` enforces Agentspace's handoff and requires Workspace's
 CNPG ScheduledBackup to be suspended. Keep ordinary CNPG/Barman scheduling when
 using `scheduler: "external"` and `initialPolicy.enabled: false`; the UI then shows
 status and manual operations without offering schedule edits. This release does

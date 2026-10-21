@@ -186,6 +186,13 @@ export function createMailComposeToolDefinitions(
       readonly references?: readonly string[];
     },
   ) => {
+    const { to, cc, bcc } = rest.envelope;
+    const maxRecipients = options.maxRecipients ?? 100;
+    if (to.length + cc.length + bcc.length > maxRecipients) {
+      throw new BadRequestError(
+        `A message can have at most ${String(maxRecipients)} recipients across To, Cc and Bcc.`,
+      );
+    }
     await options.sendLimit?.assertMaySend({ orgId: ctx.actor.orgId, actorId: ctx.actor.id });
     return new MailSendService({
       store: options.store,

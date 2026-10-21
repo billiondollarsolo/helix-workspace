@@ -1,10 +1,5 @@
 import { queryOptions } from "@tanstack/react-query";
 import {
-  optionalBooleanSearchParam,
-  optionalEnumSearchParam,
-  optionalStringSearchParam,
-} from "@/lib/search-params";
-import {
   getMailThread,
   getMailUserSettings,
   getMailVacation,
@@ -16,62 +11,7 @@ import {
   type MailThreadsListInput,
 } from "./api";
 
-export interface MailSearchQueryInput {
-  readonly query?: string;
-  readonly labels?: readonly string[];
-  readonly limit?: number;
-}
-
-const mailRouteMailboxes = ["inbox", "starred", "sent", "drafts", "archive"] as const;
-type MailRouteMailbox = (typeof mailRouteMailboxes)[number];
-
-const mailRouteLabels = ["planning", "finance", "support", "team"] as const;
-type MailRouteLabel = (typeof mailRouteLabels)[number];
-
-export interface MailRouteSearch {
-  readonly thread?: string;
-  readonly message?: string;
-  readonly q?: string;
-  readonly label?: MailRouteLabel;
-  readonly mailbox?: MailRouteMailbox;
-  readonly unread?: boolean;
-  readonly priority?: boolean;
-  readonly attachments?: boolean;
-}
-
-export interface MailSearchState {
-  readonly query: string;
-  readonly label: MailRouteLabel | "all";
-  readonly mailbox: MailRouteMailbox;
-  readonly unreadOnly: boolean;
-  readonly priorityOnly: boolean;
-  readonly attachmentsOnly: boolean;
-}
-
-const defaultMailSearchInput = {
-  query: "",
-  labels: [],
-  limit: 50,
-} as const satisfies MailSearchQueryInput;
-
-const defaultMailSearchState = {
-  query: "",
-  label: "all",
-  mailbox: "inbox",
-  unreadOnly: false,
-  priorityOnly: false,
-  attachmentsOnly: false,
-} as const satisfies MailSearchState;
-
 const mailQueryKeys = {
-  search: (input: MailSearchQueryInput = defaultMailSearchInput) =>
-    [
-      "mail",
-      "search",
-      input.query ?? "",
-      [...(input.labels ?? [])].sort().join(","),
-      input.limit ?? 50,
-    ] as const,
   thread: (threadId: string) => ["mail", "thread", threadId] as const,
   threads: (input: MailThreadsListInput) =>
     [
@@ -123,58 +63,6 @@ export function mailLabelsQueryOptions() {
     queryFn: () => listMailLabels(),
     throwOnError: false,
   });
-}
-
-export function validateMailRouteSearch(search: Record<string, unknown>): MailRouteSearch {
-  return {
-    thread: optionalStringSearchParam(search.thread),
-    message: optionalStringSearchParam(search.message),
-    q: optionalStringSearchParam(search.q),
-    label: optionalEnumSearchParam(search.label, mailRouteLabels),
-    mailbox: optionalEnumSearchParam(search.mailbox, mailRouteMailboxes),
-    unread: optionalBooleanSearchParam(search.unread),
-    priority: optionalBooleanSearchParam(search.priority),
-    attachments: optionalBooleanSearchParam(search.attachments),
-  };
-}
-
-export function mailSearchStateFromRouteSearch(search: MailRouteSearch): MailSearchState {
-  return {
-    query: search.q ?? defaultMailSearchState.query,
-    label: search.label ?? defaultMailSearchState.label,
-    mailbox: search.mailbox ?? defaultMailSearchState.mailbox,
-    unreadOnly: search.unread ?? defaultMailSearchState.unreadOnly,
-    priorityOnly: search.priority ?? defaultMailSearchState.priorityOnly,
-    attachmentsOnly: search.attachments ?? defaultMailSearchState.attachmentsOnly,
-  };
-}
-
-export function mailRouteSearchFromState(
-  state: MailSearchState,
-  current: Pick<MailRouteSearch, "thread" | "message"> = {},
-): MailRouteSearch {
-  return {
-    thread: current.thread,
-    message: current.message,
-    q: state.query.trim() || undefined,
-    label: state.label === "all" ? undefined : state.label,
-    mailbox: state.mailbox === defaultMailSearchState.mailbox ? undefined : state.mailbox,
-    unread: state.unreadOnly || undefined,
-    priority: state.priorityOnly || undefined,
-    attachments: state.attachmentsOnly || undefined,
-  };
-}
-
-function mailSearchInputFromState(state: MailSearchState): MailSearchQueryInput {
-  return {
-    query: state.query,
-    labels: state.label === "all" ? [] : [state.label],
-    limit: defaultMailSearchInput.limit,
-  };
-}
-
-export function mailSearchInputFromRouteSearch(search: MailRouteSearch): MailSearchQueryInput {
-  return mailSearchInputFromState(mailSearchStateFromRouteSearch(search));
 }
 
 export function mailThreadQueryOptions(threadId: string) {

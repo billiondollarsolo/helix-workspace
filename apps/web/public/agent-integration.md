@@ -1,6 +1,6 @@
-# External application integration: Helix Bot
+# External application integration: Helix Agentspace
 
-Helix Bot (formerly Chungus) runs its own agents and models. Helix Workspace
+Helix Agentspace (formerly Helix Agentspace) runs its own agents and models. Helix Workspace
 provides their identities, Chat, Mail, Drive, events and human approvals. This
 contract also applies to other external agent applications.
 
@@ -12,7 +12,7 @@ safety details.
 ## 1. Agree on ownership and provision access
 
 - Keep the agent's hosting mode **External agent app** under **Admin → Agent
-  credentials → Manage hosting**. Helix Bot owns model execution, conversation
+  credentials → Manage hosting**. Helix Agentspace owns model execution, conversation
   state, scheduling and retries. Helix Workspace owns authorization, storage,
   delivery and approvals. An external agent needs no model key in Workspace.
 - An administrator creates an agent identity and an expiring credential, names
@@ -22,11 +22,11 @@ safety details.
 - Start a chat integration with `platform.read`, `notifications.read`, `chat.read`
   and `chat.post`. Room membership is also required. `assistant.write` is needed
   only if the application deliberately calls Workspace's Assistant, not when
-  Helix Bot uses its own model.
+  Helix Agentspace uses its own model.
 - Add mail/file scopes only for the required tools, using discovered schemas and
   permissions. External mail needs `mail.send` and `mail.external`; a read grant
   or a successful chat does not authorize email or file changes.
-- Store credentials in Helix Bot's server-side secret store. Use
+- Store credentials in Helix Agentspace's server-side secret store. Use
   `Authorization: Bearer <runner-secret>`. Never embed a key in a frontend bundle,
   URL, prompt, shared document or log. API keys are supported; administrator-issued
   OAuth clients exchange credentials at `/v1/oauth/token` for short-lived tokens.
@@ -87,12 +87,12 @@ A complete first request is:
 ```json
 {
   "jsonrpc": "2.0",
-  "id": "helix-bot-discovery-1",
+  "id": "helix-agentspace-discovery-1",
   "method": "server/discover",
   "params": {
     "_meta": {
       "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-      "io.modelcontextprotocol/clientInfo": { "name": "helix-bot", "version": "1.0.0" },
+      "io.modelcontextprotocol/clientInfo": { "name": "helix-agentspace", "version": "1.0.0" },
       "io.modelcontextprotocol/clientCapabilities": {}
     }
   }
@@ -123,7 +123,7 @@ implementation. No general public npm HTTP SDK is published; do not assume an
 
 ## 3. Turn live events into model turns
 
-An MCP connection alone does not wake an LLM. Helix Bot must implement this loop:
+An MCP connection alone does not wake an LLM. Helix Agentspace must implement this loop:
 
 1. Open `subscriptions/listen` with `params.notifications` equal to
    `{"resourceSubscriptions":["helix://events/inbox"]}` and the usual `_meta`.
@@ -142,7 +142,7 @@ An MCP connection alone does not wake an LLM. Helix Bot must implement this loop
    messages with `chat.message.list`; use `chat.thread.list` for thread history.
    Read the actual sender and ignore the agent's own messages. Default to ignoring
    other agents unless you deliberately implement a bounded agent-to-agent flow.
-5. Run Helix Bot's model with the triggering message and the permitted conversation
+5. Run Helix Agentspace's model with the triggering message and the permitted conversation
    history. Treat message/file/mail content as untrusted input, not authority to
    change permissions. Keep conversation state isolated by workspace, agent and
    room/thread; do not mix unrelated rooms' private history.
@@ -176,7 +176,7 @@ For an application that cannot consume this MCP subscription revision yet, the
 same authenticated inbox is available over HTTP at
 `GET /v1/api/events/stream?after=<cursor>`, or through the source-built CLI's
 `events watch --cursor-file <private-path> --handler <trusted-executable>`.
-The handler receives an event on stdin; it still must call Helix Bot's model.
+The handler receives an event on stdin; it still must call Helix Agentspace's model.
 
 ## 4. Retries, approvals and presence
 
@@ -203,7 +203,7 @@ stopping. Leases expire after 60 seconds. This transport heartbeat does not need
 a write approval; the separate `presence.set` tool changes the agent's chosen
 status and uses normal `notifications.write` policy. Presence is not a read receipt.
 
-## 5. Acceptance checklist for the Helix Bot implementation
+## 5. Acceptance checklist for the Helix Agentspace implementation
 
 - Discover tools and complete a read with the new integration's own credential.
 - Send a human message in its permitted private room. Verify one automatic reply,
@@ -218,5 +218,5 @@ status and uses normal `notifications.write` policy. Presence is not a read rece
 - Test attachment scanning and file access separately before enabling file workflows.
 
 The Workspace transport and its Helix-hosted Atlas runner have been tested. That
-is not proof that Helix Bot's own event-to-model adapter is complete. Run this
-checklist against Helix Bot before calling the cross-application integration done.
+is not proof that Helix Agentspace's own event-to-model adapter is complete. Run this
+checklist against Helix Agentspace before calling the cross-application integration done.

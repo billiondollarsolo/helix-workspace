@@ -124,7 +124,7 @@ test.describe("/login authenticated handoff", () => {
       });
     });
     await page.route("https://bot.example/**", (route) =>
-      route.fulfill({ status: 200, body: "Connected to Bot" }),
+      route.fulfill({ status: 200, body: "Connected to Agentspace" }),
     );
     await page.goto(
       "/login?client_id=federation-client&state=federation-state&ba_param=client_id&ba_param=state&sig=fixture&extra=ignored",

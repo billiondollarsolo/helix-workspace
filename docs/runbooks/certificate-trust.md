@@ -20,7 +20,7 @@ Caddy is rebuilt with Go 1.26.10.
 Native Ubuntu 24.04 uses ca-certificates 20260816ubuntu0.24.04.1. The hosted
 Ubuntu 26.04 mirror still lacked its fixed package after refreshing indexes;
 its `/etc/ca-certificates.conf` instead disables the same two root entries.
-Native API, web and Bot units, and hosted recovery workers, use systemd drop-ins:
+Native API, web and Agentspace units, and hosted recovery workers, use systemd drop-ins:
 
 ```ini
 [Service]
@@ -50,7 +50,7 @@ an upstream fixed runtime with the same negative and positive controls.
 
 This mitigation can reject legitimate sites whose only chain uses a removed root.
 Explicit custom CA bundles must be reviewed separately. The first rollout covered
-the core API/web/Bot images, native processes and hosted recovery workers. The
+the core API/web/Agentspace images, native processes and hosted recovery workers. The
 follow-up below extends that coverage.
 
 Private build logs, encrypted checkpoint and verification receipts are retained at
@@ -59,7 +59,7 @@ Private build logs, encrypted checkpoint and verification receipts are retained 
 
 ## Qualified deployment
 
-Workspace API and edge images `ca-42fde1e` and Bot image `ca-b31dba4` were
+Workspace API and edge images `ca-42fde1e` and Agentspace image `ca-b31dba4` were
 deployed. All required repository checks passed: Workspace's backend had 4,046
 passing tests and 450 gated skips; its web app had 1,453 passing tests. Both native
 Node versions, both hosted APIs and both recovery workers rejected all 12 published
@@ -118,11 +118,11 @@ Native installed clients are also qualified:
   Replace this canary only with a stable release that passes the same checks.
 - Chromium NSS explicitly distrusts all four incident roots (`p,p,p`). Fresh
   Preview navigation rejects all 12 with `ERR_CERT_AUTHORITY_INVALID` and reaches
-  normal Workspace/OpenAI HTTPS. The maintained Bot browser image applies the
+  normal Workspace/OpenAI HTTPS. The maintained Agentspace browser image applies the
   same policy. Restart T3 and other already-running browsers/Codex sessions after
   this turn; updating files does not replace their loaded trust or executable.
 
-All required Workspace checks passed. Bot static checks, typecheck, build,
+All required Workspace checks passed. Agentspace static checks, typecheck, build,
 contracts, recovery and portability checks passed. Its initial unit run had two
 integration timeouts during concurrent builds; the final focused rerun passed all
 10 tests, including image/PDF grants, revocation and assistant environment filtering.

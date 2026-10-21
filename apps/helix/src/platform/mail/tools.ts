@@ -321,6 +321,8 @@ export interface CreateMailToolDefinitionsOptions {
    * message, but it is recorded so the From header is not trusted.
    */
   readonly inboundAuthenticator?: MailAuthenticator;
+  /** Most To, Cc and Bcc addresses one message may have, as for SMTP submission. Default 100. */
+  readonly maxRecipients?: number | undefined;
   /** Refuses a message that would take the sender past their hourly or daily limit. */
   readonly sendLimit?:
     | { assertMaySend(input: { readonly orgId: string; readonly actorId: string }): Promise<void> }

@@ -34,8 +34,8 @@ function render(chart, extra = []) {
 for (const [name, chart, base] of [
   ["Workspace", "infra/helm/helix", []],
   [
-    "Bot",
-    "../helix-bot/deploy/helm/helix-bot",
+    "Agentspace",
+    "../helix-agentspace/deploy/helm/helix-agentspace",
     [
       "--set-string",
       "publicUrl=https://bot.example.test",
@@ -98,7 +98,7 @@ for (const [name, chart, base] of [
 }
 for (const [file, prefix] of [
   ["docker-compose.backup-worker.yml", "HELIX"],
-  ["../helix-bot/deploy/compose/compose.backup-worker.yaml", "CHUNGUS"],
+  ["../helix-agentspace/deploy/compose/compose.backup-worker.yaml", "AGENTSPACE"],
 ]) {
   test(
     `${prefix} optional compose executor publishes no port or privileged socket`,

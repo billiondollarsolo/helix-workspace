@@ -7,6 +7,6 @@
 - [Administrator checklist](admin-setup.md): domain, outgoing/incoming mail, MFA and agent onboarding.
 - [AI agent setup instructions](agent-setup.md): connection, credentials, approvals, safe deployment and end-to-end checks.
 
-- [External application integration](agent-integration.md): Helix Bot and other runners; MCP discovery, live events, chat, approvals, retries and presence.
+- [External application integration](agent-integration.md): Helix Agentspace and other runners; MCP discovery, live events, chat, approvals, retries and presence.
 
 Resolve relative links against this site's origin. These public instructions contain no credentials and grant no access.

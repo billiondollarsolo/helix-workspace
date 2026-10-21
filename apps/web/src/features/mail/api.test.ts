@@ -26,55 +26,8 @@ import {
   validateMailAttachmentSelection,
 } from "./api";
 import { mapMailSendUiStatus } from "./mail-send-status";
-import {
-  mailRouteSearchFromState,
-  mailSearchInputFromRouteSearch,
-  mailSearchStateFromRouteSearch,
-  validateMailRouteSearch,
-} from "./queries";
 
 describe("mail API", () => {
-  it("normalizes route search state into the mail.search query input", () => {
-    const routeSearch = validateMailRouteSearch({
-      thread: "thread-1",
-      message: "message-1",
-      q: "launch",
-      label: "planning",
-      mailbox: "starred",
-      unread: "true",
-      priority: "1",
-      attachments: "false",
-    });
-
-    expect(routeSearch).toEqual({
-      thread: "thread-1",
-      message: "message-1",
-      q: "launch",
-      label: "planning",
-      mailbox: "starred",
-      unread: true,
-      priority: true,
-      attachments: undefined,
-    });
-    expect(mailSearchInputFromRouteSearch(routeSearch)).toEqual({
-      query: "launch",
-      labels: ["planning"],
-      limit: 50,
-    });
-    expect(
-      mailRouteSearchFromState(mailSearchStateFromRouteSearch(routeSearch), routeSearch),
-    ).toEqual({
-      thread: "thread-1",
-      message: "message-1",
-      q: "launch",
-      label: "planning",
-      mailbox: "starred",
-      unread: true,
-      priority: true,
-      attachments: undefined,
-    });
-  });
-
   it("searches through the mail.search tool", async () => {
     const fetchImpl = vi.fn(() =>
       Promise.resolve(

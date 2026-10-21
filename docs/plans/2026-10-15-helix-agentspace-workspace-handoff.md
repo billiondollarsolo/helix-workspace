@@ -1,6 +1,6 @@
-# Helix Bot → Helix Workspace implementation handoff
+# Helix Agentspace → Helix Workspace implementation handoff
 
-Updated 2026-10-19. **Helix Bot is the new name of Chungus.** This handoff is for
+Updated 2026-10-19. **Helix Agentspace is the new name of Helix Agentspace.** This handoff is for
 its implementation agent. The user wants persistent bots with their own email,
 Chat, file storage and other Workspace capabilities, including personal assistants,
 background routines, shared projects and coding workflows. Coding is one workload.
@@ -89,7 +89,7 @@ host reboot and complete Workspace Kubernetes qualification remain outstanding.
 
 ### Current implementation and deployment evidence (2026-10-16)
 
-The checkouts now live together at `/home/mj/mjcode/helix-all/helix-bot` and
+The checkouts now live together at `/home/mj/mjcode/helix-all/helix-agentspace` and
 `/home/mj/mjcode/helix-all/helix-workspace`. Historical paths and earlier delivery
 checklists below describe their original inspection dates.
 
@@ -158,7 +158,7 @@ another. Humans and bots exchange messages and receive deliberate file grants;
 human observer access remains a separate administrator-managed capability.
 
 - **Running local stack, trusted installation setup, private HTTP, Compose and Kubernetes:**
-  [connection runbook](../runbooks/helix-bot-local-development.md).
+  [connection runbook](../runbooks/helix-agentspace-local-development.md).
 
 - New work: [account requests and human oversight](#account-requests-and-bot-oversight--local-integration-contract),
   [native mail tools](#native-mail-productivity-integration), and
@@ -166,9 +166,9 @@ human observer access remains a separate administrator-managed capability.
 - Live Workspace contract: <https://workspace.helixapps.si/agent-integration.md>.
 - General setup: <https://workspace.helixapps.si/agent-setup.md>.
 - Workspace source: `/home/mj/mjcode/helix-workspace`.
-- Bot source: `/home/mj/mjcode/chungus-all`.
-- Bot's existing plan: `docs/plans/helix-bot-workspace-integration.md` in that repo.
-- Catalog: `/home/mj/mjcode/chungus-extensions/catalog/helix-workspace.json`.
+- Bot source: `/home/mj/mjcode/agentspace-all`.
+- Bot's existing plan: `docs/plans/helix-agentspace-workspace-integration.md` in that repo.
+- Catalog: `/home/mj/mjcode/agentspace-extensions/catalog/helix-workspace.json`.
 
 This is a source-based compatibility review and task list, not evidence of a
 completed Bot connection. The original 2026-10-15 review inspected Bot HEAD `981f1e8c2e333c1d59decc7e2a7f72e8f5ac9e8e`
@@ -210,7 +210,7 @@ parent authority; they do not automatically get a new mailbox or new permissions
 ## Local private-HTTP connection update — 2026-10-16
 
 Workspace is running locally with an installation-only credential. Start with the
-[local connection runbook](../runbooks/helix-bot-local-development.md); `setup.env`
+[local connection runbook](../runbooks/helix-agentspace-local-development.md); `setup.env`
 is the installation connection. Beacon is only a provisioned test fixture.
 
 The initial read of Bot's working tree found that the modern HTTP MCP request builder
@@ -520,7 +520,7 @@ It contains no actual credential.
 
 ```json
 {
-  "externalBotId": "helix-bot:operations-assistant",
+  "externalBotId": "helix-agentspace:operations-assistant",
   "displayName": "Operations Assistant",
   "purpose": "Handle authorized conversations, organize files and prepare replies for review.",
   "email": "operations-bot@workspace.helixapps.si",
@@ -628,7 +628,7 @@ not arbitrary destinations taken from model output.
 
 A human admin authorized for the agent console can inspect tenant bots. Other
 humans require an explicit observation grant for that bot; approval grants its
-selected owner observation access. Bot access in Helix Bot does **not** itself
+selected owner observation access. Bot access in Helix Agentspace does **not** itself
 create a Workspace observation grant. Keep the two systems' authorization aligned
 through explicit admin actions, and revoke both when access is removed.
 
@@ -1000,7 +1000,7 @@ Cold encrypted pre-migration checkpoints and an updated authenticated off-server
 operator/key/source checkpoint were retained. The new operator archive itself has
 not been restored; the preceding complete snapshot and separate upgrade clone
 are the current recovery evidence. See the Bot
-[integration ledger](../../../helix-bot/docs/plans/helix-bot-workspace-integration.md)
+[integration ledger](../../../helix-agentspace/docs/plans/helix-agentspace-workspace-integration.md)
 for exact releases, hashes and remaining generated-output, PDF/image, specialist,
 onboarding, productivity, Calendar/SMTP and consented Meet acceptance work.
 

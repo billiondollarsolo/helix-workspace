@@ -1,0 +1,50 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Helix logo options</title>
+<style>
+:root{--fg:var(--foreground,#16141f);--mut:var(--muted-foreground,#6b6880);--ln:var(--border,#e6e3f0);--cd:var(--card,#fff);--a1:#5fe0cc;--a2:#13808f}
+body:has(#c-blue:checked){--a1:#7fb2ff;--a2:#2f4fd1}
+body:has(#c-coral:checked){--a1:#ffb08a;--a2:#d6455d}
+body:has(#c-amber:checked){--a1:#ffd36e;--a2:#d27a12}
+body:has(#c-same:checked){--a1:#a491ff;--a2:#693ad4}
+*{box-sizing:border-box}
+body{margin:0;color:var(--fg);font:14px/1.5 var(--font-sans,ui-sans-serif,system-ui,sans-serif)}
+.sub{color:var(--mut);margin:0 0 12px}
+.controls{display:flex;flex-wrap:wrap;gap:12px;margin:0 0 16px;font-size:13px;color:var(--mut)}
+.controls label{cursor:pointer;display:flex;gap:5px;align-items:center;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:14px}
+.card{background:var(--cd);border:1px solid var(--ln);border-radius:var(--radius,14px);padding:16px}
+.card header{display:flex;align-items:center;gap:8px}
+.num{width:22px;height:22px;border-radius:6px;display:grid;place-items:center;border:1px solid var(--ln);font-weight:600;font-size:12px}
+h2{font-size:15px;margin:0}
+.card p{color:var(--mut);margin:6px 0 14px;font-size:13px}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.side{display:flex;flex-direction:column;gap:10px}
+.big{width:72px;height:72px}
+.sizes{display:flex;gap:8px;align-items:center}
+.mono{width:22px;height:22px;color:var(--fg)}
+.lockup{display:flex;align-items:center;gap:6px;font-size:14px;white-space:nowrap}
+.lockup svg{width:20px;height:20px}
+.lockup b{font-weight:650}.lockup span{color:var(--mut)}
+svg{display:block}
+.s{fill:none;stroke:currentColor;stroke-width:4.5;stroke-linecap:round;stroke-linejoin:round}
+</style></head><body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<linearGradient id="gw" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="64" y2="64"><stop offset="0" stop-color="#a491ff"/><stop offset="1" stop-color="#693ad4"/></linearGradient>
+<linearGradient id="ga" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="64" y2="64"><stop offset="0" style="stop-color:var(--a1)"/><stop offset="1" style="stop-color:var(--a2)"/></linearGradient>
+</defs><defs id="sym"></defs></svg>
+<p class="sub">Each pair shares one idea and one tile shape. Workspace keeps today's violet; pick Agentspace's colour below. Shown at 72, 40, 24 and 16 px, as a one-colour glyph, and as the sidebar lockup.</p>
+<form class="controls">Agentspace colour:
+<label><input type="radio" name="c" checked> Teal</label><label><input type="radio" name="c" id="c-blue"> Blue</label><label><input type="radio" name="c" id="c-coral"> Coral</label><label><input type="radio" name="c" id="c-amber"> Amber</label><label><input type="radio" name="c" id="c-same"> Same violet</label>
+</form>
+<div class="grid" id="grid"></div>
+<script>
+const P=[{"name":"Twin Strand","idea":"Evolves today's mark. Workspace keeps the rungs of a double helix; Agentspace swaps the rungs for nodes with a core where the strands cross — the same DNA, now a network.","w":"<path class=\"s\" d=\"M22 12C22 22 42 22 42 32S22 42 22 52\"/><path class=\"s\" d=\"M42 12C42 22 22 22 22 32S42 42 42 52\"/><path class=\"s\" d=\"M25 18H39M25 46H39\"/>","a":"<path class=\"s\" d=\"M22 12C22 22 42 22 42 32S22 42 22 52\"/><path class=\"s\" d=\"M42 12C42 22 22 22 22 32S42 42 42 52\"/><circle cx=\"25\" cy=\"18\" r=\"4\" fill=\"currentColor\"/><circle cx=\"39\" cy=\"18\" r=\"4\" fill=\"currentColor\"/><circle cx=\"25\" cy=\"46\" r=\"4\" fill=\"currentColor\"/><circle cx=\"39\" cy=\"46\" r=\"4\" fill=\"currentColor\"/><circle cx=\"32\" cy=\"32\" r=\"5.5\" fill=\"currentColor\"/>"},{"name":"Twisted Monogram","idea":"Letters with a helix crossbar. H-for-Helix on Workspace, A-for-Agent on Agentspace. Both read as letters at 16 px.","w":"<path class=\"s\" d=\"M20 14V50M44 14V50\"/><path class=\"s\" d=\"M20 26C32 26 32 38 44 38M44 26C32 26 32 38 20 38\"/>","a":"<path class=\"s\" d=\"M19 50 32 14 45 50\"/><path class=\"s\" d=\"M26.2 30C33 30 34 40 41.4 40M37.8 30C31 30 30 40 22.6 40\"/>"},{"name":"Coil","idea":"A helix seen end-on is a spiral. Workspace is the calm coil; Agentspace's coil unwinds into an arrow — work that moves on its own.","w":"<g transform=\"translate(32 32) scale(1.1) translate(-28 -34)\"><path class=\"s\" style=\"stroke-width:4\" d=\"M28 32A4 4 0 0 1 36 32A8 8 0 0 1 20 32A12 12 0 0 1 44 32A16 16 0 0 1 12 32\"/></g>","a":"<g transform=\"translate(32 32) scale(1.3) translate(-34 -29)\"><path class=\"s\" style=\"stroke-width:3.5\" d=\"M28 32A4 4 0 0 1 36 32A8 8 0 0 1 20 32A12 12 0 0 1 44 32V37M40 34l4 4 4-4\"/></g>"},{"name":"Same Parts","idea":"Three identical strokes. Lined up in parallel they are Workspace (order, documents); rotated to share a centre they become Agentspace's spark. The system is literally the same pieces rearranged.","w":"<path class=\"s\" d=\"M14 42 30 22M24 42 40 22M34 42 50 22\"/>","a":"<path class=\"s\" d=\"M32 17V47M19 24.5 45 39.5M19 39.5 45 24.5\"/>"},{"name":"Window & Bubble","idea":"Most literal pair. A window for the place you work, a chat bubble for the agents you talk to, both carrying the same helix wave.","w":"<rect class=\"s\" x=\"13\" y=\"15\" width=\"38\" height=\"34\" rx=\"7\"/><path class=\"s\" d=\"M13 24H51\"/><path class=\"s\" d=\"M20 37c4-6 8-6 12 0s8 6 12 0\"/>","a":"<path class=\"s\" d=\"M20 15H44A7 7 0 0 1 51 22V38A7 7 0 0 1 44 45H31L21 51V45H20A7 7 0 0 1 13 38V22A7 7 0 0 1 20 15Z\"/><path class=\"s\" d=\"M20 30c4-6 8-6 12 0s8 6 12 0\"/>"},{"name":"Orbit","idea":"A ring with a helix S through it. On Agentspace the ring opens and a satellite slips into the gap: something working around you.","w":"<circle class=\"s\" cx=\"32\" cy=\"32\" r=\"17\"/><path class=\"s\" d=\"M32 15C21 23 43 41 32 49\"/>","a":"<path class=\"s\" d=\"M49 32A17 17 0 1 1 44 20\"/><circle cx=\"47.7\" cy=\"25.5\" r=\"3.5\" fill=\"currentColor\"/><path class=\"s\" d=\"M32 21C24 27 40 37 32 43\"/><circle cx=\"32\" cy=\"21\" r=\"3.5\" fill=\"currentColor\"/><circle cx=\"32\" cy=\"43\" r=\"3.5\" fill=\"currentColor\"/>"},{"name":"Cell","idea":"Hexagon as the shared container (a cell, a hive). Workspace holds a helix; Agentspace holds three connected agents.","w":"<path class=\"s\" d=\"M32 12 49.3 22V42L32 52 14.7 42V22Z\"/><path class=\"s\" style=\"stroke-width:4\" d=\"M27 22C27 27 37 27 37 32S27 37 27 42M37 22C37 27 27 27 27 32S37 37 37 42\"/>","a":"<path class=\"s\" d=\"M32 12 49.3 22V42L32 52 14.7 42V22Z\"/><path class=\"s\" style=\"stroke-width:3\" d=\"M32 23 24 38H40Z\"/><circle cx=\"32\" cy=\"23\" r=\"4\" fill=\"currentColor\"/><circle cx=\"24\" cy=\"38\" r=\"4\" fill=\"currentColor\"/><circle cx=\"40\" cy=\"38\" r=\"4\" fill=\"currentColor\"/>"},{"name":"Strand + Mark","idea":"One helix twist plus a small badge in the corner: a page for Workspace, a spark for Agentspace. Easy to extend later (Meet, Mail, …) with new badges.","w":"<g transform=\"translate(-3 4)\"><path class=\"s\" d=\"M17 24C31 24 31 42 45 42M17 42C31 42 31 24 45 24\"/></g><rect x=\"42\" y=\"10\" width=\"12\" height=\"12\" rx=\"3.5\" fill=\"currentColor\"/>","a":"<g transform=\"translate(-3 4)\"><path class=\"s\" d=\"M17 24C31 24 31 42 45 42M17 42C31 42 31 24 45 24\"/></g><path fill=\"currentColor\" d=\"M48 8Q48 16 56 16Q48 16 48 24Q48 16 40 16Q48 16 48 8Z\"/>"},{"name":"Grid & Graph","idea":"Four positions, two readings. Workspace is an app grid; Agentspace is the same four points wired into a graph.","w":"<rect x=\"15\" y=\"15\" width=\"14\" height=\"14\" rx=\"4\" fill=\"currentColor\"/><rect x=\"35\" y=\"15\" width=\"14\" height=\"14\" rx=\"4\" fill=\"currentColor\"/><rect x=\"15\" y=\"35\" width=\"14\" height=\"14\" rx=\"4\" fill=\"currentColor\"/><circle cx=\"42\" cy=\"42\" r=\"7\" fill=\"currentColor\"/>","a":"<path class=\"s\" style=\"stroke-width:3.5\" d=\"M22 22H42V42H22ZM22 22 42 42\"/><circle cx=\"22\" cy=\"22\" r=\"6\" fill=\"currentColor\"/><circle cx=\"42\" cy=\"22\" r=\"6\" fill=\"currentColor\"/><circle cx=\"22\" cy=\"42\" r=\"6\" fill=\"currentColor\"/><circle cx=\"42\" cy=\"42\" r=\"6\" fill=\"currentColor\"/>"},{"name":"Links","idea":"Interlocking rings, like a helix seen from the side. Two for Workspace (people together), three for Agentspace (many workers together).","w":"<circle class=\"s\" cx=\"25\" cy=\"32\" r=\"12\"/><circle class=\"s\" cx=\"39\" cy=\"32\" r=\"12\"/>","a":"<circle class=\"s\" cx=\"32\" cy=\"24.5\" r=\"11\"/><circle class=\"s\" cx=\"25.5\" cy=\"36\" r=\"11\"/><circle class=\"s\" cx=\"38.5\" cy=\"36\" r=\"11\"/>"}];
+const NS="http://www.w3.org/2000/svg";
+const sym=document.getElementById("sym");
+const tile=(id,g,s)=>'<svg width="'+s+'" height="'+s+'" viewBox="0 0 64 64"><rect width="64" height="64" rx="15" fill="url(#'+g+')"/><g color="#fff" transform="translate(32 32) scale(.8) translate(-32 -32)"><use href="#'+id+'"/></g></svg>';
+const side=(id,g,name)=>'<div class="side"><div class="big">'+tile(id,g,72)+'</div><div class="sizes">'+[40,24,16].map(s=>tile(id,g,s)).join("")+'<svg class="mono" viewBox="0 0 64 64"><use href="#'+id+'"/></svg></div><div class="lockup">'+tile(id,g,20)+'<b>Helix</b><span>'+name+'</span></div></div>';
+const tmp=document.createElementNS(NS,"svg");
+tmp.innerHTML=P.map((p,i)=>'<symbol id="w'+i+'" viewBox="0 0 64 64">'+p.w+'</symbol><symbol id="a'+i+'" viewBox="0 0 64 64">'+p.a+'</symbol>').join("");
+sym.append(...tmp.childNodes);
+document.getElementById("grid").innerHTML=P.map((p,i)=>'<section class="card"><header><span class="num">'+(i+1)+'</span><h2>'+p.name+'</h2></header><p>'+p.idea+'</p><div class="pair">'+side("w"+i,"gw","Workspace")+side("a"+i,"ga","Agentspace")+'</div></section>').join("");
+</script></body></html>

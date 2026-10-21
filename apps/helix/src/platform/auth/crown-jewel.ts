@@ -81,6 +81,15 @@ const policies: readonly {
     "admin.security",
     true,
   ),
+  // Same effect as turning mail off or on in the domain's capabilities.
+  policy("DELETE", /^\/api\/admin\/mail\/domains\/[^/]+$/u, "domain.takeover", "mail.admin", true),
+  policy(
+    "POST",
+    /^\/api\/admin\/mail\/domains\/[^/]+\/enable$/u,
+    "domain.takeover",
+    "mail.admin",
+    true,
+  ),
   policy(
     "POST",
     /^\/api\/admin\/mail\/domains\/[^/]+\/dkim(?:\/[^/]+\/(?:activate|retire))?$/u,

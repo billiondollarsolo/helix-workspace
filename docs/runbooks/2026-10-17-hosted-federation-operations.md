@@ -4,8 +4,8 @@
 
 Review covered the federation naming cutover, management navigation and context,
 setting ownership, scoped assignment access, directory freshness, backup status
-semantics and recovery evidence for the current Workspace/Bot installation. The
-concrete assignment overwrite gap is fixed in Workspace `a314e1f`. Bot runtime
+semantics and recovery evidence for the current Workspace/Agentspace installation. The
+concrete assignment overwrite gap is fixed in Workspace `a314e1f`. Agentspace runtime
 remains `92b5ae9`; no schema, dependency or general policy protocol was added.
 
 Assignment reads now return the existing directory revision while holding a shared
@@ -35,14 +35,14 @@ apps, required revision input, scoped/denied access, identity filtering, OIDC/PK
 and the existing recovery protocol. Five assignment/management UI unit tests pass.
 Two source browser/accessibility cases and three built cases pass, including desktop
 and 390px conflict handling, retained drafts, explicit reload and backup enrollment.
-Browser fixture lint and type checks pass. Bot's three focused federation/setting
+Browser fixture lint and type checks pass. Agentspace's three focused federation/setting
 ownership/link checks pass; its unchanged runtime did not require a full rerun.
 
 ### Rollout
 
-Workspace API/web `a314e1f` are deployed hosted and native. Bot remains on runtime
+Workspace API/web `a314e1f` are deployed hosted and native. Agentspace remains on runtime
 `92b5ae9`; schemas remain 251 / 13. Public/native readiness, fresh directory authority,
-private federation networking and independent recovery workers pass. Native Bot
+private federation networking and independent recovery workers pass. Native Agentspace
 providers/executor and Local Claude remain ready; hosted providers remain ready
 and its executor remains unconfigured. Anonymous application inventory/assignments
 return 403 and worker status returns 401 with JSON application denials. Native
@@ -64,7 +64,7 @@ The previously untested October 19 checkpoint
 `2c9a9dd07e9af0e2b5a243872b3e105c7e09195ae674b38c0a795849428d1c01`)
 was authenticated and restored into isolated PostgreSQL containers using the
 recorded images. Ownership and grants were restored; all 445 Workspace and 499
-Bot foreign-key constraints were re-created and validated against the recovered
+Agentspace foreign-key constraints were re-created and validated against the recovered
 rows. Schema counts are 251 / 13. Both full-history source bundles verify at their
 recorded revisions (`6bfbf55` / `92b5ae9`). Recovered application keys decrypt both
 federation records; installation/organization/tenancy bindings, OIDC credentials
@@ -74,7 +74,7 @@ A fresh pre-rollout checkpoint, `hosted-before-federation-review.tar.gz.age`
 (SHA-256 `64c28dab53b100eee52a7711d7c4ed32ca9814b7df79a6a5ed6aa1dfa2e2e8e0`),
 was then authenticated and passed the same database/constraint/key/binding checks.
 Both drills used network mode `none`, no published ports and no live volumes.
-The first Bot drill attempt lacked the database-owner role in its empty bootstrap;
+The first Agentspace drill attempt lacked the database-owner role in its empty bootstrap;
 adding the required `helix_bot` role allowed a clean repeat with owners/grants intact.
 Database role bootstrap remains a prerequisite of logical restore, not data inside
 `pg_dump`.
@@ -97,7 +97,7 @@ Private scripts, checks and receipts are under
 
 ## Federated app management qualification — 2026-10-19
 
-Workspace API and web `6bfbf55` are hosted and native ready. Bot runtime remains
+Workspace API and web `6bfbf55` are hosted and native ready. Agentspace runtime remains
 `92b5ae9`; schemas remain 251 / 13. Recovery workers retain their existing
 `eddec8b` binaries and federation protocol. The change adds no schema, configuration
 authority, credential rotation or general policy propagation.
@@ -123,7 +123,7 @@ Refresh, collapsing the section and failed saves preserve drafts; clean drafts
 follow refreshed assignments. Retrying the same failed search makes a new request.
 Federation query factories use the shared admin defaults so permission and network
 errors retain inline errors and Retry controls under the production error default.
-App assignment still grants no Bot ownership or Mail, Chat, Drive or private Work access.
+App assignment still grants no Agentspace ownership or Mail, Chat, Drive or private Work access.
 
 Workspace format, types, lint, full tests, build and boundaries passed: 4,034 backend
 and 1,450 web tests, with 448 fixture-gated backend skips. The final query/search
@@ -135,7 +135,7 @@ OIDC/PKCE, backup bindings, lost replies and recovery approvals. Five source and
 built browser/accessibility cases passed at desktop and 390px, including capability
 failure/retry, pending versus acknowledged policy, app binding, assignment draft
 retention and the existing backup enrollment/navigation flows. No lint or accessibility
-rule was disabled. Bot's runtime source did not change; its full suite was not repeated.
+rule was disabled. Agentspace's runtime source did not change; its full suite was not repeated.
 
 Hosted and native readiness pass. The directory regained fresh authority, both
 independent recovery workers and the private federation network remain intact,
@@ -180,11 +180,11 @@ the latest checkpoint still has not been restored. The live review is complete;
 assignment conflict protection and the checkpoint restore test remain pending.
 Private receipt and screenshot references: `app-management/live-admin-review.json`
 under the October 19 recovery directory. This follow-up covers Workspace's admin
-view; it does not repeat Bot's human SSO or a paid model call.
+view; it does not repeat Agentspace's human SSO or a paid model call.
 
 ## Setting ownership qualification — 2026-10-19
 
-Workspace web `6e44cc5` and Bot `92b5ae9` are hosted and native ready. Workspace API
+Workspace web `6e44cc5` and Agentspace `92b5ae9` are hosted and native ready. Workspace API
 remains `eddec8b`; schemas remain 251 / 13. This Stage 3 change shows current
 ownership and effective values using existing contracts; it adds no generalized
 Workspace policy propagation. The [setting inventory](../architecture/helix-federation-management.md#setting-ownership-inventory)
@@ -192,24 +192,24 @@ records the inherited and local fields.
 
 Managed people and Single sign-on show Workspace as their source and link to its
 existing Federated apps editor. Links require the person's own Workspace session
-and permissions; Bot roles do not grant Workspace administration. Member-only
+and permissions; Agentspace roles do not grant Workspace administration. Member-only
 views show the source without an administrator link. Managed sign-in shows the
 provider, issuer, enabled state, assigned role range and local-owner login policy.
 Managed editors remain read-only. Unavailable connection data offers retry without
 declaring local authority, and synchronization errors retain the Workspace source.
 
-Bot's password, recovery and MFA editors are offered to local password accounts;
+Agentspace's password, recovery and MFA editors are offered to local password accounts;
 SSO-only users see provider ownership. The required-MFA count now excludes SSO-only
 identities. Existing backend member/SSO write fences and owner-only pairing and
 disconnect remain in force. Workspace's app card identifies its assigned-person
-roles, profiles, groups and sign-in authority, and distinguishes Bot's local
+roles, profiles, groups and sign-in authority, and distinguishes Agentspace's local
 recovery, credentials, bots, Work and grants. App assignment grants no Mail, Chat
 or Drive access.
 
 Workspace format, types, lint, full tests, build and boundaries passed: 4,034 backend
 and 1,446 web tests, with 448 fixture-gated backend skips. Three browser/accessibility
 cases passed, including the active app card at desktop and 390px and the existing
-backup enrollment flow. Bot's full `pnpm check` passed: 820 tests, one optional skip,
+backup enrollment flow. Agentspace's full `pnpm check` passed: 820 tests, one optional skip,
 plus static/types, Effect/driver contracts, Pi recovery, portability, build and
 compatibility reporting. Its complete image/PDF and background fixtures passed.
 Fifteen focused PostgreSQL/SSO/permission cases and two frontend self-checks passed.
@@ -223,7 +223,7 @@ The hosted directory regained fresh authority, both recovery workers and the
 private federation network remain intact, and unauthenticated recovery status is
 denied. Native providers/executor and the separate Claude service remain ready;
 hosted providers remain ready and its executor remains unconfigured. The existing
-Preview sessions now require normal Workspace verification, including Bot SSO.
+Preview sessions now require normal Workspace verification, including Agentspace SSO.
 Authenticated live visual review remains pending; no verification gate was bypassed.
 
 Encrypted online logical/configuration checkpoints authenticated before each
@@ -239,9 +239,9 @@ sweep were not repeated. Broader app management is Stage 4.
 
 ## Greenfield terminology cutover — 2026-10-19
 
-Hosted Workspace API/web now run `eddec8b`; Bot runs `c88124d`. Native checkouts
+Hosted Workspace API/web now run `eddec8b`; Agentspace runs `c88124d`. Native checkouts
 include the same changes, plus Workspace's deployment-test correction `0af0954`.
-The schemas still contain 251 Workspace migrations and 13 Bot migrations.
+The schemas still contain 251 Workspace migrations and 13 Agentspace migrations.
 The integration uses federation names throughout code, routes, configuration,
 database objects, credential bindings and recovery protocols. Old routes return
 404; there are no aliases, redirects, dual settings or runtime compatibility code.
@@ -251,7 +251,7 @@ conversion. Encrypted cold database dumps and matching configuration, keys and
 source bundles were authenticated off-server first. One-time operator transactions
 renamed database objects and migration records and rewrapped the existing encrypted
 credentials under their new contexts. No migration was replayed. Fresh-schema
-fingerprints match Bot's converted database. Enrollment metadata, the saved pairing
+fingerprints match Agentspace's converted database. Enrollment metadata, the saved pairing
 code prefix and the managed SCIM-token label were converted once too. Opaque OAuth
 client IDs and historical audit/recovery records retain their original values.
 
@@ -259,7 +259,7 @@ Original users, bots, Work, model providers, vault secrets, memberships and acco
 drafts were compared. Their authority and content remain intact; normal credential
 use timestamps advanced after restart. The existing hosted directory connection
 regained fresh authority before maintenance ended. Both public readiness checks
-pass, and native Bot still reports providers and executor ready. The separate
+pass, and native Agentspace still reports providers and executor ready. The separate
 local Claude service and executor configuration were retained.
 
 The private shared network is now `helix-federation`. Its gateway, firewall bridge
@@ -272,17 +272,17 @@ were converted. The off-server custodian timer was updated and re-enabled.
 
 Qualification: Workspace format, types, lint, full tests, build and boundaries
 passed (4,034 backend and 1,445 web tests; 447 backend fixture-dependent skips).
-Bot static/types, contract, Pi recovery, portability and build checks passed.
+Agentspace static/types, contract, Pi recovery, portability and build checks passed.
 Its full run recorded 815 passes, one optional skip and a parent/child failure from
 one PDF fixture's database-pool timeout. That complete fixture passed separately
 (three tests); the full suite was not repeated. The joined TLS proof passed pairing,
 lost acknowledgements, three credential rotations, directory roles/groups,
 restart/outage denial, offboarding, rollback denial, re-pairing and local recovery.
 The real encrypted backup/isolated-restore fixture passed. Workspace's seven
-focused browser/accessibility checks and Bot's three SSO browser checks passed;
-Bot's three mobile cases are intentionally skipped by that suite.
+focused browser/accessibility checks and Agentspace's three SSO browser checks passed;
+Agentspace's three mobile cases are intentionally skipped by that suite.
 
-The native encrypted checkpoint authenticated. Its Bot database restored in
+The native encrypted checkpoint authenticated. Its Agentspace database restored in
 isolation and selected original application rows matched both live databases.
 Native Workspace's original isolated restore stopped at a foreign-key constraint:
 five pre-existing app-password rows referred to missing actors. That historical
@@ -300,10 +300,10 @@ were not repeated for this naming cutover. The management-layout follow-up is re
 
 ## Management layout qualification — 2026-10-19
 
-Workspace web `ae2a735` and Bot `78402c0` align Administration and Personal settings,
+Workspace web `ae2a735` and Agentspace `78402c0` align Administration and Personal settings,
 app/organization context and the common navigation groups. Workspace apps is the
 built-in module destination; Federated apps and Federated backups have their own
-Federation group. Bot's dedicated Federation page shows its governing Workspace,
+Federation group. Agentspace's dedicated Federation page shows its governing Workspace,
 with administrator status visibility and separately authorized local recovery-owner
 mutations. Existing routes, app controls and private resource grants remain intact.
 
@@ -311,12 +311,12 @@ Workspace format, types, lint, full tests, build and boundaries passed: 4,034 ba
 and 1,445 web tests; 448 fixture-dependent backend skips. The new cleanup regression
 also ran separately against restored PostgreSQL. Nine focused Workspace browser/
 accessibility cases passed, including desktop/mobile navigation and the dashboard
-fixture, member denial and mobile shell. Bot's source Settings/SSO/navigation run passed 23 cases with 19 intentional
+fixture, member denial and mobile shell. Agentspace's source Settings/SSO/navigation run passed 23 cases with 19 intentional
 mobile skips; its built Settings/navigation/performance run passed 21 cases with
 17 intentional mobile skips. The production JavaScript budget was preserved by
 loading the setup guide through the existing lazy settings helper.
 
-The final Bot full check at `87c54c4` passed 818 tests with one optional skip,
+The final Agentspace full check at `87c54c4` passed 818 tests with one optional skip,
 plus static/types, Effect/driver contracts, Pi recovery, portability, build and
 compatibility reporting. Its full image/PDF and background-reply fixtures passed.
 An earlier concurrent run timed out in the background-reply test; both its isolated
@@ -327,8 +327,8 @@ skip); label bounds are now asserted at both widths.
 
 These revisions are hosted and native ready. Workspace API stays `eddec8b`; its
 container was refreshed only to report the new web image metadata. Schemas remain
-Workspace 251 / Bot 13. The existing hosted directory regained fresh authority.
-Live Bot desktop/390px checks confirm the governing Workspace, directory status,
+Workspace 251 / Agentspace 13. The existing hosted directory regained fresh authority.
+Live Agentspace desktop/390px checks confirm the governing Workspace, directory status,
 mobile menu, readable scope labels and no horizontal overflow. Workspace's new
 navigation assets loaded, but its saved Preview session reached the normal
 “Confirm it’s you” gate; the live organization-label check remains behind that
@@ -376,7 +376,7 @@ Deployed on 2026-10-17 to `89.167.14.138`:
 | Application | URL                              | Application source |
 | ----------- | -------------------------------- | ------------------ |
 | Workspace   | <https://workspace.helixapps.si> | `9400401`          |
-| Bot         | <https://bot.helixapps.si>       | `623e698`          |
+| Agentspace  | <https://bot.helixapps.si>       | `623e698`          |
 
 The original remote checkout and recovery commits remain intact. The new source
 is under `/srv/helix/family-operations-20261017/`; Compose retains the existing
@@ -384,7 +384,7 @@ dependency images, private network, TLS and Workspace origin restrictions.
 This deployment preserves the documented development hosting profile. It is not
 an audited transition to production-mode security or promoted release artifacts.
 
-The existing Workspace owner was used for Bot's separate local recovery account.
+The existing Workspace owner was used for Agentspace's separate local recovery account.
 The operator generated a private initial password; the owner changed it before
 pairing. No Workspace password was reset. Temporary operator sessions were retired.
 Federation identity is enabled, the apps are paired, and their backup workers are
@@ -392,13 +392,13 @@ independently enrolled. Human assignments and bot resource grants remain explici
 
 ### Human sign-in checkpoint — 2026-10-19
 
-The Workspace owner signs in as `mj@workspace.helixapps.si`. Bot's local recovery
+The Workspace owner signs in as `mj@workspace.helixapps.si`. Agentspace's local recovery
 owner uses the same email but has its own password and session. Pairing does not
-copy passwords or adopt that local owner by email. The hosted Bot advertises
+copy passwords or adopt that local owner by email. The hosted Agentspace advertises
 **Sign in with Helix Workspace**; Workspace is the identity provider. The owner
 recovered Workspace access through a private, explicitly authorized reset page
-and signed in normally. Their Bot administrator assignment is saved. Directory
-synchronization exposed Bot's rejection of a matching local recovery email; the
+and signed in normally. Their Agentspace administrator assignment is saved. Directory
+synchronization exposed Agentspace's rejection of a matching local recovery email; the
 qualified fix creates a separate managed identity bound to the immutable subject.
 Deployment and the managed browser sign-in remain to be verified.
 
@@ -420,7 +420,7 @@ containers. The workers bind only the private Docker bridge gateway; UFW admits
 that bridge to ports 3081–3082. Caddy routes `/v1/federation-operations/*` at each
 existing HTTPS hostname. No additional DNS entry or public worker port was added.
 
-These targets use **external scheduling**. The existing Bot metadata schedule and
+These targets use **external scheduling**. The existing Agentspace metadata schedule and
 off-server whole-installation backup schedule remain in place; federation snapshots
 can be requested manually. Policy scheduling has not silently moved to Workspace.
 The obsolete first-team bootstrap timer is disabled after successful pairing.
@@ -429,7 +429,7 @@ The hosted operator command creates encrypted **cold snapshots**. It briefly
 stops the relevant app's writers, captures its database/private volumes and
 configuration, then restarts it with a recovery watchdog. Workspace snapshots also
 capture object storage, its KMS material and TLS/deployment configuration. Caddy's
-runtime admin-socket volume is deliberately excluded. Bot snapshots capture its
+runtime admin-socket volume is deliberately excluded. Agentspace snapshots capture its
 private state, PostgreSQL data, keys and deployment configuration. PostgreSQL
 recovery requires the exact recorded database image/version. These are independent
 app snapshots, not an atomic federation transaction.
@@ -464,11 +464,11 @@ receipts report authenticated off-host custody; the exported recovery set is
 complete, with two independent snapshots. Its canonical manifest digest was
 verified separately on the backup machine. Streaming inspection of both copies
 confirmed PostgreSQL 18 version files, control files and database relations;
-Workspace object-storage and Bot private-state roots are included. The separately
+Workspace object-storage and Agentspace private-state roots are included. The separately
 encrypted operator checkpoint was authenticated and checked for both workers’
 configuration, management/encryption keys and journals.
 The initial Workspace socket rejection remains a failed operation rather than
-being erased or replayed. The initial Bot archive omitted its separate PostgreSQL
+being erased or replayed. The initial Agentspace archive omitted its separate PostgreSQL
 volume; that receipt was explicitly invalidated and retained for inspection. A
 corrected full snapshot contains the actual PostgreSQL volume and passed the
 coverage checks above. Both public readiness endpoints returned 200; unauthenticated
@@ -492,7 +492,7 @@ mount and reboot recovery.
 ## Isolated recovery checkpoint — 2026-10-19
 
 Off-server archives `8a801d2b-e9e0-4b89-85e6-2d7dda45b2c3` (Workspace) and
-`d0fff34f-9be2-4dc9-8ef8-501330a30f54` (Bot), captured on 2026-10-17, were
+`d0fff34f-9be2-4dc9-8ef8-501330a30f54` (Agentspace), captured on 2026-10-17, were
 authenticated, matched to their ciphertext/manifest receipts and checked against
 every recorded file digest before extraction. Independent custody keys stayed
 outside the repositories. Restored data uses separate disposable Docker volumes,
@@ -521,10 +521,10 @@ volume was promoted or substituted for live state.
 
 ## Administration redesign qualification — 2026-10-20
 
-Native and hosted Workspace now run `e7b990f`; Bot runs `17e3c81`.
+Native and hosted Workspace now run `e7b990f`; Agentspace runs `17e3c81`.
 Workspace uses one administration search, shared compact controls, TanStack People
 and application tables, and linkable application Overview / People / Operations
-views. Provider routing uses divided rows instead of nested cards. Bot uses the
+views. Provider routing uses divided rows instead of nested cards. Agentspace uses the
 same spacing and form conventions, a table for members, a concise Federation
 page and an ownership disclosure. Its Overview route now renders after navigation
 and reload. The [management standard](../architecture/helix-federation-management.md#administration-design-contract)
@@ -537,16 +537,16 @@ Validation:
   skipped. The final CSS/copy follow-up passed format, typecheck, lint, build and
   17 targeted browser/accessibility cases at phone, tablet and desktop widths,
   including light/dark provider panels and assignment-conflict draft retention.
-- Bot static checks, typechecks, build, contract, recovery and portable-core proofs
+- Agentspace static checks, typechecks, build, contract, recovery and portable-core proofs
   passed. Its unit run passed 819 tests with one failure and one skip; the corrected
   federation visibility case then passed independently (820 passing cases total).
   Nineteen targeted desktop/mobile browser cases passed; three existing mobile
   scenarios were skipped. No paid model request was made.
 - Normal live sign-in verified both native apps and the hosted Workspace. A temporary
-  Workspace administrator received an explicit temporary Bot assignment, signed in
+  Workspace administrator received an explicit temporary Agentspace assignment, signed in
   through the real Workspace SSO flow, and checked Overview reload, member tables,
   Models and the authoritative Federation controls. Removing the assignment revoked
-  the Bot session (the protected membership request returned 401). Temporary local
+  the Agentspace session (the protected membership request returned 401). Temporary local
   and federated test access was revoked; generated password credentials and sessions
   were removed. Existing user MFA and SSO policies were retained.
 - A live phone review found overlapping heading/actions despite no horizontal

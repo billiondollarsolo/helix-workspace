@@ -1,4 +1,4 @@
-# Helix Bot: local development and trusted installation
+# Helix Agentspace: local development and trusted installation
 
 Updated 2026-10-17. This runbook describes the local working tree and development
 services on `beastnode1`. Both repositories are now under `/home/mj/mjcode/helix-all`.
@@ -18,7 +18,7 @@ not shared database access. This runbook does not claim a production deployment.
 | Captured development email | `http://localhost:29458` (Mailpit)              |
 
 The API and web server listen on loopback. Another process on this host, including
-Helix Bot, can connect directly. From your workstation:
+Helix Agentspace, can connect directly. From your workstation:
 
 ```sh
 ssh -N -L 5173:127.0.0.1:5173 -L 3000:127.0.0.1:3000 -L 29458:127.0.0.1:29458 mj@10.10.69.200
@@ -31,21 +31,21 @@ installation. The original local login configuration was retained; temporary
 TOTP enrollment used to exercise sensitive-action verification was removed after
 the approval test.
 
-**Connect the Helix Bot installation with `setup.env`.** It is installed outside
+**Connect the Helix Agentspace installation with `setup.env`.** It is installed outside
 the repository and readable only by the local user:
 
-- `/home/mj/.local/state/helix-workspace-dev/setup.env`: **Helix Bot local setup**,
+- `/home/mj/.local/state/helix-workspace-dev/setup.env`: **Helix Agentspace local setup**,
   trusted installation credential with `platform.read` and `agent.accounts.request`.
 - `/home/mj/.local/state/helix-workspace-dev/beacon.env`: an **optional test fixture**,
   named Beacon, created solely to prove the approved-account path. Beacon is not
-  the Helix Bot installation and is not required to connect it. It has its own
+  the Helix Agentspace installation and is not required to connect it. It has its own
   `beacon@helix.local` mailbox; the local demo administrator owns it.
 - `connection.json` in that directory contains their non-secret identity mapping.
 
 Both keys expire after 30 days. Read these files into the connector's server-side
 configuration; do not paste their contents into chat, model prompts or logs. The
 setup key cannot read mail, files or chats. Beacon cannot approve accounts or enroll
-other bots. No credentials were copied into Helix Bot automatically.
+other bots. No credentials were copied into Helix Agentspace automatically.
 
 From this repository, test the **installation connection** with:
 
@@ -59,7 +59,7 @@ pnpm exec tsx packages/cli/src/index.ts tool call agent.account.requests.list --
 
 Use the same key in `Authorization: Bearer …` for REST or MCP. For a remote MCP
 client configure the full `/v1/mcp` endpoint. The CLI's `mcp serve` command is also
-available as a stdio bridge. See the [handoff](../plans/2026-10-15-helix-bot-workspace-handoff.md)
+available as a stdio bridge. See the [handoff](../plans/2026-10-15-helix-agentspace-workspace-handoff.md)
 for protocol negotiation, tool pagination, durable events and approval handling.
 
 The current server supports protocol `2026-07-28` with `server/discover` and the
@@ -85,9 +85,9 @@ Outbound mail is captured by local Mailpit, **not SES**. This stack has no publi
 inbound mail routing. Meet and external AI depend on their own configuration;
 starting the API does not certify media recording, transcription or paid providers.
 
-## Bot-side work before direct HTTP connection
+## Agentspace-side work before direct HTTP connection
 
-Workspace's private HTTP connection has been tested. The initial read-only Bot
+Workspace's private HTTP connection has been tested. The initial read-only Agentspace
 review found the following client constraints; these are historical findings,
 not a fresh review of the other agent's ongoing changes:
 
@@ -95,7 +95,7 @@ not a fresh review of the other agent's ongoing changes:
 - `apps/server/connection-adapters.ts`, `http()` also rejects non-HTTPS URLs and
   uses `node:https.request` for every request.
 
-The Bot integration agent should verify that the current connector has an
+The Agentspace integration agent should verify that the current connector has an
 **administrator-configured internal Workspace endpoint**, permits HTTP only for that explicitly trusted connection,
 and selects `node:http` for it. Preserve the existing credential, revocation,
 timeout, response-size, hostname and redirect controls. Do not globally allow
@@ -106,10 +106,10 @@ configuration, redirects and revoked installation keys. Configure protocol
 default remains `2025-11-25`, which Workspace does not advertise.
 
 The Workspace CLI can test the endpoint immediately, as shown above. Its stdio
-bridge also works with compatible clients, but the current **Bot stdio adapter**
+bridge also works with compatible clients, but the current **Agentspace stdio adapter**
 hardcodes `2025-11-25` too; it needs compatible negotiation before using that
-bridge. Do not treat stdio alone as a verified workaround for Bot's current
-connector. No changes were made in the sibling Bot repository.
+bridge. Do not treat stdio alone as a verified workaround for Agentspace's current
+connector. No changes were made in the sibling Agentspace repository.
 
 ## Trust the installation once, approve each bot
 
@@ -118,12 +118,12 @@ credential. It does not mean a trusted source IP, an administrator token, or an
 exemption from Workspace authorization.
 
 1. In Admin, create a dedicated agent/service identity for the installation, such
-   as **Helix Bot — team cluster**. Keep it separate from individual bots.
+   as **Helix Agentspace — team cluster**. Keep it separate from individual bots.
 2. In Agent credentials, issue that identity an expiring API key with only
    `platform.read` and `agent.accounts.request`. Credential issuance follows the
    organization's sensitive-action MFA and approval settings. Install the key
-   in the Bot backend's secret store once; individual bot prompts never receive it.
-3. When Bot needs a persistent account, generate and securely persist a new
+   in the Agentspace backend's secret store once; individual bot prompts never receive it.
+3. When Agentspace needs a persistent account, generate and securely persist a new
    `helix_ak_` key locally. Submit `agent.account.request` with only its SHA-256
    hash and the requested identity/resources. The complete manifest, key format
    and examples are in the handoff. Ordinary bot scopes cannot include enrollment
@@ -135,7 +135,7 @@ exemption from Workspace authorization.
    Agent credentials → Bot account requests. An administrator chooses the human
    owner, expiry, verified email domain and exact granted scopes. Account approval
    requires a signed-in human session and follows sensitive-action policy.
-5. Bot polls `agent.account.request.get` using the installation credential. Only
+5. Agentspace polls `agent.account.request.get` using the installation credential. Only
    after `approved` may it use the pre-generated bot key. Persist the returned
    account/credential IDs, approved scopes, address and credential expiry.
 6. Every bot uses its own key for mail, files, chats and events. Resource sharing
@@ -170,7 +170,7 @@ bot keys remain valid; no replacement key needs to be installed.
 | Scout   | `01ae1a3f-c0ce-4088-981c-e9747908be6b` | `aa184f54-6f41-4af0-b227-1ee12def7908` |
 | Forge   | `9922be35-af3e-4822-be7c-4bc40f4b82aa` | `62a24aee-2711-4d92-80e0-2a7f4d2f79b6` |
 
-Bot's connector should reconcile these through `agent.account.requests.list`
+Agentspace's connector should reconcile these through `agent.account.requests.list`
 using the installation credential, match `externalBotId`, then persist the new
 request ID and returned `reviewUrl`. Keep the original locally stored bot keys.
 The old `/approvals/...` links describe expired submissions; the account reviews
@@ -207,22 +207,22 @@ checks covered account review, approval handling, unread indicators and included
 accessibility scans. The default full test run skips environment-dependent suites;
 these focused live/database checks provide the additional evidence above.
 
-These are Workspace endpoint checks, not an end-to-end Bot model/orchestrator or
+These are Workspace endpoint checks, not an end-to-end Agentspace model/orchestrator or
 same-server deployment certification.
 
 ## Coordinated local development and same-server rollout
 
-Once the user moves Helix Bot beside this repository, keep the two repositories
+Once the user moves Helix Agentspace beside this repository, keep the two repositories
 separate and coordinate contract changes with their callers in the same work
 session. Do not copy credentials or generated files between them. Update the
-[handoff](../plans/2026-10-15-helix-bot-workspace-handoff.md) whenever a tool, scope,
+[handoff](../plans/2026-10-15-helix-agentspace-workspace-handoff.md) whenever a tool, scope,
 event or approval contract changes.
 
 Before deploying both applications together, run the collaboration checks through
-Bot's actual connector: request/approve an account, exchange human/bot and bot/bot
+Agentspace's actual connector: request/approve an account, exchange human/bot and bot/bot
 chats and internal mail, upload/scanned-download/share files, change roles, revoke
 access, and verify private resources remain inaccessible. Workspace endpoint tests
-alone do not certify Bot's orchestration or reconnect behavior.
+alone do not certify Agentspace's orchestration or reconnect behavior.
 
 Then deploy both services on one private network using the addresses below.
 Keep the trusted installation credential separate from per-bot keys. Exercise the
@@ -233,36 +233,36 @@ are not a production deployment template.
 ## Docker Compose: private HTTP
 
 Both repos now include matching optional joining profiles: Workspace's
-`docker-compose.bot.yml` and Bot's `deploy/compose/compose.workspace.yaml`.
+`docker-compose.agentspace.yml` and Agentspace's `deploy/compose/compose.workspace.yaml`.
 Create `docker network create --internal helix-federation` once; append each profile after
 that app's selected Compose/TLS overrides. Set `HELIX_FEDERATION_NETWORK` identically in
 both project env files when using another network name. Only Workspace's API and
-Caddy and Bot's app join; database services keep their existing networks and ports.
+Caddy and Agentspace's app join; database services keep their existing networks and ports.
 These profiles add no automatic account grants or cross-app startup dependency.
 
 The Workspace profile gives its API the stable alias `helix-workspace` and its Caddy
 edge the existing `HELIX_DOMAIN` hostname for signed HTTPS storage URLs on port 443.
-Keep the existing public domain, browser/OAuth origin and storage URL. Bot uses
+Keep the existing public domain, browser/OAuth origin and storage URL. Agentspace uses
 `origin: http://helix-workspace:3000`, its public Workspace `browser_origin`, and the
 exact signed-file `storage_origins`. Its setup file must contain
 `HELIX_BASE_URL=http://helix-workspace:3000` plus the installation key; store it as
-`secrets/workspace-setup.env` (0600) in Bot's private installation directory. The Bot
+`secrets/workspace-setup.env` (0600) in Agentspace's private installation directory. The Agentspace
 profile mounts it at `/run/secrets/helix_workspace_setup`; select that path in
 `helix_workspace.installations[].setup.credential_file` and bind `setup.tenant_id` to
-the intended Bot team. The complete procedure is in Bot's
+the intended Agentspace team. The complete procedure is in Agentspace's
 `docs/reference/join-workspace.md`. Existing protected local setup files are unchanged.
 
 Configure **three addresses**:
 
 - Helix's browser/OAuth origin: e.g. `https://workspace.example.com`.
-- Bot's service connection: `http://helix:3000`, where `helix` is the Compose
+- Agentspace's service connection: `http://helix:3000`, where `helix` is the Compose
   service name on their shared private network.
-- Signed file URLs: an exact HTTPS origin reachable from both Bot and the browser;
+- Signed file URLs: an exact HTTPS origin reachable from both Agentspace and the browser;
   the bundled production storage defaults to the public Workspace origin.
 
 Keep `HELIX_PUBLIC_URL` and `BETTER_AUTH_URL` set to the browser/OAuth origin on
 Helix. Set `HOST=0.0.0.0` inside the API container so its private network interface
-can accept connections. Set the Bot connector/CLI's `HELIX_BASE_URL` to
+can accept connections. Set the Agentspace connector/CLI's `HELIX_BASE_URL` to
 `http://helix:3000` and supply its setup key through a secret. The MCP endpoint is
 `http://helix:3000/v1/mcp`. No API container host-port publication is needed for
 communication on that network.
@@ -273,7 +273,7 @@ continue through the public origin. For an entirely local development stack,
 `http://localhost:5173` is a valid browser origin; arbitrary plain-HTTP non-loopback
 OAuth issuers are intentionally rejected.
 
-The `HELIX_*` client variables are supported by Workspace's CLI. Helix Bot's
+The `HELIX_*` client variables are supported by Workspace's CLI. Helix Agentspace's
 adapter must map its connection settings to the same base URL and bearer key;
 this document does not assume it already consumes those environment variables.
 
@@ -294,7 +294,7 @@ MCP endpoint:    http://helix.workspace.svc.cluster.local/v1/mcp
 
 Use the actual rendered Service name/port if you override them. Keep the public
 HTTPS ingress for humans and OAuth. Inject the installation key from a Kubernetes
-Secret into the Bot backend, using a secret reference rather than a literal value
+Secret into the Agentspace backend, using a secret reference rather than a literal value
 in a Deployment or Helm values file. For the Workspace CLI, the Pod fragment is:
 
 ```yaml
@@ -316,37 +316,37 @@ networkPolicy:
   application:
     ingress:
       - namespace: bots
-        serviceAccount: helix-bot
+        serviceAccount: helix-agentspace
         podLabels:
-          app.kubernetes.io/name: helix-bot
+          app.kubernetes.io/name: helix-agentspace
 ```
 
-Bot Pods must use service account `helix-bot` and labels
-`helix.io/service-account: helix-bot` and `app.kubernetes.io/name: helix-bot` in
+Agentspace Pods must use service account `helix-agentspace` and labels
+`helix.io/service-account: helix-agentspace` and `app.kubernetes.io/name: helix-agentspace` in
 namespace `bots`, matching that rule. Restrict who can create workloads in that
-namespace. If Bot also has an egress-deny policy, allow DNS and TCP 3000 to the
+namespace. If Agentspace also has an egress-deny policy, allow DNS and TCP 3000 to the
 Workspace API Pods (the Service maps port 80 to 3000), plus its required model
 providers. Apply these rules with a NetworkPolicy-capable CNI. Do not substitute
 an allow-all policy or disable authentication to make discovery work.
 
 Configure long-lived HTTP/SSE connections and reconnect cursors for live events;
-do not buffer the event stream in a proxy. Bot can initiate its connections to
-Workspace, so a callback port on Bot is not required for the pull/live protocol.
+do not buffer the event stream in a proxy. Agentspace can initiate its connections to
+Workspace, so a callback port on Agentspace is not required for the pull/live protocol.
 
 Drive transfer URLs are a separate reachability concern: `RUSTFS_PUBLIC_ENDPOINT`
 must produce presigned URLs reachable by their consumers, including browsers and
-Bot. Do not rewrite signed URL hosts. An internal API address alone does not make
+Agentspace. Do not rewrite signed URL hosts. An internal API address alone does not make
 a loopback storage URL reachable from another Pod or container.
 
 ### Verification boundary
 
 The current native PostgreSQL connector and joint production Compose workloads passed
-Bot's two-owner/two-bot acceptance suite with real Codex calls, replies after logout,
+Agentspace's two-owner/two-bot acceptance suite with real Codex calls, replies after logout,
 restart catch-up, scanned uploads, private-room/file denial, reader sharing and revocation.
 These tests use isolated repository-seeded accounts. They do not qualify public account
 approval, human OAuth, external inbox arrival, different-host TLS, or all catalog gates.
-The same suite passed with Kubernetes Bot connected to Docker Workspace, using
-CNPG/Barman, verified database TLS and enforced network denial. See Bot's
+The same suite passed with Kubernetes Agentspace connected to Docker Workspace, using
+CNPG/Barman, verified database TLS and enforced network denial. See Agentspace's
 `docs/reference/app-federation-qualification.md` for receipts and exact topology.
 
 The rendered Workspace CNPG database/migration resources passed fresh migrations,
@@ -354,7 +354,7 @@ tenant/RLS checks, allowed/denied network traffic, Barman backup, named-point WA
 and primary failover on an isolated three-node cluster. The complete Workspace Kubernetes
 application and signed-image hook still need a joint run.
 
-In Bot's chart, put the setup credential in the existing credentials Secret (for example
+In Agentspace's chart, put the setup credential in the existing credentials Secret (for example
 key `workspace-installation.key`). Configure the connection using the application's
 ordinary settings; do not put the credential itself in Helm values:
 
@@ -388,21 +388,21 @@ networkPolicy:
           port: 3000
 ```
 
-Replace namespaces, release labels, URLs and the Bot tenant ID with the actual deployment.
+Replace namespaces, release labels, URLs and the Agentspace tenant ID with the actual deployment.
 Allow private object-store endpoints separately when used. Public storage uses the chart's
 public HTTPS rule. The setup credential maps this connection to one Workspace organization;
 each enrolled bot still needs human approval, its own credential and explicit resource grants.
 For different hosts/clusters, use reachable HTTPS origins and trusted certificates instead
 of copying a `.svc` name or granting direct database access.
 
-### Bot database operations
+### Agentspace database operations
 
-Bot now requires PostgreSQL independently of Workspace's database. Use Bot's
+Agentspace now requires PostgreSQL independently of Workspace's database. Use Agentspace's
 `pnpm init:compose` and `deploy/compose/README.md` for a new container installation,
-or its `deploy/helm/helix-bot/README.md` for CNPG/Barman deployment and recovery.
+or its `deploy/helm/helix-agentspace/README.md` for CNPG/Barman deployment and recovery.
 Keep each application's database role, database and backup credentials separate,
 even when they share a host or Kubernetes cluster. No cross-database access is needed
-for the integration. Bot currently runs one application writer; a replicated database
+for the integration. Agentspace currently runs one application writer; a replicated database
 alone does not make its artifact volumes or workers highly available.
 
 ### Hosted isolated recovery qualification (2026-10-19)
@@ -413,10 +413,10 @@ pilot object with its exact hash through restored RustFS/KMS. Fresh captured
 antivirus signatures satisfied readiness; an older capture correctly failed
 readiness once its signatures aged out. Keep that dependency gate enforced.
 
-The restored Workspace directory worker reconciled through Bot's real HTTPS
+The restored Workspace directory worker reconciled through Agentspace's real HTTPS
 routes, rotated SCIM credentials, and revoked an existing managed session after
 assignment removal. Local recovery-owner access survived. This used internal
-networks, no published ports, disabled outbound mail and disabled restored Bot
+networks, no published ports, disabled outbound mail and disabled restored Agentspace
 background runners. Isolated auth-service session fixtures are distinct from
 the separately verified hosted human OIDC journey.
 
@@ -438,11 +438,11 @@ at 251 migration rows after restart. Object storage was unchanged and excluded
 from that narrow native checkpoint. The current source includes the destination
 revocation guard described in the handoff; no account credential was replaced.
 
-Bot schema 12 adds separate owner opt-ins for source images and private text file
+Agentspace schema 12 adds separate owner opt-ins for source images and private text file
 drafts. Existing grants remain off. PNG/JPEG input is bounded to 512 KiB; text
 drafts are limited to four 12,000-byte files per operation. Drafts download from
-the original owner's private Bot Work through a current human session. They are
+the original owner's private Agentspace Work through a current human session. They are
 not automatically uploaded or delivered to Workspace. Workspace still owns file
 ACLs, scanning and DLP; it gained no viewer/converter integration or dependency.
-See the current Bot integration ledger linked in the handoff for deployment,
+See the current Agentspace integration ledger linked in the handoff for deployment,
 restored-clone qualification, checkpoint hashes and remaining live acceptance.

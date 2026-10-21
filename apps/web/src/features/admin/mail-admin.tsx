@@ -20,9 +20,11 @@ import {
   EmptyRow,
   ErrorNotice,
   LoadingState,
+  MutationError,
   PageHeading,
   PanelHeading,
 } from "@/features/admin/console/primitives";
+import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
 /* Helix Admin — Mail section.
  *
  * Production TSX for the Admin console's "Mail" section. Four sub-views wired
@@ -338,11 +340,15 @@ function MailDomains() {
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: mailAdminQueryKeys.domains() });
 
+  const [disabling, setDisabling] = useState<{ id: string; domain: string } | null>(null);
   const deleteMutation = useMutation({
     mutationFn: (id: string) => disableMailDomain(id),
     onMutate: () => undefined,
     onError: () => undefined,
-    onSuccess: () => void invalidate(),
+    onSuccess: () => {
+      setDisabling(null);
+      void invalidate();
+    },
   });
   const generateMutation = useMutation({
     mutationFn: (domainId: string) => generateDkimKey(domainId, `helix-${Date.now().toString(36)}`),
@@ -370,6 +376,22 @@ function MailDomains() {
       <p className="[color:var(--text-2)] mb-3">
         Verify and enable mail capability in Domain settings before configuring DKIM here.
       </p>
+      <MutationError error={deleteMutation.error} />
+      <ConfirmDestructive
+        open={disabling !== null}
+        onOpenChange={(open) => {
+          if (!open) setDisabling(null);
+        }}
+        title="Disable mail"
+        blastRadius="Everyone with an address at this domain stops sending and receiving mail until it is enabled again."
+        confirmLabel="Disable mail"
+        isPending={deleteMutation.isPending}
+        onConfirm={() => {
+          if (disabling !== null) deleteMutation.mutate(disabling.id);
+        }}
+      >
+        Mail for {disabling?.domain} is turned off and its delivery provider is unassigned.
+      </ConfirmDestructive>
 
       {domains.length === 0 ? (
         <div className="panel">
@@ -394,7 +416,10 @@ function MailDomains() {
 
                 aria-label={`Disable mail for ${domain.domain}`}
                 disabled={deleteMutation.isPending}
-                onClick={() => deleteMutation.mutate(domain.id)}
+                onClick={() => {
+                  deleteMutation.reset();
+                  setDisabling({ id: domain.id, domain: domain.domain });
+                }}
               >
                 <TrashIcon size={16} /> Disable mail
               </Button>

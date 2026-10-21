@@ -499,7 +499,7 @@ Caddy terminates HTTPS for `HELIX_DOMAIN`. Choose one source for its certificate
 
 | Mode                      | How to select it                                               | Use it when                                                               |
 | ------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| Automatic                 | Nothing to set                                                 | The host is reachable from the Internet on ports 80 and 443               |
+| Automatic                 | Nothing to set, or `HELIX_CADDY_TLS=<your email>`              | The host is reachable from the Internet on ports 80 and 443               |
 | Uploaded in the console   | **Admin → Domains → HTTPS certificate**                        | You have your own certificate and want to manage it without server access |
 | Your certificate as files | Add `-f docker-compose.tls-files.yml` to every Compose command | Certificates are delivered to the server by your own tooling              |
 | Internal CA               | `HELIX_CADDY_TLS=internal` in `.env.production`                | Testing on a private network; browsers will not trust it                  |
@@ -508,6 +508,9 @@ Caddy terminates HTTPS for `HELIX_DOMAIN`. Choose one source for its certificate
 `HELIX_DOMAIN` must point at the host before the first start, and ports 80 and 443 must be open.
 The certificate and its account key are stored in the `caddy-data` volume; include it in backups to
 avoid requesting a new certificate after every restore.
+Set `HELIX_CADDY_TLS` to an email address you read (for example `HELIX_CADDY_TLS=ops@example.com`)
+to register it as the ACME account contact, so the certificate authority can warn you if renewal
+keeps failing.
 
 **Uploaded in the console.** An administrator with security permissions opens
 **Admin → Domains → HTTPS certificate**, which shows the certificate being served, who issued it,

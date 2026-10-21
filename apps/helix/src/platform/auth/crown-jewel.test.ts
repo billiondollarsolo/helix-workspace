@@ -25,6 +25,8 @@ describe("crown-jewel gate", () => {
     expect(action("DELETE", "/api/admin/identity/idp-configs/idp-id")).toBe(
       "identity.idp.takeover",
     );
+    expect(action("DELETE", "/api/admin/mail/domains/domain-id")).toBe("domain.takeover");
+    expect(action("POST", "/api/admin/mail/domains/domain-id/enable")).toBe("domain.takeover");
     expect(action("POST", "/api/admin/mail/domains/domain-id/dkim")).toBe("key.rotate");
     expect(action("POST", "/api/admin/mail/domains/domain-id/dkim/key-id/activate")).toBe(
       "key.rotate",

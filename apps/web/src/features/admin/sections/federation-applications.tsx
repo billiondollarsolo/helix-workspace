@@ -93,7 +93,7 @@ export function FederationApplications() {
             label="Federated applications"
             rows={applications}
             rowKey={(app) => app.id}
-            searchText={(app) => `Helix Bot ${app.origin} ${app.status}`}
+            searchText={(app) => `Helix Agentspace ${app.origin} ${app.status}`}
             empty={
               <EmptyRow>
                 No federated apps are connected. Add an application to get started.
@@ -112,7 +112,7 @@ export function FederationApplications() {
                       params={{ section: "federation-applications" }}
                       search={{ application: app.id }}
                     >
-                      Helix Bot
+                      Helix Agentspace
                     </Link>
                     <div className="admin-muted">{app.origin}</div>
                   </>
@@ -161,7 +161,7 @@ export function FederationApplications() {
         </div>
       ))}
       {adding ? (
-        <FormPanel title="Connect Helix Bot" onClose={() => setAdding(false)}>
+        <FormPanel title="Connect Helix Agentspace" onClose={() => setAdding(false)}>
           <Registration
             onPrepared={async (result) => {
               setPrepared(result);
@@ -176,7 +176,7 @@ export function FederationApplications() {
       {prepared ? (
         <FormPanel title="Complete application pairing" onClose={() => setPrepared(null)}>
           <p>
-            Paste this code into Bot's reviewed Workspace connection before{" "}
+            Paste this code into Agentspace's reviewed Workspace connection before{" "}
             {new Date(prepared.expiresAt).toLocaleTimeString()}. It completes only the installation
             shown in the registration.
           </p>
@@ -221,7 +221,7 @@ function Registration({
     try {
       address = new URL(origin.trim());
     } catch {
-      setValidation("Enter Bot's full address.");
+      setValidation("Enter Agentspace's full address.");
       return;
     }
     if (
@@ -232,14 +232,14 @@ function Registration({
           ["localhost", "127.0.0.1", "[::1]"].includes(address.hostname))
       )
     ) {
-      setValidation("Enter Bot's HTTPS origin, without a path.");
+      setValidation("Enter Agentspace's HTTPS origin, without a path.");
       return;
     }
     if (
       !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu.test(connectionId.trim()) ||
       !/^[a-f0-9]{64}$/u.test(proof.trim())
     ) {
-      setValidation("Copy the complete connection ID and installation proof from Bot.");
+      setValidation("Copy the complete connection ID and installation proof from Agentspace.");
       return;
     }
     setValidation(null);
@@ -253,9 +253,9 @@ function Registration({
   return (
     <section className="grid gap-3" aria-label="Application registration">
       <p>
-        First prepare the connection while signed in to Bot as its local recovery owner. Copy the
-        address, connection ID and installation proof here. Workspace will manage assigned people;
-        each bot still requires a separately approved account and resource grants.
+        First prepare the connection while signed in to Agentspace as its local recovery owner. Copy
+        the address, connection ID and installation proof here. Workspace will manage assigned
+        people; each bot still requires a separately approved account and resource grants.
       </p>
       <form
         className="grid gap-3"
@@ -263,7 +263,7 @@ function Registration({
         onSubmit={submit}
         aria-describedby={mutation.error || validation ? errorId : undefined}
       >
-        <AdminField label="Bot address">
+        <AdminField label="Agentspace address">
           <AdminInput
             required
             type="url"
@@ -333,7 +333,7 @@ function Application({
       </Button>
       {active ? (
         <PageHeading
-          title="Helix Bot"
+          title="Helix Agentspace"
           subtitle={application.origin}
           actions={
             <a href={application.origin} target="_blank" rel="noopener noreferrer">
@@ -362,12 +362,12 @@ function Application({
               <div>
                 <dt>Managed by Workspace</dt>
                 <dd>
-                  Assigned people, Bot roles, profile names and email addresses, groups and the
-                  sign-in connection.
+                  Assigned people, Agentspace roles, profile names and email addresses, groups and
+                  the sign-in connection.
                 </dd>
               </div>
               <div>
-                <dt>Managed in Helix Bot</dt>
+                <dt>Managed in Helix Agentspace</dt>
                 <dd>
                   Local accounts, recovery ownership, password-account MFA, models, bots,
                   conversations, Work and resource grants.
@@ -424,7 +424,7 @@ function Application({
         confirmLabel="Disconnect"
         isPending={revoke.isPending}
         onConfirm={() => revoke.mutate()}
-        blastRadius="Managed Bot sign-ins and work delegated by those people will stop. Bot's separate local recovery owner remains available."
+        blastRadius="Managed Agentspace sign-ins and work delegated by those people will stop. Agentspace's separate local recovery owner remains available."
       >
         {application.origin}
       </ConfirmDestructive>
@@ -508,7 +508,7 @@ function Assignments({
     <div className="grid gap-3">
       <PanelHeading
         title="Assigned people"
-        subtitle="Bot ownership remains with its local recovery account."
+        subtitle="Agentspace ownership remains with its local recovery account."
         actions={
           <div className="admin-section-actions">
             <Button
@@ -581,7 +581,7 @@ function Assignments({
           },
           {
             id: "role",
-            header: "Bot role",
+            header: "Agentspace role",
             cell: ({ id, person }) => (
               <AdminSelect
                 aria-label={person?.email ?? person?.displayName ?? id}
@@ -689,7 +689,7 @@ function CredentialRotation({ application }: { readonly application: FederationA
         >
           <option value="oidc">Human sign-in</option>
           <option value="scim">Directory provisioning</option>
-          <option value="enrollment">Bot account enrollment</option>
+          <option value="enrollment">Agentspace account enrollment</option>
         </AdminSelect>
       </AdminField>
       <p>

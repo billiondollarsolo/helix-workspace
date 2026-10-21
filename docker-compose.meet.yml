@@ -47,6 +47,10 @@ services:
       LIVEKIT_INTERNAL_URL: http://livekit:7880
       LIVEKIT_PUBLIC_URL: ${LIVEKIT_PUBLIC_URL:-}
       MEET_CAPTURE_SECRET_FILE: /run/secrets/meet_capture_secret
+      # Media stays in the deployment's region.
+      MEET_MEDIA_REGION: ${HELIX_REGION:?deployment region label is required}
+      # The admin DNS checklist checks this TURN record.
+      HELIX_MEET_TURN_DOMAIN: ${HELIX_MEET_TURN_DOMAIN:?HELIX_MEET_TURN_DOMAIN is required for the Meet install}
     secrets:
       - livekit_api_secret
       - meet_capture_secret

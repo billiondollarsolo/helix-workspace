@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 import { installCoreAppsRoutes } from "./support/api-fixtures";
 
-test("production CSP permits the isolated mail bridge and configured Jitsi origin", async ({
+test("production CSP permits the isolated mail bridge and blocks third-party scripts", async ({
   page,
 }) => {
   // Load the renderer through Vite so its inline stylesheet uses the same module
@@ -19,10 +19,12 @@ test("production CSP permits the isolated mail bridge and configured Jitsi origi
     );
   });
   const edge = readFileSync("../../infra/caddy/Caddyfile.production", "utf8");
-  const csp = /Content-Security-Policy "([^"]+)"/u
-    .exec(edge)?.[1]
-    ?.replaceAll("{$HELIX_JITSI_ORIGIN:https://meet.localhost}", "https://meet.example.test");
+  const csp = /Content-Security-Policy "([^"]+)"/u.exec(edge)?.[1];
   expect(csp).toBeDefined();
+  // Meet runs in the app itself; LiveKit signalling is a same-host websocket.
+  expect(csp).toMatch(/frame-src 'self'(?:;|$)/u);
+  expect(csp).toContain("connect-src 'self' wss:");
+  expect(edge).toContain("camera=(self), microphone=(self), display-capture=(self)");
   await page.route("https://helix.example.test/**", async (route) => {
     await route.fulfill({
       contentType: "text/html",
@@ -30,18 +32,11 @@ test("production CSP permits the isolated mail bridge and configured Jitsi origi
       body: "<!doctype html><html><body></body></html>",
     });
   });
-  await page.route("https://meet.example.test/**", async (route) => {
-    await route.fulfill(
-      route.request().url().endsWith(".js")
-        ? {
-            contentType: "text/javascript",
-            body: "document.documentElement.dataset.jitsiLoaded = 'true'",
-          }
-        : {
-            contentType: "text/html",
-            body: "<p>Configured Jitsi frame</p>",
-          },
-    );
+  await page.route("https://cdn.example.test/**", async (route) => {
+    await route.fulfill({
+      contentType: "text/javascript",
+      body: "document.documentElement.dataset.thirdPartyLoaded = 'true'",
+    });
   });
   await page.addInitScript(() => {
     window.addEventListener("message", (event) => {
@@ -70,15 +65,8 @@ test("production CSP permits the isolated mail bridge and configured Jitsi origi
   await frame.getByText("External link").click();
   expect((await link).text()).toContain("https://outside.example/");
 
-  await page.addScriptTag({ url: "https://meet.example.test/external_api.js" });
-  await expect(page.locator("html")).toHaveAttribute("data-jitsi-loaded", "true");
-  await page.evaluate(() => {
-    const iframe = document.createElement("iframe");
-    iframe.title = "Jitsi";
-    iframe.src = "https://meet.example.test/room";
-    document.body.appendChild(iframe);
-  });
   await expect(
-    page.frameLocator('iframe[title="Jitsi"]').getByText("Configured Jitsi frame"),
-  ).toBeVisible();
+    page.addScriptTag({ url: "https://cdn.example.test/external_api.js" }),
+  ).rejects.toThrow();
+  await expect(page.locator("html")).not.toHaveAttribute("data-third-party-loaded", "true");
 });

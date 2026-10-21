@@ -108,6 +108,8 @@ describe("optional Meet install", () => {
       LIVEKIT_API_SECRET_FILE: "/run/secrets/livekit_api_secret",
       LIVEKIT_INTERNAL_URL: "http://livekit:7880",
       MEET_CAPTURE_SECRET_FILE: "/run/secrets/meet_capture_secret",
+      MEET_MEDIA_REGION: "eu-test",
+      HELIX_MEET_TURN_DOMAIN: "turn.example.test",
     });
     expect(helix.environment.LIVEKIT_API_SECRET).toBeUndefined();
     expect(helix.environment.MEET_CAPTURE_SECRET).toBeUndefined();

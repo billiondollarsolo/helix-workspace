@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  authorizeMeetRecordingStart,
   createMeetRoom,
   endMeetRoom,
   listMeetRooms,
   mintMeetToken,
   recordMeetTelemetry,
+  startMeetRecording,
+  stopMeetRecording,
 } from "./api";
 
 const room = {
@@ -100,20 +101,36 @@ describe("meet API", () => {
     });
   });
 
-  it("requires a server authorization before starting recording", async () => {
-    const authorization = {
-      authorizationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-      expiresAt: "2026-05-20T12:01:00.000Z",
-      participantSubjects: [room.createdByActorId],
-    };
-    const fetchImpl = vi.fn(() => Promise.resolve(Response.json(authorization)));
+  it("starts and stops recording through the meet.recording tools", async () => {
+    const started = { recordingId: "rec-1", startedAt: "2026-05-20T12:01:00.000Z" };
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json(started))
+      .mockResolvedValueOnce(Response.json({ stopped: true }));
 
-    await expect(authorizeMeetRecordingStart(room.id, fetchImpl)).resolves.toEqual(authorization);
-    expect(fetchImpl).toHaveBeenCalledWith("/api/tools/meet.recording.authorize-start", {
+    await expect(startMeetRecording(room.id, fetchImpl)).resolves.toEqual(started);
+    await expect(stopMeetRecording(room.id, fetchImpl)).resolves.toEqual({ stopped: true });
+
+    expect(fetchImpl).toHaveBeenNthCalledWith(1, "/api/tools/meet.recording.start", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ roomId: room.id }),
     });
+    expect(fetchImpl).toHaveBeenNthCalledWith(2, "/api/tools/meet.recording.stop", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ roomId: room.id }),
+    });
+  });
+
+  it("surfaces the server's reason when recording can't start", async () => {
+    const message =
+      "Recording requires an active moderator and current consent from every participant.";
+    const fetchImpl = vi.fn(() =>
+      Promise.resolve(Response.json({ error: message }, { status: 409 })),
+    );
+
+    await expect(startMeetRecording(room.id, fetchImpl)).rejects.toThrow(message);
   });
 
   it("sends only the bounded Meet telemetry event contract", async () => {

@@ -266,7 +266,6 @@ describe("MeetCall", () => {
     expect(mic?.disabled).toBe(false);
     expect(container.querySelector('button[aria-label="Share screen"]')).not.toBeNull();
     expect(container.querySelector('button[aria-label="Raise hand"]')).not.toBeNull();
-    expect(container.querySelector('button[aria-label*="recording" i]')).toBeNull();
 
     const options = container.querySelector<HTMLButtonElement>(
       'button[aria-label="Show call options"]',
@@ -337,6 +336,9 @@ describe("MeetCall", () => {
       <MeetCall session={{ ...liveSession, recordingActive: true }} onLeave={() => undefined} />,
       root,
     );
+    // LiveKit reports the running recording once connected.
+    FakeRoom.latest().isRecording = true;
+    await flush();
     await flush();
     expect(container.querySelector('[role="alert"]')?.textContent).toContain(
       "Recording in progress",

@@ -103,6 +103,8 @@ export class FakeRoom {
   readonly remoteParticipants = new Map<string, FakeParticipant>();
   activeSpeakers: FakeParticipant[] = [];
   canPlaybackAudio = true;
+  /** LiveKit's room recording flag (Egress running). */
+  isRecording = false;
   private readonly listeners = new Map<string, ((...args: unknown[]) => void)[]>();
 
   constructor(readonly options: unknown) {
@@ -159,6 +161,13 @@ export class FakeRoom {
     this.remoteParticipants.set(identity, participant);
     this.emit("participantConnected", participant);
     return participant;
+  }
+
+  /** Flips the room's recording flag and fires recordingStatusChanged, as LiveKit
+      does when Egress starts or stops. */
+  setRecording(recording: boolean) {
+    this.isRecording = recording;
+    this.emit("recordingStatusChanged", recording);
   }
 
   removeRemote(identity: string) {

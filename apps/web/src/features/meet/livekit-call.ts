@@ -245,6 +245,17 @@ export function useLiveKitCall({
       }));
     });
 
+    // LiveKit marks the room as recording while Egress runs, so every
+    // participant sees recording start and stop live.
+    let recordingActive = current.initialRecordingActive;
+    const setRecording = (recording: boolean) => {
+      if (disposed || recording === recordingActive) return;
+      recordingActive = recording;
+      if (recording) announceRecordingStarted();
+      setState((prev) => ({ ...prev, recordingActive: recording }));
+    };
+    room.on(RoomEvent.RecordingStatusChanged, setRecording);
+
     room.on(RoomEvent.DataReceived, (payload, participant, _kind, topic) => {
       if (disposed || topic !== CHAT_TOPIC) return;
       const parsed = parseChatPayload(payload);
@@ -283,6 +294,8 @@ export function useLiveKitCall({
         if (disposed) return;
         joined = true;
         setState((prev) => ({ ...prev, isJoined: true, loadError: null }));
+        // Once connected, the room's own recording flag is authoritative.
+        setRecording(room.isRecording);
         telemetry({
           event: "join_latency",
           joinLatencyMs: Math.max(0, performance.now() - joinStartedAt),

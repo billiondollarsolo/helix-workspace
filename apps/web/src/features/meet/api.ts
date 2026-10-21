@@ -186,10 +186,15 @@ export interface MeetRecordingConsent {
   readonly joinGrantId: string;
 }
 
-export interface MeetRecordingAuthorization {
-  readonly authorizationId: string;
-  readonly expiresAt: string;
-  readonly participantSubjects: readonly string[];
+/** `meet.recording.start` output: the server-side (LiveKit Egress) recording. */
+export interface MeetRecordingStarted {
+  readonly recordingId: string;
+  readonly startedAt: string;
+}
+
+/** `meet.recording.stop` output; false when no recording was running. */
+export interface MeetRecordingStopped {
+  readonly stopped: boolean;
 }
 
 export type MeetTelemetryEvent =
@@ -337,15 +342,23 @@ export async function joinMeetByCode(
   return callMeetTool<MeetTokenRecord>("meet.join-by-code", input, fetchImpl);
 }
 
-export async function authorizeMeetRecordingStart(
+/**
+ * Start recording the room for everyone present. Rejects with the server's
+ * message when recording is unavailable, the caller isn't a moderator, someone
+ * present hasn't accepted the current recording notice, or one is running.
+ */
+export async function startMeetRecording(
   roomId: string,
   fetchImpl: MeetApiFetch = authenticatedFetch,
-): Promise<MeetRecordingAuthorization> {
-  return callMeetTool<MeetRecordingAuthorization>(
-    "meet.recording.authorize-start",
-    { roomId },
-    fetchImpl,
-  );
+): Promise<MeetRecordingStarted> {
+  return callMeetTool<MeetRecordingStarted>("meet.recording.start", { roomId }, fetchImpl);
+}
+
+export async function stopMeetRecording(
+  roomId: string,
+  fetchImpl: MeetApiFetch = authenticatedFetch,
+): Promise<MeetRecordingStopped> {
+  return callMeetTool<MeetRecordingStopped>("meet.recording.stop", { roomId }, fetchImpl);
 }
 
 export async function applyMeetHostControl(

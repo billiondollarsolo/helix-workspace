@@ -36,6 +36,7 @@ import {
 } from "./api";
 import { useLiveKitCall, type LiveKitCallOptions } from "./livekit-call";
 import {
+  CallControl,
   CallOptionsPanel,
   ChatPanel,
   MiniAction,
@@ -44,6 +45,7 @@ import {
   SidePanel,
   UUID_PATTERN,
 } from "./meet-call-panels";
+import { RecordingControl, RecordingFeedback, useMeetRecording } from "./meet-call-recording";
 import { copyMeetingLink, meetJoinLink } from "./meet-join";
 import type { MeetCallSession } from "./meet-shell";
 import { MeetVideoGrid } from "./meet-video-grid";
@@ -131,6 +133,8 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
     },
     onError: () => undefined,
   });
+  const recording = useMeetRecording(session.roomId, call.recordingActive);
+  const canRecord = hasLiveRoom && session.recordingAvailable && session.canStartRecording;
   const applyControl = (control: MeetHostControl) => {
     if (!hostControl.isPending) hostControl.mutate(control);
   };
@@ -447,6 +451,13 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
             <ChatIcon size={16} />
           </CallControl>
         ) : null}
+        {canRecord ? (
+          <RecordingControl
+            controls={recording}
+            participantCount={call.participants.length + 1}
+            disabled={!call.isJoined}
+          />
+        ) : null}
 
         <div aria-hidden="true" className="[width:1px] h-7 bg-[var(--border)] [margin:0_4px]" />
 
@@ -495,6 +506,7 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
           ) : null}
         </div>
       </div>
+      {canRecord ? <RecordingFeedback controls={recording} /> : null}
       {hostControl.data?.callUpdated === false ? (
         <div role="status" className="[padding:8px_16px] [color:var(--warning)]">
           Saved, but the call didn’t update. Try again in a moment.
@@ -581,52 +593,5 @@ function Overlay({
     >
       {message}
     </div>
-  );
-}
-
-function CallControl({
-  label,
-  children,
-  onClick,
-  active = false,
-  danger = false,
-  disabled = false,
-  badge,
-}: {
-  readonly label: string;
-  readonly children: React.ReactNode;
-  readonly onClick: () => void;
-  readonly active?: boolean;
-  readonly danger?: boolean;
-  readonly disabled?: boolean;
-  readonly badge?: number | null;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-label={label}
-      aria-pressed={active}
-      disabled={disabled}
-      className={cn(
-        "focus-ring relative w-11 h-11 [border-radius:999px] grid [place-items:center] [border:none]",
-        danger
-          ? "bg-[var(--label-red)] text-[var(--label-on)]"
-          : active
-            ? "bg-[var(--accent)] text-[var(--accent-fg)]"
-            : "bg-[var(--surface-3)] text-[var(--text)]",
-        disabled ? "cursor-not-allowed [opacity:0.5]" : "cursor-pointer",
-      )}
-    >
-      {children}
-      {badge !== undefined && badge !== null && badge > 0 ? (
-        <span
-          aria-hidden="true"
-          className="absolute [top:-2px] [right:-2px] min-w-4 h-4 [padding:0_4px] [border-radius:999px] bg-[var(--label-red)] text-[var(--label-on)] type-chip font-semibold grid [place-items:center]"
-        >
-          {badge > 99 ? "99+" : badge}
-        </span>
-      ) : null}
-    </button>
   );
 }

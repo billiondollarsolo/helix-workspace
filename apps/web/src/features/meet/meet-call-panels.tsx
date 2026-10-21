@@ -1,5 +1,6 @@
 /* In-call side panels: participants, host controls, call options and
-   in-call messages share one 320px panel frame. */
+   in-call messages share one 320px panel frame. Also the round toolbar
+   control the call's bottom bar is built from. */
 
 import { Avatar } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
@@ -208,5 +209,57 @@ export function ChatPanel({
         </button>
       </form>
     </SidePanel>
+  );
+}
+
+export function CallControl({
+  label,
+  children,
+  onClick,
+  active = false,
+  danger = false,
+  disabled = false,
+  busy = false,
+  badge,
+}: {
+  readonly label: string;
+  readonly children: React.ReactNode;
+  readonly onClick: () => void;
+  readonly active?: boolean;
+  readonly danger?: boolean;
+  readonly disabled?: boolean;
+  /** Working: stays focusable (so focus isn't lost) but ignores clicks. */
+  readonly busy?: boolean;
+  readonly badge?: number | null;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={busy ? undefined : onClick}
+      aria-label={label}
+      aria-pressed={active}
+      aria-busy={busy || undefined}
+      aria-disabled={busy || undefined}
+      disabled={disabled}
+      className={cn(
+        "focus-ring relative w-11 h-11 [border-radius:999px] grid [place-items:center] [border:none]",
+        danger
+          ? "bg-[var(--label-red)] text-[var(--label-on)]"
+          : active
+            ? "bg-[var(--accent)] text-[var(--accent-fg)]"
+            : "bg-[var(--surface-3)] text-[var(--text)]",
+        disabled || busy ? "cursor-not-allowed [opacity:0.5]" : "cursor-pointer",
+      )}
+    >
+      {children}
+      {badge !== undefined && badge !== null && badge > 0 ? (
+        <span
+          aria-hidden="true"
+          className="absolute [top:-2px] [right:-2px] min-w-4 h-4 [padding:0_4px] [border-radius:999px] bg-[var(--label-red)] text-[var(--label-on)] type-chip font-semibold grid [place-items:center]"
+        >
+          {badge > 99 ? "99+" : badge}
+        </span>
+      ) : null}
+    </button>
   );
 }

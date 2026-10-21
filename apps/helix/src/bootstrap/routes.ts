@@ -84,6 +84,7 @@ import { registerPersonLimitRoutes } from "../platform/limits/person-limits-rout
 import {
   liveKitHealthy,
   PostgresMeetEgressRecordingStore,
+  PostgresMeetLobbyStore,
   MeetEgressRecoveryWorker,
   createLiveKitEgress,
   registerMeetRoutes,
@@ -725,6 +726,7 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
       guestInviteSecret: configuredMeetSecrets.guestInviteSecret,
       recordings,
       recordingDir: bootEnv.MEET_RECORDING_DIR,
+      lobby: new PostgresMeetLobbyStore(sql),
       storageResolver: driveStorageResolver,
       ...(clamavScanner === undefined ? {} : { recordingScanner: clamavScanner }),
       requireRecordingScanner: strictRecordings,

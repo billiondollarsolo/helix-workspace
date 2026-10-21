@@ -42,6 +42,9 @@ class FakeRooms implements LiveKitRooms {
   async deleteRoom() {
     this.record("delete room");
   }
+  async sendData(_org: string, _room: string, message: { readonly to: readonly string[] }) {
+    this.record(`send ${message.to.join(",")}`);
+  }
 }
 
 describe("Meet host controls", () => {

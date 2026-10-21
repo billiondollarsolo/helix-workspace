@@ -15,6 +15,8 @@ import {
   type LiveKitWebhookEvent,
 } from "./livekit.js";
 import type { MeetEgressRecordingStore } from "./egress-store.js";
+import { createLiveKitRooms, type LiveKitRooms } from "./livekit-rooms.js";
+import type { MeetLobbyStore } from "./lobby-store.js";
 import { handleEgressWebhook } from "./egress-webhook.js";
 import type { MeetRecordingScanner } from "./recording-files.js";
 import type { MeetMediaWebhookStore, MeetStore } from "./store.js";
@@ -22,6 +24,10 @@ import { MEET_RECORDING_NOTICE_VERSION } from "./store.js";
 import { meetJwtFeatures } from "./tools.js";
 
 const LIVEKIT_WEBHOOK_PATH = "/webhook/livekit";
+/** How often a waiting guest checks back. */
+const LOBBY_RETRY_MS = 3_000;
+/** LiveKit data topic that tells hosts the lobby changed. */
+export const MEET_LOBBY_TOPIC = "helix.lobby";
 const REPLAY_WINDOW_SECONDS = 300;
 const rawMeetBodies = new WeakMap<object, Buffer>();
 
@@ -50,6 +56,10 @@ export interface RegisterMeetRoutesOptions {
   /** Egress recordings: the upload records and the directory Egress writes into. */
   readonly recordings?: MeetEgressRecordingStore | undefined;
   readonly recordingDir?: string | undefined;
+  /** The lobby; without it guests join directly. */
+  readonly lobby?: MeetLobbyStore | undefined;
+  /** LiveKit's room service, to tell hosts someone is waiting; defaults to the configured server. */
+  readonly rooms?: LiveKitRooms | undefined;
   readonly metrics?: PlatformMetrics | undefined;
   readonly now?: (() => Date) | undefined;
   readonly onError?: ((error: unknown) => void) | undefined;
@@ -63,6 +73,18 @@ export async function registerMeetRoutes(
     throw new Error("Meet guest invite secret is required.");
   }
   const now = options.now ?? (() => new Date());
+  let rooms: LiveKitRooms | undefined = options.rooms;
+  // Hosts in the call refresh their lobby list when told; it is only a nudge.
+  const notifyHosts = (room: { orgId: string; id: string }, moderatorIds: readonly string[]) => {
+    rooms ??= createLiveKitRooms(options.liveKit);
+    void rooms
+      .sendData(room.orgId, room.id, {
+        topic: MEET_LOBBY_TOPIC,
+        payload: { type: "lobby.waiting" },
+        to: moderatorIds,
+      })
+      .catch((error: unknown) => options.onError?.(error));
+  };
 
   app.post("/api/meet/guest/join", async (request, reply) => {
     const parsed = guestJoinSchema.safeParse(request.body);
@@ -84,6 +106,22 @@ export async function registerMeetRoutes(
       });
       if (resolved === null) return reply.code(404).send({ error: "Unknown meeting invitation." });
       const participantSubject = `guest:${resolved.invite.id}`;
+      const entry = await options.lobby?.enter({
+        orgId: resolved.room.orgId,
+        roomId: resolved.room.id,
+        participantSubject,
+        displayName: input.name,
+      });
+      if (entry === null) return reply.code(404).send({ error: "Unknown meeting invitation." });
+      if (entry?.status === "denied") {
+        return reply.code(403).send({ error: "The host didn't let you in.", denied: true });
+      }
+      if (entry?.status === "waiting") {
+        if (entry.first && entry.moderatorIds.length > 0)
+          notifyHosts(resolved.room, entry.moderatorIds);
+        reply.header("cache-control", "no-store");
+        return reply.code(202).send({ waiting: true, retryAfterMs: LOBBY_RETRY_MS });
+      }
       const controls = await options.store.authorizeJoin?.({
         orgId: resolved.room.orgId,
         roomId: resolved.room.id,

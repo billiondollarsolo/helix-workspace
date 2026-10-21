@@ -1269,6 +1269,9 @@ const serviceDefinitions: readonly AdminServiceDefinition[] = [
       "meet.telemetry.record",
       "meet.recording.start",
       "meet.recording.stop",
+      "meet.lobby.list",
+      "meet.lobby.admit",
+      "meet.lobby.deny",
       "meet.end-room",
     ],
     capabilities: [

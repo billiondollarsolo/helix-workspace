@@ -9,6 +9,7 @@ export * from "./livekit-egress.js";
 export * from "./livekit-rooms.js";
 export * from "./recording-files.js";
 export * from "./lifecycle-worker.js";
+export * from "./lobby-store.js";
 export * from "./rate-limit.js";
 export * from "./routes.js";
 export * from "./store.js";

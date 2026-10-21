@@ -28,6 +28,8 @@ import { createLiveKitRooms, type LiveKitRooms } from "./livekit-rooms.js";
 import { meetJwtFeatures } from "./policy.js";
 import type { MeetEgressRecordingStore } from "./egress-store.js";
 import { createLiveKitEgress, type LiveKitEgress } from "./livekit-egress.js";
+import { createMeetLobbyTools } from "./lobby-tools.js";
+import type { MeetLobbyStore } from "./lobby-store.js";
 import { createMeetRecordingTools } from "./recording-tools.js";
 export { meetJwtFeatures } from "./policy.js";
 
@@ -245,6 +247,8 @@ export interface CreateMeetToolDefinitionsOptions {
   readonly recordings?: MeetEgressRecordingStore | undefined;
   readonly egress?: LiveKitEgress | undefined;
   readonly recordingDir?: string | undefined;
+  /** Guests waiting to be let in; the lobby tools are unavailable without it. */
+  readonly lobby?: MeetLobbyStore | undefined;
   readonly publicBaseUrl?: string | undefined;
   /** Live recorder readiness. Recording is unavailable when omitted or false. */
   readonly recordingAvailable?: (() => Promise<boolean>) | undefined;
@@ -585,6 +589,7 @@ function createMeetToolDefinitions(
       recordingDir: options.recordingDir,
       recordingAvailable: options.recordingAvailable,
     }),
+    ...createMeetLobbyTools({ store: options.store, lobby: options.lobby }),
   ];
 }
 

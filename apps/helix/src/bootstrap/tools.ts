@@ -93,6 +93,7 @@ import {
   missingMeetSecrets,
   PostgresMeetEgressRecordingStore,
   recordingDirectoryReady,
+  PostgresMeetLobbyStore,
   registerMeetStatusTool,
   registerMeetTools,
 } from "../platform/meet/index.js";
@@ -632,6 +633,7 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
       recordings: new PostgresMeetEgressRecordingStore(sql),
       recordingDir: bootEnv.MEET_RECORDING_DIR,
       recordingAvailable: () => recordingDirectoryReady(bootEnv.MEET_RECORDING_DIR),
+      lobby: new PostgresMeetLobbyStore(sql),
       publicBaseUrl: bootEnv.PUBLIC_BASE_URL ?? "http://localhost:3000",
       metrics,
     });

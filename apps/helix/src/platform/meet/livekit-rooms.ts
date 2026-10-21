@@ -33,6 +33,12 @@ export interface LiveKitRooms {
     },
   ): Promise<void>;
   deleteRoom(orgId: string, roomId: string): Promise<void>;
+  /** Sends a small reliable message to the named participants on `topic`. */
+  sendData(
+    orgId: string,
+    roomId: string,
+    message: { readonly topic: string; readonly payload: object; readonly to: readonly string[] },
+  ): Promise<void>;
 }
 
 /** LiveKit answers with protobuf JSON; enum values arrive as names. */
@@ -130,6 +136,16 @@ export function createLiveKitRooms(
     async deleteRoom(orgId, roomId) {
       const room = liveKitRoomName(orgId, roomId);
       await call("DeleteRoom", room, { room });
+    },
+    async sendData(orgId, roomId, message) {
+      const room = liveKitRoomName(orgId, roomId);
+      await call("SendData", room, {
+        room,
+        data: Buffer.from(JSON.stringify(message.payload)).toString("base64"),
+        kind: "RELIABLE",
+        destination_identities: message.to,
+        topic: message.topic,
+      });
     },
   };
 }

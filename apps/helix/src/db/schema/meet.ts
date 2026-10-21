@@ -6,6 +6,7 @@ import {
   index,
   jsonb,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -78,6 +79,33 @@ export const meetGuestInvites = pgTable(
       table.roomId,
       table.expiresAt,
     ),
+  }),
+);
+
+/** Guests waiting to be let into a meeting (migration 0256). */
+export const meetLobbyRequests = pgTable(
+  "meet_lobby_requests",
+  {
+    orgId: uuid("org_id").notNull(),
+    roomId: uuid("room_id").notNull(),
+    participantSubject: text("participant_subject").notNull(),
+    displayName: text("display_name").notNull(),
+    status: text("status").notNull().default("waiting"),
+    requestedAt: timestamp("requested_at", { withTimezone: true }).defaultNow().notNull(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).defaultNow().notNull(),
+    decidedByActorId: uuid("decided_by_actor_id"),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.orgId, table.roomId, table.participantSubject] }),
+    roomFk: foreignKey({
+      columns: [table.orgId, table.roomId],
+      foreignColumns: [meetRooms.orgId, meetRooms.id],
+      name: "meet_lobby_requests_room_org_fk",
+    }).onDelete("cascade"),
+    waitingIdx: index("meet_lobby_requests_waiting_idx")
+      .on(table.orgId, table.roomId, table.lastSeenAt)
+      .where(sql`${table.status} = 'waiting'`),
   }),
 );
 

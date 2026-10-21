@@ -2,7 +2,7 @@ import { FederationBackupManagement } from "../platform/backup/federation-manage
 import { registerFederationBackupRoutes } from "../platform/backup/federation-routes.js";
 import { resolveAdminSecurityControls } from "../platform/auth/admin-security-policy.js";
 import { runtimeEnvironment } from "../config/env.js";
-import { FederationPairing } from "../platform/auth/federation-pairing.js";
+import { FederationPairing, parseFederationRoutes } from "../platform/auth/federation-pairing.js";
 import { FederationDirectoryWorker } from "../platform/auth/federation-directory-worker.js";
 import { registerFederationRoutes } from "../platform/auth/federation-routes.js";
 import type { installTools } from "./tools.js";
@@ -27,6 +27,7 @@ export function installFederationConnections(context: Awaited<ReturnType<typeof 
       agentCredentialStore,
       betterAuthConfig.baseUrl,
       runtimeEnvironment().HELIX_FEDERATION_ALLOW_PRIVATE_NETWORK === "true",
+      parseFederationRoutes(runtimeEnvironment().HELIX_FEDERATION_ROUTES),
     );
     registerFederationRoutes(app, federation, actorFromAuthenticatedRequest);
     const backups = new FederationBackupManagement(federation, defaultOrg.id, (error) => {

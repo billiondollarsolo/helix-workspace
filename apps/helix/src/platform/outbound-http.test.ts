@@ -71,6 +71,35 @@ describe("outbound HTTP policy", () => {
     expect(transport).not.toHaveBeenCalled();
   });
 
+  it("connects an operator route to its private target while keeping the public identity", async () => {
+    const resolve = vi.fn(async (hostname: string): Promise<readonly ResolvedOutboundAddress[]> =>
+      hostname === "helix-agentspace" ? [{ address: "172.25.0.9", family: 4 }] : [publicV4],
+    );
+    const transport = vi.fn(async (input: OutboundHttpTransportInput) => {
+      expect(input.originalUrl.href).toBe("https://agentspace.example/v1/federation/x");
+      expect(input.url.hostname).toBe("172.25.0.9");
+      expect(input.url.port).toBe("3000");
+      expect(input.init.headers.get("host")).toBe("agentspace.example");
+      return new Response("ok");
+    });
+    const client = createOutboundHttpClient({
+      production: true,
+      resolve,
+      transport,
+      routes: new Map([["Agentspace.Example", { host: "helix-agentspace", port: 3000 }]]),
+    });
+
+    await expect((await client("https://agentspace.example/v1/federation/x")).text()).resolves.toBe(
+      "ok",
+    );
+    expect(resolve).toHaveBeenCalledWith("helix-agentspace");
+    // Only the routed hostname may reach a private address.
+    resolve.mockResolvedValue([{ address: "172.25.0.9", family: 4 }]);
+    await expect(client("https://other.example/")).rejects.toMatchObject({
+      code: "blocked_destination",
+    });
+  });
+
   it("pins the validated address so DNS rebinding cannot change the connection", async () => {
     const resolve = vi
       .fn<(hostname: string) => Promise<readonly ResolvedOutboundAddress[]>>()

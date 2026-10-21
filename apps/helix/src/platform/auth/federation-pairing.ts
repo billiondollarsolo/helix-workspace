@@ -10,7 +10,7 @@ import {
   NotFoundError,
 } from "../../api/api-error.js";
 import { canWriteAdminConsole } from "../admin/console-shared.js";
-import { createOutboundHttpClient } from "../outbound-http.js";
+import { createOutboundHttpClient, type OutboundRoute } from "../outbound-http.js";
 import type { TenantEnvelopeCipher } from "../secrets/envelope.js";
 import {
   withTenantIoSagaPostgresContext,
@@ -85,6 +85,23 @@ export interface FederationApplicationRow {
   directory_pending: boolean;
   retry_count: number;
 }
+/** Parses HELIX_FEDERATION_ROUTES ("public.host=target:port,..."). */
+export function parseFederationRoutes(value: string | undefined): Map<string, OutboundRoute> {
+  const routes = new Map<string, OutboundRoute>();
+  for (const entry of (value ?? "").split(",").filter((item) => item.trim() !== "")) {
+    const [publicHost, target] = entry.trim().split("=");
+    const separator = target?.lastIndexOf(":") ?? -1;
+    const host = target?.slice(0, separator);
+    const port = Number(target?.slice(separator + 1));
+    if (!publicHost || !host || !Number.isInteger(port) || port < 1 || port > 65535)
+      throw new TypeError(
+        `Invalid HELIX_FEDERATION_ROUTES entry "${entry}". Use public.host=target:port.`,
+      );
+    routes.set(publicHost.toLowerCase(), { host, port });
+  }
+  return routes;
+}
+
 export class FederationPairing {
   readonly fetch: typeof fetch;
   constructor(
@@ -94,10 +111,12 @@ export class FederationPairing {
     readonly credentials: PostgresAgentCredentialStore,
     readonly publicOrigin: string,
     allowPrivateNetwork = false,
+    routes: ReadonlyMap<string, OutboundRoute> = new Map(),
   ) {
     this.fetch = createOutboundHttpClient({
       allowHttp: allowPrivateNetwork,
       allowPrivateNetwork,
+      routes,
       maxRedirects: 0,
       maxRequestBytes: 2_000_000,
       maxResponseBytes: 2_000_000,

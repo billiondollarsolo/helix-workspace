@@ -232,6 +232,42 @@ the WORM-Postgres copy and immutable object copies in the bundled object store (
 not the final off-host assurance gate: configure and prove immutable off-host audit shipping
 before the private pilot.
 
+## Hostnames, Cloudflare and private links
+
+Split hostnames by who connects to them.
+
+| Who connects                                                      | Example                                           | Proxy (e.g. Cloudflare)                                                                 |
+| ----------------------------------------------------------------- | ------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| People in browsers                                                | `workspace.example.com`, `agentspace.example.com` | Proxied. Lock the origin so only the proxy's addresses reach Caddy.                     |
+| Inbound mail (MX target)                                          | `mail.workspace.example.com`                      | DNS-only. Open TCP 25, plus 465/587 for submission and 993 for IMAP clients if offered. |
+| Meet media relay                                                  | `turn.workspace.example.com`                      | DNS-only. Open TURN on UDP/TCP 3478 and TLS 5349, and Jitsi media on UDP 10000.         |
+| Workspace ↔ federated apps (directory sync, credentials, backups) | none                                              | Not involved: use a private link (below).                                               |
+
+HTTP proxies such as Cloudflare carry only web traffic, so SMTP and TURN must stay DNS-only.
+Those records publish the server's address. The web hostnames stay protected as long as their
+Caddy sites accept only the proxy's address ranges. Use SSL mode **Full (strict)**: Caddy keeps
+obtaining real certificates behind the proxy. Proxies close idle connections (about 100 seconds
+on Cloudflare) and cap request size (100 MB on Cloudflare's free plan).
+
+**Private links between apps.** Workspace's own calls to a federated app (for example Agentspace)
+should not cross the public proxy, where bot protection or timeouts can interrupt them. Set
+`HELIX_FEDERATION_ROUTES=public.host=target:port[,...]`: Workspace keeps using the app's public
+`https://` address as its identity and still verifies that hostname's TLS certificate, but connects
+to the private target. Choose the target by where the apps run:
+
+1. Same host: the shared Docker network, e.g.
+   `agentspace.example.com=helix-agentspace:3000`.
+2. Same cloud provider: its private network (Hetzner private network, AWS/GCP VPC), e.g.
+   `agentspace.example.com=10.0.0.5:3000`.
+3. Different providers: a WireGuard mesh such as Tailscale (or Headscale/NetBird), e.g.
+   `agentspace.example.com=agentspace.tailnet-name.ts.net:3000`.
+4. Already on Cloudflare Zero Trust: Cloudflare Tunnel with the WARP Connector for private
+   networking. A tunnel can also serve the web hostnames, so inbound 80/443 can be closed.
+5. Last resort: a direct public hostname restricted to the other server's address, ideally with
+   mutual TLS.
+
+The federated app must present a certificate valid for its public hostname on the routed port.
+
 ## Database
 
 Helix requires **PostgreSQL 18** with **pgvector 0.8 or newer** (the shipped images pin

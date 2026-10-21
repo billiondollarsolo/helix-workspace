@@ -86,6 +86,7 @@ Production assertions impose additional requirements; follow the [deployment gui
 | `HELIX_EDGE_TLS_SOURCE`                            | Optional     | —                                                           |
 | `HELIX_FEDERATION_ALLOW_PRIVATE_NETWORK`           | Optional     | —                                                           |
 | `HELIX_FEDERATION_IDENTITY_ENABLED`                | Optional     | —                                                           |
+| `HELIX_FEDERATION_ROUTES`                          | Optional     | —                                                           |
 | `HELIX_GLOBAL_READ_ONLY`                           | Optional     | —                                                           |
 | `HELIX_IMAGE`                                      | Optional     | —                                                           |
 | `HELIX_LOCAL_DEMO_ANCHOR_DATE`                     | Optional     | —                                                           |

@@ -3,6 +3,17 @@ import { coercePositiveInt, optionalString, optionalUrl } from "./common.js";
 export const authEnv = {
   HELIX_FEDERATION_IDENTITY_ENABLED: optionalString.pipe(z.enum(["true", "false"]).optional()),
   HELIX_FEDERATION_ALLOW_PRIVATE_NETWORK: optionalString.pipe(z.enum(["true", "false"]).optional()),
+  // "public.host=target:port[,...]": reach a federated app over a private network
+  // (Docker, VPC, Tailscale) while still verifying its public hostname's TLS identity.
+  HELIX_FEDERATION_ROUTES: optionalString.pipe(
+    z
+      .string()
+      .regex(
+        /^[a-z0-9.-]+=[A-Za-z0-9.-]+:\d{1,5}(,[a-z0-9.-]+=[A-Za-z0-9.-]+:\d{1,5})*$/u,
+        "Use public.host=target:port, separated by commas.",
+      )
+      .optional(),
+  ),
   HELIX_BOOTSTRAP_ADMIN_ENABLED: optionalString.pipe(z.enum(["true", "false"]).optional()),
   HELIX_BOOTSTRAP_ADMIN_EMAIL: optionalString,
   HELIX_BOOTSTRAP_ADMIN_NAME: optionalString,

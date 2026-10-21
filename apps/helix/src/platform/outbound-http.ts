@@ -50,6 +50,16 @@ export interface OutboundHttpTransportInput {
   readonly timeoutMs: number;
 }
 
+/**
+ * Operator-set connection target for one public hostname: connect here, but keep
+ * the public URL's Host header and TLS name (like `curl --resolve`). Used to reach
+ * a co-located or privately linked app without leaving the private network.
+ */
+export interface OutboundRoute {
+  readonly host: string;
+  readonly port: number;
+}
+
 export interface OutboundHttpClientOptions {
   readonly production?: boolean;
   readonly allowHttp?: boolean;
@@ -64,6 +74,8 @@ export interface OutboundHttpClientOptions {
   readonly proxyUrl?: string;
   readonly resolve?: (hostname: string) => Promise<readonly ResolvedOutboundAddress[]>;
   readonly transport?: (input: OutboundHttpTransportInput) => Promise<Response>;
+  /** Public hostname → private target. Targets may be private; they come from operator config. */
+  readonly routes?: ReadonlyMap<string, OutboundRoute>;
 }
 
 interface NormalizedOptions {
@@ -78,6 +90,7 @@ interface NormalizedOptions {
   readonly proxyUrl?: URL;
   readonly resolve: NonNullable<OutboundHttpClientOptions["resolve"]>;
   readonly transport?: NonNullable<OutboundHttpClientOptions["transport"]>;
+  readonly routes: ReadonlyMap<string, OutboundRoute>;
 }
 
 interface HttpResponse {
@@ -200,12 +213,16 @@ async function requestWithRedirects(input: {
   let headers = input.headers;
   for (let redirects = 0; ; redirects += 1) {
     assertUrlAllowed(url, input.policy);
-    const address = await resolveAndValidate(url, input.policy, false, input.signal);
+    const route = input.policy.routes.get(normalizedHostname(url));
+    const address =
+      route === undefined
+        ? await resolveAndValidate(url, input.policy, false, input.signal)
+        : await resolveAndValidate(routeUrl(url, route), input.policy, true, input.signal);
     const proxy =
-      input.policy.proxyUrl === undefined
+      input.policy.proxyUrl === undefined || route !== undefined
         ? undefined
         : await resolveProxy(input.policy.proxyUrl, input.policy, input.signal);
-    const pinnedUrl = pinUrl(url, address);
+    const pinnedUrl = pinUrl(url, address, route?.port);
     headers.set("host", url.host);
     headers.delete("content-length");
     headers.delete("transfer-encoding");
@@ -594,6 +611,12 @@ function normalizeOptions(options: OutboundHttpClientOptions): NormalizedOptions
           family: family === 6 ? 6 : 4,
         }))),
     ...(options.transport === undefined ? {} : { transport: options.transport }),
+    routes: new Map(
+      [...(options.routes ?? new Map<string, OutboundRoute>())].map(([host, route]) => [
+        normalizeHostname(host),
+        route,
+      ]),
+    ),
   };
 }
 
@@ -620,10 +643,15 @@ function parseProxyUrl(value: string): URL {
   return url;
 }
 
-function pinUrl(url: URL, address: ResolvedOutboundAddress): URL {
+function pinUrl(url: URL, address: ResolvedOutboundAddress, port?: number): URL {
   const pinned = new URL(url);
   pinned.hostname = address.family === 6 ? `[${address.address}]` : address.address;
+  if (port !== undefined) pinned.port = String(port);
   return pinned;
+}
+
+function routeUrl(url: URL, route: OutboundRoute): URL {
+  return new URL(`${url.protocol}//${route.host}:${String(route.port)}`);
 }
 
 function pinnedLookup(address: ResolvedOutboundAddress): LookupFunction {

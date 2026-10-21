@@ -9,6 +9,7 @@ import { RowMenu, RowMenuItem } from "@/features/admin/console/widgets";
 
 import { Button } from "@/components/ui/button";
 import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
+import { DnsChecklistPanel } from "@/features/admin/dns-checklist";
 import { EdgeCertificatePanel } from "@/features/admin/edge-certificate";
 import {
   AdminField,
@@ -493,6 +494,7 @@ export function AdminDomain() {
       )}
 
       <EdgeCertificatePanel />
+      <DnsChecklistPanel />
     </>
   );
 }

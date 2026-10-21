@@ -96,6 +96,7 @@ import {
 import { registerAuthCsrfRoute, registerBetterAuthRoutes } from "./auth-routes.js";
 import { bootstrapPasswordChangeRequired } from "../platform/auth/bootstrap-admin.js";
 import { installAgentSecretAdministration } from "./agent-secrets.js";
+import { installDnsChecklist } from "./dns-checklist.js";
 import { installEdgeCertificateManagement } from "./edge-certificate.js";
 import { createPersonLimitStore, personLimitDefaults } from "./person-limits.js";
 import { traceIdForRequest } from "./request-principal.js";
@@ -480,6 +481,12 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
     defaultOrgId: defaultOrg.id,
     leaderGatedWorkers,
+  });
+  installDnsChecklist({
+    app,
+    sql,
+    bootEnv,
+    actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
   });
 
   await registerTenantConfigAdminRoutes(app, {

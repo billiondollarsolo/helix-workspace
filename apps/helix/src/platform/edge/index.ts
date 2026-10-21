@@ -7,3 +7,8 @@ export {
   type EdgeTlsDeploymentSource,
 } from "./service.js";
 export { PostgresEdgeCertificateStore } from "./store.js";
+export {
+  registerDnsChecklistRoutes,
+  type DnsChecklistRole,
+  type DnsChecklistTarget,
+} from "./dns-checklist.js";

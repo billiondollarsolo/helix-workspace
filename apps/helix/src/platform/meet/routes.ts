@@ -193,6 +193,7 @@ export async function registerMeetRoutes(
                 storageResolver: options.storageResolver,
                 scanner: options.recordingScanner,
                 requireScanner: options.requireRecordingScanner,
+                requireEncryption: options.requireRecordingEncryption,
                 now,
                 onError: options.onError,
               },

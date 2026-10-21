@@ -45,14 +45,15 @@ export async function handleEgressWebhook(
   // A redelivered webhook must not promote (or discard) the recording twice.
   if (started || lifecycle?.duplicate === true) return { handled: true, body: { ok: true } };
 
-  if (info.status === "EGRESS_COMPLETE") {
+  if (egressProducedFile(info.status)) {
     // Copying, scanning and attaching can take a while; answer LiveKit first.
     void promoteEgressRecording(deps, recording, {
       startedAt: info.startedAt ?? recording.startedAt,
       endedAt: info.endedAt ?? deps.now(),
     })
       .then((result) => {
-        if (!result.ok) deps.onError?.(new Error(`Meet recording was not saved: ${result.error}`));
+        if ("error" in result)
+          deps.onError?.(new Error(`Meet recording was not saved: ${result.error}`));
       })
       .catch((error: unknown) => deps.onError?.(error));
     return { handled: true, body: { ok: true, promoting: true } };
@@ -64,6 +65,11 @@ export async function handleEgressWebhook(
     ),
   );
   return { handled: true, body: { ok: true, discarded: true } };
+}
+
+/** A recording stopped by its time limit is still a complete file. */
+export function egressProducedFile(status: string): boolean {
+  return status === "EGRESS_COMPLETE" || status === "EGRESS_LIMIT_REACHED";
 }
 
 /** egress_started can arrive before the start tool has stored the egress id. */

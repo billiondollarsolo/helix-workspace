@@ -49,6 +49,7 @@ export async function installWorkers(context: Awaited<ReturnType<typeof installR
     calendarInvitationDeliveryWorker,
     leaderGatedWorkers,
     chatRoutes,
+    meetRecordingRecoveryWorker,
   } = context;
   // P0-1: every singleton background worker must run on exactly one replica.
   // `pg_try_advisory_lock` previously protected only the audit verifier; the
@@ -90,6 +91,12 @@ export async function installWorkers(context: Awaited<ReturnType<typeof installR
   }
 
   leaderGatedWorkers.push({ name: "meet-lifecycle-worker", worker: meetLifecycleWorker });
+  if (meetRecordingRecoveryWorker !== undefined) {
+    leaderGatedWorkers.push({
+      name: "meet-recording-recovery-worker",
+      worker: meetRecordingRecoveryWorker,
+    });
+  }
 
   leaderGatedWorkers.push({ name: "ai-enrichment-worker", worker: enrichmentWorker });
 

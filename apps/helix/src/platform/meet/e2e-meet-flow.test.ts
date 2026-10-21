@@ -35,6 +35,7 @@ describe("meet flow", () => {
           return "EG_recording";
         },
         stopRecording: async () => undefined,
+        getRecording: async () => null,
       },
       recordingDir: "/recordings",
     });

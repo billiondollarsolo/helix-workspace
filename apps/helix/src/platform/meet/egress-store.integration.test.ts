@@ -8,6 +8,7 @@ const ORG = "fa400000-0000-4000-8000-000000000001";
 const HOST = "fa400000-0000-4000-8000-000000000011";
 const FIRST = "fa400000-0000-4000-8000-000000000021";
 const SECOND = "fa400000-0000-4000-8000-000000000022";
+const THIRD = "fa400000-0000-4000-8000-000000000023";
 
 describe("Meet Egress recordings", { skip: process.env.DATABASE_URL === undefined }, () => {
   let sql: postgres.Sql;
@@ -82,6 +83,49 @@ describe("Meet Egress recordings", { skip: process.env.DATABASE_URL === undefine
     await expect(sql`select id from meet_recording_uploads where id = ${SECOND}`).resolves.toEqual(
       [],
     );
+  });
+
+  it("lists unfinished recordings for recovery and lets only one save claim each", async () => {
+    const room = await store.createRoom({
+      orgId: ORG,
+      actorId: HOST,
+      subject: "Recovery",
+      mediaDomain: "meet.example.test",
+    });
+    await recordings.prepare({
+      id: THIRD,
+      orgId: ORG,
+      roomId: room.id,
+      storageKey: `recordings/egress/${THIRD}.mp4`,
+      mimeType: "video/mp4",
+      expiresAt: new Date(Date.now() + 3_600_000),
+    });
+    const listed = () =>
+      recordings.listPending(1000).then((rows) => rows.find((row) => row.id === THIRD));
+    await expect(listed()).resolves.toMatchObject({
+      orgId: ORG,
+      roomId: room.id,
+      egressId: null,
+      promotingUntil: null,
+    });
+    const claim = (leaseMs: number) =>
+      recordings.claimPromotion({ orgId: ORG, id: THIRD, leaseMs });
+    await expect(claim(60_000)).resolves.toBe(true);
+    await expect(claim(60_000)).resolves.toBe(false);
+    expect((await listed())?.promotingUntil?.getTime()).toBeGreaterThan(Date.now());
+    // A crashed save's claim runs out and the recording can be claimed again.
+    await sql`update meet_recording_uploads set promoting_until = now() - interval '1 second' where id = ${THIRD}`;
+    await expect(claim(60_000)).resolves.toBe(true);
+
+    // The listing reads every organization, so it refuses a tenant-scoped session.
+    await expect(
+      sql.begin(async (tx) => {
+        await tx`select set_config('helix.org_id', ${ORG}, true)`;
+        await tx`select * from helix_list_pending_meet_egress_recordings(10)`;
+      }),
+    ).rejects.toThrow(/unscoped worker context/u);
+    await recordings.abandon({ orgId: ORG, id: THIRD });
+    await expect(listed()).resolves.toBeUndefined();
   });
 
   it("still requires a digest for ordinary uploads", async () => {

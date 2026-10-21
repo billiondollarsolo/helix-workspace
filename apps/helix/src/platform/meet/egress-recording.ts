@@ -19,6 +19,8 @@ export interface EgressRecordingDeps {
   readonly storageResolver: TenantStorageResolver | undefined;
   readonly scanner?: MeetRecordingScanner | undefined;
   readonly requireScanner?: boolean | undefined;
+  /** Refuse to save into storage that does not encrypt objects at rest. */
+  readonly requireEncryption?: boolean | undefined;
   /** Directory Egress writes into, mounted at the same path in Helix. */
   readonly recordingDir: string;
 }
@@ -39,8 +41,14 @@ export async function recordingDirectoryReady(recordingDir: string | undefined):
   }
 }
 
+/** Long enough to copy, scan and attach a long meeting; a crashed save's claim runs out. */
+export const EGRESS_PROMOTION_LEASE_MS = 2 * 60 * 60 * 1000;
+
 export type EgressPromotion =
-  { readonly ok: true; readonly objectId: string } | { readonly ok: false; readonly error: string };
+  | { readonly ok: true; readonly objectId: string }
+  | { readonly ok: false; readonly error: string }
+  /** Another save holds the recording; nothing was touched. */
+  | { readonly ok: false; readonly busy: true };
 
 export async function promoteEgressRecording(
   deps: EgressRecordingDeps,
@@ -48,6 +56,14 @@ export async function promoteEgressRecording(
   times: { readonly startedAt: Date; readonly endedAt: Date },
 ): Promise<EgressPromotion> {
   const path = egressRecordingPath(deps.recordingDir, recording.id);
+  if (
+    !(await deps.recordings.claimPromotion({
+      orgId: recording.orgId,
+      id: recording.id,
+      leaseMs: EGRESS_PROMOTION_LEASE_MS,
+    }))
+  )
+    return { ok: false, busy: true };
   const fail = async (error: string): Promise<EgressPromotion> => {
     await deps.recordings.abandon({ orgId: recording.orgId, id: recording.id });
     return { ok: false, error };
@@ -62,6 +78,8 @@ export async function promoteEgressRecording(
     const sha256 = await fileSha256(path);
     const storage = await deps.storageResolver({ orgId: recording.orgId });
     if (storage === undefined) return await fail("Recording storage is not configured.");
+    if (deps.requireEncryption === true && storage.encryptionAtRest === undefined)
+      return await fail("Encrypted recording storage is not configured.");
 
     await storage.client.put({
       key: recording.storageKey,

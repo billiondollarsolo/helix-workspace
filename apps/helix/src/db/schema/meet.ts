@@ -94,6 +94,8 @@ export const meetRecordingUploads = pgTable(
     sha256: text("sha256"),
     source: text("source").notNull().default("upload"),
     egressId: text("egress_id"),
+    // A save in progress holds this claim until it finishes or runs out (0255).
+    promotingUntil: timestamp("promoting_until", { withTimezone: true }),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     completedAt: timestamp("completed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),

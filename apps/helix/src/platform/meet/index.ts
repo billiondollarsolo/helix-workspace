@@ -2,6 +2,7 @@ export * from "./availability.js";
 export * from "./conference.js";
 export * from "./config.js";
 export * from "./egress-recording.js";
+export * from "./egress-recovery-worker.js";
 export * from "./egress-store.js";
 export * from "./livekit.js";
 export * from "./livekit-egress.js";

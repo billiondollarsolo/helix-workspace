@@ -84,6 +84,8 @@ import { registerPersonLimitRoutes } from "../platform/limits/person-limits-rout
 import {
   liveKitHealthy,
   PostgresMeetEgressRecordingStore,
+  MeetEgressRecoveryWorker,
+  createLiveKitEgress,
   registerMeetRoutes,
 } from "../platform/meet/index.js";
 import { registerSearchAdminRoutes } from "../platform/search/index.js";
@@ -688,23 +690,50 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
 
   await installDriveRoutes(context);
 
+  let meetRecordingRecoveryWorker: MeetEgressRecoveryWorker | undefined;
   if (configuredMeetSecrets !== null) {
     await installMeetCapture(context, configuredMeetSecrets.captureSecret);
+    const recordings = new PostgresMeetEgressRecordingStore(sql);
+    // Business and enterprise tiers (and production) need scanned, encrypted recordings.
+    const strictRecordings = bootEnv.NODE_ENV === "production" || securityTier !== "personal";
+    if (bootEnv.MEET_RECORDING_DIR !== undefined) {
+      const liveKit = configuredMeetSecrets.liveKit;
+      meetRecordingRecoveryWorker = new MeetEgressRecoveryWorker({
+        deps: {
+          store: meetStore,
+          recordings,
+          recordingDir: bootEnv.MEET_RECORDING_DIR,
+          storageResolver: driveStorageResolver,
+          scanner: clamavScanner,
+          requireScanner: strictRecordings,
+          requireEncryption: strictRecordings,
+        },
+        recovery: recordings,
+        egress: () => createLiveKitEgress(liveKit),
+        onResult: (result) => {
+          if (result.saved + result.dropped + result.orphanFilesRemoved > 0)
+            app.log.info(result, "Meet recordings recovered");
+        },
+        onError: (error) => {
+          app.log.error({ error }, "Meet recording recovery error");
+        },
+      });
+    }
     await registerMeetRoutes(app, {
       store: meetStore,
       liveKit: configuredMeetSecrets.liveKit,
       guestInviteSecret: configuredMeetSecrets.guestInviteSecret,
-      recordings: new PostgresMeetEgressRecordingStore(sql),
+      recordings,
       recordingDir: bootEnv.MEET_RECORDING_DIR,
       storageResolver: driveStorageResolver,
       ...(clamavScanner === undefined ? {} : { recordingScanner: clamavScanner }),
-      requireRecordingScanner: bootEnv.NODE_ENV === "production" || securityTier !== "personal",
-      requireRecordingEncryption: bootEnv.NODE_ENV === "production" || securityTier !== "personal",
+      requireRecordingScanner: strictRecordings,
+      requireRecordingEncryption: strictRecordings,
       metrics,
       onError: (error) => {
         app.log.error({ error }, "Meet webhook error");
       },
     });
   }
-  return { ...context, chatRoutes };
+  return { ...context, chatRoutes, meetRecordingRecoveryWorker };
 }

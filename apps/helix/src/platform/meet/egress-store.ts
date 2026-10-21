@@ -14,6 +14,17 @@ export interface MeetEgressRecording {
   readonly mimeType: string;
   readonly egressId: string | null;
   readonly startedAt: Date;
+  readonly expiresAt: Date;
+}
+
+/** An unfinished recording as the recovery worker sees it, in any organization. */
+export interface PendingMeetEgressRecording extends MeetEgressRecording {
+  /** Set while a save is in progress; the claim runs out if that save crashed. */
+  readonly promotingUntil: Date | null;
+}
+
+export interface MeetEgressRecoveryStore {
+  listPending(limit: number): Promise<readonly PendingMeetEgressRecording[]>;
 }
 
 export interface MeetEgressRecordingStore {
@@ -45,6 +56,15 @@ export interface MeetEgressRecordingStore {
     readonly byteSize: number;
     readonly sha256: string;
   }): Promise<boolean>;
+  /**
+   * Claims the recording for saving until the lease runs out. False when another
+   * save holds an unexpired claim or the recording is no longer pending.
+   */
+  claimPromotion(input: {
+    readonly orgId: string;
+    readonly id: string;
+    readonly leaseMs: number;
+  }): Promise<boolean>;
   /** Drops a recording that failed or produced nothing; nothing was promoted. */
   abandon(input: { readonly orgId: string; readonly id: string }): Promise<void>;
 }
@@ -57,6 +77,7 @@ interface Row {
   readonly mime_type: string;
   readonly egress_id: string | null;
   readonly created_at: Date;
+  readonly expires_at: Date;
 }
 
 const toRecording = (row: Row | undefined): MeetEgressRecording | null =>
@@ -70,9 +91,12 @@ const toRecording = (row: Row | undefined): MeetEgressRecording | null =>
         mimeType: row.mime_type,
         egressId: row.egress_id,
         startedAt: row.created_at,
+        expiresAt: row.expires_at,
       };
 
-export class PostgresMeetEgressRecordingStore implements MeetEgressRecordingStore {
+export class PostgresMeetEgressRecordingStore
+  implements MeetEgressRecordingStore, MeetEgressRecoveryStore
+{
   constructor(private readonly sql: postgres.Sql) {}
 
   async prepare(input: Parameters<MeetEgressRecordingStore["prepare"]>[0]): Promise<boolean> {
@@ -107,7 +131,7 @@ export class PostgresMeetEgressRecordingStore implements MeetEgressRecordingStor
   async active(input: { readonly orgId: string; readonly roomId: string }) {
     return withTenantPostgresContext(this.sql, { orgId: input.orgId }, async (tx) => {
       const rows = await tx<Row[]>`
-        select id, org_id, room_id, storage_key, mime_type, egress_id, created_at
+        select id, org_id, room_id, storage_key, mime_type, egress_id, created_at, expires_at
         from meet_recording_uploads
         where org_id = ${input.orgId} and room_id = ${input.roomId} and source = 'egress'
           and status = 'prepared' and completed_at is null
@@ -120,7 +144,7 @@ export class PostgresMeetEgressRecordingStore implements MeetEgressRecordingStor
   async byEgressId(input: { readonly orgId: string; readonly egressId: string }) {
     return withTenantPostgresContext(this.sql, { orgId: input.orgId }, async (tx) => {
       const rows = await tx<Row[]>`
-        select id, org_id, room_id, storage_key, mime_type, egress_id, created_at
+        select id, org_id, room_id, storage_key, mime_type, egress_id, created_at, expires_at
         from meet_recording_uploads
         where org_id = ${input.orgId} and egress_id = ${input.egressId} and source = 'egress'
           and completed_at is null
@@ -143,6 +167,31 @@ export class PostgresMeetEgressRecordingStore implements MeetEgressRecordingStor
     });
   }
 
+  async claimPromotion(input: Parameters<MeetEgressRecordingStore["claimPromotion"]>[0]) {
+    return withTenantPostgresContext(this.sql, { orgId: input.orgId }, async (tx) => {
+      const rows = await tx`
+        update meet_recording_uploads
+        set promoting_until = now() + ${input.leaseMs} * interval '1 millisecond'
+        where org_id = ${input.orgId} and id = ${input.id} and source = 'egress'
+          and status = 'prepared' and completed_at is null
+          and (promoting_until is null or promoting_until < now())
+        returning id
+      `;
+      return rows.length === 1;
+    });
+  }
+
+  /** Runs outside any tenant context: the database function reads every organization. */
+  async listPending(limit: number): Promise<readonly PendingMeetEgressRecording[]> {
+    const rows = await this.sql<(Row & { readonly promoting_until: Date | null })[]>`
+      select * from helix_list_pending_meet_egress_recordings(${limit})
+    `;
+    return rows.map((row) => ({
+      ...(toRecording(row) as MeetEgressRecording),
+      promotingUntil: row.promoting_until,
+    }));
+  }
+
   async abandon(input: { readonly orgId: string; readonly id: string }) {
     await withTenantPostgresContext(this.sql, { orgId: input.orgId }, async (tx) => {
       await tx`
@@ -155,10 +204,12 @@ export class PostgresMeetEgressRecordingStore implements MeetEgressRecordingStor
 }
 
 /** For tests and the in-memory runtime. */
-export class InMemoryMeetEgressRecordingStore implements MeetEgressRecordingStore {
+export class InMemoryMeetEgressRecordingStore
+  implements MeetEgressRecordingStore, MeetEgressRecoveryStore
+{
   readonly recordings = new Map<
     string,
-    MeetEgressRecording & { byteSize?: number; sha256?: string; expiresAt: Date }
+    MeetEgressRecording & { byteSize?: number; sha256?: string; promotingUntil?: Date }
   >();
   constructor(
     private readonly roomIsActive: (orgId: string, roomId: string) => boolean = () => true,
@@ -200,6 +251,21 @@ export class InMemoryMeetEgressRecordingStore implements MeetEgressRecordingStor
     if (recording === undefined) return false;
     this.recordings.set(input.id, { ...recording, byteSize: input.byteSize, sha256: input.sha256 });
     return true;
+  }
+  async claimPromotion(input: Parameters<MeetEgressRecordingStore["claimPromotion"]>[0]) {
+    const recording = this.recordings.get(input.id);
+    const now = Date.now();
+    if (recording === undefined || (recording.promotingUntil?.getTime() ?? 0) > now) return false;
+    this.recordings.set(input.id, {
+      ...recording,
+      promotingUntil: new Date(now + input.leaseMs),
+    });
+    return true;
+  }
+  async listPending(limit: number) {
+    return [...this.recordings.values()]
+      .slice(0, limit)
+      .map((recording) => ({ ...recording, promotingUntil: recording.promotingUntil ?? null }));
   }
   async abandon(input: { readonly orgId: string; readonly id: string }) {
     this.recordings.delete(input.id);

@@ -9,6 +9,8 @@ export interface LiveKitEgress {
   /** Starts a grid recording of the room into `filepath` (a path Egress can write). */
   startRoomRecording(orgId: string, roomId: string, filepath: string): Promise<string>;
   stopRecording(orgId: string, roomId: string, egressId: string): Promise<void>;
+  /** The recording's current state, or null when LiveKit no longer knows it. */
+  getRecording(orgId: string, roomId: string, egressId: string): Promise<LiveKitEgressInfo | null>;
 }
 
 export function createLiveKitEgress(
@@ -48,6 +50,17 @@ export function createLiveKitEgress(
     },
     async stopRecording(orgId, roomId, egressId) {
       await call("StopEgress", liveKitRoomName(orgId, roomId), { egress_id: egressId });
+    },
+    async getRecording(orgId, roomId, egressId) {
+      const room = liveKitRoomName(orgId, roomId);
+      const list = (await call("ListEgress", room, { room_name: room, egress_id: egressId })) as {
+        items?: unknown;
+      };
+      const items = Array.isArray(list.items) ? (list.items as unknown[]) : [];
+      return (
+        items.map(parseEgressInfo).find((info) => info !== null && info.egressId === egressId) ??
+        null
+      );
     },
   };
 }

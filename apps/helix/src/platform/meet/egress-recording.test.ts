@@ -1,39 +1,18 @@
-import type { StorageObject } from "@helix/sdk-types";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { TenantStorageClient } from "../storage/tenant-resolver.js";
-import { egressRecordingPath } from "./egress-recording.js";
-import { InMemoryMeetEgressRecordingStore } from "./egress-store.js";
-import { handleEgressWebhook, type EgressWebhookDeps } from "./egress-webhook.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { handleEgressWebhook } from "./egress-webhook.js";
 import type { MeetRecordingScanner } from "./recording-files.js";
-import type { MeetMediaEventInput } from "./store.js";
-
-const orgId = "22222222-2222-4222-8222-222222222222";
-const roomId = "33333333-3333-4333-8333-333333333333";
-const roomName = `${orgId}.${roomId}`;
-// Smallest bytes that pass the MP4 signature check: a box header with "ftyp".
-const mp4 = Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from("ftypisom"), Buffer.alloc(32)]);
-
-class MemoryStorage implements TenantStorageClient {
-  readonly objects = new Map<string, StorageObject & { bytes: Buffer }>();
-  async put(object: StorageObject) {
-    const chunks: Buffer[] = [];
-    if (object.body instanceof Uint8Array) chunks.push(Buffer.from(object.body));
-    else for await (const chunk of object.body) chunks.push(Buffer.from(chunk));
-    this.objects.set(object.key, { ...object, bytes: Buffer.concat(chunks) });
-  }
-  async get(key: string) {
-    const object = this.objects.get(key);
-    return object === undefined ? null : { ...object, body: object.bytes };
-  }
-  async delete(key: string) {
-    this.objects.delete(key);
-  }
-}
+import {
+  mp4,
+  orgId,
+  roomId,
+  roomName,
+  setupEgressRecording,
+} from "../../test-support/meet-egress.js";
 
 let dir: string;
 beforeEach(async () => {
@@ -43,68 +22,8 @@ afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-async function setup(options: { readonly scanner?: MeetRecordingScanner } = {}) {
-  const recordings = new InMemoryMeetEgressRecordingStore();
-  const storage = new MemoryStorage();
-  const events: MeetMediaEventInput[] = [];
-  const attached: unknown[] = [];
-  const store = {
-    applyMediaEvent: vi.fn(async (input: MeetMediaEventInput) => {
-      const duplicate = events.some((event) => event.eventId === input.eventId);
-      events.push(input);
-      return {
-        roomId,
-        status: "active" as const,
-        version: events.length,
-        activeParticipantCount: 1,
-        duplicate,
-      };
-    }),
-    getRecordingUpload: vi.fn(async (id: string) => {
-      const recording = recordings.recordings.get(id);
-      return recording?.byteSize === undefined || recording.sha256 === undefined
-        ? null
-        : {
-            ...recording,
-            roomName: "Launch Review",
-            byteSize: recording.byteSize,
-            sha256: recording.sha256,
-            completedAt: null,
-          };
-    }),
-    markRecordingUploadReady: vi.fn(async () => true),
-    attachRecording: vi.fn(async (input: unknown) => {
-      attached.push(input);
-      return { roomId, threadId: "t", objectId: "object-1", messageId: "m", storageKey: "k" };
-    }),
-    completeRecordingUpload: vi.fn(async () => true),
-  };
-  await recordings.prepare({
-    id: "77777777-7777-4777-8777-777777777777",
-    orgId,
-    roomId,
-    storageKey: "recordings/Launch-Review/77777777-7777-4777-8777-777777777777.mp4",
-    mimeType: "video/mp4",
-    expiresAt: new Date(Date.now() + 3_600_000),
-  });
-  await recordings.setEgressId({
-    orgId,
-    id: "77777777-7777-4777-8777-777777777777",
-    egressId: "EG_1",
-  });
-  const errors: unknown[] = [];
-  const deps = {
-    store,
-    recordings,
-    storageResolver: () => ({ client: storage, managedBy: "helix-default", prefix: "" }),
-    scanner: options.scanner,
-    recordingDir: dir,
-    now: () => new Date("2026-10-21T08:00:00.000Z"),
-    onError: (error: unknown) => errors.push(error),
-  } as unknown as EgressWebhookDeps;
-  const file = egressRecordingPath(dir, "77777777-7777-4777-8777-777777777777");
-  return { deps, recordings, storage, events, attached, errors, store, file };
-}
+const setup = (options: { readonly scanner?: MeetRecordingScanner } = {}) =>
+  setupEgressRecording(dir, options);
 
 const ended = (status = "EGRESS_COMPLETE", id = "EV_end") => ({
   event: "egress_ended",
@@ -191,6 +110,17 @@ describe("Egress recordings", () => {
     expect(recordings.recordings.size).toBe(0);
     expect(existsSync(file)).toBe(false);
     expect(String(errors[0])).toContain("antivirus");
+  });
+
+  it("refuses to save into unencrypted storage when encryption is required", async () => {
+    const { deps, storage, recordings, file, errors } = await setup();
+    await writeFile(file, mp4);
+    await handleEgressWebhook({ ...deps, requireEncryption: true }, ended());
+    await settle();
+    expect(storage.objects.size).toBe(0);
+    expect(recordings.recordings.size).toBe(0);
+    expect(existsSync(file)).toBe(false);
+    expect(String(errors[0])).toContain("Encrypted recording storage");
   });
 
   it("discards the file when Egress reports a failure", async () => {

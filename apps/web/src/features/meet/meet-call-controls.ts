@@ -54,7 +54,7 @@ export interface MeetCallState {
   readonly tileView: boolean;
   /** Null until the provider reports it. */
   readonly noiseSuppressionEnabled: boolean | null;
-  /** Recording on: the join response's value until connected, then LiveKit's room status. */
+  /** Recording on: the join response's value (or the room's flag once connected), then LiveKit's RecordingStatusChanged events. */
   readonly recordingActive: boolean;
   /** Remote participants (does not include local). */
   readonly participants: readonly MeetCallParticipant[];

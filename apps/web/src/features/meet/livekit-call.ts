@@ -294,8 +294,10 @@ export function useLiveKitCall({
         if (disposed) return;
         joined = true;
         setState((prev) => ({ ...prev, isJoined: true, loadError: null }));
-        // Once connected, the room's own recording flag is authoritative.
-        setRecording(room.isRecording);
+        // Err towards warning: a recording the room already reports turns the
+        // notice on, but only a RecordingStatusChanged event clears the join
+        // response's recordingActive=true (Egress may not have marked it yet).
+        if (room.isRecording) setRecording(true);
         telemetry({
           event: "join_latency",
           joinLatencyMs: Math.max(0, performance.now() - joinStartedAt),

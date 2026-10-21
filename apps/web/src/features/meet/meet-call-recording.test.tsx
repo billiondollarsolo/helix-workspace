@@ -245,7 +245,7 @@ describe("MeetCall recording", () => {
     expect(container.querySelector('[role="alert"]')).toBeNull();
   });
 
-  it("takes LiveKit's status over the join response once connected", async () => {
+  it("keeps the join response's warning until LiveKit reports a change", async () => {
     renderWithClient(
       <MeetCall
         session={{ ...moderatorSession, recordingActive: true }}
@@ -253,13 +253,27 @@ describe("MeetCall recording", () => {
       />,
       root,
     );
-    // Before connecting, the join response warns straight away.
     expect(recPill()).not.toBeNull();
     await flush();
     await flush();
-    // The recording ended between the join response and connecting.
+    // The room doesn't report recording yet at connect; the notice stays.
+    expect(FakeRoom.latest().isRecording).toBe(false);
+    expect(recPill()).not.toBeNull();
+    expect(container.textContent).toContain("Recording in progress");
+
+    act(() => {
+      FakeRoom.latest().setRecording(false);
+    });
     expect(recPill()).toBeNull();
     expect(recordButton()).not.toBeNull();
+  });
+
+  it("turns the notice on when the room already reports recording at connect", async () => {
+    renderWithClient(<MeetCall session={moderatorSession} onLeave={() => undefined} />, root);
+    FakeRoom.latest().isRecording = true;
+    await flush();
+    await flush();
+    expect(recPill()).not.toBeNull();
   });
 });
 

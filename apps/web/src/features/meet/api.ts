@@ -373,6 +373,80 @@ export async function applyMeetHostControl(
   );
 }
 
+/** A guest waiting in the meeting lobby (`meet.lobby.list`). */
+export interface MeetLobbyRequest {
+  readonly participantSubject: string;
+  readonly displayName: string;
+  readonly requestedAt: string;
+}
+
+/** Guests waiting to be let in. Hosts and co-hosts only; others get an error. */
+export async function listMeetLobby(
+  roomId: string,
+  fetchImpl: MeetApiFetch = authenticatedFetch,
+): Promise<readonly MeetLobbyRequest[]> {
+  const output = await callMeetTool<{ readonly waiting?: readonly MeetLobbyRequest[] }>(
+    "meet.lobby.list",
+    { roomId },
+    fetchImpl,
+  );
+  return output.waiting ?? [];
+}
+
+export async function admitMeetLobbyGuest(
+  roomId: string,
+  participantSubject: string,
+  fetchImpl: MeetApiFetch = authenticatedFetch,
+): Promise<{ readonly admitted: boolean }> {
+  return callMeetTool("meet.lobby.admit", { roomId, participantSubject }, fetchImpl);
+}
+
+export async function denyMeetLobbyGuest(
+  roomId: string,
+  participantSubject: string,
+  fetchImpl: MeetApiFetch = authenticatedFetch,
+): Promise<{ readonly denied: boolean }> {
+  return callMeetTool("meet.lobby.deny", { roomId, participantSubject }, fetchImpl);
+}
+
+/** Allow or block guests; meetings start with guests blocked. */
+export async function setMeetGuestsAllowed(
+  roomId: string,
+  allowed: boolean,
+  fetchImpl: MeetApiFetch = authenticatedFetch,
+): Promise<{ readonly allowed: boolean }> {
+  return callMeetTool("meet.guests.set-allowed", { roomId, allowed }, fetchImpl);
+}
+
+/** One day: how long a guest invitation link works by default. */
+export const MEET_GUEST_INVITE_TTL_SECONDS = 86_400;
+
+export interface MeetGuestInviteCreated {
+  readonly invite: Record<string, unknown>;
+  /** Signed invitation token; it goes in the link's URL fragment. */
+  readonly token: string;
+}
+
+/**
+ * Create a guest invitation for one email address. The tool needs
+ * confirmation; `callMeetTool` approves it because the host clicked Create.
+ * Fails while guests are blocked, so allow guests first.
+ */
+export async function createMeetGuestInvite(
+  input: { readonly roomId: string; readonly email: string; readonly expiresInSeconds?: number },
+  fetchImpl: MeetApiFetch = authenticatedFetch,
+): Promise<MeetGuestInviteCreated> {
+  return callMeetTool<MeetGuestInviteCreated>(
+    "meet.guest-invite.create",
+    {
+      roomId: input.roomId,
+      email: input.email,
+      expiresInSeconds: input.expiresInSeconds ?? MEET_GUEST_INVITE_TTL_SECONDS,
+    },
+    fetchImpl,
+  );
+}
+
 export async function recordMeetTelemetry(
   roomId: string,
   event: MeetTelemetryEvent,

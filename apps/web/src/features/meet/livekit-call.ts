@@ -48,6 +48,8 @@ export interface LiveKitCallOptions {
 export interface UseLiveKitCallParams extends MeetCallCallbacks {
   /** When non-null, connect; null (or a change of url/token) disconnects. */
   readonly options: LiveKitCallOptions | null;
+  /** The server says someone started waiting in the lobby (hosts only receive it). */
+  readonly onLobbyWaiting?: () => void;
 }
 
 /** One video tile: a participant camera (or avatar) or a screen share. */
@@ -122,6 +124,8 @@ const EMPTY_MEDIA: MeetMediaView = { tiles: [], audioTracks: [], audioPlaybackBl
 
 /** Data-channel topic for in-call chat; payload is JSON `{ id, text }`. */
 export const CHAT_TOPIC = "chat";
+/** Data topic the server uses to tell hosts the lobby changed. */
+export const LOBBY_TOPIC = "helix.lobby";
 /** Participant attribute carrying the raised hand. */
 export const HAND_ATTRIBUTE = "hand";
 const HAND_RAISED = "raised";
@@ -156,6 +160,7 @@ export function useLiveKitCall({
   options,
   onLeft,
   onTelemetry,
+  onLobbyWaiting,
 }: UseLiveKitCallParams): LiveKitCallControls {
   const [state, setState] = useState<MeetCallState>(EMPTY_STATE);
   const [media, setMedia] = useState<MeetMediaView>(EMPTY_MEDIA);
@@ -169,6 +174,8 @@ export function useLiveKitCall({
   onLeftRef.current = onLeft;
   const onTelemetryRef = useRef(onTelemetry);
   onTelemetryRef.current = onTelemetry;
+  const onLobbyWaitingRef = useRef(onLobbyWaiting);
+  onLobbyWaitingRef.current = onLobbyWaiting;
   const displayNameRef = useRef(options?.displayName ?? "You");
   displayNameRef.current = options?.displayName ?? displayNameRef.current;
   const optionsRef = useRef(options);
@@ -257,7 +264,14 @@ export function useLiveKitCall({
     room.on(RoomEvent.RecordingStatusChanged, setRecording);
 
     room.on(RoomEvent.DataReceived, (payload, participant, _kind, topic) => {
-      if (disposed || topic !== CHAT_TOPIC) return;
+      if (disposed) return;
+      // The server sends this only to hosts and co-hosts. It only triggers a
+      // refetch of the lobby list, so who sent it doesn't matter.
+      if (topic === LOBBY_TOPIC) {
+        if (isLobbyWaiting(payload)) onLobbyWaitingRef.current?.();
+        return;
+      }
+      if (topic !== CHAT_TOPIC) return;
       const parsed = parseChatPayload(payload);
       if (parsed === null) return;
       const from = participant?.identity ?? "unknown";
@@ -580,6 +594,20 @@ export function parseChatPayload(
     return trimmed.length === 0 ? null : { id, text: trimmed };
   } catch {
     return null;
+  }
+}
+
+/** True for the server's `{ "type": "lobby.waiting" }` nudge. */
+export function isLobbyWaiting(payload: Uint8Array): boolean {
+  try {
+    const value: unknown = JSON.parse(decoder.decode(payload));
+    return (
+      typeof value === "object" &&
+      value !== null &&
+      (value as Record<string, unknown>).type === "lobby.waiting"
+    );
+  } catch {
+    return false;
   }
 }
 

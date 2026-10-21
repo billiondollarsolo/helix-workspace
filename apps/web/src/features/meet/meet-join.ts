@@ -119,7 +119,8 @@ function createRecordingConsent(): MeetRecordingConsent {
   };
 }
 
-function meetDeviceId(): string {
+/** A stable id for this browser, kept in localStorage. */
+export function meetDeviceId(): string {
   const key = "helix-meet-device-id";
   try {
     const existing = localStorage.getItem(key);

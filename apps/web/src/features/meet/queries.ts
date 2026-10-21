@@ -1,6 +1,6 @@
 import { calendarEventsQueryOptions } from "@/features/calendar/queries";
 import { queryOptions } from "@tanstack/react-query";
-import { fetchMeetStatus, listMeetMeetings, type MeetRoomStatus } from "./api";
+import { fetchMeetStatus, listMeetLobby, listMeetMeetings, type MeetRoomStatus } from "./api";
 
 type MeetRoomsStatusFilter = MeetRoomStatus;
 
@@ -21,6 +21,7 @@ export const meetQueryKeys = {
   meetings: (input: MeetRoomsQueryInput = defaultMeetRoomsInput) =>
     ["meet", "meetings", input.status ?? "all", input.limit ?? 50] as const,
   status: ["meet", "status"] as const,
+  lobby: (roomId: string) => ["meet", "lobby", roomId] as const,
 };
 
 /** `meet.status`: whether a meeting server is configured. Changes only on a server restart. */
@@ -42,6 +43,18 @@ export function meetMeetingsQueryOptions(input: MeetRoomsQueryInput = defaultMee
     queryKey: meetQueryKeys.meetings(input),
     queryFn: () => listMeetMeetings(input),
     refetchInterval: 15_000,
+    throwOnError: false,
+  });
+}
+
+/** Guests waiting in a meeting's lobby (hosts and co-hosts only); a 10 s
+ *  fallback poll behind the server's `helix.lobby` nudge. */
+export function meetLobbyQueryOptions(roomId: string, enabled: boolean) {
+  return queryOptions({
+    queryKey: meetQueryKeys.lobby(roomId),
+    queryFn: () => listMeetLobby(roomId),
+    enabled,
+    refetchInterval: enabled ? 10_000 : false,
     throwOnError: false,
   });
 }

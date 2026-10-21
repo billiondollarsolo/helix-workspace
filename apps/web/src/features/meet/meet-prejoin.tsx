@@ -14,7 +14,8 @@ import {
   Video as CamIcon,
   VideoOff as CamOffIcon,
 } from "lucide-react";
-import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { MeetRecordingConsent } from "./meet-consent";
 import {
   joinMeetTarget,
   meetJoinTargetCode,
@@ -44,7 +45,6 @@ export function MeetPreJoin({ target, onJoined, onCancel }: MeetPreJoinProps) {
   const [consented, setConsented] = useState(false);
   const [consentError, setConsentError] = useState(false);
   const preview = useMeetMediaPreview(choice);
-  const consentId = useId();
   const consentRef = useRef<HTMLInputElement>(null);
   const title = meetJoinTargetTitle(target);
   const code = meetJoinTargetCode(target);
@@ -157,39 +157,15 @@ export function MeetPreJoin({ target, onJoined, onCancel }: MeetPreJoinProps) {
               <p className="m-0 truncate type-body-sm font-medium">{displayName}</p>
             </div>
           </div>
-          <div className="rounded-lg border border-border bg-card p-3">
-            <div className="flex items-start gap-2.5">
-              <input
-                ref={consentRef}
-                id={consentId}
-                type="checkbox"
-                className="mt-1 size-4 shrink-0 accent-[var(--accent)]"
-                checked={consented}
-                aria-invalid={consentError && !consented}
-                aria-describedby={`${consentId}-notice`}
-                onChange={(event) => {
-                  setConsented(event.target.checked);
-                  setConsentError(false);
-                }}
-              />
-              <div>
-                <label htmlFor={consentId} className="type-body-sm font-medium">
-                  I consent to recording and transcription
-                </label>
-                <p id={`${consentId}-notice`} className="m-0 mt-1 type-meta text-muted-foreground">
-                  Hosts may record audio, video and shared content, or transcribe speech using the
-                  workspace AI provider. Recordings and transcripts are saved in the owner’s Drive;
-                  attendees receive private links. AI recaps may also be generated. Capture is shown
-                  during the meeting.
-                </p>
-              </div>
-            </div>
-            {consentError && !consented ? (
-              <p role="alert" className="m-0 mt-2 type-meta text-destructive">
-                Accept the recording notice to join.
-              </p>
-            ) : null}
-          </div>
+          <MeetRecordingConsent
+            checked={consented}
+            showError={consentError}
+            inputRef={consentRef}
+            onChange={(checked) => {
+              setConsented(checked);
+              setConsentError(false);
+            }}
+          />
           {join.isError ? (
             <InlineError
               variant="compact"

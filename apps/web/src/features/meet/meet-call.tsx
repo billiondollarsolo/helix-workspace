@@ -23,7 +23,10 @@ import {
    The view is wired to a real backend room carried in via `session`: the
    subject/code come from `meet.create-room`/`meet.meetings.list`, media
    connects to the LiveKit server URL with the minted access token, and
-   Leave disconnects only the local participant. */
+   Leave disconnects only the local participant.
+
+   Guests (`guestName` set) have no session: the view then skips everything
+   that calls authenticated APIs (session lookup, telemetry, host tools). */
 
 import { sessionUserQueryOptions } from "@/lib/auth";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -45,6 +48,8 @@ import {
   SidePanel,
   UUID_PATTERN,
 } from "./meet-call-panels";
+import { InviteGuestDialog } from "./meet-call-invite";
+import { LobbyNotice, useMeetLobby } from "./meet-call-lobby";
 import { RecordingControl, RecordingFeedback, useMeetRecording } from "./meet-call-recording";
 import { copyMeetingLink, meetJoinLink } from "./meet-join";
 import type { MeetCallSession } from "./meet-shell";
@@ -66,10 +71,15 @@ export function formatElapsed(totalSeconds: number): string {
 export interface MeetCallProps {
   readonly session: MeetCallSession;
   readonly onLeave: () => void;
+  /** Set for a guest (no session): the name they entered. */
+  readonly guestName?: string;
 }
 
-export function MeetCall({ session, onLeave }: MeetCallProps) {
-  const sessionQuery = useQuery(sessionUserQueryOptions());
+export function MeetCall({ session, onLeave, guestName }: MeetCallProps) {
+  const guest = guestName !== undefined;
+  const sessionQuery = useQuery({ ...sessionUserQueryOptions(), enabled: !guest });
+  const displayName = guestName ?? sessionQuery.data?.name ?? sessionQuery.data?.email ?? "You";
+  const [inviteOpen, setInviteOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [participantsOpen, setParticipantsOpen] = useState(false);
   const [hostControlsOpen, setHostControlsOpen] = useState(false);
@@ -90,7 +100,7 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
     return {
       serverUrl: session.serverUrl,
       token: session.token,
-      displayName: sessionQuery.data?.name ?? sessionQuery.data?.email ?? "You",
+      displayName,
       initialRecordingActive: session.recordingActive,
       media: session.media,
     };
@@ -100,8 +110,7 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
     session.serverUrl,
     session.recordingActive,
     session.media,
-    sessionQuery.data?.name,
-    sessionQuery.data?.email,
+    displayName,
   ]);
 
   const leave = useCallback(() => {
@@ -111,10 +120,12 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
   }, [onLeave]);
   const reportTelemetry = useCallback(
     (event: MeetTelemetryEvent) => {
+      if (guest) return;
       void recordMeetTelemetry(session.roomId, event).catch(() => undefined);
     },
-    [session.roomId],
+    [guest, session.roomId],
   );
+  const lobby = useMeetLobby(session.roomId, hasLiveRoom && session.canModerate && !guest);
 
   const {
     state: call,
@@ -124,6 +135,7 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
     options: callOptions,
     onLeft: leave,
     onTelemetry: reportTelemetry,
+    onLobbyWaiting: lobby.refresh,
   });
   const hostControl = useMutation({
     mutationFn: (control: MeetHostControl) => applyMeetHostControl(session.roomId, control),
@@ -163,7 +175,7 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
             REC
           </span>
         ) : null}
-        <MeetingDetails subject={session.subject} code={session.code} />
+        {guest ? null : <MeetingDetails subject={session.subject} code={session.code} />}
         <div className="ml-auto flex items-center gap-2 [color:var(--text-2)] type-meta">
           <span className="[font-variant-numeric:tabular-nums]" aria-label="Elapsed time">
             {formatElapsed(elapsed)}
@@ -204,6 +216,7 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
             ) : !call.isJoined ? (
               <Overlay message="Joining…" />
             ) : null}
+            <LobbyNotice lobby={lobby} />
           </div>
         </div>
 
@@ -219,7 +232,7 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
             <ul className="m-0 p-0 [list-style:none]">
               {call.isJoined ? (
                 <ParticipantRow
-                  name={`${sessionQuery.data?.name ?? "You"} (you)`}
+                  name={`${displayName} (you)`}
                   badge={call.audioMuted ? "muted" : null}
                 />
               ) : null}
@@ -325,7 +338,13 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
           >
             <div className="p-3 grid gap-2">
               <PolicyButton
-                label={`Lobby: ${controls.lobbyEnabled ? "on" : "off"}`}
+                label="Invite guest"
+                onClick={() => {
+                  setInviteOpen(true);
+                }}
+              />
+              <PolicyButton
+                label={`Guests wait in lobby: ${controls.lobbyEnabled ? "on" : "off"}`}
                 onClick={() => {
                   applyControl({ action: "set_lobby", enabled: !controls.lobbyEnabled });
                 }}
@@ -507,6 +526,14 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
         </div>
       </div>
       {canRecord ? <RecordingFeedback controls={recording} /> : null}
+      {inviteOpen && session.canModerate && !guest ? (
+        <InviteGuestDialog
+          roomId={session.roomId}
+          onClose={() => {
+            setInviteOpen(false);
+          }}
+        />
+      ) : null}
       {hostControl.data?.callUpdated === false ? (
         <div role="status" className="[padding:8px_16px] [color:var(--warning)]">
           Saved, but the call didn’t update. Try again in a moment.

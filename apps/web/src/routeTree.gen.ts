@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ShellRouteImport } from './routes/_shell'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as MeetGuestRouteImport } from './routes/meet_.guest'
 import { Route as OauthConsentRouteImport } from './routes/oauth.consent'
 import { Route as SignupInviteRouteImport } from './routes/signup_.invite'
 import { Route as SignupVerifyEmailRouteImport } from './routes/signup_.verify-email'
@@ -42,6 +43,11 @@ const ShellRoute = ShellRouteImport.update({
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MeetGuestRoute = MeetGuestRouteImport.update({
+  id: '/meet_/guest',
+  path: '/meet/guest',
   getParentRoute: () => rootRouteImport,
 } as any)
 const OauthConsentRoute = OauthConsentRouteImport.update({
@@ -133,6 +139,7 @@ const ShellSearchIndexRoute = ShellSearchIndexRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/meet/guest': typeof MeetGuestRoute
   '/oauth/consent': typeof OauthConsentRoute
   '/signup/invite': typeof SignupInviteRoute
   '/signup/verify-email': typeof SignupVerifyEmailRoute
@@ -154,6 +161,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/meet/guest': typeof MeetGuestRoute
   '/oauth/consent': typeof OauthConsentRoute
   '/signup/invite': typeof SignupInviteRoute
   '/signup/verify-email': typeof SignupVerifyEmailRoute
@@ -177,6 +185,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/_shell': typeof ShellRouteWithChildren
   '/login': typeof LoginRoute
+  '/meet_/guest': typeof MeetGuestRoute
   '/oauth/consent': typeof OauthConsentRoute
   '/signup_/invite': typeof SignupInviteRoute
   '/signup_/verify-email': typeof SignupVerifyEmailRoute
@@ -200,6 +209,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/login'
+    | '/meet/guest'
     | '/oauth/consent'
     | '/signup/invite'
     | '/signup/verify-email'
@@ -221,6 +231,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/login'
+    | '/meet/guest'
     | '/oauth/consent'
     | '/signup/invite'
     | '/signup/verify-email'
@@ -243,6 +254,7 @@ export interface FileRouteTypes {
     | '/'
     | '/_shell'
     | '/login'
+    | '/meet_/guest'
     | '/oauth/consent'
     | '/signup_/invite'
     | '/signup_/verify-email'
@@ -266,6 +278,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ShellRoute: typeof ShellRouteWithChildren
   LoginRoute: typeof LoginRoute
+  MeetGuestRoute: typeof MeetGuestRoute
   OauthConsentRoute: typeof OauthConsentRoute
   SignupInviteRoute: typeof SignupInviteRoute
   SignupVerifyEmailRoute: typeof SignupVerifyEmailRoute
@@ -292,6 +305,13 @@ declare module '@tanstack/react-router' {
       path: '/login'
       fullPath: '/login'
       preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/meet_/guest': {
+      id: '/meet_/guest'
+      path: '/meet/guest'
+      fullPath: '/meet/guest'
+      preLoaderRoute: typeof MeetGuestRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/oauth/consent': {
@@ -456,6 +476,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ShellRoute: ShellRouteWithChildren,
   LoginRoute: LoginRoute,
+  MeetGuestRoute: MeetGuestRoute,
   OauthConsentRoute: OauthConsentRoute,
   SignupInviteRoute: SignupInviteRoute,
   SignupVerifyEmailRoute: SignupVerifyEmailRoute,

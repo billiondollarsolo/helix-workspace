@@ -495,6 +495,11 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
           ) : null}
         </div>
       </div>
+      {hostControl.data?.callUpdated === false ? (
+        <div role="status" className="[padding:8px_16px] [color:var(--warning)]">
+          Saved, but the call didn’t update. Try again in a moment.
+        </div>
+      ) : null}
       {hostControl.isError ? (
         <div role="alert" className="[padding:8px_16px] [color:var(--danger)]">
           {hostControl.error instanceof Error

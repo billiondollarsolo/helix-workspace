@@ -101,6 +101,23 @@ export function mintLiveKitToken(input: MintLiveKitTokenInput): MintedLiveKitTok
 }
 
 /**
+ * What Meet's per-participant policy allows on the media server. Used for the
+ * join token and again when a host changes a policy during the call.
+ * `features` comes from meetJwtFeatures: chat, screen sharing, microphone.
+ */
+export function liveKitPolicyGrants(features: Readonly<Record<string, boolean>>) {
+  const sources: LiveKitGrants["canPublishSources"][number][] = ["camera"];
+  if (features.microphone !== false) sources.push("microphone");
+  if (features["screen-sharing"] !== false) sources.push("screen_share", "screen_share_audio");
+  return {
+    canPublish: true,
+    canSubscribe: true,
+    canPublishData: features["send-groupchat"] !== false,
+    canPublishSources: sources,
+  };
+}
+
+/**
  * Join details for a LiveKit room: the browser connects to `serverUrl` with `token`.
  * `features` are Meet's per-participant policy (chat, screen sharing), enforced by
  * the media server through token grants.
@@ -125,16 +142,7 @@ export function liveKitJoin(
     identity: input.identity,
     name: input.name,
     room: liveKitRoomName(input.orgId, input.roomId),
-    grants: {
-      roomAdmin: input.moderator,
-      canPublish: true,
-      canSubscribe: true,
-      canPublishData: input.features["send-groupchat"] !== false,
-      canPublishSources:
-        input.features["screen-sharing"] === false
-          ? ["camera", "microphone"]
-          : ["camera", "microphone", "screen_share", "screen_share_audio"],
-    },
+    grants: { roomAdmin: input.moderator, ...liveKitPolicyGrants(input.features) },
     attributes: {
       helixOrgId: input.orgId,
       helixRoomId: input.roomId,

@@ -18,13 +18,15 @@ import {
 import { openRoomForMemberJoin } from "./scheduled-join.js";
 import { MEET_RECORDING_NOTICE_VERSION, type MeetStore } from "./store.js";
 import type {
-  MeetAudiencePolicy,
-  MeetControlState,
   MeetGuestInviteRecord,
   MeetMeetingRecord,
   MeetRecordingArtifactRecord,
   MeetRoomRecord,
 } from "./types.js";
+import { applyHostControlToCall } from "./host-control-media.js";
+import { createLiveKitRooms, type LiveKitRooms } from "./livekit-rooms.js";
+import { meetJwtFeatures } from "./policy.js";
+export { meetJwtFeatures } from "./policy.js";
 
 const uuidSchema = z.string().uuid();
 const metadataSchema = z.record(z.string(), z.unknown()).default({});
@@ -236,6 +238,8 @@ const unknownOutputSchema = zodToolSchema(z.unknown(), genericObjectJsonSchema);
 export interface CreateMeetToolDefinitionsOptions {
   readonly store: MeetStore;
   readonly liveKit: LiveKitOptions;
+  /** LiveKit's room service; defaults to the configured server. */
+  readonly rooms?: LiveKitRooms | undefined;
   readonly publicBaseUrl?: string | undefined;
   /** Live recorder readiness. Recording is unavailable when omitted or false. */
   readonly recordingAvailable?: (() => Promise<boolean>) | undefined;
@@ -249,6 +253,8 @@ export interface CreateMeetToolDefinitionsOptions {
 function createMeetToolDefinitions(
   options: CreateMeetToolDefinitionsOptions,
 ): readonly ToolDefinition[] {
+  let liveKitRooms = options.rooms;
+  const rooms = () => (liveKitRooms ??= createLiveKitRooms(options.liveKit));
   // Spread rather than pass `budget: undefined` so exactOptionalPropertyTypes holds.
   const budgetOption =
     options.rateLimitBudget === undefined ? {} : { budget: options.rateLimitBudget };
@@ -518,7 +524,17 @@ function createMeetToolDefinitions(
           control,
         });
         if (result === null || result === undefined) throw new Error("Host control was rejected.");
-        return result;
+        // The change is recorded either way; say whether the live call took it too.
+        const callUpdated = await applyHostControlToCall(rooms(), {
+          orgId: ctx.actor.orgId,
+          roomId,
+          control,
+          state: result.state,
+        }).then(
+          () => true,
+          () => false,
+        );
+        return { state: result.state, callUpdated };
       },
     }),
     defineTool<z.output<typeof meetTelemetrySchema>, unknown>({
@@ -576,7 +592,14 @@ function createMeetToolDefinitions(
         if (room === null) {
           throw new NotFoundError(`Unknown Meet room: ${input.roomId}`);
         }
-        return serializeRoom(room);
+        // Disconnect everyone still in the call; the room is already ended in Helix.
+        const callEnded = await rooms()
+          .deleteRoom(ctx.actor.orgId, input.roomId)
+          .then(
+            () => true,
+            () => false,
+          );
+        return { ...serializeRoom(room), callEnded };
       },
     }),
   ];
@@ -653,24 +676,6 @@ async function mintMemberJoin(
     recordingActive: room.recordingActive ?? false,
     controls,
     canModerate: moderator,
-  };
-}
-
-export function meetJwtFeatures(
-  controls: MeetControlState,
-  participantSubject: string,
-  moderator: boolean,
-) {
-  const audienceAllows = (policy: MeetAudiencePolicy) =>
-    policy === "everyone" || (policy === "hosts" && moderator);
-  const canPresent =
-    controls.presenterPolicy === "everyone" ||
-    (controls.presenterPolicy === "hosts" && moderator) ||
-    (controls.presenterPolicy === "selected" && controls.presenterSubject === participantSubject);
-  return {
-    "send-groupchat": audienceAllows(controls.chatPolicy),
-    "send-reactions": audienceAllows(controls.reactionPolicy),
-    "screen-sharing": canPresent,
   };
 }
 

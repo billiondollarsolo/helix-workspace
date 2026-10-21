@@ -1,4 +1,5 @@
 import type postgres from "postgres";
+import { liveKitServerCheck } from "./service-status-checks.js";
 import type { AdminServiceStatus } from "./services.js";
 interface AdminServiceRuntimeCounter {
   readonly key: string;
@@ -31,6 +32,7 @@ export interface AdminServiceRuntimeStatusStore {
 export interface PostgresAdminServiceStatusStoreOptions {
   readonly env: NodeJS.ProcessEnv;
   readonly now?: (() => Date) | undefined;
+  readonly liveKitHealthy?: (() => Promise<boolean>) | undefined;
 }
 type CountRow = {
   readonly count: string | number | bigint | null;
@@ -41,11 +43,13 @@ type TimestampRow = {
 export class PostgresAdminServiceStatusStore implements AdminServiceRuntimeStatusStore {
   readonly #sql: postgres.Sql;
   readonly #env: NodeJS.ProcessEnv;
+  readonly #liveKitHealthy: (() => Promise<boolean>) | undefined;
   readonly #now: () => Date;
   constructor(sql: postgres.Sql, options: PostgresAdminServiceStatusStoreOptions) {
     this.#sql = sql;
     this.#env = options.env;
     this.#now = options.now ?? (() => new Date());
+    this.#liveKitHealthy = options.liveKitHealthy;
   }
   async get(input: AdminServiceRuntimeStatusInput): Promise<AdminServiceRuntimeStatus | null> {
     switch (input.serviceId) {
@@ -320,19 +324,13 @@ export class PostgresAdminServiceStatusStore implements AdminServiceRuntimeStatu
     });
   }
   async #meet(orgId: string): Promise<AdminServiceRuntimeStatus> {
-    const [activeRows, endedRows, totalRows, lastActivityRows] = await Promise.all([
-      this.#sql<CountRow[]>`
-        select count(*)::bigint as count
-        from meet_rooms
-        where org_id = ${orgId} and status = 'active'
-      `,
-      this.#sql<CountRow[]>`
-        select count(*)::bigint as count
-        from meet_rooms
-        where org_id = ${orgId} and status = 'ended'
-      `,
-      this.#sql<CountRow[]>`
-        select count(*)::bigint as count
+    const [countRows, lastActivityRows, mediaServerUp] = await Promise.all([
+      this.#sql<
+        { total: CountRow["count"]; active: CountRow["count"]; ended: CountRow["count"] }[]
+      >`
+        select count(*)::bigint as total,
+          count(*) filter (where status = 'active')::bigint as active,
+          count(*) filter (where status = 'ended')::bigint as ended
         from meet_rooms
         where org_id = ${orgId}
       `,
@@ -342,19 +340,21 @@ export class PostgresAdminServiceStatusStore implements AdminServiceRuntimeStatu
           coalesce((select max(updated_at) from meet_rooms where org_id = ${orgId}), 'epoch'::timestamptz)
         ) as value
       `,
+      this.#liveKitHealthy?.(),
     ]);
     return runtimeStatus({
       now: this.#now,
       serviceId: "meet",
       evidence: "Meet room lifecycle state was counted from Postgres.",
       counters: [
-        counter("rooms", "Total rooms", countValue(totalRows[0])),
-        counter("activeRooms", "Active rooms", countValue(activeRows[0])),
-        counter("endedRooms", "Ended rooms", countValue(endedRows[0])),
+        counter("rooms", "Total rooms", countValue({ count: countRows[0]?.total ?? 0 })),
+        counter("activeRooms", "Active rooms", countValue({ count: countRows[0]?.active ?? 0 })),
+        counter("endedRooms", "Ended rooms", countValue({ count: countRows[0]?.ended ?? 0 })),
       ],
       checks: [
         envCheck("liveKitKey", "LiveKit API key", this.#env, ["LIVEKIT_API_KEY"], false),
         envCheck("liveKitSecret", "LiveKit API secret", this.#env, ["LIVEKIT_API_SECRET"], true),
+        liveKitServerCheck(mediaServerUp),
       ],
       lastActivityAt: timestampValue(lastActivityRows[0]),
     });

@@ -130,37 +130,10 @@ export interface MeetControlState {
   readonly version: number;
 }
 
-export type MeetMediaCommand =
-  | { readonly command: "toggleLobby"; readonly enabled: boolean }
-  | {
-      readonly command: "answerKnockingParticipant";
-      readonly participantId: string;
-      readonly approved: boolean;
-    }
-  | { readonly command: "password"; readonly password: string }
-  | { readonly command: "kickParticipant"; readonly participantId: string }
-  | { readonly command: "grantModerator"; readonly participantId: string }
-  | {
-      readonly command: "muteRemoteParticipant";
-      readonly participantId: string;
-      readonly mediaType: "audio" | "video";
-    }
-  | {
-      readonly command: "toggleModeration";
-      readonly enabled: boolean;
-      readonly mediaType: "audio" | "video" | "desktop";
-    }
-  | {
-      readonly command: "approveParticipant";
-      readonly participantId: string;
-      readonly mediaType: "audio" | "video" | "desktop";
-    }
-  | { readonly command: "setChatPolicy"; readonly policy: MeetAudiencePolicy }
-  | { readonly command: "setReactionPolicy"; readonly policy: MeetAudiencePolicy };
-
 export interface MeetControlResult {
   readonly state: MeetControlState;
-  readonly mediaCommands: readonly MeetMediaCommand[];
+  /** False when the change was saved but the media server could not apply it yet. */
+  readonly callUpdated: boolean;
 }
 
 export type MeetHostControl =

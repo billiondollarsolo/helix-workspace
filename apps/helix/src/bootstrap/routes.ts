@@ -81,7 +81,7 @@ import { registerEventRoutes } from "../platform/events/routes.js";
 import { EventStreamLimiter } from "../platform/events/stream-limit.js";
 import { PostgresGovernanceStore, registerGovernanceRoutes } from "../platform/governance/index.js";
 import { registerPersonLimitRoutes } from "../platform/limits/person-limits-routes.js";
-import { registerMeetRoutes } from "../platform/meet/index.js";
+import { liveKitHealthy, registerMeetRoutes } from "../platform/meet/index.js";
 import { registerSearchAdminRoutes } from "../platform/search/index.js";
 import { registerInviteRoutes } from "../platform/signup/routes.js";
 import {
@@ -346,6 +346,9 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
     }),
     statusStore: new PostgresAdminServiceStatusStore(sql, {
       env: runtimeEnvironment(),
+      ...(configuredMeetSecrets === null
+        ? {}
+        : { liveKitHealthy: () => liveKitHealthy(configuredMeetSecrets.liveKit) }),
     }),
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
   });

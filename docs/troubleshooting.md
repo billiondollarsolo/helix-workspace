@@ -301,12 +301,12 @@ distributed release evidence should set `NATS_URL`. If it times out, check the
 `outbox` rows for `activity.mail.*` and `activity.chat.*`; `delivered_at` should
 be set and `last_error` should stay empty. On NATS-backed stacks, also check NATS
 connectivity/subscriptions.
-With `--meet-smoke`, the smoke run creates a Meet room, mints a Jitsi JWT, checks
-invalid and valid `/webhook/jitsi` recording delivery, verifies the recording
-artifact on room lists, and ends the room. Failures usually point to missing
-`meet.read`/`meet.write` token scopes, a `HELIX_SMOKE_MEET_WEBHOOK_SECRET` /
-`MEET_JITSI_WEBHOOK_SHARED_SECRET` mismatch, the wrong default org id, missing
-Meet migrations, or a recording artifact/object-store attach regression.
+With `--meet-smoke`, the smoke run creates a Meet room, mints a LiveKit join
+token, checks that a forged `/webhook/livekit` delivery is rejected, verifies the
+room on active and ended room lists, and ends the room. Failures usually point to
+missing `meet.read`/`meet.write` token scopes, Meet not being configured
+(`LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `MEET_CAPTURE_SECRET`), or missing Meet
+migrations.
 With `--audit-runtime-smoke`, the smoke run verifies live Postgres audit rows
 for `app.password.listed` and `agent.credential.listed`, hash-chain field shape,
 `HELIX_TRACE_TOKEN` correlation, and audit Prometheus metrics. If

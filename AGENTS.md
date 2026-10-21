@@ -13,7 +13,7 @@ dependencies, or generated route trees. Do not commit build output or secrets.
 
 Reuse existing helpers. Preserve tenant isolation, actor-scoped authorization,
 malware scanning, retention, audit trails, and actionable errors. Meet requires
-configured Jitsi credentials; do not bypass deployment evidence or dependency gates.
+configured LiveKit credentials; do not bypass deployment evidence or dependency gates.
 Use semantic HTML, labelled controls, keyboard focus, and reduced motion.
 
 Keep the established visual design. Use global design tokens and existing shared

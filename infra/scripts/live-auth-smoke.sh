@@ -39,7 +39,7 @@ Options:
   --agent-limits-smoke         Also validate OAuth agent tool limiter 429, Retry-After, and metrics
   --events-ws                  Also validate authenticated /events/ws websocket behavior
   --chat-realtime-smoke        Also validate live chat room websocket fanout and persisted search
-  --meet-smoke                 Also validate live Meet/Jitsi room, JWT, recording webhook, and end-room flow
+  --meet-smoke                 Also validate live Meet room, LiveKit token, webhook signature check, and end-room flow
   --assistant-smoke            Also validate deterministic assistant chat and memory-forget gating
   --assistant-provider-smoke   Also validate an explicitly configured non-local assistant provider,
                               provenance id propagation, and provider-specific LLM metrics
@@ -100,9 +100,6 @@ AGENT_LIMIT_SCOPE=${HELIX_SMOKE_AGENT_SCOPE:-platform.read}
 EVENTS_WS=${HELIX_SMOKE_EVENTS_WS:-false}
 CHAT_REALTIME_SMOKE=${HELIX_SMOKE_CHAT_REALTIME_SMOKE:-false}
 MEET_SMOKE=${HELIX_SMOKE_MEET_SMOKE:-false}
-MEET_SMOKE_ORG_ID=${HELIX_SMOKE_MEET_ORG_ID:-${HELIX_DEFAULT_ORG_ID:-00000000-0000-0000-0000-000000000000}}
-MEET_SMOKE_JITSI_DOMAIN=${HELIX_SMOKE_MEET_JITSI_DOMAIN:-${MEET_JITSI_DOMAIN:-meet.localhost}}
-MEET_SMOKE_WEBHOOK_SECRET=${HELIX_SMOKE_MEET_WEBHOOK_SECRET:-${MEET_JITSI_WEBHOOK_SHARED_SECRET:-helix_dev_jitsi_webhook_secret_change_me}}
 ASSISTANT_SMOKE=${HELIX_SMOKE_ASSISTANT_SMOKE:-false}
 ASSISTANT_PROVIDER_SMOKE=${HELIX_SMOKE_ASSISTANT_PROVIDER_SMOKE:-false}
 ASSISTANT_PROVIDER_ID=${HELIX_SMOKE_ASSISTANT_PROVIDER_ID:-${ASSISTANT_AI_PROVIDER_ID:-${AI_DEFAULT_PROVIDER_ID:-}}}
@@ -1884,15 +1881,13 @@ NODE
 }
 
 run_meet_smoke() {
-  local suffix subject room_file room_id room_org_id room_name token_file webhook_file recording_key list_file end_file ended_list_file status
-  local recording_file recording_sha recording_size prepare_file prepare_payload upload_id upload_url completion_payload signature
-  local -a upload_headers
+  local suffix subject room_file room_id room_name token_file webhook_file list_file end_file ended_list_file status
   suffix=$(date +%Y%m%d%H%M%S)
   subject="Helix Meet smoke $suffix"
   room_file=$(mktemp "${TMPDIR:-/tmp}/helix-meet-room.XXXXXX")
 
   request_capture POST /api/tools/meet.create-room 200 \
-    "$(node -e 'process.stdout.write(JSON.stringify({ subject: process.argv[1], roomName: process.argv[1], jitsiDomain: process.argv[2], metadata: { smoke: true } }))' "$subject" "$MEET_SMOKE_JITSI_DOMAIN")" \
+    "$(node -e 'process.stdout.write(JSON.stringify({ subject: process.argv[1], roomName: process.argv[1], metadata: { smoke: true } }))' "$subject")" \
     "meet.create-room" \
     "$room_file"
   room_id=$(json_field_from_file "$room_file" "parsed.id") || {
@@ -1900,9 +1895,6 @@ run_meet_smoke() {
     cat "$room_file" >&2
     rm -f "$room_file"
     die "meet.create-room did not return id"
-  }
-  room_org_id=$(json_field_from_file "$room_file" "parsed.orgId") || {
-    room_org_id="$MEET_SMOKE_ORG_ID"
   }
   room_name=$(json_field_from_file "$room_file" "parsed.roomName") || {
     log "response body from meet.create-room:"
@@ -1914,133 +1906,51 @@ run_meet_smoke() {
 
   token_file=$(mktemp "${TMPDIR:-/tmp}/helix-meet-token.XXXXXX")
   request_capture POST /api/tools/meet.mint-token 200 \
-    "$(node -e 'const {randomUUID}=require("node:crypto"); process.stdout.write(JSON.stringify({ roomId: process.argv[1], expiresInSeconds: 600, recordingNoticeAccepted: true, recordingNoticeVersion: "2026-09-02", deviceId: randomUUID(), joinGrantId: randomUUID() }))' "$room_id")" \
+    "$(node -e 'const {randomUUID}=require("node:crypto"); process.stdout.write(JSON.stringify({ roomId: process.argv[1], expiresInSeconds: 600, recordingNoticeAccepted: true, recordingNoticeVersion: "2026-10-15", deviceId: randomUUID(), joinGrantId: randomUUID() }))' "$room_id")" \
     "meet.mint-token" \
     "$token_file"
   node -e '
 const fs = require("node:fs");
-const [file, roomId, roomName, domain] = process.argv.slice(1);
+const [file, roomId, roomName] = process.argv.slice(1);
 const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+const claims = JSON.parse(Buffer.from(String(parsed.token).split(".")[1] ?? "", "base64url").toString("utf8"));
 if (
   parsed.roomId !== roomId ||
   parsed.roomName !== roomName ||
-  parsed.jitsiDomain !== domain ||
-  typeof parsed.token !== "string" ||
-  parsed.token.split(".").length !== 3 ||
-  typeof parsed.joinUrl !== "string" ||
-  !parsed.joinUrl.startsWith(`https://${domain}/${encodeURIComponent(roomName)}?`) ||
-  !parsed.joinUrl.includes("jwt=")
+  parsed.provider !== "livekit" ||
+  typeof parsed.mediaDomain !== "string" ||
+  !/^wss?:\/\//u.test(String(parsed.serverUrl)) ||
+  !String(claims?.video?.room).endsWith(`.${roomId}`)
 ) {
   process.exit(2);
 }
-' "$token_file" "$room_id" "$room_name" "$MEET_SMOKE_JITSI_DOMAIN" || {
+' "$token_file" "$room_id" "$room_name" || {
     log "response body from meet.mint-token:"
     cat "$token_file" >&2
     rm -f "$token_file"
-    die "meet.mint-token did not return a valid room JWT/joinUrl"
+    die "meet.mint-token did not return a valid LiveKit join"
   }
   rm -f "$token_file"
-  log "ok: Meet JWT minted"
-
-  recording_file=$(mktemp "${TMPDIR:-/tmp}/helix-meet-recording.XXXXXX")
-  node -e 'require("node:fs").writeFileSync(process.argv[1], Buffer.from([0x1a,0x45,0xdf,0xa3,0x42,0x86,0x81,0x01,0x42,0xf7,0x81,0x01]))' "$recording_file"
-  recording_sha=$(node -e 'const fs=require("node:fs"),{createHash}=require("node:crypto"); process.stdout.write(createHash("sha256").update(fs.readFileSync(process.argv[1])).digest("hex"))' "$recording_file")
-  recording_size=$(wc -c < "$recording_file" | tr -d ' ')
+  log "ok: Meet LiveKit token minted"
 
   webhook_file=$(mktemp "${TMPDIR:-/tmp}/helix-meet-webhook-bad.XXXXXX")
-  completion_payload=$(node -e 'process.stdout.write(JSON.stringify({ event: "recording.uploaded", uploadId: process.argv[1], metadata: { uploaded: true } }))' "77777777-7777-4777-8777-777777777777")
   status=$(curl_with_trace -sS \
     -o "$webhook_file" \
     -w '%{http_code}' \
     -X POST \
     -H 'accept: application/json' \
-    -H 'content-type: application/json' \
-    -H "x-helix-signature: $(webhook_bad_signature)" \
-    --data-binary "$completion_payload" \
-    "$(api_url /webhook/jitsi)")
+    -H 'content-type: application/webhook+json' \
+    -H 'authorization: Bearer forged.token.value' \
+    --data-binary '{"event":"room_finished","id":"EV_smoke_forged"}' \
+    "$(api_url /webhook/livekit)")
   if [[ "$status" != "401" ]] || ! grep -Fq 'Invalid Meet webhook signature.' "$webhook_file"; then
-    log "response body from invalid signed /webhook/jitsi:"
-    cat "$webhook_file" >&2
-    rm -f "$webhook_file" "$recording_file"
-    die "invalid /webhook/jitsi HMAC returned HTTP $status, expected 401"
-  fi
-  rm -f "$webhook_file"
-  log "ok: invalid Meet recording webhook HMAC rejected"
-
-  prepare_payload=$(node -e 'process.stdout.write(JSON.stringify({ orgId: process.argv[1], roomId: process.argv[2], mimeType: "video/webm", byteSize: Number(process.argv[3]), sha256: process.argv[4] }))' "$room_org_id" "$room_id" "$recording_size" "$recording_sha")
-  signature=$(webhook_signature "$MEET_SMOKE_WEBHOOK_SECRET" "$prepare_payload")
-  prepare_file=$(mktemp "${TMPDIR:-/tmp}/helix-meet-prepare.XXXXXX")
-  status=$(curl_with_trace -sS \
-    -o "$prepare_file" \
-    -w '%{http_code}' \
-    -X POST \
-    -H 'accept: application/json' \
-    -H 'content-type: application/json' \
-    -H "x-helix-signature: $signature" \
-    --data-binary "$prepare_payload" \
-    "$(api_url /internal/meet/recording-uploads)")
-  if [[ "$status" != "200" ]]; then
-    log "response body from Meet recording prepare:"
-    cat "$prepare_file" >&2
-    rm -f "$prepare_file" "$recording_file"
-    die "Meet recording prepare returned HTTP $status, expected 200"
-  fi
-  upload_id=$(json_field_from_file "$prepare_file" "parsed.uploadId")
-  upload_url=$(json_field_from_file "$prepare_file" "parsed.uploadUrl")
-  recording_key=$(json_field_from_file "$prepare_file" "parsed.storageKey")
-  upload_headers=()
-  while IFS= read -r header; do
-    upload_headers+=(-H "$header")
-  done < <(node -e '
-const response = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
-for (const [name, value] of Object.entries(response.headers ?? {})) console.log(`${name}: ${value}`);
-' "$prepare_file")
-  rm -f "$prepare_file"
-
-  status=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT "$upload_url" "${upload_headers[@]}" --upload-file "$recording_file")
-  rm -f "$recording_file"
-  if [[ "$status" != 2* ]]; then
-    die "Meet recording presigned upload returned HTTP $status, expected 2xx"
-  fi
-
-  completion_payload=$(node -e 'process.stdout.write(JSON.stringify({ event: "recording.uploaded", uploadId: process.argv[1], metadata: { uploaded: true, smoke: true } }))' "$upload_id")
-  signature=$(webhook_signature "$MEET_SMOKE_WEBHOOK_SECRET" "$completion_payload")
-  webhook_file=$(mktemp "${TMPDIR:-/tmp}/helix-meet-webhook.XXXXXX")
-  status=$(curl_with_trace -sS \
-    -o "$webhook_file" \
-    -w '%{http_code}' \
-    -X POST \
-    -H 'accept: application/json' \
-    -H 'content-type: application/json' \
-    -H "x-helix-signature: $signature" \
-    --data-binary "$completion_payload" \
-    "$(api_url /webhook/jitsi)")
-  if [[ "$status" != "200" ]]; then
-    log "response body from /webhook/jitsi:"
+    log "response body from forged /webhook/livekit:"
     cat "$webhook_file" >&2
     rm -f "$webhook_file"
-    die "/webhook/jitsi returned HTTP $status, expected 200"
+    die "forged /webhook/livekit returned HTTP $status, expected 401"
   fi
-  node -e '
-const fs = require("node:fs");
-const [file, roomId, storageKey] = process.argv.slice(1);
-const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
-if (
-  parsed?.ok !== true ||
-  parsed?.attachment?.roomId !== roomId ||
-  parsed?.attachment?.storageKey !== storageKey ||
-  typeof parsed?.attachment?.objectId !== "string"
-) {
-  process.exit(2);
-}
-' "$webhook_file" "$room_id" "$recording_key" || {
-    log "response body from /webhook/jitsi:"
-    cat "$webhook_file" >&2
-    rm -f "$webhook_file"
-    die "/webhook/jitsi did not attach the recording artifact"
-  }
   rm -f "$webhook_file"
-  log "ok: Meet recording webhook attached artifact"
+  log "ok: forged Meet webhook rejected"
 
   list_file=$(mktemp "${TMPDIR:-/tmp}/helix-meet-list.XXXXXX")
   request_capture POST /api/tools/meet.room.list 200 \
@@ -2049,26 +1959,24 @@ if (
     "$list_file"
   node -e '
 const fs = require("node:fs");
-const [file, roomId, storageKey] = process.argv.slice(1);
+const [file, roomId] = process.argv.slice(1);
 const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
 const rooms = Array.isArray(parsed.rooms) ? parsed.rooms : [];
 const room = rooms.find((candidate) => candidate.id === roomId);
 if (
   room === undefined ||
-  room.status !== "active" ||
-  !Array.isArray(room.recordingArtifacts) ||
-  !room.recordingArtifacts.some((artifact) => artifact.storageKey === storageKey)
+  room.status !== "active"
 ) {
   process.exit(2);
 }
-' "$list_file" "$room_id" "$recording_key" || {
+' "$list_file" "$room_id" || {
     log "response body from meet.room.list:"
     cat "$list_file" >&2
     rm -f "$list_file"
-    die "meet.room.list did not return the active room and recording artifact"
+    die "meet.room.list did not return the active room"
   }
   rm -f "$list_file"
-  log "ok: Meet room list includes recording artifact"
+  log "ok: Meet room list includes the room"
 
   end_file=$(mktemp "${TMPDIR:-/tmp}/helix-meet-end.XXXXXX")
   request_capture POST /api/tools/meet.end-room 200 \
@@ -2098,27 +2006,21 @@ if (parsed.id !== roomId || parsed.status !== "ended" || typeof parsed.endedAt !
     "$ended_list_file"
   node -e '
 const fs = require("node:fs");
-const [file, roomId, storageKey] = process.argv.slice(1);
+const [file, roomId] = process.argv.slice(1);
 const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
 const rooms = Array.isArray(parsed.rooms) ? parsed.rooms : [];
 const room = rooms.find((candidate) => candidate.id === roomId);
-if (
-  room === undefined ||
-  room.status !== "ended" ||
-  typeof room.endedAt !== "string" ||
-  !Array.isArray(room.recordingArtifacts) ||
-  !room.recordingArtifacts.some((artifact) => artifact.storageKey === storageKey)
-) {
+if (room === undefined || room.status !== "ended" || typeof room.endedAt !== "string") {
   process.exit(2);
 }
-' "$ended_list_file" "$room_id" "$recording_key" || {
+' "$ended_list_file" "$room_id" || {
     log "response body from ended meet.room.list:"
     cat "$ended_list_file" >&2
     rm -f "$ended_list_file"
-    die "meet.room.list did not return the ended room and recording artifact"
+    die "meet.room.list did not return the ended room"
   }
   rm -f "$ended_list_file"
-  log "ok: Meet ended room list includes recording artifact"
+  log "ok: Meet ended room list includes the room"
 }
 
 run_assistant_smoke() {
@@ -3986,7 +3888,6 @@ run_k6_target_smoke() {
   MEET_MINT_BODY="${MEET_MINT_BODY:-}" \
   MEET_END_TOOL_ID="${MEET_END_TOOL_ID:-}" \
   MEET_ROOM_ID="${MEET_ROOM_ID:-}" \
-  MEET_JITSI_DOMAIN="${MEET_JITSI_DOMAIN:-}" \
   MEET_EXPECT="${MEET_EXPECT:-}" \
   MEET_END_AFTER_MINT="${MEET_END_AFTER_MINT:-}" \
     infra/scripts/validate-k6.sh --no-mock
@@ -4095,7 +3996,7 @@ fi
 if bool_true "$MEET_SMOKE"; then
   run_meet_smoke
 else
-  log "skipping Meet smoke; pass --meet-smoke for Meet/Jitsi room, JWT, recording webhook, and end-room checks"
+  log "skipping Meet smoke; pass --meet-smoke for Meet room, LiveKit token, webhook, and end-room checks"
 fi
 
 if bool_true "$ASSISTANT_SMOKE"; then

@@ -58,7 +58,6 @@
   "apps/web/src/features/admin/tenant-config-management.tsx": 1235,
   "apps/web/src/features/drive/api.test.ts": 848,
   "apps/web/src/features/drive/drive-shell.test.tsx": 1033,
-  "apps/web/src/features/meet/jitsi-external-api.ts": 843,
   "apps/web/src/features/webhooks/webhook-management.test.tsx": 866,
   "packages/cli/src/completion.ts": 875,
   "packages/cli/src/parser.test.ts": 1053,

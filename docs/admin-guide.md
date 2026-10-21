@@ -455,13 +455,9 @@ outbox-driven indexing through the configured event bus. Local single-process
 stacks use the in-memory bus; distributed release evidence should set
 `NATS_URL`.
 Add `--meet-smoke` to create a live Meet room through `meet.create-room`, mint a
-Jitsi JWT/join URL through `meet.mint-token`, reject an invalid `/webhook/jitsi`
-secret, attach a recording artifact through the valid webhook path, verify the
-artifact on active and ended `meet.room.list` results, and end the room through
-`meet.end-room`. Override `HELIX_SMOKE_MEET_JITSI_DOMAIN`,
-`HELIX_SMOKE_MEET_WEBHOOK_SECRET`, or `HELIX_SMOKE_MEET_ORG_ID` when the running
-stack differs from the local compose defaults; `MEET_JITSI_WEBHOOK_SHARED_SECRET`
-is also honored when exported in the smoke environment.
+LiveKit join token through `meet.mint-token`, check that a forged
+`/webhook/livekit` delivery is rejected, verify the room on active and ended
+`meet.room.list` results, and end the room through `meet.end-room`.
 Add `--audit-runtime-smoke` to trigger real `app.passwords.list` and
 `agent.credentials.list` tool calls, read the resulting `app.password.listed`
 and `agent.credential.listed` rows back through `/api/admin/audit-log`, assert

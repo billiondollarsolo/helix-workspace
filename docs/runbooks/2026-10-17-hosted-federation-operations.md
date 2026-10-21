@@ -7,18 +7,24 @@ Jitsi is removed from the hosted server; Meet media runs on one LiveKit containe
 and web are `helix/workspace:lk-bd6d56c` and `helix/workspace-web:lk-bd6d56c`; migration 0253
 renamed `meet_rooms.jitsi_domain` to `media_domain`.
 
-| Item       | Now                                                                                        |
-| ---------- | ------------------------------------------------------------------------------------------ |
-| Signalling | `wss://workspace.helixapps.si/rtc` (Caddy route inside the Cloudflare-locked site)         |
-| Media      | 7882/udp and 7881/tcp straight to 89.167.14.138 (`node_ip`)                                |
-| TURN       | `turn.workspace.helixapps.si` (DNS-only), 3478/udp and 5349/tcp                            |
-| Webhooks   | LiveKit → `http://helix:3000/webhook/livekit`, signed with the API key `helix`             |
-| Secrets    | `/srv/helix-data/secrets/meet/{livekit_api_secret,meet_capture_secret,turn_cert,turn_key}` |
+| Item       | Now                                                                                                              |
+| ---------- | ---------------------------------------------------------------------------------------------------------------- |
+| Signalling | `wss://workspace.helixapps.si/rtc` (Caddy route inside the Cloudflare-locked site)                               |
+| Media      | 7882/udp and 7881/tcp straight to 89.167.14.138 (`node_ip`)                                                      |
+| TURN       | `turn.workspace.helixapps.si` (DNS-only), 3478/udp and 5349/tcp                                                  |
+| Webhooks   | LiveKit → `http://127.0.0.1:33000/webhook/livekit` (Workspace port on loopback), signed with the API key `helix` |
+| Secrets    | `/srv/helix-data/secrets/meet/{livekit_api_secret,meet_capture_secret,turn_cert,turn_key}`                       |
 
 `helix-turn-certificate.service` now copies Caddy's `turn.` certificate to `turn_cert`/`turn_key`
 (owned by LiveKit's user 65532) and recreates `livekit`. The firewall lost 10000/udp,
 49160–49200/udp and 3478/tcp and gained 7881/tcp and 7882/udp. The `meet.workspace.helixapps.si`
 site is gone, so its DNS record can be deleted. Recording stays off until LiveKit Egress (plan LK-5).
+
+LiveKit runs with `network_mode: host`: behind Docker's published ports every join timed out
+after signalling (UDP conntrack clashes in the port NAT; TURN relays could not reach the SFU).
+Caddy and Workspace reach its API at the edge bridge gateway `172.19.0.1:7880`, which `ufw`
+allows from the edge subnet only. A two-browser probe from outside then exchanged audio and video
+over UDP and TCP with DTLS-SRTP.
 
 Checks after rollout: readiness 200; `/rtc/validate` returns 200 with a server-minted token and 401
 without one through Cloudflare, 403 direct to the origin; a throwaway room's `room_started` and

@@ -18,7 +18,8 @@
 //
 // The optional Meet install (docker-compose.meet.yml) needs a few more files.
 // Add them to an existing directory; the TURN certificate is signed by the
-// same private CA until you replace it with a publicly trusted one:
+// same private CA until you replace it with a publicly trusted one. Run again
+// on an existing Meet install, it adds only the files that are missing:
 //
 //   node infra/scripts/generate-production-secrets.mjs --add-meet \
 //     --dir /srv/helix-secrets --turn-host turn.example.com
@@ -102,47 +103,59 @@ function installer(target) {
 
 /**
  * Adds the files docker-compose.meet.yml mounts to a directory this script
- * created earlier. Nothing that exists is replaced, so the rest of a live
- * deployment keeps its credentials.
+ * created earlier. Only missing files are written and nothing that exists is
+ * replaced, so the rest of a live deployment keeps its credentials and an
+ * existing Meet install picks up files added since it was set up.
  */
 export function addMeetSecrets({ directory, turnHost }) {
   const target = resolve(directory);
   const caCert = join(target, "ca", "ca.pem");
   const caKey = join(target, "ca", "ca.key");
-  if (!existsSync(caCert) || !existsSync(caKey)) {
-    throw new Error(
-      `${target} has no ca/ca.pem and ca/ca.key. Run this in the directory the secrets were generated in, with its CA put back.`,
-    );
-  }
   // LiveKit's API secret signs every meeting token; the capture secret guards
-  // Helix's internal capture and recording endpoints.
-  const random = ["livekit_api_secret", "meet_capture_secret"];
+  // Helix's internal capture and recording endpoints; the Redis password
+  // protects the bus LiveKit and Egress (recording) share.
+  const random = ["livekit_api_secret", "meet_capture_secret", "livekit_redis_password"];
   const issued = ["turn_cert", "turn_key"];
-  const existing = [...random, ...issued].filter((name) => existsSync(join(target, name)));
-  if (existing.length > 0) {
+  const present = (name) => existsSync(join(target, name));
+  const existing = [...random, ...issued].filter(present);
+  const missingRandom = random.filter((name) => !present(name));
+  const missingIssued = issued.filter((name) => !present(name));
+  if (missingRandom.length === 0 && missingIssued.length === 0) {
     throw new Error(
       `${target} already holds Meet secrets (${existing.join(", ")}). Refusing to replace them.`,
     );
   }
-  for (const name of random) {
+  if (missingIssued.length === 1) {
+    throw new Error(
+      `${target} holds only one of turn_cert and turn_key. Put the pair back or remove both.`,
+    );
+  }
+  if (missingIssued.length > 0 && (!existsSync(caCert) || !existsSync(caKey))) {
+    throw new Error(
+      `${target} has no ca/ca.pem and ca/ca.key. Run this in the directory the secrets were generated in, with its CA put back.`,
+    );
+  }
+  for (const name of missingRandom) {
     const file = join(target, name);
     writeFileSync(file, `${randomSecret()}\n`, { mode: FILE_MODE });
     chmodSync(file, FILE_MODE);
   }
-  const pki = join(target, ".pki-work");
-  mkdirSync(pki, { mode: 0o700 });
-  try {
-    // TURN over TLS (port 5349). Browsers verify this one: replace both files
-    // with a publicly trusted certificate for the TURN hostname. TURN over UDP
-    // on port 3478 works without it.
-    const turn = leafIssuer(pki, caCert, caKey)("turn", [turnHost], "serverAuth");
-    const install = installer(target);
-    install(turn.cert, "turn_cert");
-    install(turn.key, "turn_key");
-  } finally {
-    rmSync(pki, { recursive: true, force: true });
+  if (missingIssued.length > 0) {
+    const pki = join(target, ".pki-work");
+    mkdirSync(pki, { mode: 0o700 });
+    try {
+      // TURN over TLS (port 5349). Browsers verify this one: replace both files
+      // with a publicly trusted certificate for the TURN hostname. TURN over UDP
+      // on port 3478 works without it.
+      const turn = leafIssuer(pki, caCert, caKey)("turn", [turnHost], "serverAuth");
+      const install = installer(target);
+      install(turn.cert, "turn_cert");
+      install(turn.key, "turn_key");
+    } finally {
+      rmSync(pki, { recursive: true, force: true });
+    }
   }
-  return { directory: target, files: [...random, ...issued].sort() };
+  return { directory: target, files: [...missingRandom, ...missingIssued].sort() };
 }
 
 export function generateProductionSecrets({ directory, mailHost }) {

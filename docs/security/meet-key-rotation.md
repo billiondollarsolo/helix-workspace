@@ -4,11 +4,12 @@
 
 Meet runs on LiveKit. Its secrets live in the production secrets directory:
 
-| File                    | Used by                      | Effect of rotating                                            |
-| ----------------------- | ---------------------------- | ------------------------------------------------------------- |
-| `livekit_api_secret`    | `livekit`, `helix`           | Running calls end; people rejoin with new tokens              |
-| `meet_capture_secret`   | `helix` and capture services | Capture and recording requests with the old value are refused |
-| `turn_cert`, `turn_key` | `livekit`                    | TURN over TLS presents the new certificate                    |
+| File                     | Used by                              | Effect of rotating                                              |
+| ------------------------ | ------------------------------------ | --------------------------------------------------------------- |
+| `livekit_api_secret`     | `livekit`, `helix`, `egress`         | Running calls and recordings end; people rejoin with new tokens |
+| `livekit_redis_password` | `livekit-redis`, `livekit`, `egress` | Running recordings end                                          |
+| `meet_capture_secret`    | `helix` and capture services         | Capture and recording requests with the old value are refused   |
+| `turn_cert`, `turn_key`  | `livekit`                            | TURN over TLS presents the new certificate                      |
 
 To rotate, write a new random value (at least 32 characters) into the file, for example
 `openssl rand -base64 48 > "$HELIX_PRODUCTION_SECRETS_DIR/livekit_api_secret"`, keep mode 0644, then
@@ -17,8 +18,10 @@ recreate the services that read it:
 ```sh
 docker compose --env-file .env.production \
   -f docker-compose.yml -f docker-compose.production.yml -f docker-compose.meet.yml \
-  up -d --force-recreate livekit helix
+  up -d --force-recreate livekit egress helix
 ```
+
+For `livekit_redis_password`, recreate `livekit-redis livekit egress`.
 
 Rotate `livekit_api_secret` after any suspected exposure: whoever holds it can mint tokens for any room.
 Replace `turn_cert` and `turn_key` before the certificate expires and recreate `livekit`.

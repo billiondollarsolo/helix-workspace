@@ -77,11 +77,16 @@ services:
       # /rtc on the Workspace address through Caddy instead.
       LIVEKIT_PUBLIC_URL: ${LIVEKIT_PUBLIC_URL:-ws://localhost:28451}
       MEET_CAPTURE_SECRET: ${MEET_CAPTURE_SECRET:-helix_dev_meet_capture_secret_change_me}
+      # Egress writes finished recordings here; Helix reads them from the same path.
+      MEET_RECORDING_DIR: /recordings
       HELIX_CONFIG_JSON: >-
         {"security":{"tier":"personal"},"observability":{"config":{"otlpEndpoint":"http://otel-collector:4318/v1/traces","sampling":{"traces":1,"toolCalls":1,"permissionChecks":1}}},"plugins":{"com.helix.webhook-out-slack":{"enabled":true}}}
     ports:
       - "127.0.0.1:${HELIX_PORT:-28431}:3000"
       - "127.0.0.1:${HELIX_SMTP_RECEIVE_PORT:-28456}:2525"
+    volumes:
+      # Meet recordings from Egress (`--profile meet`), until Helix stores them.
+      - meet-recordings:/recordings
     networks:
       - default
     depends_on:
@@ -428,6 +433,108 @@ services:
       - /tmp:size=16m,mode=1777,nosuid,nodev,noexec
     restart: unless-stopped
 
+  # One-shot (`--profile meet`): Egress (uid 1001, group 0) writes recordings
+  # that Helix (uid 10001) reads and deletes, so the shared directory belongs
+  # to Helix with group 0 and the setgid bit.
+  meet-recordings-init:
+    logging: *default-logging
+    image: rustfs/rustfs:1.0.1@sha256:1803faef57627e2d9c2e7d89d655d712ddded5389040054987163043fecb6a3c
+    profiles: ["meet"]
+    user: "0:0"
+    entrypoint:
+      - /bin/sh
+      - -euc
+      - |
+        install -d -m 2770 -o 10001 -g 0 /recordings
+        install -d -m 0700 -o 1001 -g 0 /egress-tmp
+    volumes:
+      - meet-recordings:/recordings
+      - egress-tmp:/egress-tmp
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    security_opt: [no-new-privileges:true]
+    restart: "no"
+
+  # Meet recording (LiveKit Egress, `--profile meet`): renders a room in
+  # headless Chrome and writes an MP4 to /recordings, where Helix reads it.
+  # Here it shares LiveKit's network namespace, because LiveKit advertises
+  # 127.0.0.1 for media, and uses the stack's Redis like the development
+  # LiveKit. Development values only; docker-compose.meet.yml replaces the
+  # configuration for production.
+  egress:
+    logging: *default-logging
+    image: livekit/egress:v1.15.0@sha256:ac244a40268ce1dd1510fbff6eb529609ec68aceff1602343f79be8ca08c355b
+    profiles: ["meet"]
+    user: "1001:0"
+    network_mode: service:livekit
+    environment:
+      EGRESS_CONFIG_BODY: |
+        api_key: ${LIVEKIT_API_KEY:-helix}
+        api_secret: ${LIVEKIT_API_SECRET:-helix_dev_livekit_api_secret_change_me}
+        ws_url: ws://127.0.0.1:7880
+        logging:
+          level: info
+        health_port: 7982
+        template_port: 7980
+        enable_chrome_sandbox: true
+        redis:
+          address: redis:6379
+    # tini (the image's init) reaps Chrome's processes; the image's entrypoint
+    # expects the runtime directory.
+    entrypoint:
+      - /tini
+      - --
+      - /bin/sh
+      - -ec
+      - |
+        mkdir -p /home/egress/.cache/xdgr
+        exec /entrypoint.sh
+    volumes:
+      - meet-recordings:/recordings
+      - egress-tmp:/home/egress/tmp
+    depends_on:
+      livekit:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      meet-recordings-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:7982/ >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=256m,mode=1777
+      - /home/egress/.cache:rw,nosuid,nodev,size=64m,uid=1001,gid=0,mode=0700
+      - /home/egress/.config:rw,nosuid,nodev,size=16m,uid=1001,gid=0,mode=0700
+    shm_size: 1g
+    cap_drop: [ALL]
+    # Chrome's sandbox isolates the renderer, which decodes participants'
+    # media, in its own user namespace. Docker's default seccomp profile
+    # forbids that without SYS_ADMIN, so LiveKit's profile adds only the clone
+    # and unshare calls it needs (infra/livekit/egress-chrome-seccomp.json, from
+    # livekit/egress v1.15.0). SYS_CHROOT is used only inside that namespace:
+    # the process is not root and no-new-privileges stops it gaining anything.
+    cap_add: [SYS_CHROOT]
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./infra/livekit/egress-chrome-seccomp.json
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 4g
+    restart: unless-stopped
+
   otel-collector:
     logging: *default-logging
     image: otel/opentelemetry-collector-contrib:0.162.0@sha256:39923a8e431bd1f57be82411999d389fcfe40857492e4365456d97a4c1f74be6
@@ -535,3 +642,8 @@ volumes:
   grafana-data:
   spamd-data:
   clamav-data:
+  # Finished Meet recordings, until Helix has scanned and stored them. Nothing
+  # here needs a backup.
+  meet-recordings:
+  # Egress's work directory: each recording grows here until the meeting ends.
+  egress-tmp:

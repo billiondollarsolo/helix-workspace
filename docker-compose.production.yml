@@ -253,6 +253,7 @@ services:
       LIVEKIT_INTERNAL_URL: !reset "null"
       LIVEKIT_PUBLIC_URL: !reset "null"
       MEET_CAPTURE_SECRET: !reset "null"
+      MEET_RECORDING_DIR: !reset "null"
       # Where people open the optional password manager. Empty unless the
       # deployment sets HELIX_PASSWORDS_DOMAIN (and starts --profile passwords).
       HELIX_PASSWORDS_URL: ${HELIX_PASSWORDS_DOMAIN:+https://${HELIX_PASSWORDS_DOMAIN}}
@@ -324,7 +325,8 @@ services:
     networks: !override
       - edge
       - data-plane
-    volumes:
+    # Not the development recordings volume: docker-compose.meet.yml adds it.
+    volumes: !override
       - edge-certs:/run/helix-edge-certs
       - caddy-admin:/run/caddy-admin
     read_only: true
@@ -967,6 +969,10 @@ services:
     ports: !override []
     networks: !override
       - data-plane
+  egress:
+    logging: *default-logging
+    environment:
+      EGRESS_CONFIG_BODY: !reset "null"
   otel-collector:
     logging: *default-logging
     ports: !override []

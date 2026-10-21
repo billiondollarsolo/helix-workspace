@@ -747,6 +747,10 @@ file, and the default stack stays on Mail, Drive, Chat, and Assistant.
    ufw allow in on <edge-bridge> from <edge-subnet> to any port 7880 proto tcp
    ```
 
+   Recording adds three more host listeners. Redis (6390) and Egress's layout page (7980) listen
+   on 127.0.0.1 only. Egress's health check (7982) listens on every interface: keep it closed to
+   the Internet.
+
 3. Add the Meet secret files to the directory the other secrets are in. This needs the `ca`
    folder that the generator left there:
 
@@ -755,7 +759,9 @@ file, and the default stack stays on Mail, Drive, Chat, and Assistant.
      --dir "$HELIX_PRODUCTION_SECRETS_DIR" --turn-host turn.example.com
    ```
 
-   It writes `livekit_api_secret`, `meet_capture_secret`, `turn_cert`, and `turn_key`.
+   It writes `livekit_api_secret`, `meet_capture_secret`, `livekit_redis_password`, `turn_cert`,
+   and `turn_key`. Run on a Meet install set up before recording, it adds only
+   `livekit_redis_password` and leaves the other files alone.
 
 4. Add to `.env.production`:
 
@@ -780,7 +786,7 @@ How it is put together:
 
 - One `livekit` container, pinned by version and digest, on the host network. WebRTC media
   through Docker's port forwarding loses packets and breaks TURN relaying, which is why it does
-  not use a Compose network. A single node needs no Redis.
+  not use a Compose network.
 - LiveKit sends room and participant events to Helix at `/v1/webhook/livekit`, signed with the API
   secret, through a port Helix publishes on 127.0.0.1 only (`HELIX_LIVEKIT_WEBHOOK_PORT`).
 - Caddy routes `/rtc` on the Workspace site to LiveKit through the Docker host gateway
@@ -792,28 +798,49 @@ How it is put together:
   which browsers do not trust. TURN on UDP 3478 works as generated; for TURN over TLS on port
   5349, replace both files with a publicly trusted certificate for `HELIX_MEET_TURN_DOMAIN` and
   restart `livekit`.
-- Recording is not part of this install yet; it returns through LiveKit Egress. Live
-  transcription returns through a LiveKit agent. Both are follow-up tasks.
+- Recording runs on [LiveKit Egress](https://github.com/livekit/egress) (`egress`, pinned by
+  version and digest), also on the host network. It joins the room, renders it in headless Chrome
+  and writes an MP4. The layout page comes from Egress itself; nothing is fetched from the
+  Internet. Chrome runs with its sandbox on, using LiveKit's seccomp profile
+  (`infra/livekit/egress-chrome-seccomp.json`) rather than `SYS_ADMIN`.
+- LiveKit and Egress talk through their own Redis (`livekit-redis`), bound to 127.0.0.1 and
+  protected by `livekit_redis_password`. It holds only messages in transit and keeps nothing on
+  disk. The stack's main Redis is not involved.
+- Egress writes only to local files and holds no storage credentials. A finished recording lands
+  in the `meet-recordings` volume, which Helix mounts at the same path (`MEET_RECORDING_DIR`,
+  `/recordings`). Helix scans the file, copies it to the organization's storage and deletes the
+  local copy. A recording reaches nowhere else.
+- Each recording grows in Egress's work volume (`egress-tmp`) until the meeting ends, then is
+  copied to `meet-recordings`. Allow free disk for about twice the longest recording: roughly
+  1.5 GB per hour at the default 720p. A recording stops at `HELIX_MEET_RECORDING_MAX_DURATION`.
+- Egress needs about 3 CPU cores and 1 GB of memory per recording in progress. It is limited to
+  4 cores and 4 GB, with 1 GB of shared memory for Chrome, and refuses a recording when the host
+  is too busy. Live transcription returns through a LiveKit agent; that is a follow-up task.
 
-| Setting                      | Default                | Purpose                                                 |
-| ---------------------------- | ---------------------- | ------------------------------------------------------- |
-| `HELIX_MEET_TURN_DOMAIN`     | required               | The TURN hostname (DNS-only)                            |
-| `HELIX_MEET_PUBLIC_IP`       | required               | The address LiveKit tells browsers to send media to     |
-| `HELIX_MEET_RTC_TCP_PORT`    | `7881`                 | Media over TCP                                          |
-| `HELIX_MEET_RTC_UDP_PORT`    | `7882`                 | Media over UDP                                          |
-| `HELIX_MEET_TURN_PORT`       | `3478`                 | TURN over UDP                                           |
-| `HELIX_MEET_TURNS_PORT`      | `5349`                 | TURN over TLS                                           |
-| `HELIX_LIVEKIT_HOST`         | `host.docker.internal` | How Caddy and Helix reach LiveKit's API on the host     |
-| `HELIX_LIVEKIT_WEBHOOK_PORT` | `33000`                | Loopback port LiveKit's webhooks reach Helix on         |
-| `LIVEKIT_API_KEY`            | `helix`                | LiveKit API key name (not a secret)                     |
-| `LIVEKIT_PUBLIC_URL`         | `wss://<HELIX_DOMAIN>` | Where browsers connect; set only to use another address |
+| Setting                             | Default                | Purpose                                                 |
+| ----------------------------------- | ---------------------- | ------------------------------------------------------- |
+| `HELIX_MEET_TURN_DOMAIN`            | required               | The TURN hostname (DNS-only)                            |
+| `HELIX_MEET_PUBLIC_IP`              | required               | The address LiveKit tells browsers to send media to     |
+| `HELIX_MEET_RTC_TCP_PORT`           | `7881`                 | Media over TCP                                          |
+| `HELIX_MEET_RTC_UDP_PORT`           | `7882`                 | Media over UDP                                          |
+| `HELIX_MEET_TURN_PORT`              | `3478`                 | TURN over UDP                                           |
+| `HELIX_MEET_TURNS_PORT`             | `5349`                 | TURN over TLS                                           |
+| `HELIX_LIVEKIT_HOST`                | `host.docker.internal` | How Caddy and Helix reach LiveKit's API on the host     |
+| `HELIX_LIVEKIT_WEBHOOK_PORT`        | `33000`                | Loopback port LiveKit's webhooks reach Helix on         |
+| `HELIX_LIVEKIT_REDIS_PORT`          | `6390`                 | Loopback port of the Redis LiveKit and Egress share     |
+| `HELIX_EGRESS_HEALTH_PORT`          | `7982`                 | Egress's health check (keep it closed to the Internet)  |
+| `HELIX_MEET_RECORDING_MAX_DURATION` | `4h`                   | Longest recording; Egress stops it there                |
+| `LIVEKIT_API_KEY`                   | `helix`                | LiveKit API key name (not a secret)                     |
+| `LIVEKIT_PUBLIC_URL`                | `wss://<HELIX_DOMAIN>` | Where browsers connect; set only to use another address |
 
 One LiveKit server on one host is sized for small meetings. `infra/scripts/production-boot-smoke.sh
 --with meet` boots this install; run it on the host class you intend to use. The Helm chart does
 not install LiveKit; Kubernetes deployments run it separately and point Helix at it.
 
 To remove Meet, drop the file from the Compose commands and the two variables, and run
-`up -d --remove-orphans`. Scheduled meetings and calendar events stay in the database.
+`up -d --remove-orphans`. Scheduled meetings and calendar events stay in the database, and
+recordings already stored stay in the organization's storage. The `meet-recordings` and
+`egress-tmp` volumes hold nothing to keep once Helix has stored the last recording.
 
 ## Readiness
 

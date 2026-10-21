@@ -32,6 +32,12 @@ checkpoint (database dump, row counts, state/config archive) and retired
 units/configuration are under `/srv/helix/agentspace-rename-20261021/`; the old volume
 `helix-bot_postgres-data` is kept for rollback.
 
+`agentspace.helixapps.si` is proxied through Cloudflare (orange cloud) and its Caddy site
+answers only Cloudflare's address ranges (direct requests get 403), like
+`workspace.helixapps.si`; `mail.` and `turn.` stay DNS-only. Workspace reaches Agentspace over
+the shared Docker network: Agentspace advertises `https://helix-agentspace:3000` and Workspace
+verified and uses it automatically (Admin → Federated apps → Operations → Connection path).
+
 ## Federation review and assignment conflicts — 2026-10-20
 
 Review covered the federation naming cutover, management navigation and context,

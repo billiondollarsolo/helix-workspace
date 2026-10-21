@@ -1,4 +1,4 @@
-/* Admin › Apps › Meet. Meetings run on the configured Jitsi deployment; this
+/* Admin › Apps › Meet. Meetings run on the configured LiveKit media server; this
  * page shows whether that connection is configured, from the services catalog. */
 
 import { Link } from "@tanstack/react-router";
@@ -29,7 +29,7 @@ function MeetingServerPanel() {
       <PanelHeading
         id="meet-server-heading"
         title="Meeting server"
-        subtitle="Meetings need a configured Jitsi domain and signing secret."
+        subtitle="Meetings need a configured LiveKit server, API key and secret."
       />
       {failure !== null ? (
         <QueryFailureBanner

@@ -10,7 +10,8 @@ export interface MeetRoomRecord {
   readonly roomName: string;
   readonly joinCode: string;
   readonly subject: string;
-  readonly jitsiDomain: string;
+  /** Media host carrying the call. */
+  readonly mediaDomain: string;
   readonly status: MeetRoomStatus;
   readonly guestPolicy: "disabled" | "invite" | "domain";
   readonly guestDomains: readonly string[];
@@ -67,7 +68,7 @@ export interface MeetMeetingRecord {
   readonly roomName: string;
   readonly subject: string;
   readonly title: string;
-  readonly jitsiDomain: string;
+  readonly mediaDomain: string;
   readonly status: MeetRoomStatus;
   /** Mono join code shown in the UI as `helix.meet/<code>`. */
   readonly code: string;
@@ -98,7 +99,9 @@ export interface MeetMeetingsResult {
 export interface MeetTokenRecord {
   readonly roomId: string;
   readonly roomName: string;
-  readonly jitsiDomain: string;
+  /** Bare LiveKit websocket origin, e.g. `wss://workspace.example.com`. */
+  readonly serverUrl: string;
+  /** LiveKit access token; participant identity and room come from it. */
   readonly token: string;
   readonly joinUrl: string;
   readonly expiresAt: string;
@@ -310,7 +313,7 @@ export async function listMeetMeetings(
 
 /**
  * Whether video meetings are available. Meet stays off until an administrator
- * connects a Jitsi meeting server; `message` says what to do, worded for the
+ * connects a meeting media server; `message` says what to do, worded for the
  * person asking (configuration steps for admins, whom to ask for members).
  */
 export interface MeetStatus {

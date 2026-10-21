@@ -1,7 +1,7 @@
 import { SideSheet } from "@/components/ui/side-sheet";
 /* Recording playback drawer for the Meet hub.
  *
- * The Meet backend attaches Jibri uploads as Drive objects on the meeting
+ * The Meet backend attaches recording uploads as Drive objects on the meeting
  * thread (see apps/helix/src/platform/meet/store.ts:attachRecording). Each
  * artifact's bytes are reachable through the session-authenticated
  * /api/drive/objects/:id/content route, which supports HTTP Range requests
@@ -55,7 +55,7 @@ function EmptyState({ recorded }: { readonly recorded: boolean }) {
   return (
     <div role="status" className="[padding:48px_16px] text-center text-muted-foreground type-meta">
       {recorded
-        ? "This meeting was recorded, but the upload hasn't been received yet. Recordings appear here after Jibri finishes uploading."
+        ? "This meeting was recorded, but the upload hasn't been received yet. Recordings appear here after the upload finishes."
         : "No recordings for this meeting."}
     </div>
   );

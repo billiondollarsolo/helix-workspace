@@ -5,8 +5,8 @@ import { installCoreAppsRoutes } from "./support/api-fixtures";
 const accessTokenStorageKey = "helix.accessToken";
 const accessToken = "e2e-meet-token";
 const roomId = "33333333-3333-4333-8333-333333333333";
-const joinUrl =
-  "https://meet.helix.test/backend-launch-review?jwt=jwt&config.prejoinPageEnabled=false";
+const serverUrl = "wss://rtc.helix.test";
+const livekitToken = "livekit-access-token";
 
 interface MeetToolCall {
   readonly authorization: string | null;
@@ -22,8 +22,8 @@ test.use({
   },
 });
 
-test.describe("/meet Jitsi embed", () => {
-  test("joins today's meeting through the pre-join screen and loads the Jitsi room", async ({
+test.describe("/meet LiveKit call", () => {
+  test("joins today's meeting through the pre-join screen and connects to LiveKit", async ({
     page,
   }) => {
     const calls = await openMeet(page);
@@ -36,7 +36,9 @@ test.describe("/meet Jitsi embed", () => {
     await expect(page.getByRole("heading", { level: 1, name: "Ready to join?" })).toBeVisible();
     await expect(page.getByText("Backend launch review", { exact: true })).toBeVisible();
     await expectJoinedRoom(page, calls);
-    const stage = await page.locator(".meet-iframe").boundingBox();
+    const stage = await page
+      .getByRole("region", { name: "Meeting: Backend launch review" })
+      .boundingBox();
     const viewport = page.viewportSize()!;
     expect(stage!.width).toBeGreaterThan(viewport.width * 0.8);
     expect(stage!.height).toBeGreaterThan(viewport.height * 0.5);
@@ -70,7 +72,9 @@ test.describe("/meet Jitsi embed", () => {
     await page.getByRole("button", { name: "Join now", exact: true }).click();
     await expect(page.getByRole("button", { name: "Leave", exact: true })).toBeVisible();
     await expect(page).toHaveURL(/\/meet\?code=bckl-lnch-rvw0$/);
-    await expect(page.locator(".meet-iframe")).toHaveCount(1);
+    await expect(page.getByRole("region", { name: "Meeting: Backend launch review" })).toHaveCount(
+      1,
+    );
     await page.reload();
     await expect(page.getByRole("heading", { name: "Ready to join?" })).toBeVisible();
     await expect(page).toHaveURL(/\/meet\?code=bckl-lnch-rvw0$/);
@@ -80,7 +84,7 @@ test.describe("/meet Jitsi embed", () => {
     page,
   }) => {
     const message =
-      "Meet needs a Jitsi meeting server. Set MEET_JITSI_JWT_SECRET and MEET_JITSI_WEBHOOK_SHARED_SECRET to the secrets your Jitsi deployment shares with Helix, then restart Helix.";
+      "Meet needs a LiveKit media server. Set LIVEKIT_API_KEY and LIVEKIT_API_SECRET, then restart Helix.";
     const calls = await openMeet(page, { available: false, reason: "not_configured", message });
     await page.goto("/meet?code=bckl-lnch-rvw0");
 
@@ -144,7 +148,7 @@ async function openMeet(
     { key: accessTokenStorageKey, token: accessToken },
   );
   await mockMeetTools(page, calls, meetStatus);
-  await mockJitsiExternalApi(page);
+  await mockLiveKitSignal(page);
   return calls;
 }
 
@@ -164,67 +168,32 @@ async function expectJoinedRoom(page: Page, calls: readonly MeetToolCall[]): Pro
       }),
     );
 
+  // The browser opens LiveKit signalling on the server URL from the join
+  // response, authenticating with the minted access token.
   await expect
-    .poll(() =>
-      page.evaluate(
-        () =>
-          (
-            window as Window & {
-              __helixJitsiE2E?: {
-                readonly domain: string;
-                readonly jwt: string;
-                readonly roomName: string;
-              };
-            }
-          ).__helixJitsiE2E ?? null,
-      ),
-    )
-    .toEqual({
-      domain: "meet.helix.test",
-      jwt: "jwt",
-      roomName: "backend-launch-review",
-    });
-  await expect(page.locator(".meet-iframe")).toHaveAttribute(
-    "allow",
-    "camera; microphone; fullscreen; display-capture; autoplay",
-  );
+    .poll(() => {
+      const url = signalUrls.get(page)?.[0];
+      return url === undefined
+        ? null
+        : { origin: url.origin, token: url.searchParams.get("access_token") };
+    })
+    .toEqual({ origin: serverUrl, token: livekitToken });
   await expect(page.getByRole("button", { name: "Leave", exact: true })).toBeVisible();
 }
 
-async function mockJitsiExternalApi(page: Page): Promise<void> {
-  await page.route("https://meet.helix.test/external_api.js", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/javascript",
-      body: `
-        window.JitsiMeetExternalAPI = class {
-          constructor(domain, options) {
-            window.__helixJitsiE2E = {
-              domain,
-              jwt: options.jwt,
-              roomName: options.roomName,
-            };
-            this.iframe = document.createElement("iframe");
-            this.iframe.className = "meet-iframe";
-            this.iframe.title = "Helix meeting";
-            options.parentNode.append(this.iframe);
-          }
-          addListener(event, handler) {
-            if (event === "videoConferenceJoined") {
-              queueMicrotask(() => handler({}));
-            }
-          }
-          executeCommand() {}
-          dispose() {
-            this.iframe.remove();
-          }
-          getIFrame() {
-            return this.iframe;
-          }
-        };
-      `,
-    });
+const signalUrls = new WeakMap<Page, URL[]>();
+
+/* No media server runs in mocked E2E: record the signalling URL and refuse
+   the connection, so the call shows its connection error. */
+async function mockLiveKitSignal(page: Page): Promise<void> {
+  signalUrls.set(page, []);
+  await page.routeWebSocket(/\/rtc/u, (socket) => {
+    signalUrls.get(page)?.push(new URL(socket.url()));
+    void socket.close({ code: 1011, reason: "no media server in mocked E2E" });
   });
+  await page.route(/^https:\/\/rtc\.helix\.test\//u, (route) =>
+    route.fulfill({ status: 503, body: "" }),
+  );
 }
 
 async function mockMeetTools(page: Page, calls: MeetToolCall[], meetStatus: unknown) {
@@ -271,9 +240,9 @@ async function mockMeetTools(page: Page, calls: MeetToolCall[], meetStatus: unkn
         code: meetMeeting.code,
         subject: meetMeeting.subject,
         roomName: "backend-launch-review",
-        jitsiDomain: "meet.helix.test",
-        token: "jwt",
-        joinUrl,
+        serverUrl,
+        token: livekitToken,
+        joinUrl: serverUrl,
         expiresAt: "2026-05-20T13:00:00.000Z",
         recordingAvailable: true,
         canStartRecording: true,
@@ -314,7 +283,7 @@ const meetRoom = {
   threadId: "44444444-4444-4444-8444-444444444444",
   roomName: "backend-launch-review",
   subject: "Backend launch review",
-  jitsiDomain: "meet.helix.test",
+  mediaDomain: "rtc.helix.test",
   status: "active",
   createdByActorId: "11111111-1111-4111-8111-111111111111",
   startedAt: "2026-05-20T12:00:00.000Z",

@@ -16,13 +16,13 @@ import {
   Video as VideoIcon,
 } from "lucide-react";
 /* MeetCall — the in-call view, always in the dark theme. Top bar with title,
-   live REC pill, meeting details and elapsed timer; the Jitsi External API
-   embed (the real room, when a token was minted) or a placeholder; a bottom
-   control bar wired through the External API; and optional side panels.
+   live REC pill, meeting details and elapsed timer; the LiveKit video grid
+   (the real room, when a token was minted) or a placeholder; a bottom
+   control bar wired through `useLiveKitCall`; and optional side panels.
 
    The view is wired to a real backend room carried in via `session`: the
-   subject/code come from `meet.create-room`/`meet.meetings.list`, the embed
-   loads through JitsiMeetExternalAPI from the configured Jitsi domain, and
+   subject/code come from `meet.create-room`/`meet.meetings.list`, media
+   connects to the LiveKit server URL with the minted access token, and
    Leave disconnects only the local participant. */
 
 import { sessionUserQueryOptions } from "@/lib/auth";
@@ -30,12 +30,11 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useCallback, useMemo, useRef, useState } from "react";
 import {
   applyMeetHostControl,
-  authorizeMeetRecordingStart,
   recordMeetTelemetry,
   type MeetHostControl,
   type MeetTelemetryEvent,
 } from "./api";
-import { useJitsiCall, type JitsiCallOptions } from "./jitsi-external-api";
+import { useLiveKitCall, type LiveKitCallOptions } from "./livekit-call";
 import {
   CallOptionsPanel,
   ChatPanel,
@@ -47,6 +46,7 @@ import {
 } from "./meet-call-panels";
 import { copyMeetingLink, meetJoinLink } from "./meet-join";
 import type { MeetCallSession } from "./meet-shell";
+import { MeetVideoGrid } from "./meet-video-grid";
 import { meetCallElapsedQueryOptions } from "./queries";
 
 /** Format an elapsed-second count as `M:SS` or `H:MM:SS`. */
@@ -80,29 +80,22 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
   const elapsed = elapsedQuery.data ?? 0;
 
   const hasLiveRoom = session.roomId.length > 0;
-  const jitsiHostRef = useRef<HTMLDivElement | null>(null);
 
-  // Build the External API options only once we have a token; pass null
-  // otherwise so the hook keeps the call torn down.
-  const jitsiOptions = useMemo<JitsiCallOptions | null>(() => {
-    if (!hasLiveRoom || session.token === null) return null;
-    const displayName = sessionQuery.data?.name ?? sessionQuery.data?.email ?? "Helix user";
+  // Connect only once we have a server URL and token; null keeps the call
+  // torn down.
+  const callOptions = useMemo<LiveKitCallOptions | null>(() => {
+    if (!hasLiveRoom || session.token === null || session.serverUrl === null) return null;
     return {
-      domain: session.jitsiDomain,
-      roomName: session.roomName,
-      jwt: session.token,
+      serverUrl: session.serverUrl,
+      token: session.token,
+      displayName: sessionQuery.data?.name ?? sessionQuery.data?.email ?? "You",
       initialRecordingActive: session.recordingActive,
-      userInfo: {
-        displayName,
-        email: sessionQuery.data?.email ?? null,
-      },
       media: session.media,
     };
   }, [
     hasLiveRoom,
     session.token,
-    session.jitsiDomain,
-    session.roomName,
+    session.serverUrl,
     session.recordingActive,
     session.media,
     sessionQuery.data?.name,
@@ -121,29 +114,29 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
     [session.roomId],
   );
 
-  const { state: call, commands } = useJitsiCall({
-    options: jitsiOptions,
-    hostRef: jitsiHostRef,
+  const {
+    state: call,
+    commands,
+    media,
+  } = useLiveKitCall({
+    options: callOptions,
     onLeft: leave,
     onTelemetry: reportTelemetry,
-  });
-  const recordingAuthorization = useMutation({
-    mutationFn: () => authorizeMeetRecordingStart(session.roomId),
-    onMutate: () => undefined,
-    onSuccess: commands.startRecording,
-    onError: () => undefined,
   });
   const hostControl = useMutation({
     mutationFn: (control: MeetHostControl) => applyMeetHostControl(session.roomId, control),
     onMutate: () => undefined,
     onSuccess: (result) => {
       setControls(result.state);
-      commands.applyMediaCommands(result.mediaCommands);
     },
     onError: () => undefined,
   });
   const applyControl = (control: MeetHostControl) => {
     if (!hostControl.isPending) hostControl.mutate(control);
+  };
+  const showChat = (open: boolean) => {
+    setChatOpen(open);
+    commands.setChatPanelOpen(open);
   };
 
   return (
@@ -188,19 +181,20 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
       <RecordingNotice active={call.recordingActive} />
 
       <div className="flex-1 flex min-h-0">
-        {/* Main stage — Jitsi External API mounts its iframe inside the host
-            ref. We always render the host so the ref stays attached. */}
+        {/* Main stage — the LiveKit video grid. */}
         <div className="flex-1 p-4 flex flex-col gap-3 min-w-0">
           <div className="flex-1 relative rounded-lg overflow-hidden bg-[var(--surface)] min-h-0">
-            <div
-              ref={jitsiHostRef}
-              className="absolute inset-0"
-              aria-label={`Meeting: ${session.subject}`}
+            <MeetVideoGrid
+              label={`Meeting: ${session.subject}`}
+              media={media}
+              activeSpeakerId={call.activeSpeakerId}
+              tileView={call.tileView}
+              onStartAudio={commands.startAudio}
             />
-            {jitsiOptions === null ? (
+            {callOptions === null ? (
               <Overlay message="Waiting for the meeting room to connect…" />
             ) : call.loadError !== null ? (
-              <Overlay message={`Couldn't load Jitsi: ${call.loadError}`} tone="error" />
+              <Overlay message={call.loadError} tone="error" />
             ) : !call.isReady ? (
               <Overlay message="Loading meeting room…" />
             ) : !call.isJoined ? (
@@ -226,7 +220,11 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
                 />
               ) : null}
               {call.participants.map((p) => (
-                <ParticipantRow key={p.id} name={p.displayName}>
+                <ParticipantRow
+                  key={p.id}
+                  name={p.displayName}
+                  badge={p.handRaised ? "hand raised" : p.audioMuted ? "muted" : null}
+                >
                   {session.canModerate ? (
                     <span className="flex gap-1">
                       <MiniAction
@@ -370,19 +368,6 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
                   });
                 }}
               />
-              {call.knockingParticipants.map((participant) => (
-                <PolicyButton
-                  key={participant.id}
-                  label={`Admit ${participant.displayName}`}
-                  onClick={() => {
-                    applyControl({
-                      action: "admit",
-                      participantSubject: participant.participantSubject,
-                      mediaParticipantId: participant.id,
-                    });
-                  }}
-                />
-              ))}
               <small className="[color:var(--text-2)]">Policy version {controls.version}</small>
             </div>
           </SidePanel>
@@ -392,7 +377,6 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
           <CallOptionsPanel
             call={call}
             commands={commands}
-            canModerate={session.canModerate}
             onClose={() => {
               setCallOptionsOpen(false);
             }}
@@ -400,11 +384,11 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
         ) : null}
 
         {/* In-call chat panel */}
-        {chatOpen ? (
+        {chatOpen && call.capabilities.chat ? (
           <ChatPanel
             messages={call.chatMessages}
             onClose={() => {
-              setChatOpen(false);
+              showChat(false);
             }}
             onSend={(text) => {
               commands.sendChatMessage(text);
@@ -431,57 +415,38 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
         >
           {call.videoMuted ? <CamOffIcon size={16} /> : <VideoIcon size={16} />}
         </CallControl>
-        <CallControl
-          label={call.screenSharing ? "Stop sharing screen" : "Share screen"}
-          active={call.screenSharing}
-          disabled={!call.isJoined}
-          onClick={commands.toggleShareScreen}
-        >
-          <ScreenIcon size={16} />
-        </CallControl>
-        <CallControl
-          label={call.handRaised ? "Lower hand" : "Raise hand"}
-          active={call.handRaised}
-          disabled={!call.isJoined}
-          onClick={commands.toggleRaiseHand}
-        >
-          <HandIcon size={16} />
-        </CallControl>
-        {session.canStartRecording ? (
+        {call.capabilities.screenShare ? (
           <CallControl
-            label={
-              !session.recordingAvailable
-                ? "Recording unavailable"
-                : call.recordingActive
-                  ? "Stop recording"
-                  : "Start recording"
-            }
-            danger={call.recordingActive}
-            disabled={
-              !call.isJoined || !session.recordingAvailable || recordingAuthorization.isPending
-            }
-            onClick={() => {
-              if (call.recordingActive) commands.stopRecording();
-              else recordingAuthorization.mutate();
-            }}
+            label={call.screenSharing ? "Stop sharing screen" : "Share screen"}
+            active={call.screenSharing}
+            disabled={!call.isJoined}
+            onClick={commands.toggleShareScreen}
           >
-            <RecordIcon />
+            <ScreenIcon size={16} />
           </CallControl>
         ) : null}
-        <CallControl
-          label={chatOpen ? "Hide in-call messages" : "Show in-call messages"}
-          active={chatOpen}
-          badge={call.unreadChatCount > 0 ? call.unreadChatCount : null}
-          onClick={() => {
-            setChatOpen((value) => {
-              const next = !value;
-              if (next) commands.markChatRead();
-              return next;
-            });
-          }}
-        >
-          <ChatIcon size={16} />
-        </CallControl>
+        {call.capabilities.raiseHand ? (
+          <CallControl
+            label={call.handRaised ? "Lower hand" : "Raise hand"}
+            active={call.handRaised}
+            disabled={!call.isJoined}
+            onClick={commands.toggleRaiseHand}
+          >
+            <HandIcon size={16} />
+          </CallControl>
+        ) : null}
+        {call.capabilities.chat ? (
+          <CallControl
+            label={chatOpen ? "Hide in-call messages" : "Show in-call messages"}
+            active={chatOpen}
+            badge={call.unreadChatCount > 0 ? call.unreadChatCount : null}
+            onClick={() => {
+              showChat(!chatOpen);
+            }}
+          >
+            <ChatIcon size={16} />
+          </CallControl>
+        ) : null}
 
         <div aria-hidden="true" className="[width:1px] h-7 bg-[var(--border)] [margin:0_4px]" />
 
@@ -511,7 +476,7 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
           >
             <UsersIcon size={16} />
           </button>
-          {Object.values(call.capabilities).some(Boolean) ? (
+          {call.capabilities.tileView || call.capabilities.noiseSuppression ? (
             <button
               className={cn(
                 "btn sm",
@@ -530,13 +495,6 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
           ) : null}
         </div>
       </div>
-      {recordingAuthorization.isError ? (
-        <div role="alert" className="[padding:8px_16px] [color:var(--danger)]">
-          {recordingAuthorization.error instanceof Error
-            ? recordingAuthorization.error.message
-            : "Recording could not be authorized."}
-        </div>
-      ) : null}
       {hostControl.isError ? (
         <div role="alert" className="[padding:8px_16px] [color:var(--danger)]">
           {hostControl.error instanceof Error
@@ -612,20 +570,12 @@ function Overlay({
       className={cn(
         "absolute inset-0 grid [place-items:center] type-body-sm pointer-events-none",
         tone === "error"
-          ? "[background:color-mix(in_srgb,var(--danger)_25%,transparent)] [color:var(--danger)]"
+          ? "[background:var(--danger-soft)] [color:var(--text)] [padding:0_24px] text-center"
           : "[background:color-mix(in_srgb,var(--bg)_65%,transparent)] [color:var(--text-2)]",
       )}
     >
       {message}
     </div>
-  );
-}
-
-function RecordIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-      <circle cx="8" cy="8" r="5" fill="currentColor" />
-    </svg>
   );
 }
 

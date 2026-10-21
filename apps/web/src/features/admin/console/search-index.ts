@@ -85,7 +85,7 @@ const SETTINGS: readonly Omit<AdminSettingEntry, "location">[] = [
     section: "calendar",
     keywords: ["ics", "invites", "invitation import"],
   },
-  { title: "Meeting server", section: "meet", keywords: ["jitsi", "video", "conference", "jwt"] },
+  { title: "Meeting server", section: "meet", keywords: ["livekit", "video", "conference", "rtc"] },
   {
     title: "Password manager",
     section: "passwords",

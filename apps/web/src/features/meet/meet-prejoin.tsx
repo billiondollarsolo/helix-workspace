@@ -58,7 +58,7 @@ export function MeetPreJoin({ target, onJoined, onCancel }: MeetPreJoinProps) {
   };
 
   const join = useMutation({
-    mutationFn: () => joinMeetTarget(target, initialMediaFor(choice, preview.devices)),
+    mutationFn: () => joinMeetTarget(target, initialMediaFor(choice)),
     onMutate: () => undefined,
     onSuccess: onJoined,
     onError: () => undefined,

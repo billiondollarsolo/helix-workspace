@@ -4,6 +4,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type * as TanStackRouter from "@tanstack/react-router";
+import type * as LiveKit from "livekit-client";
 import * as authModule from "@/lib/auth";
 import {
   flush,
@@ -15,6 +16,12 @@ import {
 } from "@/test/meet";
 import { parseMeetCode } from "./meet-code";
 import { MeetShell } from "./meet-shell";
+import { FakeRoom } from "@/test/livekit";
+
+vi.mock("livekit-client", async (importOriginal) => ({
+  ...(await importOriginal<typeof LiveKit>()),
+  Room: (await import("@/test/livekit")).FakeRoom,
+}));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => {
   const actual = await importOriginal<typeof TanStackRouter>();
@@ -75,9 +82,9 @@ function todayEvents() {
 const tokenRecord = {
   roomId: "room-new",
   roomName: "instant-room",
-  jitsiDomain: "meet.localhost",
-  token: "jwt",
-  joinUrl: "https://meet.localhost/instant-room?jwt=jwt",
+  serverUrl: "wss://workspace.localhost",
+  token: "livekit-token",
+  joinUrl: "wss://workspace.localhost",
   expiresAt: "2026-05-21T11:00:00.000Z",
   recordingAvailable: true,
   canStartRecording: true,
@@ -192,7 +199,7 @@ describe("MeetShell hub", () => {
 
   it("shows Meet as unavailable with the server's setup guidance", async () => {
     const message =
-      "Meet needs a Jitsi meeting server. Set MEET_JITSI_JWT_SECRET and MEET_JITSI_WEBHOOK_SHARED_SECRET, then restart Helix.";
+      "Meet needs a LiveKit media server. Set LIVEKIT_API_KEY and LIVEKIT_API_SECRET, then restart Helix.";
     mockTools({
       "meet.status": () => ({ available: false, reason: "not_configured", message }),
       "meet.meetings.list": () => meetingsPayload,
@@ -420,8 +427,17 @@ describe("Meet pre-join", () => {
       roomId: "room-new",
       recordingNoticeAccepted: true,
     });
-    // The call view received the camera choice: its camera control starts off.
+    // The call received the choices: LiveKit connects with the minted token,
+    // captures the chosen microphone and leaves the camera off.
+    await flush();
+    await flush();
     expect(buttonNamed(container, "Turn on camera")).toBeDefined();
+    const room = FakeRoom.latest();
+    expect(room.connect).toHaveBeenCalledWith("wss://workspace.localhost", "livekit-token");
+    expect(room.options).toMatchObject({
+      audioCaptureDefaults: { deviceId: { ideal: "mic-2" } },
+    });
+    expect(room.localParticipant.setCameraEnabled).not.toHaveBeenCalled();
   });
 
   it("goes back to the hub from the pre-join screen", async () => {

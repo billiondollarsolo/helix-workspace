@@ -6,10 +6,9 @@ import { SurfaceFrame } from "@/components/shell";
 import { EmptyState } from "@/components/ui/empty-state";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { VideoOff, Video as VideoIcon } from "lucide-react";
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import type { MeetControlState } from "./api";
-import type { JitsiInitialMedia } from "./jitsi-external-api";
-import { MeetCall } from "./meet-call";
+import type { MeetInitialMedia } from "./meet-call-controls";
 import { MeetHub } from "./meet-hub";
 import type { MeetJoinTarget } from "./meet-join";
 import { MeetPreJoin } from "./meet-prejoin";
@@ -27,26 +26,28 @@ export interface MeetCallSession {
   readonly roomName: string;
   readonly subject: string;
   readonly code: string;
-  readonly jitsiDomain: string;
-  /** Minted Jitsi JWT for the embed; null when joining offline-fallback. */
+  /** Bare LiveKit websocket origin; null when the server returned none. */
+  readonly serverUrl: string | null;
+  /** LiveKit access token; null until one was minted. */
   readonly token: string | null;
-  /** Full Jitsi join URL (with `?jwt=`), when minted. */
-  readonly joinUrl: string | null;
-  /** Live Jibri readiness sampled when the join token was minted. */
+  /** Recorder readiness sampled when the join token was minted. */
   readonly recordingAvailable: boolean;
   /** Server-proven moderator capability; participants never receive a start control. */
   readonly canStartRecording: boolean;
   /** Recording disclosure version accepted before this join token was issued. */
   readonly recordingNoticeVersion: string;
-  /** Authoritative server state used to warn late joiners before Jitsi emits an event. */
+  /** Authoritative server state used to warn late joiners as soon as they join. */
   readonly recordingActive: boolean;
   readonly controls: MeetControlState;
   readonly canModerate: boolean;
   /** Wall-clock start (epoch ms) for the elapsed timer. */
   readonly startedAtMs: number;
   /** Microphone, camera and devices chosen on the pre-join screen. */
-  readonly media: JitsiInitialMedia;
+  readonly media: MeetInitialMedia;
 }
+
+/* The call view carries the LiveKit client; load it only when joining. */
+const MeetCall = lazy(() => import("./meet-call").then((module) => ({ default: module.MeetCall })));
 
 export interface MeetShellProps {
   /** Meeting code from the URL; opens its pre-join screen. */
@@ -72,7 +73,17 @@ export function MeetShell({ code, onCodeChange, onScheduleInCalendar }: MeetShel
   };
 
   if (session !== null) {
-    return <MeetCall session={session} onLeave={backToHub} />;
+    return (
+      <Suspense
+        fallback={
+          <div role="status" className="flex-1 grid place-items-center type-body-sm">
+            Opening the meeting…
+          </div>
+        }
+      >
+        <MeetCall session={session} onLeave={backToHub} />
+      </Suspense>
+    );
   }
 
   if (status?.available === false) {

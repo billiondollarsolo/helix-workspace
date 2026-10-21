@@ -5,6 +5,10 @@ import { fileURLToPath, URL } from "node:url";
 import { defineConfig, type Plugin } from "vite";
 const standardChunkBudgetBytes = 500_000;
 const initialGraphBudgetBytes = 450_000;
+/* Vendor chunks allowed past the standard budget, only while they stay out of
+   the initial graph. livekit-client ships as one prebuilt ESM module (about
+   530 kB minified) that cannot be split further; Meet loads it on joining. */
+const lazyVendorChunkBudgets = new Map([["vendor-livekit", 600_000]]);
 const devApiTarget =
   process.env.HELIX_E2E_API_BASE_URL ?? process.env.HELIX_API_BASE_URL ?? "http://localhost:3000";
 
@@ -117,9 +121,13 @@ function enforceBundleBudgets(): Plugin {
 
       for (const chunk of chunks) {
         const bytes = Buffer.byteLength(chunk.code, "utf8");
-        if (bytes > standardChunkBudgetBytes) {
+        const lazyBudget = initialFiles.has(chunk.fileName)
+          ? undefined
+          : lazyVendorChunkBudgets.get(chunk.name);
+        const budget = lazyBudget ?? standardChunkBudgetBytes;
+        if (bytes > budget) {
           violations.push(
-            `${chunk.fileName} is ${formatBytes(bytes)} (budget ${formatBytes(standardChunkBudgetBytes)})`,
+            `${chunk.fileName} is ${formatBytes(bytes)} (budget ${formatBytes(budget)})`,
           );
         }
       }
@@ -154,6 +162,10 @@ function semanticVendorChunk(moduleId: string): string | undefined {
     isDependency(moduleId, "@tanstack/history")
   ) {
     return "vendor-tanstack";
+  }
+  // The Meet media client: one prebuilt module, loaded only when joining.
+  if (isDependency(moduleId, "livekit-client")) {
+    return "vendor-livekit";
   }
 
   return undefined;

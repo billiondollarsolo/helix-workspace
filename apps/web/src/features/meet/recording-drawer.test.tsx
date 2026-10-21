@@ -16,7 +16,7 @@ const meeting: MeetMeetingRecord = {
   roomName: "launch",
   subject: "Launch review",
   title: "Launch review",
-  jitsiDomain: "meet.helix.test",
+  mediaDomain: "meet.helix.test",
   status: "ended",
   code: "launch",
   host: null,

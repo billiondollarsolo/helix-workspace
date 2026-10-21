@@ -11,7 +11,7 @@ import {
   type MeetRecordingConsent,
   type MeetTokenRecord,
 } from "./api";
-import type { JitsiInitialMedia } from "./jitsi-external-api";
+import type { MeetInitialMedia } from "./meet-call-controls";
 import type { MeetCallSession } from "./meet-shell";
 import { randomId } from "@/lib/random-id";
 
@@ -50,7 +50,7 @@ export async function copyMeetingLink(link: string): Promise<void> {
 /** Mints the join token for a target (creating the room for an instant meeting). */
 export async function joinMeetTarget(
   target: MeetJoinTarget,
-  media: JitsiInitialMedia,
+  media: MeetInitialMedia,
 ): Promise<MeetCallSession> {
   const consent = createRecordingConsent();
   if (target.kind === "start") {
@@ -81,14 +81,14 @@ export async function joinMeetTarget(
   });
 }
 
-function sessionFromToken(
+export function sessionFromToken(
   token: MeetTokenRecord,
   room: {
     readonly roomName: string;
     readonly subject: string;
     readonly code: string;
     readonly startedAtMs: number;
-    readonly media: JitsiInitialMedia;
+    readonly media: MeetInitialMedia;
   },
 ): MeetCallSession {
   return {
@@ -96,9 +96,9 @@ function sessionFromToken(
     roomName: room.roomName,
     subject: room.subject,
     code: room.code,
-    jitsiDomain: token.jitsiDomain,
+    serverUrl:
+      typeof token.serverUrl === "string" && token.serverUrl.length > 0 ? token.serverUrl : null,
     token: token.token,
-    joinUrl: token.joinUrl,
     recordingAvailable: token.recordingAvailable,
     canStartRecording: token.canStartRecording,
     recordingNoticeVersion: token.recordingNoticeVersion,

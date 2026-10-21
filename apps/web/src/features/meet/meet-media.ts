@@ -1,9 +1,9 @@
 /* Camera and microphone for the pre-join screen: the viewer's remembered
    choices, the device list, and a live preview stream. The preview releases
-   its tracks on unmount so Jitsi can open the same devices for the call. */
+   its tracks on unmount so the call can open the same devices. */
 
 import { useEffect, useState } from "react";
-import type { JitsiInitialMedia } from "./jitsi-external-api";
+import type { MeetInitialMedia } from "./meet-call-controls";
 
 export interface MeetMediaChoice {
   readonly micOn: boolean;
@@ -45,18 +45,13 @@ export function saveMeetMediaChoice(choice: MeetMediaChoice): void {
   }
 }
 
-/** What the call starts with: muted states plus the labels Jitsi matches devices by. */
-export function initialMediaFor(
-  choice: MeetMediaChoice,
-  devices: readonly MediaDeviceInfo[],
-): JitsiInitialMedia {
-  const label = (id: string | null) =>
-    devices.find((device) => id !== null && device.deviceId === id)?.label || null;
+/** What the call starts with: muted states plus the chosen device ids. */
+export function initialMediaFor(choice: MeetMediaChoice): MeetInitialMedia {
   return {
     audioMuted: !choice.micOn,
     videoMuted: !choice.camOn,
-    audioInputLabel: label(choice.audioInputId),
-    videoInputLabel: label(choice.videoInputId),
+    audioInputId: choice.audioInputId,
+    videoInputId: choice.videoInputId,
   };
 }
 

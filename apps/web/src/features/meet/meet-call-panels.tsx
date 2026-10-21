@@ -5,26 +5,23 @@ import { Avatar } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 import { MessageCircle as ChatIcon, Settings as SettingsIcon, X as XIcon } from "lucide-react";
 import { useState } from "react";
-import type { JitsiCallCommands, JitsiCallState, JitsiChatMessage } from "./jitsi-external-api";
+import type { MeetCallCommands, MeetCallState, MeetChatMessage } from "./meet-call-controls";
 
 export function CallOptionsPanel({
   call,
   commands,
-  canModerate,
   onClose,
 }: {
-  readonly call: JitsiCallState;
-  readonly commands: JitsiCallCommands;
-  readonly canModerate: boolean;
+  readonly call: MeetCallState;
+  readonly commands: MeetCallCommands;
   readonly onClose: () => void;
 }) {
-  const breakoutRooms = call.breakoutRooms.filter((room) => !room.isMainRoom);
   return (
     <SidePanel title="Call options" icon={<SettingsIcon size={16} />} onClose={onClose}>
       <div className="p-3 grid gap-2">
         {call.capabilities.tileView ? (
           <PolicyButton
-            label={call.tileView === true ? "Use speaker layout" : "Use tile layout"}
+            label={call.tileView ? "Use speaker layout" : "Use tile layout"}
             onClick={commands.toggleTileView}
           />
         ) : null}
@@ -39,53 +36,6 @@ export function CallOptionsPanel({
               commands.setNoiseSuppression(call.noiseSuppressionEnabled !== true);
             }}
           />
-        ) : null}
-        {call.capabilities.backgroundBlur ? (
-          <PolicyButton
-            label={call.backgroundBlurred === true ? "Remove background blur" : "Blur background"}
-            onClick={() => {
-              commands.setBackgroundBlur(call.backgroundBlurred !== true);
-            }}
-          />
-        ) : null}
-        {call.capabilities.breakoutRooms && canModerate ? (
-          <section aria-label="Breakout rooms" className="grid gap-2 mt-2">
-            <strong className="type-body-sm">Breakout rooms</strong>
-            <PolicyButton label="Add breakout room" onClick={commands.addBreakoutRoom} />
-            <PolicyButton
-              label="Auto-assign participants"
-              onClick={commands.autoAssignBreakoutRooms}
-            />
-            {breakoutRooms.length > 0 ? (
-              <PolicyButton
-                label="Return to main room"
-                onClick={() => {
-                  commands.joinBreakoutRoom();
-                }}
-              />
-            ) : null}
-            {breakoutRooms.map((room) => (
-              <div key={room.id} className="grid gap-1.5 p-2 [border:1px_solid_var(--border)]">
-                <span className="type-meta">
-                  {room.name} ({String(room.participantCount)})
-                </span>
-                <div className="flex gap-1.5">
-                  <MiniAction
-                    label={`Join ${room.name}`}
-                    onClick={() => {
-                      commands.joinBreakoutRoom(room.id);
-                    }}
-                  />
-                  <MiniAction
-                    label={`Close ${room.name}`}
-                    onClick={() => {
-                      commands.closeBreakoutRoom(room.id);
-                    }}
-                  />
-                </div>
-              </div>
-            ))}
-          </section>
         ) : null}
       </div>
     </SidePanel>
@@ -184,7 +134,7 @@ export function ChatPanel({
   onSend,
   onClose,
 }: {
-  readonly messages: readonly JitsiChatMessage[];
+  readonly messages: readonly MeetChatMessage[];
   readonly onSend: (text: string) => void;
   readonly onClose: () => void;
 }) {

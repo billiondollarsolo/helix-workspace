@@ -1,7 +1,7 @@
 import { defineConfig } from "@playwright/test";
 
 /**
- * Opt-in release gate for a real Helix/Jitsi/JVB/Jibri deployment. It is kept
+ * Opt-in release gate for a real Helix + LiveKit deployment. It is kept
  * separate from the mocked product E2E suite so missing media infrastructure
  * is a hard failure, never a skip or a mocked success.
  */

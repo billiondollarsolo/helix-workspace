@@ -1,5 +1,34 @@
 # Hosted federation deployment and recovery enrollment
 
+## Agentspace rename and restart fix — 2026-10-21
+
+**Outage and fix.** The 03:42 UTC whole-installation backup stopped the apps and could not
+restart Workspace: `helix-storage-init` had `pull_policy: always`, so Compose tried to pull
+`helix/workspace:ca-42fde1e` from Docker Hub and aborted the stack (Workspace 521, Agentspace
+unreachable behind Caddy). It is now `never` like every other service; the prior file is
+`/srv/helix/config/development-compose.pre-storage-init-pull-fix-*.json`.
+
+**Rename.** Helix Bot / Chungus is now Helix Agentspace on the hosted server, with data,
+accounts, TLS and federation kept (all 295 Agentspace tables matched the pre-change row counts;
+directory sync stayed fresh). Sessions were reset by the cookie rename.
+
+| Item             | Now                                                                       |
+| ---------------- | ------------------------------------------------------------------------- |
+| Agentspace image | `helix/agentspace:rename-726dfc3` (source `agentspace-rename` `726dfc3`)  |
+| Workspace images | `helix/workspace:rename-cf2df11`, `helix/workspace-web:rename-cf2df11`    |
+| Deployment       | `/srv/helix-agentspace/compose` (project `helix-agentspace`)              |
+| State            | `/srv/helix-data/agentspace`                                              |
+| Database         | container `helix-agentspace-postgres-1`, database and role `agentspace`   |
+| Services         | `helix-agentspace-recovery.service`, `helix-agentspace-certificate.timer` |
+| Caddy            | `bot.helixapps.si` proxies to `helix-agentspace:3000`                     |
+
+The federation application ID stays `bot` (its Workspace registration and operator state
+directory). The public hostname is still `bot.helixapps.si` until an
+`agentspace.helixapps.si` DNS record exists. Release files, checkpoint (database dump, row
+counts, state/config archive) and retired units/configuration are under
+`/srv/helix/agentspace-rename-20261021/`; the old volume `helix-bot_postgres-data` is kept
+for rollback.
+
 ## Federation review and assignment conflicts — 2026-10-20
 
 Review covered the federation naming cutover, management navigation and context,
@@ -75,7 +104,7 @@ A fresh pre-rollout checkpoint, `hosted-before-federation-review.tar.gz.age`
 was then authenticated and passed the same database/constraint/key/binding checks.
 Both drills used network mode `none`, no published ports and no live volumes.
 The first Agentspace drill attempt lacked the database-owner role in its empty bootstrap;
-adding the required `helix_bot` role allowed a clean repeat with owners/grants intact.
+adding the required database-owner role (then `helix_bot`, now `agentspace`) allowed a clean repeat with owners/grants intact.
 Database role bootstrap remains a prerequisite of logical restore, not data inside
 `pg_dump`.
 
@@ -413,7 +442,7 @@ unqualified.
 
 Open **Workspace → Admin → Federated backups** for the two recovery targets.
 Independent native operator services are `helix-workspace-recovery.service` and
-`helix-bot-recovery.service`. Their fixed command/configuration, journals and
+`helix-agentspace-recovery.service` (formerly `helix-bot-recovery.service`). Their fixed command/configuration, journals and
 capabilities are private under `/srv/helix-data/federation-operations/`. Runtime code
 is under `/opt/helix-recovery-eddec8b/`; privileged execution is outside the API
 containers. The workers bind only the private Docker bridge gateway; UFW admits

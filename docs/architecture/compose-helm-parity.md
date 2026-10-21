@@ -19,13 +19,13 @@ Legend: **P** = parity present · **D** = documented intentional difference · *
 | --------------------------------------- | -------------------------------------------- | ------------------------------------------------ | ------ |
 | `HELIX_APPS` MVP allowlist              | `mail,drive,chat,assistant`                  | `workspace.apps` default same                    | P      |
 | Disabled modules in `HELIX_CONFIG_JSON` | calendar/meet `enabled: false`               | `workspace.modules.*` rendered into config JSON  | P      |
-| Meet production credentials stripped    | `MEET_JITSI_*=false` / secrets reset         | Meet not chart-installed; module disabled        | D\*    |
+| Meet production credentials stripped    | `LIVEKIT_*` / `MEET_CAPTURE_SECRET` reset    | Meet not chart-installed; module disabled        | D\*    |
 | Full Workspace PKG flip procedure       | Documented in compose header + ha-rpo-rto.md | Documented in values comments + ha-rpo-rto.md    | P      |
 | Web `VITE_HELIX_MVP_ONLY=true`          | Built into promoted web image                | Same promoted image (chart does not rebuild SPA) | P      |
 
-\*Helm has **no in-chart Jitsi** (O-K.10 gap). Compose can host Jitsi under a non-production profile
-but production overlay forces Meet off. Enabling Meet on either target requires external/cluster
-Jitsi + PKG gates — do not enable in defaults.
+\*Helm has **no in-chart LiveKit** (O-K.10 gap). Compose runs LiveKit only when
+`docker-compose.meet.yml` is added; the production overlay alone keeps Meet off. Enabling Meet on
+either target requires a LiveKit server + PKG gates — do not enable in defaults.
 
 ## Lifecycle and data plane
 
@@ -74,7 +74,7 @@ Jitsi + PKG gates — do not enable in defaults.
 
 ## Known gaps blocking dual-target Full Workspace GA
 
-1. **O-K.9 / O-K.10** — ClamAV and Meet/Jitsi not first-class Helm chart resources; must be external or added with fail-closed values before Meet/Drive Business claims on K8s.
+1. **O-K.9 / O-K.10** — ClamAV and Meet/LiveKit not first-class Helm chart resources; must be external or added with fail-closed values before Meet/Drive Business claims on K8s.
 2. **O-D.9 / O-D.10** — Compose production keeps Calendar/Meet disabled; GA profiles need evidence, not default enable.
 3. **Live drills** — O-D.13 and O-K.16 evidence packs are environment-specific; repository provides scripts + gates only.
 4. **O-X.2–O-X.6** — SBOM/provenance and dual R3 binding remain process gates beyond this matrix.

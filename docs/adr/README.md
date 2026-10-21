@@ -9,7 +9,7 @@ The [canonical 1.0 scope](../release/1.0-scope.md) governs product enablement. A
 - [ADR-0005: Agent write confirmation and bounded automation](adr-0005-agent-write-confirmation-and-allowlists.md)
 - [ADR-0006: Business-pilot availability and recovery targets](adr-0006-business-pilot-recovery-targets.md)
 - [ADR-0007: Fail-closed untrusted uploads](adr-0007-fail-closed-untrusted-uploads.md)
-- [ADR-0008: Full Workspace Meet via Jitsi](adr-0008-meet-via-jitsi.md)
+- [ADR-0008: Full Workspace Meet via Jitsi](adr-0008-meet-via-jitsi.md) (superseded by ADR-0032)
 - [ADR-0009: Full Workspace Calendar](adr-0009-full-workspace-calendar.md)
 - [ADR-0010: Helix 1.0 release scope](adr-0010-release-1.0-scope.md)
 - [ADR-0011: Multi-org self-host ordering](adr-0011-multi-org-self-host-ordering.md)
@@ -28,5 +28,6 @@ The [canonical 1.0 scope](../release/1.0-scope.md) governs product enablement. A
 - [ADR-0028: Per-Tenant `tenant_config` as JSONB on `orgs` Table](adr-0028-tenant-config-jsonb.md)
 - [ADR-0029: Immutable Audit Log via `audit-immutable-s3` Plugin; 7-Year Retention](adr-0029-immutable-audit-log.md)
 - [ADR-0030: Helix is free and open source with no plans or limits](adr-0030-free-open-source-no-plans-or-limits.md)
+- [ADR-0032: Meet on LiveKit](adr-0032-meet-via-livekit.md)
 
 New decisions use the next available number and state Context, Decision, Alternatives considered, Consequences, and Reversal triggers. Supersede an earlier record explicitly when changing an accepted decision.

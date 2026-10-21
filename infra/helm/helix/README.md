@@ -88,13 +88,15 @@ claim: nothing Helix stores can rebuild a lost vault.
 
 ## Optional Meet and Calendar
 
-Meet and Calendar are not enabled by default. To opt in, deploy the media plane from
-[`infra/meet/ha`](../../meet/ha/README.md), then set `workspace.profile=full`, the Full Workspace
+Meet and Calendar are not enabled by default. Meet runs on a LiveKit server that this chart does
+not deploy. To opt in, run LiveKit (with its webhook pointed at `http://<helix service>:3000/webhook/livekit`),
+route `/rtc` on the Workspace host to it, then set `workspace.profile=full`, the Full Workspace
 `workspace.apps`, `workspace.modules.meet.enabled=true`, `workspace.modules.calendar.enabled=true`,
-`workspace.meet.jitsiDomain`, and the JWT secret reference described under
-[Workspace packaging](#workspace-packaging-mvp-fail-closed). The chart refuses the Full
-Workspace app list without `workspace.profile=full`, and Helix refuses to start Meet without a
-Jitsi domain and secrets. A single host can use `docker-compose.meet.yml` instead; see
+and `workspace.meet.livekit` (`internalUrl`, and `secretName` for an existing Secret holding the
+LiveKit API secret and the Meet capture secret). The chart refuses the Full Workspace app list
+without `workspace.profile=full`, and Meet stays unavailable without the LiveKit secrets. Allow
+Helix egress to LiveKit and LiveKit's webhook into Helix in your network policies. A single host
+can use `docker-compose.meet.yml` instead; see
 [Optional installs](../../../docs/deployment-production.md#optional-installs).
 
 ## Signed plugin trust
@@ -314,7 +316,7 @@ internal URLs or their matching `urlSecret` entries. Object storage, Meilisearch
 KMS, and SIEM tokens are always read from Kubernetes Secrets.
 
 The chart creates only `ClusterIP` Services and deny-by-default workload network
-policies. Public HTTPS termination, SMTP edge, and Jitsi media ingress are separate
+policies. Public HTTPS termination, SMTP edge, and LiveKit media ingress are separate
 operator-managed gateways; the Helix application chart does not expose database,
 queue, search, object-store, scanner, policy, or observability control planes.
 
@@ -384,7 +386,7 @@ requires the same namespace + service-account identity label + pod-label
 triple. The image verifier has a separate no-ingress policy and public HTTPS
 access only to reach the registry. The sovereign overlay disables that public
 rule, so its private registry must be supplied as a host endpoint. Plugins run
-inside the selected Helix role and the Jitsi media plane is not deployed by
+inside the selected Helix role and the LiveKit media plane is not deployed by
 this chart; any future plugin/media `roleDeployments` entry automatically gets
 its own policy.
 

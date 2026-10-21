@@ -222,11 +222,20 @@ describe("production Compose overlay", () => {
       AUDIT_IMMUTABLE_S3_ENABLED: "true",
       AUDIT_IMMUTABLE_S3_REGION: "eu-test",
       AUDIT_IMMUTABLE_S3_ANCHOR_SECRET_FILE: "/run/secrets/audit_anchor_secret",
-      MEET_JITSI_ENABLED: "false",
     });
     // Development Meet defaults from the base file must not reach production.
-    expect(environment).not.toHaveProperty("MEET_JITSI_PUBLIC_URL");
-    expect(environment).not.toHaveProperty("MEET_JITSI_DOMAIN");
+    for (const name of [
+      "LIVEKIT_API_KEY",
+      "LIVEKIT_API_SECRET",
+      "LIVEKIT_INTERNAL_URL",
+      "LIVEKIT_PUBLIC_URL",
+      "MEET_CAPTURE_SECRET",
+    ]) {
+      expect(environment).not.toHaveProperty(name);
+    }
+    expect(resolvedAllProfilesCompose.services.livekit.environment).not.toHaveProperty(
+      "LIVEKIT_KEYS",
+    );
     expect(resolvedCompose.services["helix-migrate"].environment.HELIX_REGION).toBe("eu-test");
     // First boot waits for ClamAV to load current signatures instead of failing.
     expect(resolvedCompose.services.helix.healthcheck.start_period).toBe("10m0s");

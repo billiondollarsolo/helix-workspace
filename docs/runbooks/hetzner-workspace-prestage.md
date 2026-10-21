@@ -120,6 +120,17 @@ External UDP and trusted TLS allocation tests passed and released their
 allocations. Anonymous allocation was denied. Both the conference controller and
 bridge authenticated to Prosody with certificate verification enabled. These
 checks do not prove a two-person browser call or recording.
+
+**Meet moves to LiveKit (2026-10-21).** On the next deploy Meet runs on one
+LiveKit container instead of Jitsi; see the
+[Meet install](../deployment-production.md#meet-and-calendar). Then delete the
+`meet.workspace` record, remove the Jitsi containers and coturn, and close UDP
+10000 and UDP 49160–49200. Open TCP 7881 and UDP 7882; keep UDP 3478 and TLS TCP
+5349 for TURN (LiveKit's TURN has no plain-TCP listener on 3478). Signalling uses
+the proxied `workspace` hostname at `/rtc`. `helix-turn-certificate.service`
+must now write the Caddy-issued `turn.workspace` certificate to `turn_cert` and
+`turn_key` in the secrets directory and recreate `livekit` after changes.
+
 The API, PostgreSQL, Redis, NATS, object storage and private SMTP receiver have
 no public listeners. HTTP/3 and public IPv6 origin listeners are not enabled.
 
@@ -628,8 +639,8 @@ recorded in [development completion evidence](../reviews/evidence/2026-10-15-dev
 The daily archive restored successfully into isolated services on this host; this
 is not proof of a replacement-host recovery or production acceptance.
 
-`infra/docker/optional-runtime.Dockerfile` supplies development-only `packages`,
-`jitsi` and `mail-edge` targets. Pass the original pinned image as `SOURCE_IMAGE`
+`infra/docker/optional-runtime.Dockerfile` supplies development-only `packages`
+and `mail-edge` targets (its `jitsi` target was removed with Jitsi). Pass the original pinned image as `SOURCE_IMAGE`
 and its original user as `RUNTIME_USER`, build the matching target, then scan and
 record the resulting image ID before updating the resolved development compose.
 The active six optional-image IDs and rollback configurations are in the evidence.

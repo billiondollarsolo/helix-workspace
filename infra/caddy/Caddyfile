@@ -22,8 +22,8 @@
 		X-Content-Type-Options "nosniff"
 		Referrer-Policy "no-referrer"
 		X-Frame-Options "DENY"
-		Permissions-Policy "camera=(self \"{$HELIX_JITSI_ORIGIN:https://meet.localhost}\"), microphone=(self \"{$HELIX_JITSI_ORIGIN:https://meet.localhost}\"), display-capture=(self \"{$HELIX_JITSI_ORIGIN:https://meet.localhost}\"), fullscreen=(self \"{$HELIX_JITSI_ORIGIN:https://meet.localhost}\"), geolocation=(), payment=(), usb=()"
-		Content-Security-Policy "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' 'wasm-unsafe-eval' 'sha256-hHzFTfzWwCmwgbHAc/JciBfagnNs4KtGdDWPaK7lCgU=' {$HELIX_JITSI_ORIGIN:https://meet.localhost}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' blob:; connect-src 'self' wss:; worker-src 'self' blob:; frame-src 'self' {$HELIX_JITSI_ORIGIN:https://meet.localhost}"
+		Permissions-Policy "camera=(self), microphone=(self), display-capture=(self), fullscreen=(self), geolocation=(), payment=(), usb=()"
+		Content-Security-Policy "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' 'wasm-unsafe-eval' 'sha256-hHzFTfzWwCmwgbHAc/JciBfagnNs4KtGdDWPaK7lCgU='; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' blob:; connect-src 'self' wss:; worker-src 'self' blob:; frame-src 'self'"
 		Cross-Origin-Opener-Policy "same-origin-allow-popups"
 		Cross-Origin-Resource-Policy "same-origin"
 		Origin-Agent-Cluster "?1"
@@ -65,6 +65,10 @@
 
 	# Caddy streams bodies by default. Keep its buffering knobs unset so slow
 	# upstreams apply TCP backpressure instead of allocating whole bodies.
+	# Meet's LiveKit signalling (`docker compose --profile meet`). On by
+	# default; answers 502 until LiveKit runs.
+	import optional/meet{$HELIX_MEET_SITE:-on}.caddy
+
 	@federationRecovery path /v1/federation-operations/*
 	handle @federationRecovery {
 		reverse_proxy {$HELIX_BACKUP_WORKER_UPSTREAM:backup-worker:3081} {

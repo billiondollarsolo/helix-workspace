@@ -62,6 +62,7 @@ their published ports to loopback. Vite and the API are separate host processes.
 | Local inbound SMTP     | `28456`                                           |
 | Mailpit SMTP / inbox   | `28457` / `http://localhost:28458`                |
 | ClamAV                 | `127.0.0.1:28460`                                 |
+| LiveKit (Meet)         | `ws://localhost:28451`                            |
 
 Base infrastructure uses the `28431`–`28443` block; optional profiles use
 `28444`–`28455`. Observability Alertmanager proof uses `28461`–`28462`.
@@ -72,10 +73,12 @@ requires a [managed provider](mail-managed-provider-delivery.md). Assistant demo
 conversations do not call a model provider. Configure a provider through Admin to
 use AI; see [local AI and retrieval](runbooks/local-ai-retrieval.md).
 
-The full profile includes Calendar and Meet development surfaces. Meet requires
-configured Jitsi credentials and a running Jitsi deployment; see the
-[Meet infrastructure guide](../infra/meet/README.md). Their presence in demo data
-does not change the [1.0 production scope](release/1.0-scope.md).
+The full profile includes Calendar and Meet development surfaces. Meet runs on
+LiveKit: `docker compose --profile meet up -d` starts it with development keys,
+and browsers reach it at `ws://localhost:28451` (`LIVEKIT_HTTP_PORT`). Media uses
+TCP 7881 and UDP 7882, and TURN UDP 3478, on `127.0.0.1`. Recording and live
+transcription are not available yet. Their presence in demo data does not change
+the [1.0 production scope](release/1.0-scope.md).
 
 ## Everyday commands
 

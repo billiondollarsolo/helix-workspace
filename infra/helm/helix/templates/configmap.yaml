@@ -12,14 +12,19 @@ data:
   HELIX_REGION: {{ .Values.external.s3.region | quote }}
   HELIX_OTEL_REGION: {{ .Values.external.s3.region | quote }}
   HELIX_SIEM_REGION: {{ .Values.external.s3.region | quote }}
-  MEET_JITSI_REGION: {{ .Values.external.s3.region | quote }}
   LOG_LEVEL: {{ .Values.logLevel | quote }}
   HELIX_TRUSTED_PROXIES: {{ join "," .Values.trustedProxies | quote }}
   {{- /* Workspace packaging: MVP fail-closed defaults. PKG flip only with evidence. */}}
   HELIX_WORKSPACE_PROFILE: {{ default "mvp" .Values.workspace.profile | quote }}
   HELIX_APPS: {{ default "mail,drive,chat,assistant" .Values.workspace.apps | quote }}
-  {{- if and .Values.workspace.meet .Values.workspace.meet.jitsiDomain }}
-  MEET_JITSI_DOMAIN: {{ .Values.workspace.meet.jitsiDomain | quote }}
+  {{- with .Values.workspace.meet.livekit }}
+  {{- if .secretName }}
+  LIVEKIT_API_KEY: {{ .apiKey | quote }}
+  LIVEKIT_INTERNAL_URL: {{ required "workspace.meet.livekit.internalUrl is required when secretName is set" .internalUrl | quote }}
+  {{- if .publicUrl }}
+  LIVEKIT_PUBLIC_URL: {{ .publicUrl | quote }}
+  {{- end }}
+  {{- end }}
   {{- end }}
   {{- if .Values.passwords.enabled }}
   HELIX_PASSWORDS_URL: {{ printf "https://%s" .Values.passwords.host | quote }}

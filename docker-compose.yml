@@ -69,17 +69,16 @@ services:
       HELIX_OBSERVABILITY_ENABLED: ${HELIX_OBSERVABILITY_ENABLED:-false}
       HELIX_OTEL_TRACES_ENDPOINT: ${HELIX_OTEL_TRACES_ENDPOINT:-http://otel-collector:4318/v1/traces}
       OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-helix-app}
-      MEET_JITSI_DOMAIN: ${MEET_JITSI_DOMAIN:-meet.localhost}
-      MEET_JITSI_PUBLIC_URL: ${MEET_JITSI_PUBLIC_URL:-https://meet.localhost:28452}
-      MEET_JITSI_JWT_APP_ID: ${MEET_JITSI_JWT_APP_ID:-helix-meet}
-      MEET_JITSI_JWT_ISSUER: ${MEET_JITSI_JWT_ISSUER:-helix}
-      MEET_JITSI_JWT_AUDIENCE: ${MEET_JITSI_JWT_AUDIENCE:-jitsi}
-      MEET_JITSI_JWT_SECRET: ${MEET_JITSI_JWT_SECRET:-helix_dev_jitsi_jwt_secret_change_me}
-      MEET_JITSI_TOKEN_TTL_SECONDS: ${MEET_JITSI_TOKEN_TTL_SECONDS:-300}
-      MEET_JITSI_WEBHOOK_SHARED_SECRET: ${MEET_JITSI_WEBHOOK_SHARED_SECRET:-helix_dev_jitsi_webhook_secret_change_me}
-      MEET_JIBRI_HEALTH_URL: ${MEET_JIBRI_HEALTH_URL:-http://jitsi-jibri:2222/jibri/api/v1.0/health}
+      # Meet media (LiveKit, `--profile meet`). Development values only.
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-helix}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-helix_dev_livekit_api_secret_change_me}
+      LIVEKIT_INTERNAL_URL: http://livekit:7880
+      # Browsers reach the development LiveKit directly; production routes
+      # /rtc on the Workspace address through Caddy instead.
+      LIVEKIT_PUBLIC_URL: ${LIVEKIT_PUBLIC_URL:-ws://localhost:28451}
+      MEET_CAPTURE_SECRET: ${MEET_CAPTURE_SECRET:-helix_dev_meet_capture_secret_change_me}
       HELIX_CONFIG_JSON: >-
-        {"security":{"tier":"personal"},"observability":{"config":{"otlpEndpoint":"http://otel-collector:4318/v1/traces","sampling":{"traces":1,"toolCalls":1,"permissionChecks":1}}},"plugins":{"com.helix.webhook-out-slack":{"enabled":true},"com.helix.core.meet-jitsi":{"enabled":true,"jitsiDomain":"${MEET_JITSI_DOMAIN:-meet.localhost}","publicUrl":"${MEET_JITSI_PUBLIC_URL:-https://meet.localhost:28452}","jwt":{"appId":"${MEET_JITSI_JWT_APP_ID:-helix-meet}","issuer":"${MEET_JITSI_JWT_ISSUER:-helix}","audience":"${MEET_JITSI_JWT_AUDIENCE:-jitsi}","secretEnv":"MEET_JITSI_JWT_SECRET","ttlSeconds":${MEET_JITSI_TOKEN_TTL_SECONDS:-300}},"webhook":{"sharedSecretEnv":"MEET_JITSI_WEBHOOK_SHARED_SECRET"}}}}
+        {"security":{"tier":"personal"},"observability":{"config":{"otlpEndpoint":"http://otel-collector:4318/v1/traces","sampling":{"traces":1,"toolCalls":1,"permissionChecks":1}}},"plugins":{"com.helix.webhook-out-slack":{"enabled":true}}}
     ports:
       - "127.0.0.1:${HELIX_PORT:-28431}:3000"
       - "127.0.0.1:${HELIX_SMTP_RECEIVE_PORT:-28456}:2525"
@@ -368,296 +367,65 @@ services:
     environment:
       HELIX_DOMAIN: ${HELIX_DOMAIN:-localhost}
       HELIX_UPSTREAM: ${HELIX_UPSTREAM:-helix:3000}
-      HELIX_JITSI_ORIGIN: ${MEET_JITSI_PUBLIC_URL:-https://meet.localhost:28452}
     ports:
       - "${CADDY_HTTP_PORT:-28441}:80"
       - "${CADDY_HTTPS_PORT:-28442}:443"
       - "${CADDY_HTTPS_PORT:-28442}:443/udp"
     volumes:
       - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./infra/caddy/optional:/etc/caddy/optional:ro
       - caddy-data:/data
       - caddy-config:/config
     depends_on:
       - helix
     restart: unless-stopped
 
-  jitsi-web:
+  # Meet media (LiveKit). Browsers signal through Caddy at /rtc on the
+  # Workspace address; media goes straight to the ports below. Start it with
+  # `docker compose --profile meet up -d`.
+  livekit:
     logging: *default-logging
-    image: jitsi/web:stable-11031@sha256:2183593bbbe1b5e27c368e3737efc51915ce7742de93f594e5ca7950c864c233
+    image: livekit/livekit-server:v1.13.10@sha256:89ca9ce0791e18d6e03bf6e2c49ceb27e1c754eae8bd50c989386c1a5963791a
     profiles: ["meet"]
+    user: "65532:65532"
     environment:
-      ENABLE_AUTH: "1"
-      ENABLE_GUESTS: "0"
-      ENABLE_XMPP_WEBSOCKET: "1"
-      ENABLE_P2P: "0"
-      ENABLE_LOBBY: "1"
-      ENABLE_AV_MODERATION: "1"
-      AUTH_TYPE: jwt
-      # Show the in-call "Start recording" button. Without this jitsi-meet
-      # hides the recording menu items even if Jibri is up.
-      ENABLE_RECORDING: "1"
-      PUBLIC_URL: ${MEET_JITSI_PUBLIC_URL:-https://meet.localhost:28452}
-      TZ: ${TZ:-UTC}
-      XMPP_SERVER: jitsi-prosody
-      XMPP_DOMAIN: ${JITSI_XMPP_DOMAIN:-meet.jitsi}
-      XMPP_AUTH_DOMAIN: ${JITSI_XMPP_AUTH_DOMAIN:-auth.meet.jitsi}
-      XMPP_MUC_DOMAIN: ${JITSI_XMPP_MUC_DOMAIN:-muc.meet.jitsi}
-      XMPP_INTERNAL_MUC_DOMAIN: ${JITSI_XMPP_INTERNAL_MUC_DOMAIN:-internal-muc.meet.jitsi}
-      XMPP_BOSH_URL_BASE: http://jitsi-prosody:5280
-      JWT_APP_ID: ${MEET_JITSI_JWT_APP_ID:-helix-meet}
-      JWT_APP_SECRET: ${MEET_JITSI_JWT_SECRET:-helix_dev_jitsi_jwt_secret_change_me}
-      JWT_ACCEPTED_ISSUERS: ${MEET_JITSI_JWT_ISSUER:-helix}
-      JWT_ACCEPTED_AUDIENCES: ${MEET_JITSI_JWT_AUDIENCE:-jitsi}
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY:-helix}: ${LIVEKIT_API_SECRET:-helix_dev_livekit_api_secret_change_me}"
+      LIVEKIT_CONFIG: |
+        port: 7880
+        log_level: info
+        rtc:
+          tcp_port: 7881
+          udp_port: 7882
+          node_ip: ${HELIX_MEET_PUBLIC_IP:-127.0.0.1}
+          use_external_ip: false
+        redis:
+          address: redis:6379
+        turn:
+          enabled: true
+          domain: ${HELIX_MEET_TURN_DOMAIN:-turn.localhost}
+          udp_port: 3478
+        webhook:
+          api_key: ${LIVEKIT_API_KEY:-helix}
+          urls:
+            - http://helix:3000/webhook/livekit
     ports:
-      - "127.0.0.1:${JITSI_WEB_HTTP_PORT:-28451}:80"
-      - "127.0.0.1:${JITSI_WEB_HTTPS_PORT:-28452}:443"
-    volumes:
-      - jitsi-web-config:/config
-      - ./infra/meet/custom-config.js:/config/custom-config.js:ro
-      - ./infra/meet/custom-interface_config.js:/run/helix-jitsi-config/custom-interface_config.js:ro
-      - ./infra/meet/init/02-helix-config:/etc/cont-init.d/02-helix-config:ro
-      - ./infra/meet/config/transcripts:/usr/share/jitsi-meet/transcripts
-    networks: [meet-control]
+      - "127.0.0.1:${LIVEKIT_HTTP_PORT:-28451}:7880"
+      - "${HELIX_MEET_BIND_IP:-127.0.0.1}:7881:7881/tcp"
+      - "${HELIX_MEET_BIND_IP:-127.0.0.1}:7882:7882/udp"
+      - "${HELIX_MEET_BIND_IP:-127.0.0.1}:3478:3478/udp"
     depends_on:
-      - jitsi-prosody
-      - jitsi-jicofo
-      - jitsi-jvb
-    restart: unless-stopped
-
-  jitsi-prosody:
-    logging: *default-logging
-    image: jitsi/prosody:stable-11031@sha256:926c508c0d9198bf9d0b6adb88ce9092461e9a79e2895fb57fe4ef5f44ff3523
-    profiles: ["meet"]
-    environment:
-      AUTH_TYPE: jwt
-      ENABLE_AUTH: "1"
-      ENABLE_GUESTS: "0"
-      ENABLE_XMPP_WEBSOCKET: "1"
-      ENABLE_LOBBY: "1"
-      ENABLE_AV_MODERATION: "1"
-      ENABLE_END_CONFERENCE: "1"
-      PROSODY_ENABLE_FILTER_MESSAGES: "1"
-      XMPP_MUC_MODULES: token_affiliation,helix_lifecycle,helix_capture
-      HELIX_LIFECYCLE_URL: http://helix:3000/webhook/jitsi
-      HELIX_CAPTURE_STATE_URL: http://helix:3000/internal/meet/capture-state
-      HELIX_JITSI_WEBHOOK_SECRET: ${MEET_JITSI_WEBHOOK_SHARED_SECRET:-helix_dev_jitsi_webhook_secret_change_me}
-      STUN_HOST: ${JITSI_TURN_HOST:-turn.localhost}
-      STUN_PORT: ${JITSI_TURN_PORT:-3478}
-      TURN_HOST: ${JITSI_TURN_HOST:-turn.localhost}
-      TURN_PORT: ${JITSI_TURN_PORT:-3478}
-      TURN_TRANSPORT: udp,tcp
-      TURNS_HOST: ${JITSI_TURN_HOST:-turn.localhost}
-      TURNS_PORT: ${JITSI_TURNS_PORT:-5349}
-      TURN_TTL: "600"
-      # Provision the recorder.meet.jitsi virtual host + the jibri/recorder
-      # XMPP users that Jibri authenticates as. Required for the recording
-      # to begin at all; absent these, jicofo never finds a Jibri instance.
-      ENABLE_RECORDING: "1"
-      JIBRI_XMPP_USER: ${JIBRI_XMPP_USER:-jibri}
-      JIBRI_XMPP_PASSWORD: ${JIBRI_XMPP_PASSWORD:-helix_dev_jibri_xmpp_password_change_me}
-      JIBRI_BREWERY_MUC: ${JIBRI_BREWERY_MUC:-jibribrewery}
-      JIBRI_RECORDER_USER: ${JIBRI_RECORDER_USER:-recorder}
-      JIBRI_RECORDER_PASSWORD: ${JIBRI_RECORDER_PASSWORD:-helix_dev_jibri_recorder_password_change_me}
-      XMPP_RECORDER_DOMAIN: ${JITSI_XMPP_RECORDER_DOMAIN:-recorder.meet.jitsi}
-      PUBLIC_URL: ${MEET_JITSI_PUBLIC_URL:-https://meet.localhost:28452}
-      TZ: ${TZ:-UTC}
-      XMPP_DOMAIN: ${JITSI_XMPP_DOMAIN:-meet.jitsi}
-      XMPP_AUTH_DOMAIN: ${JITSI_XMPP_AUTH_DOMAIN:-auth.meet.jitsi}
-      XMPP_MUC_DOMAIN: ${JITSI_XMPP_MUC_DOMAIN:-muc.meet.jitsi}
-      XMPP_INTERNAL_MUC_DOMAIN: ${JITSI_XMPP_INTERNAL_MUC_DOMAIN:-internal-muc.meet.jitsi}
-      JICOFO_AUTH_USER: focus
-      JICOFO_AUTH_PASSWORD: ${JITSI_JICOFO_AUTH_PASSWORD:-helix_dev_jicofo_auth_password_change_me}
-      JICOFO_COMPONENT_SECRET: ${JITSI_JICOFO_COMPONENT_SECRET:-helix_dev_jicofo_component_secret_change_me}
-      ENABLE_AUTO_OWNER: "0"
-      ENABLE_MODERATOR_CHECKS: "1"
-      JVB_AUTH_USER: jvb
-      JVB_AUTH_PASSWORD: ${JITSI_JVB_AUTH_PASSWORD:-helix_dev_jvb_auth_password_change_me}
-      JWT_APP_ID: ${MEET_JITSI_JWT_APP_ID:-helix-meet}
-      JWT_APP_SECRET: ${MEET_JITSI_JWT_SECRET:-helix_dev_jitsi_jwt_secret_change_me}
-      JWT_ACCEPTED_ISSUERS: ${MEET_JITSI_JWT_ISSUER:-helix}
-      JWT_ACCEPTED_AUDIENCES: ${MEET_JITSI_JWT_AUDIENCE:-jitsi}
-    ports:
-      - "127.0.0.1:${JITSI_PROSODY_C2S_PORT:-28454}:5222"
-      - "127.0.0.1:${JITSI_PROSODY_HTTP_PORT:-28455}:5280"
-    volumes:
-      - jitsi-prosody-config:/config
-      - ./infra/meet/init/01-helix-secrets:/etc/cont-init.d/01-helix-secrets:ro
-      - ./infra/meet/prosody/05-turn-secret:/etc/cont-init.d/05-turn-secret:ro
-      - ./infra/meet/prosody/mod_helix_lifecycle.lua:/prosody-plugins-custom/mod_helix_lifecycle.lua:ro
-      - ./infra/meet/prosody/mod_helix_capture.lua:/prosody-plugins-custom/mod_helix_capture.lua:ro
-    secrets:
-      - source: jitsi_turn_shared_secret
-        target: jitsi_turn_shared_secret
-      - source: jitsi_xmpp_cert
-        target: /run/secrets/jitsi_xmpp_cert
-      - source: jitsi_xmpp_key
-        target: /run/secrets/jitsi_xmpp_key
-    networks: [meet-control]
-    restart: unless-stopped
-
-  jitsi-jicofo:
-    logging: *default-logging
-    image: jitsi/jicofo:stable-11031@sha256:1f78fb0c0548ae5efd83a2b488df6aabbae4a70bc6f64c74395b6937b3aceb98
-    profiles: ["meet"]
-    environment:
-      TZ: ${TZ:-UTC}
-      XMPP_SERVER: jitsi-prosody
-      XMPP_DOMAIN: ${JITSI_XMPP_DOMAIN:-meet.jitsi}
-      XMPP_AUTH_DOMAIN: ${JITSI_XMPP_AUTH_DOMAIN:-auth.meet.jitsi}
-      XMPP_MUC_DOMAIN: ${JITSI_XMPP_MUC_DOMAIN:-muc.meet.jitsi}
-      XMPP_INTERNAL_MUC_DOMAIN: ${JITSI_XMPP_INTERNAL_MUC_DOMAIN:-internal-muc.meet.jitsi}
-      JICOFO_AUTH_USER: focus
-      JICOFO_AUTH_PASSWORD: ${JITSI_JICOFO_AUTH_PASSWORD:-helix_dev_jicofo_auth_password_change_me}
-      JICOFO_COMPONENT_SECRET: ${JITSI_JICOFO_COMPONENT_SECRET:-helix_dev_jicofo_component_secret_change_me}
-      JAVA_TOOL_OPTIONS: >-
-        -Djavax.net.ssl.trustStore=/run/secrets/jitsi_xmpp_truststore
-        -Djavax.net.ssl.trustStoreType=PKCS12
-        -Djavax.net.ssl.trustStorePassword=changeit
-      # Tell jicofo to discover Jibri instances via the recording brewery
-      # MUC. Jibri joins that MUC on startup; jicofo dispatches recording
-      # start/stop IQ messages to whichever Jibri presence is available.
-      ENABLE_RECORDING: "1"
-      JIBRI_BREWERY_MUC: ${JIBRI_BREWERY_MUC:-jibribrewery}
-      JIBRI_PENDING_TIMEOUT: "90"
-      XMPP_RECORDER_DOMAIN: ${JITSI_XMPP_RECORDER_DOMAIN:-recorder.meet.jitsi}
-    volumes:
-      - jitsi-jicofo-config:/config
-      - ./infra/meet/init/02-helix-config:/etc/cont-init.d/02-helix-config:ro
-      - ./infra/meet/jicofo/custom-jicofo.conf:/run/helix-jitsi-config/custom-jicofo.conf:ro
-    secrets:
-      - jitsi_xmpp_truststore
-    networks: [meet-control]
-    depends_on:
-      - jitsi-prosody
-    restart: unless-stopped
-
-  jitsi-jvb:
-    logging: *default-logging
-    image: jitsi/jvb:stable-11031@sha256:3460de3541a8f96d007b8f2b4681ea8321cae64c17387338eabf776e73cd0f51
-    profiles: ["meet"]
-    environment:
-      TZ: ${TZ:-UTC}
-      XMPP_SERVER: jitsi-prosody
-      XMPP_AUTH_DOMAIN: ${JITSI_XMPP_AUTH_DOMAIN:-auth.meet.jitsi}
-      XMPP_INTERNAL_MUC_DOMAIN: ${JITSI_XMPP_INTERNAL_MUC_DOMAIN:-internal-muc.meet.jitsi}
-      JVB_AUTH_USER: jvb
-      JVB_AUTH_PASSWORD: ${JITSI_JVB_AUTH_PASSWORD:-helix_dev_jvb_auth_password_change_me}
-      JVB_BREWERY_MUC: jvbbrewery
-      JVB_PORT: 10000
-      JVB_TCP_HARVESTER_DISABLED: "true"
-      JVB_ADVERTISE_IPS: ${JITSI_JVB_ADVERTISE_IPS:-}
-      JVB_STUN_SERVERS: jitsi-turn:3478
-      JVB_REQUIRE_VALID_ADDRESS: "true"
-      JAVA_TOOL_OPTIONS: >-
-        -Djavax.net.ssl.trustStore=/run/secrets/jitsi_xmpp_truststore
-        -Djavax.net.ssl.trustStoreType=PKCS12
-        -Djavax.net.ssl.trustStorePassword=changeit
-    ports:
-      - "127.0.0.1:${JITSI_JVB_UDP_PORT:-28453}:10000/udp"
-    volumes:
-      - jitsi-jvb-config:/config
-      - ./infra/meet/init/02-helix-config:/etc/cont-init.d/02-helix-config:ro
-      - ./infra/meet/jvb/custom-jvb.conf:/run/helix-jitsi-config/custom-jvb.conf:ro
-    secrets:
-      - jitsi_xmpp_truststore
-    networks: [meet-control, meet-media]
-    depends_on:
-      - jitsi-prosody
-      - jitsi-turn
-    restart: unless-stopped
-
-  jitsi-turn:
-    logging: *default-logging
-    image: coturn/coturn:4.18.0-alpine@sha256:c29135c08565810d37053f384584392b7c24b69570fc81a721b878d6fe63e04e
-    profiles: ["meet"]
-    entrypoint: ["/bin/sh", "-ec"]
-    command:
-      - >-
-        umask 077; printf 'static-auth-secret=%s\n' "$$(cat
-        /run/secrets/jitsi_turn_shared_secret)" > /tmp/turn-secret.conf; exec
-        turnserver -c /tmp/turn-secret.conf --fingerprint --use-auth-secret
-        --realm="$${JITSI_TURN_REALM}" --server-name="$${JITSI_TURN_REALM}"
-        --external-ip="$${JITSI_TURN_EXTERNAL_IP}" --listening-port=3478
-        --tls-listening-port=5349 --min-port=49160 --max-port=49200
-        --cert=/run/secrets/jitsi_turn_cert --pkey=/run/secrets/jitsi_turn_key
-        --stale-nonce=600 --user-quota=12 --total-quota=1200 --no-cli
-        --no-multicast-peers --log-file=stdout
-    environment:
-      JITSI_TURN_REALM: ${JITSI_TURN_HOST:-turn.localhost}
-      JITSI_TURN_EXTERNAL_IP: ${JITSI_TURN_EXTERNAL_IP:-127.0.0.1}
-    ports:
-      - "${JITSI_TURN_BIND_IP:-127.0.0.1}:${JITSI_TURN_PORT:-3478}:3478/tcp"
-      - "${JITSI_TURN_BIND_IP:-127.0.0.1}:${JITSI_TURN_PORT:-3478}:3478/udp"
-      - "${JITSI_TURN_BIND_IP:-127.0.0.1}:${JITSI_TURNS_PORT:-5349}:5349/tcp"
-      - "${JITSI_TURN_BIND_IP:-127.0.0.1}:49160-49200:49160-49200/udp"
-    secrets:
-      - jitsi_turn_shared_secret
-      - jitsi_turn_cert
-      - jitsi_turn_key
-    networks: [meet-media]
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:7880/"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
     read_only: true
     cap_drop: [ALL]
-    cap_add: [NET_BIND_SERVICE]
     security_opt: [no-new-privileges:true]
     tmpfs:
       - /tmp:size=16m,mode=1777,nosuid,nodev,noexec
-      - /var/tmp:size=16m,mode=1777,nosuid,nodev,noexec
-    restart: unless-stopped
-
-  # ----------------------------------------------------------------------
-  # Jibri — meeting recorder. Joins each meeting as a hidden XMPP client,
-  # opens the conference URL in headless Chrome, captures audio via ALSA
-  # snd-aloop + X11 screen, encodes via ffmpeg, runs finalize.sh on stop.
-  #
-  # IMPORTANT: snd-aloop is a Linux kernel module that must be loaded on
-  # the host. Recording is therefore supported only on a Linux host where
-  # `modprobe snd-aloop` succeeds; the service intentionally fails rather
-  # than manufacturing placeholder media on unsupported hosts.
-  jitsi-jibri:
-    logging: *default-logging
-    image: jitsi/jibri:stable-11031@sha256:40f5fd67517cdb6395ae642143f1a5c002ff80259c1c633a384ede5c7b0569f4
-    profiles: ["meet", "recording"]
-    environment:
-      TZ: ${TZ:-UTC}
-      XMPP_SERVER: jitsi-prosody
-      XMPP_DOMAIN: ${JITSI_XMPP_DOMAIN:-meet.jitsi}
-      XMPP_AUTH_DOMAIN: ${JITSI_XMPP_AUTH_DOMAIN:-auth.meet.jitsi}
-      XMPP_INTERNAL_MUC_DOMAIN: ${JITSI_XMPP_INTERNAL_MUC_DOMAIN:-internal-muc.meet.jitsi}
-      XMPP_MUC_DOMAIN: ${JITSI_XMPP_MUC_DOMAIN:-muc.meet.jitsi}
-      XMPP_RECORDER_DOMAIN: ${JITSI_XMPP_RECORDER_DOMAIN:-recorder.meet.jitsi}
-      JIBRI_XMPP_USER: ${JIBRI_XMPP_USER:-jibri}
-      JIBRI_XMPP_PASSWORD: ${JIBRI_XMPP_PASSWORD:-helix_dev_jibri_xmpp_password_change_me}
-      JIBRI_BREWERY_MUC: ${JIBRI_BREWERY_MUC:-jibribrewery}
-      JIBRI_RECORDER_USER: ${JIBRI_RECORDER_USER:-recorder}
-      JIBRI_RECORDER_PASSWORD: ${JIBRI_RECORDER_PASSWORD:-helix_dev_jibri_recorder_password_change_me}
-      XMPP_TRUST_ALL_CERTS: "false"
-      JAVA_TOOL_OPTIONS: >-
-        -Djavax.net.ssl.trustStore=/run/secrets/jitsi_xmpp_truststore
-        -Djavax.net.ssl.trustStoreType=PKCS12
-        -Djavax.net.ssl.trustStorePassword=changeit
-      JIBRI_RECORDING_DIR: /recordings
-      JIBRI_FINALIZE_RECORDING_SCRIPT_PATH: /jibri-finalize/finalize.sh
-      # finalize.sh uses Helix's tenant-bound prepare/upload/complete protocol.
-      HELIX_INTERNAL_URL: ${HELIX_INTERNAL_URL:-http://helix:3000}
-      HELIX_JITSI_WEBHOOK_SECRET: ${MEET_JITSI_WEBHOOK_SHARED_SECRET:-helix_dev_jitsi_webhook_secret_change_me}
-      HELIX_JITSI_ORG_ID: ${HELIX_JITSI_ORG_ID:-}
-    volumes:
-      - jitsi-jibri-config:/config
-      - ./infra/meet/finalize:/jibri-finalize:ro
-      - jibri-recordings:/recordings
-      # Required for Jibri's headless Chrome and X server
-      - /dev/shm:/dev/shm
-    secrets:
-      - jitsi_xmpp_truststore
-    networks: [default, meet-control]
-    shm_size: "2gb"
-    cap_add:
-      - SYS_ADMIN
-    depends_on:
-      - jitsi-prosody
-      - jitsi-jicofo
-      - rustfs
-      - helix
     restart: unless-stopped
 
   otel-collector:
@@ -767,28 +535,3 @@ volumes:
   grafana-data:
   spamd-data:
   clamav-data:
-  jitsi-web-config:
-  jitsi-prosody-config:
-  jitsi-jicofo-config:
-  jitsi-jvb-config:
-  jitsi-jibri-config:
-  jibri-recordings:
-
-secrets:
-  jitsi_turn_shared_secret:
-    file: ${HELIX_MEET_SECRETS_DIR:-.local/meet-secrets}/turn-shared-secret
-  jitsi_turn_cert:
-    file: ${HELIX_MEET_SECRETS_DIR:-.local/meet-secrets}/turn.crt
-  jitsi_turn_key:
-    file: ${HELIX_MEET_SECRETS_DIR:-.local/meet-secrets}/turn.key
-  jitsi_xmpp_cert:
-    file: ${HELIX_MEET_SECRETS_DIR:-.local/meet-secrets}/xmpp.crt
-  jitsi_xmpp_key:
-    file: ${HELIX_MEET_SECRETS_DIR:-.local/meet-secrets}/xmpp.key
-  jitsi_xmpp_truststore:
-    file: ${HELIX_MEET_SECRETS_DIR:-.local/meet-secrets}/xmpp-truststore.p12
-
-networks:
-  meet-control:
-    internal: true
-  meet-media:

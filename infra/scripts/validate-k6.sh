@@ -237,7 +237,7 @@ export AUTH_TOKEN="${AUTH_TOKEN:-}"
 export K6_TRACE_TOKEN="${K6_TRACE_TOKEN:-}"
 export HELIX_TRACE_TOKEN="${HELIX_TRACE_TOKEN:-}"
 export SKIP_PROTECTED_WITHOUT_AUTH="${SKIP_PROTECTED_WITHOUT_AUTH:-true}"
-export K6_SCENARIO_GROUPS="${K6_SCENARIO_GROUPS:-web_navigation,api_smoke,mail_api,inbound_mail,search,chat,meet_jitsi,assistant_llm,mcp,otel_health}"
+export K6_SCENARIO_GROUPS="${K6_SCENARIO_GROUPS:-web_navigation,api_smoke,mail_api,inbound_mail,search,chat,meet,assistant_llm,mcp,otel_health}"
 
 if [[ "$RUNNER" == "local" ]]; then
   log "running local k6 quality gate"
@@ -317,10 +317,9 @@ else
     -e MEET_MINT_BODY \
     -e MEET_END_TOOL_ID \
     -e MEET_ROOM_ID \
-    -e MEET_JITSI_DOMAIN \
     -e MEET_EXPECT \
     -e MEET_END_AFTER_MINT \
-    -e JITSI_JOIN_P95_MS \
+    -e MEET_JOIN_P95_MS \
     -e ASSISTANT_TOOL_ID \
     -e ASSISTANT_BODY \
     -e ASSISTANT_MESSAGE \

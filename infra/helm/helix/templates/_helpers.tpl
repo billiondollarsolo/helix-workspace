@@ -366,11 +366,6 @@ default role. Input is the chart root context.
     configMapKeyRef:
       name: {{ include "helix.fullname" . }}-config
       key: HELIX_SIEM_REGION
-- name: MEET_JITSI_REGION
-  valueFrom:
-    configMapKeyRef:
-      name: {{ include "helix.fullname" . }}-config
-      key: MEET_JITSI_REGION
 - name: HELIX_CONFIG_JSON
   valueFrom:
     configMapKeyRef:
@@ -564,6 +559,34 @@ default role. Input is the chart root context.
     configMapKeyRef:
       name: {{ include "helix.fullname" . }}-config
       key: HELIX_BYO_STORAGE_VAULT_KV_VERSION
+{{- end }}
+{{- with .Values.workspace.meet.livekit }}
+{{- if .secretName }}
+{{- range list "LIVEKIT_API_KEY" "LIVEKIT_INTERNAL_URL" }}
+- name: {{ . }}
+  valueFrom:
+    configMapKeyRef:
+      name: {{ include "helix.fullname" $ }}-config
+      key: {{ . }}
+{{- end }}
+{{- if .publicUrl }}
+- name: LIVEKIT_PUBLIC_URL
+  valueFrom:
+    configMapKeyRef:
+      name: {{ include "helix.fullname" $ }}-config
+      key: LIVEKIT_PUBLIC_URL
+{{- end }}
+- name: LIVEKIT_API_SECRET
+  valueFrom:
+    secretKeyRef:
+      name: {{ .secretName | quote }}
+      key: {{ .apiSecretKey | quote }}
+- name: MEET_CAPTURE_SECRET
+  valueFrom:
+    secretKeyRef:
+      name: {{ .secretName | quote }}
+      key: {{ .captureSecretKey | quote }}
+{{- end }}
 {{- end }}
 {{- if .Values.external.siem.enabled }}
 - name: SIEM_ENDPOINT

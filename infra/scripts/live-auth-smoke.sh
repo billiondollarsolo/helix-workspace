@@ -189,7 +189,7 @@ while [[ $# -gt 0 ]]; do
       CALDAV_SMOKE=true
       K6_TARGET_SMOKE=true
       if ! bool_true "$K6_SCENARIO_GROUPS_USER_SET"; then
-        K6_SCENARIO_GROUPS=api_smoke,mail_api,inbound_mail,search,chat,meet_jitsi,mcp,otel_health
+        K6_SCENARIO_GROUPS=api_smoke,mail_api,inbound_mail,search,chat,meet,mcp,otel_health
       fi
       shift
       ;;

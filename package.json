@@ -53,7 +53,6 @@
     "infra:logs": "docker compose logs -f",
     "infra:caddy:validate": "bash infra/scripts/validate-caddy-hardening.sh",
     "infra:helm:validate": "bash infra/scripts/validate-helm.sh",
-    "infra:meet:validate": "bash infra/scripts/validate-meet-jitsi.sh",
     "infra:demo:live-smoke": "bash infra/scripts/live-demo-data-smoke.sh",
     "infra:restore:validate": "bash infra/scripts/validate-restore-drill.sh",
     "infra:restore:live-smoke": "bash infra/scripts/live-restore-drill-smoke.sh",

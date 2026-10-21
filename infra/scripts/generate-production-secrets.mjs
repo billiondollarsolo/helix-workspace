@@ -17,10 +17,11 @@
 // its own signing secret.
 //
 // The optional Meet install (docker-compose.meet.yml) needs a few more files.
-// Add them to an existing directory, signed by the same private CA:
+// Add them to an existing directory; the TURN certificate is signed by the
+// same private CA until you replace it with a publicly trusted one:
 //
 //   node infra/scripts/generate-production-secrets.mjs --add-meet \
-//     --dir /srv/helix-secrets --meet-host meet.example.com
+//     --dir /srv/helix-secrets --turn-host turn.example.com
 
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -38,15 +39,6 @@ const CA_DAYS = 3650;
 const LEAF_DAYS = 825;
 
 export const OPERATOR_PLACEHOLDER = "REPLACE_WITH_PROVIDER_VALUE";
-
-/** The XMPP names Prosody serves inside the Meet network, and its service name. */
-const MEET_XMPP_HOSTS = [
-  "meet.jitsi",
-  "auth.meet.jitsi",
-  "muc.meet.jitsi",
-  "internal-muc.meet.jitsi",
-  "jitsi-prosody",
-];
 
 const randomSecret = (bytes = 48) => randomBytes(bytes).toString("base64url");
 
@@ -113,7 +105,7 @@ function installer(target) {
  * created earlier. Nothing that exists is replaced, so the rest of a live
  * deployment keeps its credentials.
  */
-export function addMeetSecrets({ directory, meetHost }) {
+export function addMeetSecrets({ directory, turnHost }) {
   const target = resolve(directory);
   const caCert = join(target, "ca", "ca.pem");
   const caKey = join(target, "ca", "ca.key");
@@ -122,21 +114,10 @@ export function addMeetSecrets({ directory, meetHost }) {
       `${target} has no ca/ca.pem and ca/ca.key. Run this in the directory the secrets were generated in, with its CA put back.`,
     );
   }
-  const random = [
-    "meet_jwt_secret",
-    "meet_webhook_secret",
-    "jitsi_jicofo_auth_password",
-    "jitsi_jicofo_component_secret",
-    "jitsi_jvb_auth_password",
-    "jitsi_turn_shared_secret",
-  ];
-  const issued = [
-    "jitsi_xmpp_ca",
-    "jitsi_xmpp_cert",
-    "jitsi_xmpp_key",
-    "jitsi_turn_cert",
-    "jitsi_turn_key",
-  ];
+  // LiveKit's API secret signs every meeting token; the capture secret guards
+  // Helix's internal capture and recording endpoints.
+  const random = ["livekit_api_secret", "meet_capture_secret"];
+  const issued = ["turn_cert", "turn_key"];
   const existing = [...random, ...issued].filter((name) => existsSync(join(target, name)));
   if (existing.length > 0) {
     throw new Error(
@@ -151,19 +132,13 @@ export function addMeetSecrets({ directory, meetHost }) {
   const pki = join(target, ".pki-work");
   mkdirSync(pki, { mode: 0o700 });
   try {
-    const leaf = leafIssuer(pki, caCert, caKey);
-    const install = installer(target);
-    // Prosody's certificate, verified by the bridge and the conference focus.
-    const xmpp = leaf("jitsi_xmpp", MEET_XMPP_HOSTS, "serverAuth");
-    install(caCert, "jitsi_xmpp_ca");
-    install(xmpp.cert, "jitsi_xmpp_cert");
-    install(xmpp.key, "jitsi_xmpp_key");
     // TURN over TLS (port 5349). Browsers verify this one: replace both files
-    // with a publicly trusted certificate for the Meet hostname. Plain TURN
+    // with a publicly trusted certificate for the TURN hostname. TURN over UDP
     // on port 3478 works without it.
-    const turn = leaf("jitsi_turn", [meetHost], "serverAuth");
-    install(turn.cert, "jitsi_turn_cert");
-    install(turn.key, "jitsi_turn_key");
+    const turn = leafIssuer(pki, caCert, caKey)("turn", [turnHost], "serverAuth");
+    const install = installer(target);
+    install(turn.cert, "turn_cert");
+    install(turn.key, "turn_key");
   } finally {
     rmSync(pki, { recursive: true, force: true });
   }
@@ -277,19 +252,19 @@ if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(
       dir: { type: "string" },
       "mail-host": { type: "string" },
       "add-meet": { type: "boolean" },
-      "meet-host": { type: "string" },
+      "turn-host": { type: "string" },
     },
     strict: true,
   });
   if (values["add-meet"] === true) {
-    if (values.dir === undefined || values["meet-host"] === undefined) {
+    if (values.dir === undefined || values["turn-host"] === undefined) {
       console.error(
-        "Usage: generate-production-secrets.mjs --add-meet --dir <existing secrets directory> --meet-host <Meet hostname>",
+        "Usage: generate-production-secrets.mjs --add-meet --dir <existing secrets directory> --turn-host <TURN hostname>",
       );
       process.exit(2);
     }
     try {
-      const added = addMeetSecrets({ directory: values.dir, meetHost: values["meet-host"] });
+      const added = addMeetSecrets({ directory: values.dir, turnHost: values["turn-host"] });
       console.log(`Added ${String(added.files.length)} Meet secret files to ${added.directory}.`);
     } catch (error) {
       console.error(error instanceof Error ? error.message : error);

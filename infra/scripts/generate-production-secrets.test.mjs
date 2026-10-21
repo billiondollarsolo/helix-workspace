@@ -103,7 +103,7 @@ describe("production secrets generator", () => {
       `process.umask(0o077);
        const { generateProductionSecrets, addMeetSecrets } = await import(process.argv[1]);
        generateProductionSecrets({ directory: process.argv[2], mailHost: "mail.example.test" });
-       addMeetSecrets({ directory: process.argv[2], meetHost: "meet.example.test" });`,
+       addMeetSecrets({ directory: process.argv[2], turnHost: "turn.example.test" });`,
       new URL("./generate-production-secrets.mjs", import.meta.url).href,
       privateDirectory,
     ]);

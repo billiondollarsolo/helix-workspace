@@ -9,8 +9,9 @@ import { addMeetSecrets, generateProductionSecrets } from "./generate-production
 
 /* The optional Meet install: docker-compose.meet.yml on top of the production
    stack. Without the file nothing below exists; with it Helix runs the Full
-   Workspace profile against a bundled Jitsi that holds no development
-   credential and publishes only the media ports. */
+   Workspace profile against a bundled LiveKit server that holds no development
+   credential, signals through the Workspace site at /rtc and publishes only
+   the media and TURN ports. */
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const digest = (character) => `sha256:${character.repeat(64)}`;
@@ -22,7 +23,7 @@ beforeAll(() => {
   workspace = mkdtempSync(join(tmpdir(), "helix-meet-compose-"));
   const secrets = join(workspace, "secrets");
   generateProductionSecrets({ directory: secrets, mailHost: "mail.example.test" });
-  addMeetSecrets({ directory: secrets, meetHost: "meet.example.test" });
+  addMeetSecrets({ directory: secrets, turnHost: "turn.example.test" });
   // An empty env file keeps a developer's own .env out of the result.
   const envFile = join(workspace, "empty.env");
   writeFileSync(envFile, "");
@@ -47,7 +48,7 @@ beforeAll(() => {
     HELIX_POSTGRES_ENCRYPTION_AT_REST_ATTESTED: "true",
     HELIX_OBJECT_STORAGE_ENCRYPTION_AT_REST_ATTESTED: "true",
     HELIX_BACKUP_ENCRYPTION_AT_REST_ATTESTED: "true",
-    HELIX_MEET_DOMAIN: "meet.example.test",
+    HELIX_MEET_TURN_DOMAIN: "turn.example.test",
     HELIX_MEET_PUBLIC_IP: "203.0.113.10",
   };
   const resolveCompose = (files) =>
@@ -75,185 +76,143 @@ afterAll(() => {
   if (workspace !== undefined) rmSync(workspace, { recursive: true, force: true });
 });
 
-const jitsiServices = ["jitsi-web", "jitsi-prosody", "jitsi-jicofo", "jitsi-jvb", "jitsi-turn"];
 const published = (compose) =>
   Object.entries(compose.services).flatMap(([service, config]) =>
     (config.ports ?? []).map((port) => `${service} ${String(port.published)}/${port.protocol}`),
   );
 
 describe("optional Meet install", () => {
-  it("keeps root-owned XMPP secrets outside Prosody's runtime certificate paths", () => {
-    const prosody = withMeet.services["jitsi-prosody"];
-    for (const source of ["jitsi_xmpp_cert", "jitsi_xmpp_key"]) {
-      const mounts = prosody.secrets.filter((secret) => secret.source === source);
-      expect(mounts).toHaveLength(1);
-      expect(mounts[0].target).toBe(`/run/secrets/${source}`);
-    }
-    expect(prosody.volumes).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ target: "/etc/cont-init.d/01-helix-secrets", read_only: true }),
-        expect.objectContaining({ target: "/config", type: "volume" }),
-      ]),
-    );
-    execFileSync("sh", ["-n", join(root, "infra/meet/init/01-helix-secrets")]);
-  });
-
   it("deploys nothing and keeps the core packaging without its Compose file", () => {
-    expect(Object.keys(withoutMeet.services).filter((name) => name.startsWith("jitsi-"))).toEqual(
-      [],
-    );
+    expect(withoutMeet.services.livekit).toBeUndefined();
     const environment = withoutMeet.services.helix.environment;
     expect(environment.HELIX_APPS).toBe("mail,drive,chat,assistant");
-    expect(environment.MEET_JITSI_ENABLED).toBe("false");
+    for (const name of ["LIVEKIT_API_KEY", "LIVEKIT_API_SECRET", "MEET_CAPTURE_SECRET"]) {
+      expect(environment, name).not.toHaveProperty(name);
+    }
     expect(withoutMeet.services.caddy.environment).not.toHaveProperty("HELIX_MEET_SITE");
-    expect(published(withoutMeet).filter((port) => port.startsWith("jitsi-"))).toEqual([]);
+    expect(published(withoutMeet).filter((port) => port.startsWith("livekit "))).toEqual([]);
   });
 
-  it("switches Helix to the Full Workspace profile with file-backed Jitsi secrets", () => {
+  it("removes every Jitsi service, secret and variable", () => {
+    const rendered = JSON.stringify(withMeet);
+    expect(rendered).not.toMatch(/jitsi|jibri|jicofo|prosody|coturn/iu);
+    expect(rendered).not.toMatch(/MEET_JITSI_|HELIX_JITSI_ORIGIN|HELIX_MEET_DOMAIN/u);
+  });
+
+  it("switches Helix to the Full Workspace profile with file-backed LiveKit secrets", () => {
     const helix = withMeet.services.helix;
     expect(helix.environment).toMatchObject({
       HELIX_WORKSPACE_PROFILE: "full",
       HELIX_APPS: "mail,drive,chat,assistant,calendar,meet",
-      MEET_JITSI_ENABLED: "true",
-      MEET_JITSI_DOMAIN: "meet.example.test",
-      MEET_JITSI_PUBLIC_URL: "https://meet.example.test",
-      MEET_JITSI_REGION: "eu-test",
-      MEET_JITSI_JWT_SECRET_FILE: "/run/secrets/meet_jwt_secret",
-      MEET_JITSI_WEBHOOK_SHARED_SECRET_FILE: "/run/secrets/meet_webhook_secret",
-      BETTER_AUTH_TRUSTED_ORIGINS: "https://workspace.example.test,https://meet.example.test",
+      LIVEKIT_API_KEY: "helix",
+      LIVEKIT_API_SECRET_FILE: "/run/secrets/livekit_api_secret",
+      LIVEKIT_INTERNAL_URL: "http://livekit:7880",
+      MEET_CAPTURE_SECRET_FILE: "/run/secrets/meet_capture_secret",
     });
-    expect(helix.environment.MEET_JITSI_JWT_SECRET).toBeUndefined();
-    expect(helix.environment.MEET_JITSI_WEBHOOK_SHARED_SECRET).toBeUndefined();
+    expect(helix.environment.LIVEKIT_API_SECRET).toBeUndefined();
+    expect(helix.environment.MEET_CAPTURE_SECRET).toBeUndefined();
+    // Empty: browsers use the Workspace address unless the operator chooses another.
+    expect(helix.environment.LIVEKIT_PUBLIC_URL).toBe("");
     // Neither module may be forced off once its app is in the profile.
     const modules = JSON.parse(helix.environment.HELIX_CONFIG_JSON).modules;
     expect(modules).not.toHaveProperty("meet");
     expect(modules).not.toHaveProperty("calendar");
     expect(modules).toMatchObject({ docs: { enabled: false }, editors: { enabled: false } });
     expect(helix.secrets.map((secret) => secret.source)).toEqual(
-      expect.arrayContaining(["meet_jwt_secret", "meet_webhook_secret"]),
+      expect.arrayContaining(["livekit_api_secret", "meet_capture_secret"]),
     );
   });
 
-  it("runs Jitsi without a development credential and without a recorder", () => {
-    expect(withMeet.services["jitsi-jibri"]).toBeUndefined();
-    for (const name of jitsiServices) {
-      const service = withMeet.services[name];
-      expect(service.profiles, name).toBeUndefined();
-      expect(service.security_opt, name).toEqual(["no-new-privileges:true"]);
-      expect(service.image, name).toMatch(/@sha256:[a-f0-9]{64}$/u);
-      const leaked = Object.entries(service.environment ?? {}).filter(
-        ([, value]) => typeof value === "string" && /helix_dev|change_me/u.test(value),
-      );
-      expect(leaked, name).toEqual([]);
-    }
-    for (const name of ["jitsi-prosody", "jitsi-jicofo", "jitsi-jvb"]) {
-      const environment = withMeet.services[name].environment;
-      for (const credential of [
-        "JICOFO_AUTH_PASSWORD",
-        "JICOFO_COMPONENT_SECRET",
-        "JVB_AUTH_PASSWORD",
-        "JWT_APP_SECRET",
-        "JIBRI_XMPP_PASSWORD",
-        "JIBRI_RECORDER_PASSWORD",
-      ]) {
-        expect(environment, `${name} ${credential}`).not.toHaveProperty(credential);
-      }
-    }
-    const credentialFiles = (name) =>
-      withMeet.services[name].secrets
-        .filter((secret) => secret.target.startsWith("/run/helix-jitsi-env/"))
-        .map((secret) => `${secret.target.split("/").at(-1)}=${secret.source}`)
-        .sort();
-    expect(credentialFiles("jitsi-prosody")).toEqual([
-      "HELIX_JITSI_WEBHOOK_SECRET=meet_webhook_secret",
-      "JICOFO_AUTH_PASSWORD=jitsi_jicofo_auth_password",
-      "JICOFO_COMPONENT_SECRET=jitsi_jicofo_component_secret",
-      "JVB_AUTH_PASSWORD=jitsi_jvb_auth_password",
-      "JWT_APP_SECRET=meet_jwt_secret",
+  it("runs a pinned, hardened LiveKit without a development credential", () => {
+    const service = withMeet.services.livekit;
+    expect(service.profiles).toBeUndefined();
+    expect(service.image).toMatch(/^livekit\/livekit-server:v1\.[0-9.]+@sha256:[a-f0-9]{64}$/u);
+    expect(service.security_opt).toEqual(["no-new-privileges:true"]);
+    expect(service.read_only).toBe(true);
+    expect(service.cap_drop).toEqual(["ALL"]);
+    expect(service.user).toBe("65532:65532");
+    expect(service.deploy.resources.limits).toMatchObject({ pids: 1024 });
+    expect(service.environment).not.toHaveProperty("LIVEKIT_KEYS");
+    const leaked = Object.entries(service.environment).filter(
+      ([, value]) => typeof value === "string" && /helix_dev|change_me/u.test(value),
+    );
+    expect(leaked).toEqual([]);
+    // The key list and Redis password are read from secret files at start.
+    const script = service.entrypoint.join("\n");
+    expect(script).toContain("cat /run/secrets/livekit_api_secret");
+    expect(script).toContain("cat /run/secrets/redis_password");
+    expect(script).toContain("exec /livekit-server");
+    expect(service.secrets.map((secret) => secret.source).sort()).toEqual([
+      "livekit_api_secret",
+      "redis_ca",
+      "redis_password",
+      "turn_cert",
+      "turn_key",
     ]);
-    expect(credentialFiles("jitsi-jicofo")).toEqual([
-      "JICOFO_AUTH_PASSWORD=jitsi_jicofo_auth_password",
-      "JICOFO_COMPONENT_SECRET=jitsi_jicofo_component_secret",
-    ]);
-    expect(credentialFiles("jitsi-jvb")).toEqual(["JVB_AUTH_PASSWORD=jitsi_jvb_auth_password"]);
-    expect(withMeet.services["jitsi-web"].secrets ?? []).toEqual([]);
-    expect(withMeet.services["jitsi-prosody"].environment.ENABLE_RECORDING).toBe("0");
   });
 
-  it("verifies XMPP against the deployment CA through a trust store built at start", () => {
-    const init = withMeet.services["jitsi-truststore-init"];
-    expect(init.network_mode).toBe("none");
-    expect(init.restart).toBe("no");
-    expect(init.secrets).toEqual([
-      { source: "jitsi_xmpp_ca", target: "/run/secrets/jitsi_xmpp_ca" },
+  it("configures LiveKit for the existing Redis, Helix's webhook and built-in TURN", () => {
+    // The rendered YAML, exactly: Compose has already filled in the variables.
+    expect(withMeet.services.livekit.environment.LIVEKIT_CONFIG.trimEnd().split("\n")).toEqual([
+      "port: 7880",
+      "log_level: info",
+      "rtc:",
+      "  tcp_port: 7881",
+      "  udp_port: 7882",
+      "  node_ip: 203.0.113.10",
+      "  use_external_ip: false",
+      "redis:",
+      "  address: redis:6379",
+      "  use_tls: true",
+      "turn:",
+      "  enabled: true",
+      "  domain: turn.example.test",
+      "  udp_port: 3478",
+      "  tls_port: 5349",
+      "  cert_file: /run/secrets/turn_cert",
+      "  key_file: /run/secrets/turn_key",
+      "webhook:",
+      "  api_key: helix",
+      "  urls:",
+      "    - http://helix:3000/webhook/livekit",
     ]);
-    for (const name of ["jitsi-jicofo", "jitsi-jvb"]) {
-      const service = withMeet.services[name];
-      expect(service.depends_on["jitsi-truststore-init"].condition).toBe(
-        "service_completed_successfully",
-      );
-      expect(service.environment.JAVA_TOOL_OPTIONS).toContain(
-        "-Djavax.net.ssl.trustStore=/run/helix-truststore/xmpp-truststore.p12",
-      );
-    }
-    for (const file of ["jvb/custom-jvb.conf", "jicofo/custom-jicofo.conf"]) {
-      expect(readFileSync(join(root, "infra/meet", file), "utf8")).toMatch(
-        /certificate.verification = false/iu,
-      );
-    }
+    // Redis's certificate is signed by the deployment CA.
+    expect(withMeet.services.livekit.environment.SSL_CERT_FILE).toBe("/run/secrets/redis_ca");
   });
 
-  it("publishes only the media ports, and advertises the ports it publishes", () => {
+  it("publishes only the media and TURN ports, and advertises the ports it publishes", () => {
     const before = published(withoutMeet);
-    expect(published(withMeet).filter((port) => !before.includes(port))).toEqual(
-      expect.arrayContaining([
-        "jitsi-jvb 10000/udp",
-        "jitsi-turn 3478/tcp",
-        "jitsi-turn 3478/udp",
-        "jitsi-turn 5349/tcp",
-        "jitsi-turn 49160/udp",
-        "jitsi-turn 49200/udp",
-      ]),
-    );
-    for (const name of ["jitsi-web", "jitsi-prosody", "jitsi-jicofo"]) {
-      expect(withMeet.services[name].ports, name).toBeUndefined();
+    expect(published(withMeet).filter((port) => !before.includes(port))).toEqual([
+      "livekit 7881/tcp",
+      "livekit 7882/udp",
+      "livekit 3478/udp",
+      "livekit 5349/tcp",
+    ]);
+    for (const port of withMeet.services.livekit.ports) {
+      expect(String(port.published)).toBe(String(port.target));
+      expect(port.mode).toBe("host");
     }
-    expect(withMeet.services["jitsi-jvb"].environment).toMatchObject({
-      JVB_ADVERTISE_IPS: "203.0.113.10",
-      JVB_PORT: "10000",
-    });
-    expect(withMeet.services["jitsi-prosody"].environment).toMatchObject({
-      TURN_HOST: "meet.example.test",
-      TURN_PORT: "3478",
-      TURNS_PORT: "5349",
-    });
-    expect(withMeet.services["jitsi-turn"].environment).toMatchObject({
-      JITSI_TURN_REALM: "meet.example.test",
-      JITSI_TURN_EXTERNAL_IP: "203.0.113.10",
-    });
   });
 
-  it("keeps signalling off the Internet and serves the meeting page through the edge", () => {
-    expect(withMeet.networks["meet-control"].internal).toBe(true);
-    expect(Object.keys(withMeet.services["jitsi-prosody"].networks)).toEqual(["meet-control"]);
-    expect(Object.keys(withMeet.services["jitsi-jicofo"].networks)).toEqual(["meet-control"]);
-    expect(Object.keys(withMeet.services["jitsi-web"].networks).sort()).toEqual([
-      "edge",
-      "meet-control",
-    ]);
-    expect(Object.keys(withMeet.services["jitsi-turn"].networks)).toEqual(["meet-media"]);
+  it("keeps the LiveKit API private and routes signalling through the Workspace site", () => {
+    expect(Object.keys(withMeet.services.livekit.networks).sort()).toEqual(["data-plane", "edge"]);
     expect(withMeet.services.caddy.environment).toMatchObject({
-      HELIX_MEET_DOMAIN: "meet.example.test",
       HELIX_MEET_SITE: "-on",
-      HELIX_JITSI_ORIGIN: "https://meet.example.test",
+      HELIX_LIVEKIT_UPSTREAM: "livekit:7880",
     });
-    const site = readFileSync(join(root, "infra/caddy/optional/meet-on.caddy"), "utf8");
-    expect(site).toContain("{$HELIX_MEET_DOMAIN} {");
-    expect(site).toContain("tls {$HELIX_CADDY_TLS:} {");
-    expect(site).toContain('"frame-ancestors https://{$HELIX_DOMAIN}"');
-    expect(readFileSync(join(root, "infra/caddy/Caddyfile.production"), "utf8")).toContain(
-      "import optional/meet{$HELIX_MEET_SITE:}.caddy",
-    );
+    expect(withMeet.services.caddy.environment).not.toHaveProperty("HELIX_JITSI_ORIGIN");
+    const caddyfile = readFileSync(join(root, "infra/caddy/Caddyfile.production"), "utf8");
+    // Imported inside the Workspace site, before the single-page app fallback.
+    const site = caddyfile.slice(caddyfile.indexOf("{$HELIX_DOMAIN} {"));
+    const imported = site.indexOf("\timport optional/meet{$HELIX_MEET_SITE:}.caddy");
+    expect(imported).toBeGreaterThan(0);
+    expect(imported).toBeLessThan(site.indexOf("\thandle {\n\t\troot * /srv"));
+    expect(caddyfile).toContain("camera=(self), microphone=(self), display-capture=(self)");
+    expect(caddyfile).not.toMatch(/JITSI|meet\.localhost/u);
+    const route = readFileSync(join(root, "infra/caddy/optional/meet-on.caddy"), "utf8");
+    expect(route).toContain("@livekit path /rtc /rtc/*");
+    expect(route).toContain("reverse_proxy {$HELIX_LIVEKIT_UPSTREAM:livekit:7880} {");
+    expect(route).toContain("flush_interval -1");
     expect(
       readFileSync(join(root, "infra/caddy/optional/meet.caddy"), "utf8")
         .split("\n")
@@ -268,25 +227,25 @@ describe("optional Meet install", () => {
         .slice(overlay.lastIndexOf("\nsecrets:\n"))
         .matchAll(/^ {2}([a-z0-9_]+):\n {4}file: /gmu),
     ].map((match) => match[1]);
-    expect(declared.length).toBeGreaterThanOrEqual(11);
+    expect(declared.sort()).toEqual([
+      "livekit_api_secret",
+      "meet_capture_secret",
+      "turn_cert",
+      "turn_key",
+    ]);
     for (const name of declared) {
       expect(readFileSync(join(workspace, "secrets", name), "utf8").length, name).toBeGreaterThan(
         32,
       );
     }
-    const verified = execFileSync(
+    const certificate = execFileSync(
       "openssl",
-      [
-        "verify",
-        "-CAfile",
-        join(workspace, "secrets", "jitsi_xmpp_ca"),
-        join(workspace, "secrets", "jitsi_xmpp_cert"),
-      ],
+      ["x509", "-noout", "-ext", "subjectAltName", "-in", join(workspace, "secrets", "turn_cert")],
       { encoding: "utf8" },
     );
-    expect(verified).toContain("OK");
+    expect(certificate).toContain("DNS:turn.example.test");
     expect(() =>
-      addMeetSecrets({ directory: join(workspace, "secrets"), meetHost: "meet.example.test" }),
+      addMeetSecrets({ directory: join(workspace, "secrets"), turnHost: "turn.example.test" }),
     ).toThrow(/already holds Meet secrets/u);
   });
 });

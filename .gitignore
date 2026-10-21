@@ -41,9 +41,6 @@ New
 data
 *.log
 *.pid
-infra/meet/config/**/certs/
-infra/meet/config/**/keys/
-infra/meet/config/**/data/
 
 # OS / editor
 .DS_Store

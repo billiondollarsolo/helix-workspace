@@ -17,11 +17,9 @@ granted, and replacing the HTTPS certificate from the Admin console. With
 --with passwords it also installs the optional
 password manager and proves it is served on its own address, sends its
 sign-up confirmation, and appears for people once an administrator turns it on.
-With --with meet it adds docker-compose.meet.yml and holds a real meeting: two
-headless browsers join with passes Helix signed, each must receive the other's
-audio and video through the bridge over an encrypted connection, and a forged
-pass must be turned away. That needs Playwright's Chromium
-(pnpm --filter @helix/web exec playwright install chromium).
+With --with meet it adds docker-compose.meet.yml and proves LiveKit is reached
+through the Workspace address at /rtc: it accepts the tokens Helix signs and
+turns away a forged one. (A two-browser media check for LiveKit is a follow-up.)
 
 Images are built from this checkout; nothing is pulled from the Helix registry
 and nothing is published beyond 127.0.0.1. Everything the run creates is
@@ -84,13 +82,6 @@ compose_version=$(docker compose version --short 2>/dev/null | sed 's/^v//')
 if [[ "$(printf '%s\n' 2.27.0 "${compose_version:-0}" | sort -V | head -n 1)" != 2.27.0 ]]; then
   die "Docker Compose 2.27 or newer is required (found ${compose_version:-none})"
 fi
-if [[ "$WITH_MEET" == 1 ]] && ! node -e '
-  const { createRequire } = require("node:module");
-  const { chromium } = createRequire(process.cwd() + "/apps/web/package.json")("@playwright/test");
-  if (!require("node:fs").existsSync(chromium.executablePath())) process.exit(1);
-' 2>/dev/null; then
-  die "--with meet holds a real meeting and needs Playwright's Chromium: pnpm install && pnpm --filter @helix/web exec playwright install chromium"
-fi
 
 # Cleanup removes the project's containers and volumes, so never adopt one.
 if [[ -n "$(docker ps -aq --filter "label=com.docker.compose.project=$PROJECT")" ]] ||
@@ -100,7 +91,7 @@ fi
 
 DOMAIN=helix.bootsmoke.test
 VAULT_DOMAIN=vault.bootsmoke.test
-MEET_DOMAIN=meet.bootsmoke.test
+TURN_DOMAIN=turn.bootsmoke.test
 ORG_NAME="Boot Smoke Workspace"
 OWNER_EMAIL="owner@$DOMAIN"
 OWNER_PASSWORD="Boot-smoke-$(openssl rand -hex 12)"
@@ -168,7 +159,7 @@ node infra/scripts/generate-production-secrets.mjs --dir "$SECRETS" --mail-host 
 openssl rand -hex 24 >"$SECRETS/mail_smtp_password"
 if [[ "$WITH_MEET" == 1 ]]; then
   node infra/scripts/generate-production-secrets.mjs --add-meet --dir "$SECRETS" \
-    --meet-host "$MEET_DOMAIN" >/dev/null
+    --turn-host "$TURN_DOMAIN" >/dev/null
 fi
 
 # issue_certificate <file name> <host> [more hosts...]
@@ -189,7 +180,6 @@ if [[ "$TLS_MODE" == files ]]; then
   # One operator certificate covers every site the edge serves.
   edge_names=("$DOMAIN")
   [[ "$WITH_PASSWORDS" == 1 ]] && edge_names+=("$VAULT_DOMAIN")
-  [[ "$WITH_MEET" == 1 ]] && edge_names+=("$MEET_DOMAIN")
   issue_certificate edge "${edge_names[@]}"
   cat "$WORK/edge.pem" "$SECRETS/ca/ca.pem" >"$SECRETS/tls_cert"
   cp "$WORK/edge.key" "$SECRETS/tls_key"
@@ -236,12 +226,13 @@ EOF
     printf 'COMPOSE_PROFILES=passwords\nHELIX_PASSWORDS_DOMAIN=%s\n' "$VAULT_DOMAIN"
   # What an operator adds for Meet; the ports stay on this host for the test.
   [[ "$WITH_MEET" == 1 ]] && cat <<EOF
-HELIX_MEET_DOMAIN=$MEET_DOMAIN
+HELIX_MEET_TURN_DOMAIN=$TURN_DOMAIN
 HELIX_MEET_PUBLIC_IP=127.0.0.1
 HELIX_MEET_BIND_IP=127.0.0.1
-HELIX_MEET_MEDIA_PORT=$((HTTPS_PORT + 1))
-HELIX_MEET_TURN_PORT=$((HTTPS_PORT + 2))
-HELIX_MEET_TURNS_PORT=$((HTTPS_PORT + 3))
+HELIX_MEET_RTC_TCP_PORT=$((HTTPS_PORT + 1))
+HELIX_MEET_RTC_UDP_PORT=$((HTTPS_PORT + 2))
+HELIX_MEET_TURN_PORT=$((HTTPS_PORT + 3))
+HELIX_MEET_TURNS_PORT=$((HTTPS_PORT + 4))
 EOF
   true
 } >"$WORK/env.production"
@@ -279,15 +270,6 @@ if [[ "$WITH_PASSWORDS" == 1 ]]; then
   vaultwarden:
     environment:
       SMTP_ACCEPT_INVALID_CERTS: "true"
-EOF
-fi
-# The bridge refuses to run with only a loopback address to advertise, which
-# is right for a real deployment and is all this test has.
-if [[ "$WITH_MEET" == 1 ]]; then
-  cat >>"$WORK/smoke.override.yml" <<EOF
-  jitsi-jvb:
-    environment:
-      JVB_REQUIRE_VALID_ADDRESS: "false"
 EOF
 fi
 
@@ -344,10 +326,6 @@ vault() {
   curl -sS --cacert "$EDGE_CA" --connect-to "$VAULT_DOMAIN:443:127.0.0.1:$HTTPS_PORT" "$@"
 }
 vault_status() { vault -o "$WORK/vault.json" -w '%{http_code}' "$@"; }
-MEET="https://$MEET_DOMAIN"
-meet() {
-  curl -sS --cacert "$EDGE_CA" --connect-to "$MEET_DOMAIN:443:127.0.0.1:$HTTPS_PORT" "$@"
-}
 # relay_has_mail <Mailpit search query>
 relay_has_mail() {
   for _ in {1..20}; do
@@ -522,71 +500,37 @@ app_registered() {
 if [[ "$WITH_MEET" == 0 ]]; then
   expect "Meet is not served when it is not installed" "$(app_registered meet)" false
 else
-  for _ in {1..40}; do
-    [[ "$(meet -o /dev/null -w '%{http_code}' "$MEET/" 2>/dev/null)" == 200 ]] && break
-    sleep 3
-  done
-  expect "meeting page answers on its own address over verified HTTPS" \
-    "$(meet -o /dev/null -w '%{http_code}' "$MEET/")" 200
-  if meet -I "$MEET/" | grep -qi "^content-security-policy: frame-ancestors https://$DOMAIN"; then
-    pass "only the workspace may embed the meeting page"
-  else
-    fail "only the workspace may embed the meeting page"
-  fi
   expect "the workspace serves Meet" "$(app_registered meet)" true
   expect "and Calendar, which schedules meetings" "$(app_registered calendar)" true
   expect "Meet reports that it is available" \
     "$(api /v1/api/tools/meet.status -d '{}' | json available)" true
 
-  bridges=0
-  for _ in {1..40}; do
-    bridges=$(compose exec -T jitsi-jicofo curl -s http://127.0.0.1:8888/stats 2>/dev/null |
-      json bridge_selector.bridge_count || true)
-    [[ "${bridges:-0}" -ge 1 ]] && break
-    sleep 3
-  done
-  if [[ "${bridges:-0}" -ge 1 ]]; then
-    pass "the media bridge has joined the conference focus over verified XMPP"
-  else
-    fail "the media bridge has joined the conference focus over verified XMPP"
-  fi
-
-  # A real meeting. Helix creates the room and signs a pass per person; the
-  # browsers then talk to the bundled Jitsi only.
+  # Helix creates the room and signs a LiveKit token per person; browsers
+  # signal to LiveKit through the Workspace address at /rtc.
   notice=$(grep -o 'MEET_RECORDING_NOTICE_VERSION = "[^"]*"' apps/helix/src/platform/meet/store.ts |
     cut -d'"' -f2)
   uuid() { node -e 'process.stdout.write(require("node:crypto").randomUUID())'; }
   room_id=$(api /v1/api/tools/meet.create-room -d '{"subject":"Boot smoke meeting"}' | json id)
-  join_url() {
-    api /v1/api/tools/meet.mint-token -d "{\"roomId\":\"$room_id\",\"recordingNoticeAccepted\":true,\"recordingNoticeVersion\":\"$notice\",\"deviceId\":\"$(uuid)\",\"joinGrantId\":\"$(uuid)\"}" |
-      json joinUrl
-  }
-  first_url=$(join_url)
-  second_url=$(join_url)
-  if [[ "$first_url" == "$MEET/"*"jwt="* && "$second_url" == "$MEET/"*"jwt="* ]]; then
-    pass "Helix signs a meeting pass for the bundled Jitsi's address"
-  else
-    fail "Helix signs a meeting pass for the bundled Jitsi's address ($(head -c 120 <<<"$first_url"))"
-  fi
-  # The same pass, re-signed with a key the deployment does not hold.
-  forged_url=$(node -e '
+  api /v1/api/tools/meet.mint-token -d "{\"roomId\":\"$room_id\",\"recordingNoticeAccepted\":true,\"recordingNoticeVersion\":\"$notice\",\"deviceId\":\"$(uuid)\",\"joinGrantId\":\"$(uuid)\"}" \
+    >"$WORK/join.json"
+  expect "Helix signs a LiveKit token" "$(json provider <"$WORK/join.json")" livekit
+  expect "for LiveKit on the Workspace address" "$(json serverUrl <"$WORK/join.json")" "wss://$DOMAIN"
+  token=$(json token <"$WORK/join.json")
+  # The same token, re-signed with a key the deployment does not hold.
+  forged=$(node -e '
     const { createHmac } = require("node:crypto");
-    const url = new URL(process.argv[1]);
-    const [header, payload] = url.searchParams.get("jwt").split(".");
+    const [header, payload] = process.argv[1].split(".");
     const signature = createHmac("sha256", "not-the-deployment-secret")
       .update(`${header}.${payload}`).digest("base64url");
-    url.searchParams.set("jwt", `${header}.${payload}.${signature}`);
-    process.stdout.write(url.toString());
-  ' "$first_url" 2>/dev/null || true)
-  node apps/web/scripts/meet-media-probe.mjs --join-url "$first_url" --join-url "$second_url" \
-    --forged-url "$forged_url" --map "$MEET_DOMAIN:443=127.0.0.1:$HTTPS_PORT" --insecure \
-    >"$WORK/media.log" 2>&1 || true
-  grep -E '^PASS' "$WORK/media.log" || true
-  media_failures=$(grep -cE '^FAIL' "$WORK/media.log" || true)
-  if [[ "$media_failures" -gt 0 ]] || ! grep -qE '^PASS' "$WORK/media.log"; then
-    grep -vE '^PASS' "$WORK/media.log" | head -n 12
-    FAILURES=$((FAILURES + (media_failures > 0 ? media_failures : 1)))
-  fi
+    process.stdout.write(`${header}.${payload}.${signature}`);
+  ' "$token" 2>/dev/null || true)
+  rtc_status() { edge -o /dev/null -w '%{http_code}' "$BASE/rtc/validate?access_token=$1"; }
+  for _ in {1..40}; do
+    [[ "$(rtc_status "$token" 2>/dev/null)" == 200 ]] && break
+    sleep 3
+  done
+  expect "LiveKit accepts Helix's token through the edge at /rtc" "$(rtc_status "$token")" 200
+  expect "and turns away a forged one" "$(rtc_status "$forged")" 401
 fi
 
 # --- Drive: upload, download, malware --------------------------------------

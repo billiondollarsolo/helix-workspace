@@ -42,8 +42,8 @@ main push, manual run, and scheduled run.
 `.gitleaksignore` contains 70 exact commit/path/rule/line fingerprints for reviewed historical
 findings; it contains no detector-wide or path-wide exclusions. Most are synthetic values in tests
 or generated formatting baselines. Five are self-signed `meet.localhost` development fixture keys
-introduced in commit `b7758ad`; Meet is disabled in the production MVP, and the production runtime
-images do not copy `infra/meet`. Five, from commit `29b1575`, are labelled synthetic test secrets
+introduced in commit `b7758ad`; the Jitsi configuration that held them has since been removed
+with Jitsi itself. Five, from commit `29b1575`, are labelled synthetic test secrets
 and a Prometheus SLO recording-rule name that match the generic API key pattern. Changing any
 baselined content produces a different fingerprint and fails the scan. A suspected real credential
 must still be revoked before any history remediation; never add a fingerprint merely to make CI

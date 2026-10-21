@@ -10,6 +10,6 @@ The [canonical 1.0 scope](../release/1.0-scope.md) replaces earlier proposed inv
 | Assistant | Shipped    | Authorized reads, confirmed writes           |
 | Admin     | Shipped    | Authenticated control surface                |
 | Calendar  | Dormant    | Full profile only                            |
-| Meet      | Dormant    | Full profile with Jitsi dependency gates     |
+| Meet      | Dormant    | Full profile with LiveKit dependency gates   |
 
 Production uses `HELIX_APPS=mail,drive,chat,assistant` and `VITE_HELIX_MVP_ONLY=true`.

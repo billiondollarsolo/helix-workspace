@@ -236,12 +236,12 @@ before the private pilot.
 
 Split hostnames by who connects to them.
 
-| Who connects                                                      | Example                                           | Proxy (e.g. Cloudflare)                                                                 |
-| ----------------------------------------------------------------- | ------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| People in browsers                                                | `workspace.example.com`, `agentspace.example.com` | Proxied. Lock the origin so only the proxy's addresses reach Caddy.                     |
-| Inbound mail (MX target)                                          | `mail.workspace.example.com`                      | DNS-only. Open TCP 25, plus 465/587 for submission and 993 for IMAP clients if offered. |
-| Meet media relay                                                  | `turn.workspace.example.com`                      | DNS-only. Open TURN on UDP/TCP 3478 and TLS 5349, and Jitsi media on UDP 10000.         |
-| Workspace ↔ federated apps (directory sync, credentials, backups) | none                                              | Not involved: use a private link (below).                                               |
+| Who connects                                                      | Example                                           | Proxy (e.g. Cloudflare)                                                                   |
+| ----------------------------------------------------------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| People in browsers                                                | `workspace.example.com`, `agentspace.example.com` | Proxied. Lock the origin so only the proxy's addresses reach Caddy.                       |
+| Inbound mail (MX target)                                          | `mail.workspace.example.com`                      | DNS-only. Open TCP 25, plus 465/587 for submission and 993 for IMAP clients if offered.   |
+| Meet media relay                                                  | `turn.workspace.example.com`                      | DNS-only. Open TURN on UDP 3478 and TLS 5349, and LiveKit media on TCP 7881 and UDP 7882. |
+| Workspace ↔ federated apps (directory sync, credentials, backups) | none                                              | Not involved: use a private link (below).                                                 |
 
 HTTP proxies such as Cloudflare carry only web traffic, so SMTP and TURN must stay DNS-only.
 Those records publish the server's address. The web hostnames stay protected as long as their
@@ -722,32 +722,37 @@ With the Helm chart, set `passwords.enabled=true` and the values described in th
 
 ### Meet and Calendar
 
-Video meetings on a bundled [Jitsi](https://jitsi.org/) server, with Calendar to schedule them.
-This is the Full Workspace profile. It is outside the [1.0 release scope](release/1.0-scope.md):
-nothing here is deployed unless you add its Compose file, and the default stack stays on Mail,
-Drive, Chat, and Assistant.
+Video meetings on a bundled [LiveKit](https://livekit.io/) media server, with Calendar to schedule
+them. The call runs inside the Workspace app, and its signalling uses the Workspace address at
+`/rtc`, so Meet needs no hostname of its own. This is the Full Workspace profile. It is outside the
+[1.0 release scope](release/1.0-scope.md): nothing here is deployed unless you add its Compose
+file, and the default stack stays on Mail, Drive, Chat, and Assistant.
 
-1. Point a DNS name at the host, for example `meet.example.com`.
+1. Point a TURN hostname at the host, for example `turn.example.com`. Keep it DNS-only: proxies
+   such as Cloudflare do not carry TURN.
 2. Open these ports to the Internet. Media cannot go through the edge:
 
-   | Port                       | Purpose                                         |
-   | -------------------------- | ----------------------------------------------- |
-   | UDP 10000                  | Audio and video to the media bridge             |
-   | TCP and UDP 3478, TCP 5349 | TURN, for people whose network blocks UDP 10000 |
-   | UDP 49160-49200            | TURN relay                                      |
+   | Port     | Purpose                                            |
+   | -------- | -------------------------------------------------- |
+   | UDP 7882 | Audio and video                                    |
+   | TCP 7881 | Audio and video when UDP is blocked                |
+   | UDP 3478 | TURN, for people whose network blocks direct media |
+   | TCP 5349 | TURN over TLS, for networks that allow only TLS    |
 
 3. Add the Meet secret files to the directory the other secrets are in. This needs the `ca`
    folder that the generator left there:
 
    ```sh
    node infra/scripts/generate-production-secrets.mjs --add-meet \
-     --dir "$HELIX_PRODUCTION_SECRETS_DIR" --meet-host meet.example.com
+     --dir "$HELIX_PRODUCTION_SECRETS_DIR" --turn-host turn.example.com
    ```
+
+   It writes `livekit_api_secret`, `meet_capture_secret`, `turn_cert`, and `turn_key`.
 
 4. Add to `.env.production`:
 
    ```sh
-   HELIX_MEET_DOMAIN=meet.example.com
+   HELIX_MEET_TURN_DOMAIN=turn.example.com
    HELIX_MEET_PUBLIC_IP=203.0.113.10   # the address browsers reach this host on
    ```
 
@@ -759,39 +764,40 @@ Drive, Chat, and Assistant.
    ```
 
 Helix then runs with `HELIX_WORKSPACE_PROFILE=full` and
-`HELIX_APPS=mail,drive,chat,assistant,calendar,meet`, and refuses to start without the Jitsi
-domain, region, and secrets the file supplies. Meet and Calendar appear in the app launcher. An
+`HELIX_APPS=mail,drive,chat,assistant,calendar,meet`. Meet stays unavailable until the LiveKit key
+and secrets the file supplies are present. Meet and Calendar appear in the app launcher. An
 administrator can turn either off for the organization in **Admin → Apps**.
 
 How it is put together:
 
-- The meeting page is served by Caddy at `HELIX_MEET_DOMAIN`, with a certificate obtained the
-  same way as for `HELIX_DOMAIN` (a certificate you provide as files must cover both names). Only
-  the workspace may embed it.
-- People join with a pass that Helix signs for one room and five minutes. Jitsi accepts no other
-  way in: guests are off, and a pass signed with any other key is refused.
-- The conference focus and the media bridge sign in to the XMPP server with generated passwords
-  and verify its certificate against the deployment CA. No signalling port is published.
-- Media is encrypted between each browser and the bridge (DTLS-SRTP). Peer-to-peer calls are off,
-  so every call follows the bridge or TURN.
-- `jitsi_turn_cert` and `jitsi_turn_key` are issued by the private CA, which browsers do not
-  trust. TURN on port 3478 works as generated; for TURN over TLS on port 5349, replace both files
-  with a publicly trusted certificate for `HELIX_MEET_DOMAIN` and restart `jitsi-turn`.
-- Recording is not part of this install.
+- One `livekit` container, pinned by version and digest. It uses the stack's Redis and sends room
+  and participant events to Helix at `/webhook/livekit`, signed with the API secret.
+- Caddy routes `/rtc` on the Workspace site to LiveKit. The LiveKit API itself is never published.
+- People join with a token that Helix signs for one room. LiveKit accepts nothing else, and host
+  controls (mute, remove, end) go through Helix.
+- Media is encrypted between each browser and LiveKit (DTLS-SRTP).
+- TURN is LiveKit's built-in server. `turn_cert` and `turn_key` are issued by the private CA,
+  which browsers do not trust. TURN on UDP 3478 works as generated; for TURN over TLS on port
+  5349, replace both files with a publicly trusted certificate for `HELIX_MEET_TURN_DOMAIN` and
+  restart `livekit`.
+- Recording is not part of this install yet; it returns through LiveKit Egress. Live
+  transcription returns through a LiveKit agent. Both are follow-up tasks.
 
-| Setting                 | Default   | Purpose                                                |
-| ----------------------- | --------- | ------------------------------------------------------ |
-| `HELIX_MEET_DOMAIN`     | required  | The meeting page's public hostname, also the TURN name |
-| `HELIX_MEET_PUBLIC_IP`  | required  | The address the bridge and TURN tell browsers to use   |
-| `HELIX_MEET_BIND_IP`    | `0.0.0.0` | Host address the media and TURN ports are published on |
-| `HELIX_MEET_MEDIA_PORT` | `10000`   | Media port, published and advertised                   |
-| `HELIX_MEET_TURN_PORT`  | `3478`    | TURN port, published and advertised                    |
-| `HELIX_MEET_TURNS_PORT` | `5349`    | TURN over TLS port, published and advertised           |
+| Setting                   | Default                | Purpose                                                 |
+| ------------------------- | ---------------------- | ------------------------------------------------------- |
+| `HELIX_MEET_TURN_DOMAIN`  | required               | The TURN hostname (DNS-only)                            |
+| `HELIX_MEET_PUBLIC_IP`    | required               | The address LiveKit tells browsers to send media to     |
+| `HELIX_MEET_BIND_IP`      | `0.0.0.0`              | Host address the media and TURN ports are published on  |
+| `HELIX_MEET_RTC_TCP_PORT` | `7881`                 | Media over TCP, published and advertised                |
+| `HELIX_MEET_RTC_UDP_PORT` | `7882`                 | Media over UDP, published and advertised                |
+| `HELIX_MEET_TURN_PORT`    | `3478`                 | TURN over UDP, published and advertised                 |
+| `HELIX_MEET_TURNS_PORT`   | `5349`                 | TURN over TLS, published and advertised                 |
+| `LIVEKIT_API_KEY`         | `helix`                | LiveKit API key name (not a secret)                     |
+| `LIVEKIT_PUBLIC_URL`      | `wss://<HELIX_DOMAIN>` | Where browsers connect; set only to use another address |
 
-One bridge on one host is sized for small meetings. `infra/scripts/production-boot-smoke.sh
---with meet` boots this install and holds a meeting between two browsers; run it on the host
-class you intend to use. Kubernetes deployments use the Helm chart's `workspace.profile=full`
-values with the separate media deployment in [`infra/meet/ha`](../infra/meet/ha/README.md).
+One LiveKit server on one host is sized for small meetings. `infra/scripts/production-boot-smoke.sh
+--with meet` boots this install; run it on the host class you intend to use. The Helm chart does
+not install LiveKit; Kubernetes deployments run it separately and point Helix at it.
 
 To remove Meet, drop the file from the Compose commands and the two variables, and run
 `up -d --remove-orphans`. Scheduled meetings and calendar events stay in the database.

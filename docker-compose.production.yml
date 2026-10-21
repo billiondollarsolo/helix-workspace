@@ -12,7 +12,7 @@ name: helix-production
 # Production remains MVP fail-closed (AGENTS.md). This overlay MUST keep:
 #   HELIX_APPS=mail,drive,chat,assistant
 #   HELIX_CONFIG_JSON modules calendar/meet enabled:false
-#   MEET_JITSI_ENABLED=false (no production Meet credentials)
+#   No LiveKit/Meet credentials (Meet stays unavailable)
 #   ClamAV + SpamAssassin ON for Mail/Drive Business scanning
 #   Immutable digest-only images; data-plane ports unpublished
 #
@@ -28,7 +28,7 @@ name: helix-production
 #   2. Promote web image built with VITE_HELIX_MVP_ONLY=false
 #   3. Set HELIX_WORKSPACE_PROFILE=full and the approved Full Workspace
 #      HELIX_APPS allowlist (see docs/architecture/v1-packaging-matrix.md)
-#   4. Enable only modules that passed gates; Meet requires real Jitsi domain
+#   4. Enable only modules that passed gates; Meet requires LiveKit secrets
 #   5. Run helix-migrate, smoke, and RPO/RTO drill (docs/architecture/ha-rpo-rto.md)
 #   6. Update AGENTS.md boundary in the same release train (PKG.2)
 #
@@ -248,11 +248,11 @@ services:
 
       # Meet is outside the core Workspace MVP and its development credentials
       # from the base Compose file must never reach a production process.
-      MEET_JITSI_ENABLED: "false"
-      MEET_JITSI_PUBLIC_URL: !reset "null"
-      MEET_JITSI_DOMAIN: !reset "null"
-      MEET_JITSI_JWT_SECRET: !reset "null"
-      MEET_JITSI_WEBHOOK_SHARED_SECRET: !reset "null"
+      LIVEKIT_API_KEY: !reset "null"
+      LIVEKIT_API_SECRET: !reset "null"
+      LIVEKIT_INTERNAL_URL: !reset "null"
+      LIVEKIT_PUBLIC_URL: !reset "null"
+      MEET_CAPTURE_SECRET: !reset "null"
       # Where people open the optional password manager. Empty unless the
       # deployment sets HELIX_PASSWORDS_DOMAIN (and starts --profile passwords).
       HELIX_PASSWORDS_URL: ${HELIX_PASSWORDS_DOMAIN:+https://${HELIX_PASSWORDS_DOMAIN}}
@@ -887,7 +887,6 @@ services:
     environment:
       HELIX_DOMAIN: ${HELIX_DOMAIN:?HELIX_DOMAIN is required}
       HELIX_UPSTREAM: helix:3000
-      HELIX_JITSI_ORIGIN: ${MEET_JITSI_PUBLIC_URL:-https://meet.localhost}
       # Serves the optional password manager's site only when its domain is set.
       HELIX_PASSWORDS_DOMAIN: ${HELIX_PASSWORDS_DOMAIN:-}
       HELIX_PASSWORDS_SITE: ${HELIX_PASSWORDS_DOMAIN:+-on}
@@ -961,30 +960,11 @@ services:
 
   # Optional profiles remain private even when an operator explicitly enables
   # them. Use a VPN, SSH tunnel, or separately authenticated admin ingress.
-  jitsi-turn:
+  livekit:
     logging: *default-logging
+    environment:
+      LIVEKIT_KEYS: !reset "null"
     ports: !override []
-  jitsi-web:
-    logging: *default-logging
-    ports: !override []
-    networks: !override
-      - data-plane
-  jitsi-prosody:
-    logging: *default-logging
-    ports: !override []
-    networks: !override
-      - data-plane
-  jitsi-jicofo:
-    logging: *default-logging
-    networks: !override
-      - data-plane
-  jitsi-jvb:
-    logging: *default-logging
-    ports: !override []
-    networks: !override
-      - data-plane
-  jitsi-jibri:
-    logging: *default-logging
     networks: !override
       - data-plane
   otel-collector:
@@ -1112,6 +1092,3 @@ volumes:
   # Local KMS key material for the bundled RustFS. Back it up with rustfs-data:
   # objects cannot be decrypted without it and the rustfs_kms_master_key secret.
   rustfs-kms:
-  # The base recording profile references this volume but does not declare it.
-  # It remains private and inactive in the core Workspace MVP.
-  jibri-recordings:

@@ -23,7 +23,7 @@ shipped features, production packaging, security disclosures, and launch limits.
 - [Managed outbound mail](mail-managed-provider-delivery.md), [mail client interoperability](runbooks/mail-client-interoperability.md), and [mail security](mail-security-and-reliability.md).
 - [Drive desktop sync](drive-desktop-sync.md), [S3-compatible API](drive-s3-api.md), and [storage security](drive-storage-security.md).
 - [Local AI and retrieval](runbooks/local-ai-retrieval.md).
-- [Meet setup](../infra/meet/README.md) and [support boundaries](meet-support-and-slos.md) for separately configured full-profile deployments.
+- [Meet setup](deployment-production.md#meet-and-calendar) (LiveKit) and [support boundaries](meet-support-and-slos.md) for full-profile deployments.
 
 ## Integrate and develop
 

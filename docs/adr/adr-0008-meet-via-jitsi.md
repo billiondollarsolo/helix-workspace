@@ -1,8 +1,10 @@
 # ADR-0008: Full Workspace Meet via Jitsi
 
+> Superseded by [ADR-0032: Meet on LiveKit](adr-0032-meet-via-livekit.md) (2026-10-21). Jitsi has been removed.
+>
 > Dormant full-profile proposal, outside 1.0. Superseded for release packaging by [ADR-0010](adr-0010-release-1.0-scope.md).
 
-- **Status:** Proposed (2026-08-02) — owner approval pending for implementation authorization
+- **Status:** Superseded by ADR-0032 (2026-10-21); originally proposed 2026-08-02
 - **Plan task:** G0.7
 - **Date:** 2026-08-02
 

@@ -36,12 +36,9 @@ Optional Drive preview profile:
 
 Optional Meet profile:
 
-| Service         | Purpose                  | Published port   |
-| --------------- | ------------------------ | ---------------- |
-| `jitsi-web`     | Jitsi Meet web frontend  | `28451`, `28452` |
-| `jitsi-jvb`     | Jitsi video bridge media | `28453`          |
-| `jitsi-prosody` | Jitsi XMPP/BOSH service  | `28454`, `28455` |
-| `jitsi-jicofo`  | Jitsi conference focus   | none             |
+| Service   | Purpose                     | Published port                                              |
+| --------- | --------------------------- | ----------------------------------------------------------- |
+| `livekit` | Meet media server (LiveKit) | `28451` (API/WebSocket), `7881`/tcp, `7882`/udp, `3478`/udp |
 
 ## High-Port Block
 

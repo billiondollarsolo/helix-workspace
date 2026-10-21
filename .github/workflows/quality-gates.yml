@@ -406,10 +406,10 @@ jobs:
           RUSTFS_SECRET_KEY: helix_rustfs_dev_secret
           RUSTFS_BUCKET: helix-objects
           MAIL_SMTP_RECEIVER_ENABLED: "false"
-          # Meet requires Jitsi credentials; these match the docker-compose dev stack.
-          MEET_JITSI_DOMAIN: meet.localhost
-          MEET_JITSI_JWT_SECRET: helix_dev_jitsi_jwt_secret_change_me
-          MEET_JITSI_WEBHOOK_SHARED_SECRET: helix_dev_jitsi_webhook_secret_change_me
+          # Meet requires LiveKit credentials; these match the docker-compose dev stack.
+          LIVEKIT_API_KEY: helix
+          LIVEKIT_API_SECRET: helix_dev_livekit_api_secret_change_me
+          MEET_CAPTURE_SECRET: helix_dev_meet_capture_secret_change_me
         run: |
           pnpm --filter @helix/app exec tsx src/index.ts > /tmp/helix-api.log 2>&1 &
           echo "$!" > /tmp/helix-api.pid

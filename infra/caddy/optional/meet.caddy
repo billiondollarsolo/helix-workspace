@@ -1,2 +1,2 @@
-# Meet is not installed, so it has no site. docker-compose.meet.yml selects
-# meet-on.caddy.
+# Meet is not installed, so the Workspace site has no /rtc route.
+# docker-compose.meet.yml selects meet-on.caddy.

@@ -19,7 +19,7 @@ const apiTargets = csv(__ENV.API_TARGETS || "/healthz,/readyz,/metrics,/openapi.
 const enabledGroups = new Set(
   csv(
     __ENV.K6_SCENARIO_GROUPS ||
-      "web_navigation,api_smoke,mail_api,inbound_mail,search,chat,meet_jitsi,assistant_llm,mcp,otel_health",
+      "web_navigation,api_smoke,mail_api,inbound_mail,search,chat,meet,assistant_llm,mcp,otel_health",
   ),
 );
 
@@ -61,10 +61,10 @@ const prdTargets = [
     protected: true,
   },
   {
-    group: "meet_jitsi",
-    exec: "meetJitsi",
-    metric: "helix_jitsi_join_ms",
-    threshold: Number(__ENV.JITSI_JOIN_P95_MS || 4000),
+    group: "meet",
+    exec: "meetJoin",
+    metric: "helix_meet_join_ms",
+    threshold: Number(__ENV.MEET_JOIN_P95_MS || 4000),
     protected: true,
   },
   {
@@ -123,7 +123,7 @@ const metrics = {
   inbound_mail: new Trend("helix_inbound_mail_searchable_ms", true),
   search: new Trend("helix_search_query_ms", true),
   chat: new Trend("helix_chat_delivery_ms", true),
-  meet_jitsi: new Trend("helix_jitsi_join_ms", true),
+  meet: new Trend("helix_meet_join_ms", true),
   assistant_llm: new Trend("helix_llm_routing_overhead_ms", true),
   mcp: new Trend("helix_mcp_catalog_ms", true),
   otel_health: new Trend("helix_otel_trace_ingestion_lag_ms", true),
@@ -249,7 +249,7 @@ export function chat() {
   });
 }
 
-export function meetJitsi() {
+export function meetJoin() {
   const marker = `Helix Meet k6 ${Date.now()}-${__VU}-${__ITER}`;
   const expect = __ENV.MEET_EXPECT || "";
   const startedAt = Date.now();
@@ -261,11 +261,10 @@ export function meetJitsi() {
       __ENV.MEET_CREATE_TOOL_ID || "meet.create-room",
       jsonEnv("MEET_CREATE_BODY", {
         subject: `k6 Meet join probe ${marker}`,
-        jitsiDomain: __ENV.MEET_JITSI_DOMAIN || "meet.localhost",
         participantActorIds: [],
         metadata: { source: "k6", marker },
       }),
-      { group: "meet_jitsi", step: "create" },
+      { group: "meet", step: "create" },
     );
     const created = parseJson(createResponse);
     roomId = typeof created?.id === "string" ? created.id : "";
@@ -284,18 +283,18 @@ export function meetJitsi() {
       }),
       roomId,
     },
-    { group: "meet_jitsi", step: "mint-token" },
+    { group: "meet", step: "mint-token" },
   );
 
   if ((__ENV.MEET_END_AFTER_MINT || "true").toLowerCase() !== "false" && roomId) {
     toolCall(
       __ENV.MEET_END_TOOL_ID || "meet.end-room",
       { roomId },
-      { group: "meet_jitsi", step: "end-room" },
+      { group: "meet", step: "end-room" },
     );
   }
 
-  metrics.meet_jitsi.add(Date.now() - startedAt, { group: "meet_jitsi" });
+  metrics.meet.add(Date.now() - startedAt, { group: "meet" });
   check(mintResponse, {
     "meet create tool accepted probe": () =>
       createResponse === null || [200, 202].includes(createResponse.status),
@@ -303,8 +302,8 @@ export function meetJitsi() {
     "meet mint-token tool is reachable": (res) => [200, 404].includes(res.status),
     "meet mint-token is authorized with AUTH_TOKEN": (res) => !authToken || res.status !== 401,
     "meet mint-token returned a JWT": (res) => jwtLooksSigned(parseJson(res)?.token),
-    "meet mint-token returned a Jitsi join URL": (res) =>
-      typeof parseJson(res)?.joinUrl === "string" && parseJson(res).joinUrl.includes("jwt="),
+    "meet mint-token returned a LiveKit server URL": (res) =>
+      parseJson(res)?.provider === "livekit" && typeof parseJson(res)?.serverUrl === "string",
     "meet response contains expected marker": (res) => !expect || responseContains(res, expect),
   });
 }

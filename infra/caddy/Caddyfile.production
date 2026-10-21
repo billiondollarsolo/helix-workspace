@@ -34,9 +34,9 @@
 		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
 		X-Content-Type-Options "nosniff"
 		Referrer-Policy "no-referrer"
-		Permissions-Policy "camera=(self \"{$HELIX_JITSI_ORIGIN:https://meet.localhost}\"), microphone=(self \"{$HELIX_JITSI_ORIGIN:https://meet.localhost}\"), display-capture=(self \"{$HELIX_JITSI_ORIGIN:https://meet.localhost}\"), fullscreen=(self \"{$HELIX_JITSI_ORIGIN:https://meet.localhost}\"), geolocation=(), payment=(), usb=()"
+		Permissions-Policy "camera=(self), microphone=(self), display-capture=(self), fullscreen=(self), geolocation=(), payment=(), usb=()"
 		X-Frame-Options "DENY"
-		Content-Security-Policy "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' 'wasm-unsafe-eval' 'sha256-hHzFTfzWwCmwgbHAc/JciBfagnNs4KtGdDWPaK7lCgU=' {$HELIX_JITSI_ORIGIN:https://meet.localhost}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' blob:; connect-src 'self' wss:; worker-src 'self' blob:; frame-src 'self' {$HELIX_JITSI_ORIGIN:https://meet.localhost}"
+		Content-Security-Policy "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' 'wasm-unsafe-eval' 'sha256-hHzFTfzWwCmwgbHAc/JciBfagnNs4KtGdDWPaK7lCgU='; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' blob:; connect-src 'self' wss:; worker-src 'self' blob:; frame-src 'self'"
 		Cross-Origin-Opener-Policy "same-origin-allow-popups"
 		Cross-Origin-Resource-Policy "same-origin"
 		Origin-Agent-Cluster "?1"
@@ -86,6 +86,10 @@
 		}
 	}
 
+	# Meet's LiveKit signalling at /rtc when Meet is installed; otherwise an
+	# empty file is imported.
+	import optional/meet{$HELIX_MEET_SITE:}.caddy
+
 	handle {
 		root * /srv
 		try_files {path} /index.html
@@ -93,8 +97,7 @@
 	}
 }
 
-# Optional installs each bring their own site. The file name ends in "-on" only
-# when the deployment sets the matching variable; otherwise an empty file is
-# imported and nothing is served.
+# The optional password manager brings its own site. The file name ends in
+# "-on" only when the deployment sets the matching variable; otherwise an empty
+# file is imported and nothing is served.
 import optional/passwords{$HELIX_PASSWORDS_SITE:}.caddy
-import optional/meet{$HELIX_MEET_SITE:}.caddy

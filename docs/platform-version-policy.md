@@ -36,7 +36,7 @@ with registry digests captured by the image-security workflow.
 
 ## Optional and operational containers
 
-The checked-in optional profiles pin Caddy 2.11.7, Jitsi `stable-11031`, coturn 4.18.0,
+The checked-in optional profiles pin Caddy 2.11.7, LiveKit server 1.13.10,
 OpenTelemetry Collector Contrib 0.162.0, Prometheus 3.15.0, Alertmanager 0.34.1, Tempo 3.1.0,
 Loki 3.7.8, Grafana 13.2.3,
 k6 2.1.0, and ZAP 2.17.0 by immutable digest. These components remain outside the storage-only MVP

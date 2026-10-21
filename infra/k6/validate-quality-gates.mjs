@@ -50,10 +50,10 @@ const requiredCoverage = [
     envOverrides: ["CHAT_TOOL_ID", "CHAT_BODY", "CHAT_QUERY", "CHAT_EXPECT"],
   },
   {
-    label: "Jitsi call join time",
-    group: "meet_jitsi",
-    metric: "helix_jitsi_join_ms",
-    thresholdEnv: "JITSI_JOIN_P95_MS",
+    label: "Meet call join time",
+    group: "meet",
+    metric: "helix_meet_join_ms",
+    thresholdEnv: "MEET_JOIN_P95_MS",
     defaultThreshold: 4000,
     envOverrides: [
       "MEET_CREATE_TOOL_ID",
@@ -62,7 +62,6 @@ const requiredCoverage = [
       "MEET_MINT_BODY",
       "MEET_END_TOOL_ID",
       "MEET_ROOM_ID",
-      "MEET_JITSI_DOMAIN",
       "MEET_EXPECT",
       "MEET_END_AFTER_MINT",
     ],
@@ -134,14 +133,14 @@ expectLiveAuthSmoke(
 );
 expectLiveAuthSmoke(
   "backend realism smoke default k6 bundle",
-  "api_smoke,mail_api,inbound_mail,search,chat,meet_jitsi,mcp,otel_health",
+  "api_smoke,mail_api,inbound_mail,search,chat,meet,mcp,otel_health",
 );
 for (const backendGroup of [
   "mail_api",
   "inbound_mail",
   "search",
   "chat",
-  "meet_jitsi",
+  "meet",
   "mcp",
   "otel_health",
 ]) {

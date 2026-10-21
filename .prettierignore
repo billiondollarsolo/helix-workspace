@@ -28,7 +28,6 @@
 
 # Raw Go-template YAML is validated after rendering by the Helm-specific gate.
 /infra/helm/helix/templates/**
-/infra/meet/ha/addons/templates/**
 
 # Non-source metadata with no Prettier parser.
 /.github/CODEOWNERS

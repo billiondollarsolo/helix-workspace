@@ -59,13 +59,20 @@ workspace:
       enabled: false
     meet:
       enabled: false
-  # O-K.10 — Meet/Jitsi deps for Full Workspace (empty = fail-closed if meet in apps).
-  # Operators inject secrets via sealed-secrets/CSI; do not commit JWT secrets.
+  # O-K.10 — Meet runs on a LiveKit server the chart does not deploy. Empty
+  # secretName = Meet stays unavailable. Operators inject the Secret via
+  # sealed-secrets/CSI; do not commit it.
   meet:
-    jitsiDomain: ""
-    # secretKeyRef name for MEET_JITSI_JWT_SECRET (chart does not invent a secret).
-    jitsiJwtSecretName: ""
-    jitsiJwtSecretKey: "jwt-secret"
+    livekit:
+      apiKey: "helix"
+      # LiveKit server API on the private network, for example http://livekit.media:7880.
+      internalUrl: ""
+      # Browser websocket URL. Empty: wss://<publicUrl host>, with /rtc routed to LiveKit.
+      publicUrl: ""
+      # Existing Secret holding the LiveKit API secret and the Meet capture secret.
+      secretName: ""
+      apiSecretKey: "livekit-api-secret"
+      captureSecretKey: "meet-capture-secret"
 
 # Optional password manager (Vaultwarden, Bitwarden-compatible). Nothing is
 # deployed unless enabled. It runs as its own workload on its own hostname, so

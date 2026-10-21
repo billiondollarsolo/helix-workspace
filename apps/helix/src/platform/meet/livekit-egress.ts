@@ -38,7 +38,8 @@ export function createLiveKitEgress(
       const info = (await call("StartRoomCompositeEgress", room, {
         room_name: room,
         layout: "grid",
-        file_outputs: [{ file_type: "MP4", filepath }],
+        // No manifest: only the MP4 lands in the shared directory.
+        file_outputs: [{ file_type: "MP4", filepath, disable_manifest: true }],
       })) as { egressId?: string; egress_id?: string };
       const egressId = info.egressId ?? info.egress_id;
       if (typeof egressId !== "string" || egressId.length === 0)

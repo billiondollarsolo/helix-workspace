@@ -422,10 +422,11 @@ describe("admin console request budget", () => {
           ],
         },
         "domains": {
-          "requestCount": 2,
+          "requestCount": 3,
           "settled": true,
           "urls": [
             "/v1/api/admin/domains",
+            "/v1/api/admin/domains/dns-checklist",
             "/v1/api/admin/edge/certificate",
           ],
         },

@@ -10,7 +10,12 @@ import {
   NotFoundError,
 } from "../../api/api-error.js";
 import { canWriteAdminConsole } from "../admin/console-shared.js";
-import { createOutboundHttpClient, type OutboundRoute } from "../outbound-http.js";
+import { privateLinkView, withPrivateFallback } from "./federation-private-link.js";
+import {
+  createOutboundHttpClient,
+  OutboundHttpError,
+  type OutboundRoute,
+} from "../outbound-http.js";
 import type { TenantEnvelopeCipher } from "../secrets/envelope.js";
 import {
   withTenantIoSagaPostgresContext,
@@ -84,6 +89,10 @@ export interface FederationApplicationRow {
   last_error: string | null;
   directory_pending: boolean;
   retry_count: number;
+  private_target: string | null;
+  private_target_source: "discovered" | "manual" | null;
+  private_target_checked_at: Date | null;
+  private_target_error: string | null;
 }
 /** Parses HELIX_FEDERATION_ROUTES ("public.host=target:port,..."). */
 export function parseFederationRoutes(value: string | undefined): Map<string, OutboundRoute> {
@@ -104,6 +113,10 @@ export function parseFederationRoutes(value: string | undefined): Map<string, Ou
 
 export class FederationPairing {
   readonly fetch: typeof fetch;
+  /** Verified private targets by public hostname (see federation-private-link.ts). */
+  readonly privateRoutes = new Map<string, OutboundRoute>();
+  /** Called when a learned private route stops answering and calls fall back to public. */
+  onPrivateRouteFailure: (hostname: string) => void = () => undefined;
   constructor(
     readonly sql: postgres.Sql,
     readonly cipher: TenantEnvelopeCipher,
@@ -111,17 +124,30 @@ export class FederationPairing {
     readonly credentials: PostgresAgentCredentialStore,
     readonly publicOrigin: string,
     allowPrivateNetwork = false,
-    routes: ReadonlyMap<string, OutboundRoute> = new Map(),
+    readonly staticRoutes: ReadonlyMap<string, OutboundRoute> = new Map(),
   ) {
-    this.fetch = createOutboundHttpClient({
+    const options = {
       allowHttp: allowPrivateNetwork,
       allowPrivateNetwork,
-      routes,
       maxRedirects: 0,
       maxRequestBytes: 2_000_000,
       maxResponseBytes: 2_000_000,
       timeoutMs: 15_000,
+    };
+    const routed = createOutboundHttpClient({
+      ...options,
+      routes: (host) => staticRoutes.get(host) ?? this.privateRoutes.get(host),
     });
+    const direct = createOutboundHttpClient({ ...options, routes: staticRoutes });
+    this.fetch = withPrivateFallback(
+      routed,
+      direct,
+      (host) => !staticRoutes.has(host) && this.privateRoutes.has(host),
+      (host) => {
+        this.privateRoutes.delete(host);
+        this.onPrivateRouteFailure(host);
+      },
+    );
   }
   admin(actor: Actor) {
     if (actor.type !== "user" || !canWriteAdminConsole(actor, "admin.agents"))
@@ -164,6 +190,7 @@ export class FederationPairing {
       pending: row.directory_pending,
       rotationPending:
         row.receipt_envelope !== null && this.material(row).pendingRotation !== undefined,
+      connection: privateLinkView(this.staticRoutes, row),
     };
   }
   async list(actor: Actor) {
@@ -562,6 +589,11 @@ export class FederationPairing {
       throw new ForbiddenError("The receiving installation's authority is invalid.");
     await this.retire(row, "revoked");
     return { revoked: true };
+  }
+  async recordForApp(actor: Actor, appId: string, verb: string) {
+    await withTenantPostgresContext(this.sql, { orgId: actor.orgId, actorId: actor.id }, (tx) =>
+      this.record(tx, actor.orgId, actor.id, appId, verb),
+    );
   }
   async record(
     tx: postgres.TransactionSql,

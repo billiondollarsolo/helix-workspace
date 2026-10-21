@@ -13,6 +13,16 @@ export interface FederationApplication {
   readonly error: string | null;
   readonly pending: boolean;
   readonly rotationPending: boolean;
+  /** Absent from servers older than private links. */
+  readonly connection?: FederationConnection;
+}
+/** How Workspace's own calls reach the app: privately, or over its public address. */
+export interface FederationConnection {
+  readonly path: "private" | "public";
+  readonly target: string | null;
+  readonly source: "discovered" | "manual" | "configured" | null;
+  readonly checkedAt: string | null;
+  readonly error: string | null;
 }
 export type FederationRole = "viewer" | "member" | "admin";
 export interface FederationAssignment {
@@ -142,3 +152,32 @@ export async function rotateFederationCredential(
       "Credential rotation is pending. Check the connection and retry.",
     );
 }
+
+async function privateLinkRequest(
+  appId: string,
+  method: "PUT" | "DELETE" | "POST",
+  body?: { target: string },
+): Promise<FederationApplication> {
+  const response = await authenticatedFetch(
+    `/api/admin/federation-applications/${encodeURIComponent(appId)}/private-link${method === "POST" ? "/check" : ""}`,
+    {
+      method,
+      ...(body === undefined
+        ? {}
+        : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
+    },
+  );
+  const result: unknown = await response.json().catch(() => null);
+  if (!response.ok)
+    throw responseError(
+      response,
+      result,
+      "Application connection",
+      "The private link could not be updated.",
+    );
+  return result as FederationApplication;
+}
+export const setFederationPrivateLink = (appId: string, target: string) =>
+  privateLinkRequest(appId, "PUT", { target });
+export const resetFederationPrivateLink = (appId: string) => privateLinkRequest(appId, "DELETE");
+export const checkFederationPrivateLink = (appId: string) => privateLinkRequest(appId, "POST");

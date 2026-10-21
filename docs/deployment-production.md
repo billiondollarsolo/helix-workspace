@@ -249,24 +249,30 @@ Caddy sites accept only the proxy's address ranges. Use SSL mode **Full (strict)
 obtaining real certificates behind the proxy. Proxies close idle connections (about 100 seconds
 on Cloudflare) and cap request size (100 MB on Cloudflare's free plan).
 
-**Private links between apps.** Workspace's own calls to a federated app (for example Agentspace)
-should not cross the public proxy, where bot protection or timeouts can interrupt them. Set
-`HELIX_FEDERATION_ROUTES=public.host=target:port[,...]`: Workspace keeps using the app's public
-`https://` address as its identity and still verifies that hostname's TLS certificate, but connects
-to the private target. Choose the target by where the apps run:
+**Private links between apps.** Workspace's own calls to a federated app (directory sync,
+credentials, backups) should stay on a private network, where bot protection and proxy timeouts
+can't interrupt them. This is automatic when both apps share a Docker network: Agentspace's
+`compose.workspace.yaml` advertises `https://helix-agentspace:3000`, and Workspace uses it after
+checking that the app answers there with a valid certificate for its public hostname and as the
+same installation. Every 10 minutes it re-checks; if the private address stops answering, calls
+fall back to the public address.
 
-1. Same host: the shared Docker network, e.g.
-   `agentspace.example.com=helix-agentspace:3000`.
-2. Same cloud provider: its private network (Hetzner private network, AWS/GCP VPC), e.g.
-   `agentspace.example.com=10.0.0.5:3000`.
-3. Different providers: a WireGuard mesh such as Tailscale (or Headscale/NetBird), e.g.
-   `agentspace.example.com=agentspace.tailnet-name.ts.net:3000`.
-4. Already on Cloudflare Zero Trust: Cloudflare Tunnel with the WARP Connector for private
-   networking. A tunnel can also serve the web hostnames, so inbound 80/443 can be closed.
-5. Last resort: a direct public hostname restricted to the other server's address, ideally with
-   mutual TLS.
+**Admin → Federated apps → (app) → Operations → Connection path** shows which path is in use.
+For other setups choose **Set up a private link**, pick where the app runs, and enter one
+address; Workspace tests it before saving.
 
-The federated app must present a certificate valid for its public hostname on the routed port.
+| Where the apps run    | What to set up                                                | Address to enter                      |
+| --------------------- | ------------------------------------------------------------- | ------------------------------------- |
+| Same server           | Nothing (shared Docker network)                               | found automatically                   |
+| Same cloud provider   | Its private network (Hetzner private network, AWS or GCP VPC) | `10.0.0.5:3000`                       |
+| Different providers   | Tailscale or another WireGuard mesh (Headscale, NetBird)      | `agentspace.tailnet-name.ts.net:3000` |
+| Cloudflare Zero Trust | Cloudflare Tunnel with the WARP Connector                     | the app's private address             |
+
+An app can also advertise its own private addresses with `AGENTSPACE_PRIVATE_URLS` (comma-separated
+`https://host:port`). Operators can pin routes instead with
+`HELIX_FEDERATION_ROUTES=public.host=target:port[,...]`, which takes precedence and hides the admin
+controls. A direct public hostname is the last resort; restrict it to the other server's address.
+The federated app must present a certificate valid for its public hostname on the private port.
 
 ## Database
 

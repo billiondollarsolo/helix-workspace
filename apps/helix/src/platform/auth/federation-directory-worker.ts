@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { withTenantIoSagaPostgresContext } from "../tenancy/postgres-roles.js";
 import type { FederationPairing, FederationApplicationRow } from "./federation-pairing.js";
+import { privateLinkDue, refreshPrivateLink } from "./federation-private-link.js";
 import { FederationPeerEndedError } from "./federation-pairing.js";
 
 type DirectoryUser = {
@@ -99,7 +100,13 @@ export class FederationDirectoryWorker {
               await tx`update federation_applications set directory_pending=false,last_error=null where org_id=${this.orgId} and id=${row.id}`;
             },
           );
-        } else await this.sync(row);
+        } else {
+          if (privateLinkDue(row))
+            await refreshPrivateLink(this.federation, row).catch((error: unknown) => {
+              this.onError(error);
+            });
+          await this.sync(row);
+        }
       } catch (error) {
         if (error instanceof FederationPeerEndedError) {
           await this.federation.retire(row, row.status === "revoked" ? "revoked" : "failed");

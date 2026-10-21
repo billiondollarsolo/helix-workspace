@@ -74,8 +74,13 @@ export interface OutboundHttpClientOptions {
   readonly proxyUrl?: string;
   readonly resolve?: (hostname: string) => Promise<readonly ResolvedOutboundAddress[]>;
   readonly transport?: (input: OutboundHttpTransportInput) => Promise<Response>;
-  /** Public hostname → private target. Targets may be private; they come from operator config. */
-  readonly routes?: ReadonlyMap<string, OutboundRoute>;
+  /**
+   * Public hostname → private target, as a map or a lookup evaluated per request.
+   * Targets may be private addresses: they come from operator configuration or
+   * from a target the caller verified (TLS name of the public host + identity).
+   */
+  readonly routes?:
+    ReadonlyMap<string, OutboundRoute> | ((hostname: string) => OutboundRoute | undefined);
 }
 
 interface NormalizedOptions {
@@ -90,7 +95,7 @@ interface NormalizedOptions {
   readonly proxyUrl?: URL;
   readonly resolve: NonNullable<OutboundHttpClientOptions["resolve"]>;
   readonly transport?: NonNullable<OutboundHttpClientOptions["transport"]>;
-  readonly routes: ReadonlyMap<string, OutboundRoute>;
+  readonly route: (hostname: string) => OutboundRoute | undefined;
 }
 
 interface HttpResponse {
@@ -213,7 +218,7 @@ async function requestWithRedirects(input: {
   let headers = input.headers;
   for (let redirects = 0; ; redirects += 1) {
     assertUrlAllowed(url, input.policy);
-    const route = input.policy.routes.get(normalizedHostname(url));
+    const route = input.policy.route(normalizedHostname(url));
     const address =
       route === undefined
         ? await resolveAndValidate(url, input.policy, false, input.signal)
@@ -611,13 +616,21 @@ function normalizeOptions(options: OutboundHttpClientOptions): NormalizedOptions
           family: family === 6 ? 6 : 4,
         }))),
     ...(options.transport === undefined ? {} : { transport: options.transport }),
-    routes: new Map(
-      [...(options.routes ?? new Map<string, OutboundRoute>())].map(([host, route]) => [
-        normalizeHostname(host),
-        route,
-      ]),
-    ),
+    route: normalizeRoutes(options.routes),
   };
+}
+
+function normalizeRoutes(
+  routes: OutboundHttpClientOptions["routes"],
+): (hostname: string) => OutboundRoute | undefined {
+  if (typeof routes === "function") return (hostname) => routes(normalizeHostname(hostname));
+  const map = new Map(
+    [...(routes ?? new Map<string, OutboundRoute>())].map(([host, route]) => [
+      normalizeHostname(host),
+      route,
+    ]),
+  );
+  return (hostname) => map.get(hostname);
 }
 
 function parseUrl(value: string): URL {

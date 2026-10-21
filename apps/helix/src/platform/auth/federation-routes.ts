@@ -8,6 +8,12 @@ import {
   deliverFederationRotation,
 } from "./federation-credentials.js";
 import { ForbiddenError } from "../../api/api-error.js";
+import {
+  checkPrivateLink,
+  privateLinkInput,
+  resetPrivateLink,
+  setPrivateLink,
+} from "./federation-private-link.js";
 import { assertActorMatchesRequestTenant } from "../tenancy/middleware.js";
 import { withTenantPostgresContext } from "../tenancy/postgres-roles.js";
 import {
@@ -76,6 +82,21 @@ export function registerFederationRoutes(
     await deliverFederationRotation(federation, row);
     return { rotated: true };
   });
+  // Private link: how Workspace's own calls reach the app (see federation-private-link.ts).
+  app.put("/api/admin/federation-applications/:appId/private-link", async (request) =>
+    setPrivateLink(
+      federation,
+      await admin(request),
+      appId(request),
+      privateLinkInput.parse(request.body),
+    ),
+  );
+  app.delete("/api/admin/federation-applications/:appId/private-link", async (request) =>
+    resetPrivateLink(federation, await admin(request), appId(request)),
+  );
+  app.post("/api/admin/federation-applications/:appId/private-link/check", async (request) =>
+    checkPrivateLink(federation, await admin(request), appId(request)),
+  );
   app.delete("/api/admin/federation-applications/:appId", async (request) => {
     await federation.revoke(await admin(request), appId(request));
     return { revoked: true };

@@ -100,6 +100,28 @@ describe("outbound HTTP policy", () => {
     });
   });
 
+  it("evaluates a route lookup on every request", async () => {
+    const route: { target?: { host: string; port: number } } = {};
+    const transport = vi.fn(
+      async (input: OutboundHttpTransportInput) =>
+        new Response(`${input.url.hostname}:${input.url.port}`),
+    );
+    const client = createOutboundHttpClient({
+      production: true,
+      resolve: async (hostname) =>
+        hostname === "helix-agentspace" ? [{ address: "172.25.0.9", family: 4 }] : [publicV4],
+      transport,
+      routes: (hostname) => (hostname === "agentspace.example" ? route.target : undefined),
+    });
+    await expect((await client("https://agentspace.example/")).text()).resolves.toBe(
+      `${publicV4.address}:`,
+    );
+    route.target = { host: "helix-agentspace", port: 3000 };
+    await expect((await client("https://agentspace.example/")).text()).resolves.toBe(
+      "172.25.0.9:3000",
+    );
+  });
+
   it("pins the validated address so DNS rebinding cannot change the connection", async () => {
     const resolve = vi
       .fn<(hostname: string) => Promise<readonly ResolvedOutboundAddress[]>>()

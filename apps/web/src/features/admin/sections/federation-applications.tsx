@@ -21,6 +21,7 @@ import {
 } from "@/features/admin/console/primitives";
 import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
 import { adminUsersQueryOptions } from "@/features/admin/admin-users";
+import { FederationPrivateLink } from "@/features/admin/federation-private-link";
 import {
   ApplicationSynchronization,
   FederationApplicationDetails,
@@ -390,6 +391,9 @@ function Application({
         <div hidden={tab !== "operations"}>
           {active && tab === "operations" ? (
             <FederationApplicationDetails application={application} />
+          ) : null}
+          {application.status === "active" && application.connection ? (
+            <FederationPrivateLink application={application} connection={application.connection} />
           ) : null}
           <section className="admin-section">
             <PanelHeading title="Connection credentials" />

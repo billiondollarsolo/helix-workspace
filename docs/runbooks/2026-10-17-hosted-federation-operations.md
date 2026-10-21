@@ -23,11 +23,14 @@ directory sync stayed fresh). Sessions were reset by the cookie rename.
 | Caddy            | `bot.helixapps.si` proxies to `helix-agentspace:3000`                     |
 
 The federation application ID stays `bot` (its Workspace registration and operator state
-directory). The public hostname is still `bot.helixapps.si` until an
-`agentspace.helixapps.si` DNS record exists. Release files, checkpoint (database dump, row
-counts, state/config archive) and retired units/configuration are under
-`/srv/helix/agentspace-rename-20261021/`; the old volume `helix-bot_postgres-data` is kept
-for rollback.
+directory). Agentspace's public address is now `https://agentspace.helixapps.si` (Caddy
+certificate, in-app certificate sync, `instance.public_url`, Workspace's federation
+application and backup-target origins, the recovery worker's health URL and the SSO
+client's redirect URI). `bot.helixapps.si` permanently redirects to it; its old callback
+URL stays registered on the SSO client until the redirect is retired. Release files,
+checkpoint (database dump, row counts, state/config archive) and retired
+units/configuration are under `/srv/helix/agentspace-rename-20261021/`; the old volume
+`helix-bot_postgres-data` is kept for rollback.
 
 ## Federation review and assignment conflicts — 2026-10-20
 

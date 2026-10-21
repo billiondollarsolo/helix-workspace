@@ -339,7 +339,10 @@ async function undiciTransport(input: OutboundHttpTransportInput): Promise<Respo
       ...(input.init.body === undefined ? {} : { body: input.init.body }),
       dispatcher,
     };
-    const requestUrl = input.proxyUrl === undefined ? input.originalUrl : input.url;
+    // Direct requests keep the public URL (TLS name, Host) but must use the pinned port,
+    // which differs from the public one for operator routes.
+    const requestUrl =
+      input.proxyUrl === undefined ? withPort(input.originalUrl, input.url.port) : input.url;
     const response = await undiciFetch(requestUrl, requestInit);
     return await boundedResponse(
       response,
@@ -661,6 +664,13 @@ function pinUrl(url: URL, address: ResolvedOutboundAddress, port?: number): URL 
   pinned.hostname = address.family === 6 ? `[${address.address}]` : address.address;
   if (port !== undefined) pinned.port = String(port);
   return pinned;
+}
+
+function withPort(url: URL, port: string): URL {
+  if (url.port === port) return url;
+  const next = new URL(url);
+  next.port = port;
+  return next;
 }
 
 function routeUrl(url: URL, route: OutboundRoute): URL {

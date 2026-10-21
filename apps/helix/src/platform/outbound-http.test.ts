@@ -139,6 +139,37 @@ describe("outbound HTTP policy", () => {
     expect(resolve).toHaveBeenCalledTimes(1);
   });
 
+  it("sends routed requests to the route's port through the real transport", async () => {
+    const server = createServer((request, response) => {
+      expect(request.headers.host).toMatch(/^routed\.example/u);
+      response.end("routed");
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    try {
+      const { port } = server.address() as AddressInfo;
+      const client = createOutboundHttpClient({
+        production: true,
+        allowHttp: true,
+        allowPrivateNetwork: true,
+        allowedHosts: ["routed.example"],
+        resolve: async () => [{ address: "127.0.0.1", family: 4 as const }],
+        routes: new Map([["routed.example", { host: "backend.internal", port }]]),
+      });
+      // The public URL has no port (80); only the route knows where the app listens.
+      await expect((await client("http://routed.example/")).text()).resolves.toBe("routed");
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error === undefined) resolve();
+          else reject(error);
+        });
+      });
+    }
+  });
+
   it("connects the real transport to the validated address without resolving the hostname again", async () => {
     const server = createServer((request, response) => {
       expect(request.headers.host).toMatch(/^rebind\.example:/u);

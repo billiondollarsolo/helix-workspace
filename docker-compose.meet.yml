@@ -44,7 +44,9 @@ services:
       # LiveKit at /rtc. Set LIVEKIT_PUBLIC_URL only to use another address.
       LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-helix}
       LIVEKIT_API_SECRET_FILE: /run/secrets/livekit_api_secret
-      LIVEKIT_INTERNAL_URL: http://livekit:7880
+      # LiveKit runs on the host network (see below); reach its API through the
+      # Docker host gateway. Firewalls must let the edge network reach 7880.
+      LIVEKIT_INTERNAL_URL: http://${HELIX_LIVEKIT_HOST:-host.docker.internal}:7880
       LIVEKIT_PUBLIC_URL: ${LIVEKIT_PUBLIC_URL:-}
       MEET_CAPTURE_SECRET_FILE: /run/secrets/meet_capture_secret
       # Media stays in the deployment's region.
@@ -54,33 +56,39 @@ services:
     secrets:
       - livekit_api_secret
       - meet_capture_secret
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    # LiveKit's webhooks arrive here from the host network, on loopback only.
+    ports:
+      - target: 3000
+        published: ${HELIX_LIVEKIT_WEBHOOK_PORT:-33000}
+        host_ip: 127.0.0.1
+        protocol: tcp
 
   caddy:
     logging: *default-logging
     environment:
       # Adds the /rtc route to the Workspace site.
       HELIX_MEET_SITE: -on
-      HELIX_LIVEKIT_UPSTREAM: livekit:7880
+      HELIX_LIVEKIT_UPSTREAM: ${HELIX_LIVEKIT_HOST:-host.docker.internal}:7880
+    extra_hosts:
+      - host.docker.internal:host-gateway
 
   livekit:
     logging: *default-logging
     profiles: !override []
-    # The image's shell turns the secret files into the key list and Redis
-    # password; neither ever appears in the Compose file or environment.
+    # The image's shell turns the secret file into the key list; the secret
+    # never appears in the Compose file or environment.
     entrypoint: !override
       - /bin/sh
       - -ec
       - |
         LIVEKIT_KEYS="$${LIVEKIT_API_KEY}: $$(cat /run/secrets/livekit_api_secret)"
-        LIVEKIT_REDIS_PASSWORD="$$(cat /run/secrets/redis_password)"
-        export LIVEKIT_KEYS LIVEKIT_REDIS_PASSWORD
+        export LIVEKIT_KEYS
         exec /livekit-server
     environment:
       LIVEKIT_KEYS: !reset null
       LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-helix}
-      # Go reads trusted roots from here: Redis's certificate is signed by the
-      # deployment CA.
-      SSL_CERT_FILE: /run/secrets/redis_ca
       LIVEKIT_CONFIG: |
         port: 7880
         log_level: info
@@ -89,9 +97,6 @@ services:
           udp_port: ${HELIX_MEET_RTC_UDP_PORT:-7882}
           node_ip: ${HELIX_MEET_PUBLIC_IP:?HELIX_MEET_PUBLIC_IP is required for the Meet install}
           use_external_ip: false
-        redis:
-          address: redis:6379
-          use_tls: true
         turn:
           enabled: true
           domain: ${HELIX_MEET_TURN_DOMAIN:?HELIX_MEET_TURN_DOMAIN is required for the Meet install}
@@ -102,44 +107,21 @@ services:
         webhook:
           api_key: ${LIVEKIT_API_KEY:-helix}
           urls:
-            - http://helix:3000/webhook/livekit
+            - http://127.0.0.1:${HELIX_LIVEKIT_WEBHOOK_PORT:-33000}/webhook/livekit
     secrets: !override
       - livekit_api_secret
-      - redis_password
-      - redis_ca
       - turn_cert
       - turn_key
-    depends_on: !override
-      redis:
-        condition: service_healthy
-    # Media and TURN are the only things that cannot go through the edge.
-    # LiveKit's TURN listens on UDP and TLS only, so 3478 is UDP.
-    ports: !override
-      - target: ${HELIX_MEET_RTC_TCP_PORT:-7881}
-        published: ${HELIX_MEET_RTC_TCP_PORT:-7881}
-        host_ip: ${HELIX_MEET_BIND_IP:-0.0.0.0}
-        protocol: tcp
-        mode: host
-      - target: ${HELIX_MEET_RTC_UDP_PORT:-7882}
-        published: ${HELIX_MEET_RTC_UDP_PORT:-7882}
-        host_ip: ${HELIX_MEET_BIND_IP:-0.0.0.0}
-        protocol: udp
-        mode: host
-      - target: ${HELIX_MEET_TURN_PORT:-3478}
-        published: ${HELIX_MEET_TURN_PORT:-3478}
-        host_ip: ${HELIX_MEET_BIND_IP:-0.0.0.0}
-        protocol: udp
-        mode: host
-      - target: ${HELIX_MEET_TURNS_PORT:-5349}
-        published: ${HELIX_MEET_TURNS_PORT:-5349}
-        host_ip: ${HELIX_MEET_BIND_IP:-0.0.0.0}
-        protocol: tcp
-        mode: host
-    # data-plane: Redis and Helix's webhook. edge: Caddy's /rtc route and the
-    # published media ports.
-    networks: !override
-      - data-plane
-      - edge
+    # A single LiveKit node needs no Redis.
+    depends_on: !reset {}
+    # Host networking: WebRTC media through Docker's port forwarding loses
+    # packets (UDP NAT conntrack clashes) and breaks TURN relaying to the SFU.
+    # LiveKit therefore listens on the host: 7881/tcp, 7882/udp, 3478/udp and
+    # 5349/tcp must be open to the internet; 7880 only to the Docker edge
+    # network (Caddy's /rtc route and Workspace).
+    network_mode: host
+    ports: !reset []
+    networks: !reset []
     # Read-only root, no capabilities, non-root user and no-new-privileges
     # come from docker-compose.yml.
     deploy:

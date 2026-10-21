@@ -739,6 +739,14 @@ file, and the default stack stays on Mail, Drive, Chat, and Assistant.
    | UDP 3478 | TURN, for people whose network blocks direct media |
    | TCP 5349 | TURN over TLS, for networks that allow only TLS    |
 
+   LiveKit runs on the host network, so it also listens on TCP 7880. Keep 7880 closed to the
+   Internet but open to the Docker edge network, which Caddy and Helix use to reach it. With
+   `ufw` (edge subnet and bridge from `docker network inspect helix-production-edge`):
+
+   ```sh
+   ufw allow in on <edge-bridge> from <edge-subnet> to any port 7880 proto tcp
+   ```
+
 3. Add the Meet secret files to the directory the other secrets are in. This needs the `ca`
    folder that the generator left there:
 
@@ -770,9 +778,13 @@ administrator can turn either off for the organization in **Admin → Apps**.
 
 How it is put together:
 
-- One `livekit` container, pinned by version and digest. It uses the stack's Redis and sends room
-  and participant events to Helix at `/webhook/livekit`, signed with the API secret.
-- Caddy routes `/rtc` on the Workspace site to LiveKit. The LiveKit API itself is never published.
+- One `livekit` container, pinned by version and digest, on the host network. WebRTC media
+  through Docker's port forwarding loses packets and breaks TURN relaying, which is why it does
+  not use a Compose network. A single node needs no Redis.
+- LiveKit sends room and participant events to Helix at `/webhook/livekit`, signed with the API
+  secret, through a port Helix publishes on 127.0.0.1 only (`HELIX_LIVEKIT_WEBHOOK_PORT`).
+- Caddy routes `/rtc` on the Workspace site to LiveKit through the Docker host gateway
+  (`host.docker.internal`).
 - People join with a token that Helix signs for one room. LiveKit accepts nothing else, and host
   controls (mute, remove, end) go through Helix.
 - Media is encrypted between each browser and LiveKit (DTLS-SRTP).
@@ -783,17 +795,18 @@ How it is put together:
 - Recording is not part of this install yet; it returns through LiveKit Egress. Live
   transcription returns through a LiveKit agent. Both are follow-up tasks.
 
-| Setting                   | Default                | Purpose                                                 |
-| ------------------------- | ---------------------- | ------------------------------------------------------- |
-| `HELIX_MEET_TURN_DOMAIN`  | required               | The TURN hostname (DNS-only)                            |
-| `HELIX_MEET_PUBLIC_IP`    | required               | The address LiveKit tells browsers to send media to     |
-| `HELIX_MEET_BIND_IP`      | `0.0.0.0`              | Host address the media and TURN ports are published on  |
-| `HELIX_MEET_RTC_TCP_PORT` | `7881`                 | Media over TCP, published and advertised                |
-| `HELIX_MEET_RTC_UDP_PORT` | `7882`                 | Media over UDP, published and advertised                |
-| `HELIX_MEET_TURN_PORT`    | `3478`                 | TURN over UDP, published and advertised                 |
-| `HELIX_MEET_TURNS_PORT`   | `5349`                 | TURN over TLS, published and advertised                 |
-| `LIVEKIT_API_KEY`         | `helix`                | LiveKit API key name (not a secret)                     |
-| `LIVEKIT_PUBLIC_URL`      | `wss://<HELIX_DOMAIN>` | Where browsers connect; set only to use another address |
+| Setting                      | Default                | Purpose                                                 |
+| ---------------------------- | ---------------------- | ------------------------------------------------------- |
+| `HELIX_MEET_TURN_DOMAIN`     | required               | The TURN hostname (DNS-only)                            |
+| `HELIX_MEET_PUBLIC_IP`       | required               | The address LiveKit tells browsers to send media to     |
+| `HELIX_MEET_RTC_TCP_PORT`    | `7881`                 | Media over TCP                                          |
+| `HELIX_MEET_RTC_UDP_PORT`    | `7882`                 | Media over UDP                                          |
+| `HELIX_MEET_TURN_PORT`       | `3478`                 | TURN over UDP                                           |
+| `HELIX_MEET_TURNS_PORT`      | `5349`                 | TURN over TLS                                           |
+| `HELIX_LIVEKIT_HOST`         | `host.docker.internal` | How Caddy and Helix reach LiveKit's API on the host     |
+| `HELIX_LIVEKIT_WEBHOOK_PORT` | `33000`                | Loopback port LiveKit's webhooks reach Helix on         |
+| `LIVEKIT_API_KEY`            | `helix`                | LiveKit API key name (not a secret)                     |
+| `LIVEKIT_PUBLIC_URL`         | `wss://<HELIX_DOMAIN>` | Where browsers connect; set only to use another address |
 
 One LiveKit server on one host is sized for small meetings. `infra/scripts/production-boot-smoke.sh
 --with meet` boots this install; run it on the host class you intend to use. The Helm chart does

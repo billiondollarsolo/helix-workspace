@@ -10,8 +10,8 @@ import { addMeetSecrets, generateProductionSecrets } from "./generate-production
 /* The optional Meet install: docker-compose.meet.yml on top of the production
    stack. Without the file nothing below exists; with it Helix runs the Full
    Workspace profile against a bundled LiveKit server that holds no development
-   credential, signals through the Workspace site at /rtc and publishes only
-   the media and TURN ports. */
+   credential, signals through the Workspace site at /rtc and runs on the host
+   network so WebRTC media and TURN relaying do not pass Docker's port NAT. */
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const digest = (character) => `sha256:${character.repeat(64)}`;
@@ -106,7 +106,7 @@ describe("optional Meet install", () => {
       HELIX_APPS: "mail,drive,chat,assistant,calendar,meet",
       LIVEKIT_API_KEY: "helix",
       LIVEKIT_API_SECRET_FILE: "/run/secrets/livekit_api_secret",
-      LIVEKIT_INTERNAL_URL: "http://livekit:7880",
+      LIVEKIT_INTERNAL_URL: "http://host.docker.internal:7880",
       MEET_CAPTURE_SECRET_FILE: "/run/secrets/meet_capture_secret",
       MEET_MEDIA_REGION: "eu-test",
       HELIX_MEET_TURN_DOMAIN: "turn.example.test",
@@ -139,21 +139,18 @@ describe("optional Meet install", () => {
       ([, value]) => typeof value === "string" && /helix_dev|change_me/u.test(value),
     );
     expect(leaked).toEqual([]);
-    // The key list and Redis password are read from secret files at start.
+    // The key list is read from the secret file at start.
     const script = service.entrypoint.join("\n");
     expect(script).toContain("cat /run/secrets/livekit_api_secret");
-    expect(script).toContain("cat /run/secrets/redis_password");
     expect(script).toContain("exec /livekit-server");
     expect(service.secrets.map((secret) => secret.source).sort()).toEqual([
       "livekit_api_secret",
-      "redis_ca",
-      "redis_password",
       "turn_cert",
       "turn_key",
     ]);
   });
 
-  it("configures LiveKit for the existing Redis, Helix's webhook and built-in TURN", () => {
+  it("configures a single LiveKit node with Helix's webhook and built-in TURN", () => {
     // The rendered YAML, exactly: Compose has already filled in the variables.
     expect(withMeet.services.livekit.environment.LIVEKIT_CONFIG.trimEnd().split("\n")).toEqual([
       "port: 7880",
@@ -163,9 +160,6 @@ describe("optional Meet install", () => {
       "  udp_port: 7882",
       "  node_ip: 203.0.113.10",
       "  use_external_ip: false",
-      "redis:",
-      "  address: redis:6379",
-      "  use_tls: true",
       "turn:",
       "  enabled: true",
       "  domain: turn.example.test",
@@ -176,31 +170,34 @@ describe("optional Meet install", () => {
       "webhook:",
       "  api_key: helix",
       "  urls:",
-      "    - http://helix:3000/webhook/livekit",
+      "    - http://127.0.0.1:33000/webhook/livekit",
     ]);
-    // Redis's certificate is signed by the deployment CA.
-    expect(withMeet.services.livekit.environment.SSL_CERT_FILE).toBe("/run/secrets/redis_ca");
+    expect(withMeet.services.livekit.environment).not.toHaveProperty("SSL_CERT_FILE");
+    expect(withMeet.services.livekit.depends_on).toBeUndefined();
   });
 
-  it("publishes only the media and TURN ports, and advertises the ports it publishes", () => {
+  it("runs LiveKit on the host network and takes webhooks on Workspace's loopback port", () => {
+    const service = withMeet.services.livekit;
+    expect(service.network_mode).toBe("host");
+    expect(service.ports).toBeUndefined();
+    expect(service.networks).toBeUndefined();
+    // The only new published port is Workspace's, and only on loopback.
     const before = published(withoutMeet);
     expect(published(withMeet).filter((port) => !before.includes(port))).toEqual([
-      "livekit 7881/tcp",
-      "livekit 7882/udp",
-      "livekit 3478/udp",
-      "livekit 5349/tcp",
+      "helix 33000/tcp",
     ]);
-    for (const port of withMeet.services.livekit.ports) {
-      expect(String(port.published)).toBe(String(port.target));
-      expect(port.mode).toBe("host");
-    }
+    const webhook = withMeet.services.helix.ports.find(
+      (port) => String(port.published) === "33000",
+    );
+    expect(webhook).toMatchObject({ host_ip: "127.0.0.1", target: 3000 });
+    for (const name of ["helix", "caddy"])
+      expect(withMeet.services[name].extra_hosts).toEqual(["host.docker.internal=host-gateway"]);
   });
 
   it("keeps the LiveKit API private and routes signalling through the Workspace site", () => {
-    expect(Object.keys(withMeet.services.livekit.networks).sort()).toEqual(["data-plane", "edge"]);
     expect(withMeet.services.caddy.environment).toMatchObject({
       HELIX_MEET_SITE: "-on",
-      HELIX_LIVEKIT_UPSTREAM: "livekit:7880",
+      HELIX_LIVEKIT_UPSTREAM: "host.docker.internal:7880",
     });
     expect(withMeet.services.caddy.environment).not.toHaveProperty("HELIX_JITSI_ORIGIN");
     const caddyfile = readFileSync(join(root, "infra/caddy/Caddyfile.production"), "utf8");

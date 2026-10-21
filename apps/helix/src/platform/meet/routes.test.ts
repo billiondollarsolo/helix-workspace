@@ -102,14 +102,15 @@ describe("Meet LiveKit webhook", () => {
     expect(store.lifecycleEvents).toEqual([]);
   });
 
-  it("returns 404 for a room that does not exist", async () => {
+  it("ignores events for a room that does not exist, without asking LiveKit to retry", async () => {
     const app = await createApp(new FakeMeetStore());
     const response = await injectLiveKit(app, {
       event: "room_started",
       id: "EV_other_org",
       room: { name: `${otherOrgId}.${roomId}` },
     });
-    expect(response.statusCode).toBe(404);
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ ok: true, ignored: true });
   });
 
   it("records participant duration and bridge load from signed events", async () => {

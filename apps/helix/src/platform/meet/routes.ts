@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { PlatformMetrics } from "../../api/metrics.js";
 import { MEET_WEBHOOK_BODY_LIMIT_BYTES, readBoundedRequestBody } from "../../api/request-body.js";
 import type { TenantStorageResolver } from "../storage/tenant-resolver.js";
+import { detachedFromTenantPostgresContext } from "../tenancy/postgres-roles.js";
 import { meetGuestInviteTokenHash, verifyMeetGuestInviteToken } from "./guest-invites.js";
 import {
   liveKitJoin,
@@ -174,31 +175,35 @@ export async function registerMeetRoutes(
       if (raw === null) return reply.code(401).send({ error: "Invalid Meet webhook signature." });
       if (raw === false) return reply.code(409).send({ error: "Meet webhook replay rejected." });
       try {
-        const body = (parseRawJson(raw) ?? {}) as LiveKitWebhookEvent & { egressInfo?: unknown };
-        if (options.recordings !== undefined && options.recordingDir !== undefined) {
-          const egress = await handleEgressWebhook(
-            {
-              store: options.store,
-              recordings: options.recordings,
-              recordingDir: options.recordingDir,
-              storageResolver: options.storageResolver,
-              scanner: options.recordingScanner,
-              requireScanner: options.requireRecordingScanner,
-              now,
-              onError: options.onError,
-            },
-            body,
-          );
-          if (egress.handled) return egress.body;
-        }
-        const event = liveKitMediaEvent(body);
-        if (event === null) return { ok: true, ignored: true };
-        const lifecycle = await options.store.applyMediaEvent(event);
-        if (lifecycle !== null && !lifecycle.duplicate)
-          recordLifecycleMetrics(options, event.event, lifecycle);
-        return lifecycle === null
-          ? await reply.code(404).send({ error: "Unknown Meet room." })
-          : { ok: true, lifecycle };
+        // Each event names its own organization; leave the request's tenant
+        // context so every organization's meetings (and the background
+        // recording promotion) get their own.
+        return await detachedFromTenantPostgresContext(async () => {
+          const body = (parseRawJson(raw) ?? {}) as LiveKitWebhookEvent & { egressInfo?: unknown };
+          if (options.recordings !== undefined && options.recordingDir !== undefined) {
+            const egress = await handleEgressWebhook(
+              {
+                store: options.store,
+                recordings: options.recordings,
+                recordingDir: options.recordingDir,
+                storageResolver: options.storageResolver,
+                scanner: options.recordingScanner,
+                requireScanner: options.requireRecordingScanner,
+                now,
+                onError: options.onError,
+              },
+              body,
+            );
+            if (egress.handled) return egress.body;
+          }
+          const event = liveKitMediaEvent(body);
+          if (event === null) return { ok: true, ignored: true };
+          const lifecycle = await options.store.applyMediaEvent(event);
+          if (lifecycle !== null && !lifecycle.duplicate)
+            recordLifecycleMetrics(options, event.event, lifecycle);
+          // An unknown room never becomes known: answer 200 so LiveKit doesn't retry.
+          return lifecycle === null ? { ok: true, ignored: true } : { ok: true, lifecycle };
+        });
       } catch (error) {
         options.onError?.(error);
         throw error;

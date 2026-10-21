@@ -26,6 +26,15 @@ Caddy and Workspace reach its API at the edge bridge gateway `172.19.0.1:7880`, 
 allows from the edge subnet only. A two-browser probe from outside then exchanged audio and video
 over UDP and TCP with DTLS-SRTP.
 
+Recording (LiveKit Egress, `livekit/egress:v1.15.0`) runs on the host network with a
+loopback-only Redis (`livekit-redis`, 127.0.0.1:6390) shared with LiveKit. Egress writes MP4s to
+the `meet-recordings` volume (`/recordings`, owned 10001:0 mode 2770), which Workspace promotes
+into tenant storage and deletes. The Redis password is `livekit_redis_password` in the Meet
+secrets directory; `livekit_api_secret` and it are world-readable files there because Redis,
+LiveKit and Egress run as different users. Chrome runs sandboxed with LiveKit's seccomp profile
+(`/srv/helix/livekit-20261021/egress-chrome-seccomp.json`) and `SYS_CHROOT`. A throwaway-room
+recording produced a 2 MB MP4 that Workspace read and deleted; every webhook answered 200.
+
 Checks after rollout: readiness 200; `/rtc/validate` returns 200 with a server-minted token and 401
 without one through Cloudflare, 403 direct to the origin; a throwaway room's `room_started` and
 `room_finished` webhooks were verified by Workspace (404 unknown room, as expected). The pre-change

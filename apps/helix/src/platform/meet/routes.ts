@@ -73,63 +73,67 @@ export async function registerMeetRoutes(
     const at = now();
     const claims = verifyMeetGuestInviteToken(options.guestInviteSecret, input.token, at);
     if (claims === null) return reply.code(404).send({ error: "Unknown meeting invitation." });
-    const resolved = await options.store.resolveGuestInvite({
-      ...claims,
-      email: input.email,
-      tokenHash: meetGuestInviteTokenHash(input.token),
-      now: at,
+    // The signed invite names its organization, which need not be the one this
+    // host's request context is bound to.
+    return detachedFromTenantPostgresContext(async () => {
+      const resolved = await options.store.resolveGuestInvite({
+        ...claims,
+        email: input.email,
+        tokenHash: meetGuestInviteTokenHash(input.token),
+        now: at,
+      });
+      if (resolved === null) return reply.code(404).send({ error: "Unknown meeting invitation." });
+      const participantSubject = `guest:${resolved.invite.id}`;
+      const controls = await options.store.authorizeJoin?.({
+        orgId: resolved.room.orgId,
+        roomId: resolved.room.id,
+        participantSubject,
+      });
+      if (controls === null || controls === undefined) {
+        return reply
+          .code(403)
+          .send({ error: "Meeting entry is locked or this participant is banned." });
+      }
+      const ttlSeconds = Math.min(
+        5 * 60,
+        Math.max(1, Math.floor((resolved.invite.expiresAt.getTime() - at.getTime()) / 1000)),
+      );
+      const consented = await options.store.recordGuestRecordingConsent({
+        orgId: resolved.room.orgId,
+        roomId: resolved.room.id,
+        guestInviteId: resolved.invite.id,
+        joinGrantId: input.joinGrantId,
+        deviceId: input.deviceId,
+        expiresAt: new Date(at.getTime() + ttlSeconds * 1_000),
+      });
+      if (!consented) {
+        return reply.code(409).send({ error: "Recording notice consent could not be recorded." });
+      }
+      const join = liveKitJoin(options.liveKit, {
+        orgId: resolved.room.orgId,
+        roomId: resolved.room.id,
+        identity: participantSubject,
+        name: input.name,
+        moderator: false,
+        features: meetJwtFeatures(controls, participantSubject, false),
+        consentVersion: MEET_RECORDING_NOTICE_VERSION,
+        ttlSeconds,
+        now: at,
+      });
+      reply.header("cache-control", "no-store");
+      return {
+        roomId: resolved.room.id,
+        roomName: resolved.room.roomName,
+        mediaDomain: resolved.room.mediaDomain,
+        ...join,
+        lobbyRequired: resolved.room.lobbyEnabled,
+        canStartRecording: false,
+        recordingNoticeVersion: MEET_RECORDING_NOTICE_VERSION,
+        recordingActive: resolved.room.recordingActive ?? false,
+        controls,
+        canModerate: false,
+      };
     });
-    if (resolved === null) return reply.code(404).send({ error: "Unknown meeting invitation." });
-    const participantSubject = `guest:${resolved.invite.id}`;
-    const controls = await options.store.authorizeJoin?.({
-      orgId: resolved.room.orgId,
-      roomId: resolved.room.id,
-      participantSubject,
-    });
-    if (controls === null || controls === undefined) {
-      return reply
-        .code(403)
-        .send({ error: "Meeting entry is locked or this participant is banned." });
-    }
-    const ttlSeconds = Math.min(
-      5 * 60,
-      Math.max(1, Math.floor((resolved.invite.expiresAt.getTime() - at.getTime()) / 1000)),
-    );
-    const consented = await options.store.recordGuestRecordingConsent({
-      orgId: resolved.room.orgId,
-      roomId: resolved.room.id,
-      guestInviteId: resolved.invite.id,
-      joinGrantId: input.joinGrantId,
-      deviceId: input.deviceId,
-      expiresAt: new Date(at.getTime() + ttlSeconds * 1_000),
-    });
-    if (!consented) {
-      return reply.code(409).send({ error: "Recording notice consent could not be recorded." });
-    }
-    const join = liveKitJoin(options.liveKit, {
-      orgId: resolved.room.orgId,
-      roomId: resolved.room.id,
-      identity: participantSubject,
-      name: input.name,
-      moderator: false,
-      features: meetJwtFeatures(controls, participantSubject, false),
-      consentVersion: MEET_RECORDING_NOTICE_VERSION,
-      ttlSeconds,
-      now: at,
-    });
-    reply.header("cache-control", "no-store");
-    return {
-      roomId: resolved.room.id,
-      roomName: resolved.room.roomName,
-      mediaDomain: resolved.room.mediaDomain,
-      ...join,
-      lobbyRequired: resolved.room.lobbyEnabled,
-      canStartRecording: false,
-      recordingNoticeVersion: MEET_RECORDING_NOTICE_VERSION,
-      recordingActive: resolved.room.recordingActive ?? false,
-      controls,
-      canModerate: false,
-    };
   });
 
   // LiveKit signs the raw body, so keep it before parsing (it uses application/webhook+json).

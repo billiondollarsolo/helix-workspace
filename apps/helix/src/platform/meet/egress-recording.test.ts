@@ -83,6 +83,29 @@ describe("Egress recordings", () => {
     expect(existsSync(file)).toBe(false);
   });
 
+  it("announces a saved recording, and a failed announcement doesn't undo the save", async () => {
+    const { deps, file, store, errors } = await setup();
+    await writeFile(file, mp4);
+    const saved: unknown[] = [];
+    const onSaved = async (recording: unknown) => {
+      saved.push(recording);
+      throw new Error("mail is down");
+    };
+    await handleEgressWebhook({ ...deps, onSaved }, ended());
+    await settle();
+    expect(saved).toEqual([
+      {
+        orgId,
+        roomId,
+        objectId: "object-1",
+        startedAt: new Date(1_792_569_600_000),
+        endedAt: new Date(1_792_569_660_000),
+      },
+    ]);
+    expect(store.completeRecordingUpload).toHaveBeenCalledTimes(1);
+    expect(errors).toEqual([]);
+  });
+
   it("promotes only once when LiveKit redelivers egress_ended", async () => {
     const { deps, file, store } = await setup();
     await writeFile(file, mp4);

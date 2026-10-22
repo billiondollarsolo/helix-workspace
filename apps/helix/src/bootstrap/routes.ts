@@ -87,6 +87,7 @@ import {
   PostgresMeetLobbyStore,
   MeetEgressRecoveryWorker,
   createLiveKitEgress,
+  createMeetRecordingReadyHandler,
   registerMeetRoutes,
 } from "../platform/meet/index.js";
 import { registerSearchAdminRoutes } from "../platform/search/index.js";
@@ -697,6 +698,15 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
     const recordings = new PostgresMeetEgressRecordingStore(sql);
     // Business and enterprise tiers (and production) need scanned, encrypted recordings.
     const strictRecordings = bootEnv.NODE_ENV === "production" || securityTier !== "personal";
+    const onRecordingSaved = createMeetRecordingReadyHandler({
+      sql,
+      transport: context.identityMailTransport,
+      from: { address: context.mailCfg.signupFrom.address, name: context.mailCfg.signupFrom.name },
+      publicBaseUrl: bootEnv.HELIX_PUBLIC_URL ?? bootEnv.PUBLIC_BASE_URL ?? "http://localhost:3000",
+      onError: (error) => {
+        app.log.warn({ error }, "Meet recording-ready email failed");
+      },
+    });
     if (bootEnv.MEET_RECORDING_DIR !== undefined) {
       const liveKit = configuredMeetSecrets.liveKit;
       meetRecordingRecoveryWorker = new MeetEgressRecoveryWorker({
@@ -708,6 +718,7 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
           scanner: clamavScanner,
           requireScanner: strictRecordings,
           requireEncryption: strictRecordings,
+          onSaved: onRecordingSaved,
         },
         recovery: recordings,
         egress: () => createLiveKitEgress(liveKit),
@@ -726,6 +737,7 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
       guestInviteSecret: configuredMeetSecrets.guestInviteSecret,
       recordings,
       recordingDir: bootEnv.MEET_RECORDING_DIR,
+      onRecordingSaved,
       lobby: new PostgresMeetLobbyStore(sql),
       storageResolver: driveStorageResolver,
       ...(clamavScanner === undefined ? {} : { recordingScanner: clamavScanner }),

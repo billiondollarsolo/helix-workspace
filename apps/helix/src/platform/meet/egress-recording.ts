@@ -10,6 +10,7 @@ import { join } from "node:path";
 import type { TenantStorageResolver } from "../storage/tenant-resolver.js";
 import { toJsonObject } from "../util/json.js";
 import type { MeetEgressRecording, MeetEgressRecordingStore } from "./egress-store.js";
+import type { SavedMeetRecording } from "./recording-ready.js";
 import { validatePreparedRecordingObject, type MeetRecordingScanner } from "./recording-files.js";
 import type { MeetMediaWebhookStore, MeetStore } from "./store.js";
 
@@ -23,6 +24,8 @@ export interface EgressRecordingDeps {
   readonly requireEncryption?: boolean | undefined;
   /** Directory Egress writes into, mounted at the same path in Helix. */
   readonly recordingDir: string;
+  /** Runs once the recording is saved (naming it, emailing the hosts); must not throw. */
+  readonly onSaved?: ((saved: SavedMeetRecording) => Promise<void>) | undefined;
 }
 
 /** Where Egress writes a recording; derived from Helix's own upload id only. */
@@ -142,6 +145,15 @@ export async function promoteEgressRecording(
       return { ok: false, error: "The meeting for this recording is unavailable." };
     }
     await deps.store.completeRecordingUpload(recording.id);
+    await deps
+      .onSaved?.({
+        orgId: recording.orgId,
+        roomId: recording.roomId,
+        objectId: attachment.objectId,
+        startedAt: times.startedAt,
+        endedAt: times.endedAt,
+      })
+      .catch(() => undefined);
     return { ok: true, objectId: attachment.objectId };
   } finally {
     await unlink(path).catch(() => undefined);

@@ -14,6 +14,7 @@ import {
   type LiveKitOptions,
   type LiveKitWebhookEvent,
 } from "./livekit.js";
+import type { EgressRecordingDeps } from "./egress-recording.js";
 import type { MeetEgressRecordingStore } from "./egress-store.js";
 import { createLiveKitRooms, type LiveKitRooms } from "./livekit-rooms.js";
 import type { MeetLobbyStore } from "./lobby-store.js";
@@ -56,6 +57,8 @@ export interface RegisterMeetRoutesOptions {
   /** Egress recordings: the upload records and the directory Egress writes into. */
   readonly recordings?: MeetEgressRecordingStore | undefined;
   readonly recordingDir?: string | undefined;
+  /** Runs after each recording is saved. */
+  readonly onRecordingSaved?: EgressRecordingDeps["onSaved"];
   /** The lobby; without it guests join directly. */
   readonly lobby?: MeetLobbyStore | undefined;
   /** LiveKit's room service, to tell hosts someone is waiting; defaults to the configured server. */
@@ -232,6 +235,7 @@ export async function registerMeetRoutes(
                 scanner: options.recordingScanner,
                 requireScanner: options.requireRecordingScanner,
                 requireEncryption: options.requireRecordingEncryption,
+                onSaved: options.onRecordingSaved,
                 now,
                 onError: options.onError,
               },

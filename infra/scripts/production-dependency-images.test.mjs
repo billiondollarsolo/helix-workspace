@@ -77,10 +77,13 @@ describe("production dependency image build contracts", () => {
     expect(dataPlaneFixture).toContain("redis:8.10.2-alpine@sha256:");
     expect(dataPlaneFixture).not.toMatch(/(?:postgres|redis):(?:17|7)-alpine/u);
   });
-  it("repackages Meilisearch into a minimal patched runtime from an immutable source image", () => {
-    expect(dockerfiles.meilisearch).toContain("SOURCE_IMAGE=getmeili/meilisearch:v1.51.0@sha256:");
+  it("builds Meilisearch from checksum-pinned source into a minimal patched runtime", () => {
+    expect(dockerfiles.meilisearch).toMatch(
+      /ADD --checksum=sha256:[0-9a-f]{64} https:\/\/github\.com\/meilisearch\/meilisearch\/archive\/refs\/tags\/v1\.51\.0\.tar\.gz/u,
+    );
+    expect(dockerfiles.meilisearch).toContain("cargo build --release --locked -p meilisearch");
     expect(dockerfiles.meilisearch).toContain("RUNTIME_BASE=alpine:3.24.2@sha256:");
-    expect(dockerfiles.meilisearch).toContain("COPY --from=source /bin/meilisearch");
+    expect(dockerfiles.meilisearch).toContain("COPY --from=source");
     expect(dockerfiles.meilisearch).not.toContain("getmeili/meilisearch:v1.10");
   });
   it("installs the exact Alpine packages that close current high-severity advisories", () => {

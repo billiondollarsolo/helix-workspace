@@ -147,7 +147,7 @@ describe("production dependency audit", () => {
   });
   it("uses patched brace expansion without local compatibility patches", () => {
     const workspaceConfig = readFileSync(resolve("pnpm-workspace.yaml"), "utf8");
-    expect(workspaceConfig).toContain('"brace-expansion": "5.0.11"');
+    expect(workspaceConfig).toContain('"brace-expansion": "5.0.12"');
     expect(workspaceConfig).not.toContain("patchedDependencies");
   });
 });

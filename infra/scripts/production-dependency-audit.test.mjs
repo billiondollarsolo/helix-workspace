@@ -148,6 +148,10 @@ describe("production dependency audit", () => {
   it("uses patched brace expansion without local compatibility patches", () => {
     const workspaceConfig = readFileSync(resolve("pnpm-workspace.yaml"), "utf8");
     expect(workspaceConfig).toContain('"brace-expansion": "5.0.12"');
-    expect(workspaceConfig).not.toContain("patchedDependencies");
+    // The only reviewed local patch: a type-declaration fix in @better-auth/oauth-provider.
+    const patched = workspaceConfig.split("patchedDependencies:")[1]?.split(/\n\S/u)[0] ?? "";
+    expect(patched.trim().split("\n").filter(Boolean)).toEqual([
+      '"@better-auth/oauth-provider@1.7.2": patches/@better-auth__oauth-provider@1.7.2.patch',
+    ]);
   });
 });

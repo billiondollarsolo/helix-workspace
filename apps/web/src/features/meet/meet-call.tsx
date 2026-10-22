@@ -23,16 +23,18 @@ import {
    The view is wired to a real backend room carried in via `session`: the
    subject/code come from `meet.create-room`/`meet.meetings.list`, media
    connects to the LiveKit server URL with the minted access token, and
-   Leave disconnects only the local participant.
+   Leave disconnects only the local participant, except that a host or
+   co-host leaving an otherwise empty call ends the meeting.
 
    Guests (`guestName` set) have no session: the view then skips everything
    that calls authenticated APIs (session lookup, telemetry, host tools). */
 
 import { sessionUserQueryOptions } from "@/lib/auth";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useMemo, useRef, useState } from "react";
 import {
   applyMeetHostControl,
+  endMeetRoom,
   recordMeetTelemetry,
   type MeetHostControl,
   type MeetTelemetryEvent,
@@ -54,7 +56,7 @@ import { RecordingControl, RecordingFeedback, useMeetRecording } from "./meet-ca
 import { copyMeetingLink, meetJoinLink } from "./meet-join";
 import type { MeetCallSession } from "./meet-shell";
 import { MeetVideoGrid } from "./meet-video-grid";
-import { meetCallElapsedQueryOptions } from "./queries";
+import { meetCallElapsedQueryOptions, meetQueryKeys } from "./queries";
 
 /** Format an elapsed-second count as `M:SS` or `H:MM:SS`. */
 export function formatElapsed(totalSeconds: number): string {
@@ -77,6 +79,7 @@ export interface MeetCallProps {
 
 export function MeetCall({ session, onLeave, guestName }: MeetCallProps) {
   const guest = guestName !== undefined;
+  const queryClient = useQueryClient();
   const sessionQuery = useQuery({ ...sessionUserQueryOptions(), enabled: !guest });
   const displayName = guestName ?? sessionQuery.data?.name ?? sessionQuery.data?.email ?? "You";
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -483,6 +486,14 @@ export function MeetCall({ session, onLeave, guestName }: MeetCallProps) {
         <button
           type="button"
           onClick={() => {
+            // Recorders join as participants too; only people count.
+            const alone = call.participants.every((p) => p.id.startsWith("EG_"));
+            if (!guest && call.isJoined && session.canModerate && alone) {
+              // The last host out ends the meeting now instead of after LiveKit's idle timeout.
+              void endMeetRoom(session.roomId)
+                .catch(() => undefined)
+                .finally(() => void queryClient.invalidateQueries({ queryKey: meetQueryKeys.all }));
+            }
             commands.hangup();
             leave();
           }}

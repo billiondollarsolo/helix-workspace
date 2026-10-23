@@ -542,7 +542,7 @@ services:
   # and both services run as the same unprivileged user.
   edge-volumes-init:
     logging: *default-logging
-    image: rustfs/rustfs:1.0.1@sha256:1803faef57627e2d9c2e7d89d655d712ddded5389040054987163043fecb6a3c
+    image: rustfs/rustfs:1.0.3@sha256:9ca9559533b537d10482fe923288b676ad08f92a7069d9a17327fbae3cab688b
     user: "0:0"
     entrypoint:
       - /bin/sh
@@ -567,7 +567,7 @@ services:
   # mode 0700, and a new named volume is root-owned.
   rustfs-kms-init:
     logging: *default-logging
-    image: rustfs/rustfs:1.0.1@sha256:1803faef57627e2d9c2e7d89d655d712ddded5389040054987163043fecb6a3c
+    image: rustfs/rustfs:1.0.3@sha256:9ca9559533b537d10482fe923288b676ad08f92a7069d9a17327fbae3cab688b
     user: "0:0"
     entrypoint:
       - /bin/sh
@@ -653,7 +653,7 @@ services:
   # the first time and 409 once the key exists.
   rustfs-kms-key:
     logging: *default-logging
-    image: rustfs/rustfs:1.0.1@sha256:1803faef57627e2d9c2e7d89d655d712ddded5389040054987163043fecb6a3c
+    image: rustfs/rustfs:1.0.3@sha256:9ca9559533b537d10482fe923288b676ad08f92a7069d9a17327fbae3cab688b
     entrypoint:
       - /bin/sh
       - -euc

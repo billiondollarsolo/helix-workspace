@@ -198,7 +198,7 @@ services:
 
   rustfs:
     logging: *default-logging
-    image: rustfs/rustfs:1.0.1@sha256:1803faef57627e2d9c2e7d89d655d712ddded5389040054987163043fecb6a3c
+    image: rustfs/rustfs:1.0.3@sha256:9ca9559533b537d10482fe923288b676ad08f92a7069d9a17327fbae3cab688b
     command: ["/data"]
     environment:
       RUSTFS_ADDRESS: ":9000"
@@ -305,7 +305,7 @@ services:
 
   mailpit:
     logging: *default-logging
-    image: axllent/mailpit:v1.31.4@sha256:b68349e3a014b90c5610bfb26b2ae36f3892d7b8cf25ee140c6c71c98d2fcf48
+    image: axllent/mailpit:v1.31.6@sha256:23fe39e81bde596a918000b3135c0f85dc8bb4c9ea6be274b051143f3e300387
     ports:
       - "127.0.0.1:${MAILPIT_SMTP_PORT:-28457}:1025"
       - "127.0.0.1:${MAILPIT_WEB_PORT:-28458}:8025"
@@ -438,7 +438,7 @@ services:
   # to Helix with group 0 and the setgid bit.
   meet-recordings-init:
     logging: *default-logging
-    image: rustfs/rustfs:1.0.1@sha256:1803faef57627e2d9c2e7d89d655d712ddded5389040054987163043fecb6a3c
+    image: rustfs/rustfs:1.0.3@sha256:9ca9559533b537d10482fe923288b676ad08f92a7069d9a17327fbae3cab688b
     profiles: ["meet"]
     user: "0:0"
     entrypoint:
@@ -537,7 +537,7 @@ services:
 
   otel-collector:
     logging: *default-logging
-    image: otel/opentelemetry-collector-contrib:0.162.0@sha256:39923a8e431bd1f57be82411999d389fcfe40857492e4365456d97a4c1f74be6
+    image: otel/opentelemetry-collector-contrib:0.163.1-386@sha256:cc79ec8a69421354e7dbcc524d34cbe9a88bb08ed601f5b7b2a55387392f1aba
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
     profiles: ["observability"]
     ports:
@@ -605,7 +605,7 @@ services:
 
   grafana:
     logging: *default-logging
-    image: grafana/grafana:13.2.3@sha256:b28bae15e219c998fb0e0424ed724930cc61b1f61fb404d47c862f9a23f9e572
+    image: grafana/grafana:13.2.4@sha256:dbbc38ea21103cefb50396340cd88afec779c7e070b0a7bf5a75b4ce46651d3f
     profiles: ["observability"]
     environment:
       GF_ANALYTICS_REPORTING_ENABLED: "false"

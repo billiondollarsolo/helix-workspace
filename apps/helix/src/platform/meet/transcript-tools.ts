@@ -12,6 +12,9 @@ export function registerMeetTranscriptTools(
     readonly meetings: MeetStore;
     readonly transcripts: MeetTranscriptStore;
     readonly enabled: (orgId: string) => Promise<boolean>;
+    /** Starts or stops the live transcriber right away instead of on its next sweep. */
+    readonly onRequested?:
+      ((orgId: string, roomId: string, enabled: boolean) => Promise<void>) | undefined;
   },
 ): void {
   const room = z.object({ roomId: z.string().uuid() }).strict();
@@ -74,12 +77,24 @@ export function registerMeetTranscriptTools(
           throw new ForbiddenError(
             "An administrator must configure and enable Meet transcription first.",
           );
+        if (
+          input.enabled &&
+          (await options.meetings.authorizeRecordingStart({
+            orgId: ctx.actor.orgId,
+            actorId: ctx.actor.id,
+            roomId: input.roomId,
+          })) === null
+        )
+          throw new ForbiddenError(
+            "Transcription needs current capture consent from everyone in the call.",
+          );
         await options.transcripts.setRequested(
           ctx.actor.orgId,
           input.roomId,
           ctx.actor.id,
           input.enabled,
         );
+        await options.onRequested?.(ctx.actor.orgId, input.roomId, input.enabled);
         return { requested: input.enabled };
       },
     }),

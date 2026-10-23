@@ -252,6 +252,13 @@ export interface CreateMeetToolDefinitionsOptions {
   readonly publicBaseUrl?: string | undefined;
   /** Live recorder readiness. Recording is unavailable when omitted or false. */
   readonly recordingAvailable?: (() => Promise<boolean>) | undefined;
+  /** Live transcription; unavailable when omitted. */
+  readonly transcription?:
+    | {
+        readonly available: (orgId: string) => Promise<boolean>;
+        readonly active: (orgId: string, roomId: string) => Promise<boolean>;
+      }
+    | undefined;
   readonly metrics?: PlatformMetrics | undefined;
   readonly guestInviteSecret: string;
   /** Abuse rate limiter for create/join (MT.6). Defaults to in-memory. */
@@ -662,6 +669,9 @@ async function mintMemberJoin(
     canStartRecording: moderator,
     recordingNoticeVersion: MEET_RECORDING_NOTICE_VERSION,
     recordingActive: room.recordingActive ?? false,
+    transcriptionAvailable:
+      moderator && (await options.transcription?.available(actor.orgId)) === true,
+    transcriptionActive: (await options.transcription?.active(actor.orgId, room.id)) === true,
     controls,
     canModerate: moderator,
   };

@@ -38,6 +38,10 @@ export interface MeetCallSession {
   readonly recordingNoticeVersion: string;
   /** Authoritative server state used to warn late joiners as soon as they join. */
   readonly recordingActive: boolean;
+  /** Hosts/co-hosts only: transcription can be turned on. Missing means false. */
+  readonly transcriptionAvailable?: boolean;
+  /** Transcription was on when the token was minted. Missing means false. */
+  readonly transcriptionActive?: boolean;
   readonly controls: MeetControlState;
   readonly canModerate: boolean;
   /** Wall-clock start (epoch ms) for the elapsed timer. */

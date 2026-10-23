@@ -19,6 +19,5 @@ export const communicationEnv = {
   /** TURN hostname LiveKit serves (DNS-only, never proxied). */
   HELIX_MEET_TURN_DOMAIN: optionalString,
   MEET_TRANSCRIPTION_ALLOWED_HOSTS: optionalString,
-  MEET_TRANSCRIPTION_PROXY_URL: optionalUrl,
   HELIX_PASSWORDS_URL: optionalUrl,
 };

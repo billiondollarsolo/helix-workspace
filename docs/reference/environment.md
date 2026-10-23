@@ -216,7 +216,6 @@ Production assertions impose additional requirements; follow the [deployment gui
 | `MEET_MEDIA_REGION`                                | Optional     | —                                                           |
 | `MEET_RECORDING_DIR`                               | Optional     | —                                                           |
 | `MEET_TRANSCRIPTION_ALLOWED_HOSTS`                 | Optional     | —                                                           |
-| `MEET_TRANSCRIPTION_PROXY_URL`                     | Optional     | —                                                           |
 | `MEILI_API_KEY`                                    | Optional     | —                                                           |
 | `MEILI_HOST`                                       | Optional     | —                                                           |
 | `MEILI_INDEX_UID`                                  | Optional     | —                                                           |

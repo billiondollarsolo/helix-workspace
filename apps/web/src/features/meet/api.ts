@@ -109,6 +109,10 @@ export interface MeetTokenRecord {
   readonly canStartRecording: boolean;
   readonly recordingNoticeVersion: string;
   readonly recordingActive: boolean;
+  /** Hosts/co-hosts only: an admin enabled Meet transcription. Missing means false. */
+  readonly transcriptionAvailable?: boolean;
+  /** A host has transcription on right now. Missing means false. */
+  readonly transcriptionActive?: boolean;
   readonly controls: MeetControlState;
   readonly canModerate: boolean;
   readonly subject?: string;
@@ -359,6 +363,18 @@ export async function stopMeetRecording(
   fetchImpl: MeetApiFetch = authenticatedFetch,
 ): Promise<MeetRecordingStopped> {
   return callMeetTool<MeetRecordingStopped>("meet.recording.stop", { roomId }, fetchImpl);
+}
+
+/**
+ * Turn live transcription on or off. Rejects with the server's message, e.g.
+ * when someone present hasn't given current capture consent.
+ */
+export async function setMeetTranscription(
+  roomId: string,
+  enabled: boolean,
+  fetchImpl: MeetApiFetch = authenticatedFetch,
+): Promise<unknown> {
+  return callMeetTool<unknown>("meet.transcription.set", { roomId, enabled }, fetchImpl);
 }
 
 export async function applyMeetHostControl(

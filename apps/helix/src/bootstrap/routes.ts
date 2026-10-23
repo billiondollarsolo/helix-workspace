@@ -694,7 +694,7 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
 
   let meetRecordingRecoveryWorker: MeetEgressRecoveryWorker | undefined;
   if (configuredMeetSecrets !== null) {
-    await installMeetCapture(context, configuredMeetSecrets.captureSecret);
+    installMeetCapture(context);
     const recordings = new PostgresMeetEgressRecordingStore(sql);
     // Business and enterprise tiers (and production) need scanned, encrypted recordings.
     const strictRecordings = bootEnv.NODE_ENV === "production" || securityTier !== "personal";

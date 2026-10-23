@@ -88,6 +88,28 @@ export class MeetTranscriptStore {
     });
   }
 
+  /** Live meetings whose host asked for transcription and that have no live capture. */
+  async requestedRooms(
+    limit: number,
+  ): Promise<readonly { readonly orgId: string; readonly roomId: string }[]> {
+    const rows = await this.sql<
+      { org_id: string; room_id: string }[]
+    >`select org_id, room_id from helix_meet_transcription_requested_rooms(${limit})`;
+    return rows.map((row) => ({ orgId: row.org_id, roomId: row.room_id }));
+  }
+
+  /** Turns the request off after a failure, so it isn't retried in a loop. */
+  async clearRequested(orgId: string, roomId: string): Promise<void> {
+    await withTenantPostgresContext(
+      this.sql,
+      { orgId },
+      (
+        tx,
+      ) => tx`update meet_rooms set metadata=metadata || ${tx.json({ transcriptionRequested: false })}, updated_at=now()
+        where org_id=${orgId} and id=${roomId}`,
+    );
+  }
+
   async begin(
     orgId: string,
     roomId: string,

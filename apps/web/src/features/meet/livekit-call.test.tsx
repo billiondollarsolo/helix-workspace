@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type * as LiveKit from "livekit-client";
 import { FakeRoom } from "@/test/livekit";
 import {
+  FINAL_CAPTION_TTL_MS,
+  parseCaptionsPayload,
   parseChatPayload,
   qualityScore,
   useLiveKitCall,
@@ -213,6 +215,81 @@ describe("useLiveKitCall", () => {
     expect(controls().state.unreadChatCount).toBe(0);
   });
 
+  it("follows the transcription state packets and the join response", async () => {
+    const room = await mount({ options: { ...options, initialTranscriptionActive: true } });
+    expect(controls().state.transcriptionActive).toBe(true);
+    act(() => {
+      room.receiveData("helix.captions", { v: 1, type: "state", transcribing: false });
+    });
+    expect(controls().state.transcriptionActive).toBe(false);
+    act(() => {
+      room.receiveData("helix.captions", { v: 2, type: "state", transcribing: true });
+      room.receiveData("helix.captions", { v: 1, type: "state", transcribing: "yes" });
+      room.receiveData("helix.captions", "not json");
+      room.receiveData("other", { v: 1, type: "state", transcribing: true });
+    });
+    expect(controls().state.transcriptionActive).toBe(false);
+    act(() => {
+      room.receiveData("helix.captions", { v: 1, type: "state", transcribing: true });
+    });
+    expect(controls().state.transcriptionActive).toBe(true);
+  });
+
+  it("replaces interim captions with the final, keeps the newest lines and expires finals", async () => {
+    vi.useFakeTimers();
+    try {
+      const room = await mount();
+      const caption = (itemId: string, text: string, final: boolean) => ({
+        v: 1,
+        type: "caption",
+        itemId,
+        speakerIdentity: "actor-2",
+        speakerName: "Ana",
+        text,
+        final,
+      });
+      act(() => {
+        room.receiveData("helix.captions", { v: 1, type: "state", transcribing: true });
+        room.receiveData("helix.captions", caption("i1", "Hello", false));
+        room.receiveData("helix.captions", caption("i1", "Hello every", false));
+      });
+      expect(controls().state.captions).toEqual([
+        expect.objectContaining({ itemId: "i1", text: "Hello every", final: false }),
+      ]);
+      act(() => {
+        room.receiveData("helix.captions", caption("i1", "Hello everyone.", true));
+      });
+      expect(controls().state.captions).toEqual([
+        {
+          itemId: "i1",
+          speakerIdentity: "actor-2",
+          speakerName: "Ana",
+          text: "Hello everyone.",
+          final: true,
+        },
+      ]);
+
+      act(() => {
+        for (const id of ["i2", "i3", "i4"])
+          room.receiveData("helix.captions", caption(id, id, true));
+      });
+      expect(controls().state.captions.map((line) => line.itemId)).toEqual(["i2", "i3", "i4"]);
+
+      act(() => {
+        vi.advanceTimersByTime(FINAL_CAPTION_TTL_MS + 1);
+      });
+      expect(controls().state.captions).toEqual([]);
+
+      act(() => {
+        room.receiveData("helix.captions", caption("i5", "still talking", false));
+        room.receiveData("helix.captions", { v: 1, type: "state", transcribing: false });
+      });
+      expect(controls().state).toMatchObject({ transcriptionActive: false, captions: [] });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps only the last 200 chat messages", async () => {
     const room = await mount();
     const remote = room.addRemote("actor-2", "Ana");
@@ -335,5 +412,39 @@ describe("LiveKit helpers", () => {
     expect(qualityScore("excellent" as LiveKit.ConnectionQuality)).toBe(100);
     expect(qualityScore("lost" as LiveKit.ConnectionQuality)).toBe(0);
     expect(qualityScore("unknown" as LiveKit.ConnectionQuality)).toBeNull();
+  });
+});
+
+describe("parseCaptionsPayload", () => {
+  const encode = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
+  const base = {
+    v: 1,
+    type: "caption",
+    itemId: "i1",
+    speakerIdentity: "actor-2",
+    speakerName: "Ana",
+    text: "hi",
+    final: true,
+  };
+
+  it("drops malformed packets", () => {
+    expect(parseCaptionsPayload(new TextEncoder().encode("{"))).toBeNull();
+    expect(parseCaptionsPayload(encode(null))).toBeNull();
+    expect(parseCaptionsPayload(encode({ ...base, v: 2 }))).toBeNull();
+    expect(parseCaptionsPayload(encode({ ...base, itemId: "" }))).toBeNull();
+    expect(parseCaptionsPayload(encode({ ...base, text: "   " }))).toBeNull();
+    expect(parseCaptionsPayload(encode({ ...base, final: "true" }))).toBeNull();
+    expect(parseCaptionsPayload(encode({ ...base, speakerName: 3 }))).toBeNull();
+  });
+
+  it("caps long text to its newest words and fills in a missing name", () => {
+    const parsed = parseCaptionsPayload(
+      encode({ ...base, speakerName: " ", text: `${"a".repeat(600)} end` }),
+    );
+    expect(parsed?.type).toBe("caption");
+    if (parsed?.type !== "caption") return;
+    expect(parsed.caption.speakerName).toBe("Speaker");
+    expect(parsed.caption.text.length).toBeLessThanOrEqual(500);
+    expect(parsed.caption.text.endsWith(" end")).toBe(true);
   });
 });

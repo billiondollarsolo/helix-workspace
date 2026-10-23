@@ -16,6 +16,7 @@ import {
   type RemoteParticipant,
   type VideoCaptureOptions,
 } from "livekit-client";
+import { Debouncer } from "@tanstack/pacer";
 import { useEffect, useRef, useState } from "react";
 import { randomId } from "@/lib/random-id";
 import type { MeetTelemetryEvent } from "./api";
@@ -23,6 +24,7 @@ import {
   announceRecordingStarted,
   appendChat,
   MAX_CHAT_MESSAGE_LENGTH,
+  type MeetCaption,
   type MeetCallCallbacks,
   type MeetCallCapabilities,
   type MeetCallCommands,
@@ -42,6 +44,8 @@ export interface LiveKitCallOptions {
   /** Fallback label for the local participant when the token carries no name. */
   readonly displayName: string;
   readonly initialRecordingActive: boolean;
+  /** Transcription state from the join response; missing means off. */
+  readonly initialTranscriptionActive?: boolean;
   readonly media: MeetInitialMedia;
 }
 
@@ -113,6 +117,8 @@ const EMPTY_STATE: MeetCallState = {
   tileView: true,
   noiseSuppressionEnabled: null,
   recordingActive: false,
+  transcriptionActive: false,
+  captions: [],
   participants: [],
   activeSpeakerId: null,
   chatMessages: [],
@@ -129,6 +135,17 @@ export const LOBBY_TOPIC = "helix.lobby";
 /** Participant attribute carrying the raised hand. */
 export const HAND_ATTRIBUTE = "hand";
 const HAND_RAISED = "raised";
+/** Data topic the transcription service publishes state and captions on. */
+export const CAPTIONS_TOPIC = "helix.captions";
+/** Caption lines shown at once. */
+export const MAX_VISIBLE_CAPTIONS = 3;
+/** How long a final caption stays on screen. */
+export const FINAL_CAPTION_TTL_MS = 6_000;
+/** An interim caption that stops updating is dropped after this long. */
+const INTERIM_CAPTION_TTL_MS = 15_000;
+export const MAX_CAPTION_TEXT_LENGTH = 500;
+const MAX_CAPTION_NAME_LENGTH = 80;
+const MAX_CAPTION_ID_LENGTH = 200;
 const QUALITY_SAMPLE_INTERVAL_MS = 10_000;
 const MAX_CHAT_ID_LENGTH = 100;
 
@@ -221,6 +238,7 @@ export function useLiveKitCall({
       videoMuted: initial.videoMuted,
       noiseSuppressionEnabled: true,
       recordingActive: current.initialRecordingActive,
+      transcriptionActive: current.initialTranscriptionActive === true,
     });
     setMedia(EMPTY_MEDIA);
     if (current.initialRecordingActive) announceRecordingStarted();
@@ -263,8 +281,79 @@ export function useLiveKitCall({
     };
     room.on(RoomEvent.RecordingStatusChanged, setRecording);
 
+    // Live captions keyed by itemId, in arrival order. Each item expires on
+    // its own debounced timer (reset by every update) so finals fade out and
+    // stuck interims don't linger.
+    const captions = new Map<string, MeetCaption>();
+    const captionTimers = new Map<string, Debouncer<() => void>>();
+    const dropCaption = (itemId: string) => {
+      captionTimers.get(itemId)?.cancel();
+      captionTimers.delete(itemId);
+      captions.delete(itemId);
+    };
+    const publishCaptions = () => {
+      const visible = [...captions.values()].slice(-MAX_VISIBLE_CAPTIONS);
+      setState((prev) => ({ ...prev, captions: visible }));
+    };
+    const clearCaptions = () => {
+      for (const timer of captionTimers.values()) timer.cancel();
+      captionTimers.clear();
+      captions.clear();
+    };
+    const setTranscription = (transcribing: boolean) => {
+      if (!transcribing) clearCaptions();
+      setState((prev) =>
+        prev.transcriptionActive === transcribing && (transcribing || prev.captions.length === 0)
+          ? prev
+          : {
+              ...prev,
+              transcriptionActive: transcribing,
+              captions: transcribing ? prev.captions : [],
+            },
+      );
+    };
+    const receiveCaption = (caption: MeetCaption) => {
+      const { itemId } = caption;
+      captions.set(itemId, caption);
+      let timer = captionTimers.get(itemId);
+      if (timer === undefined) {
+        timer = new Debouncer(
+          () => {
+            if (disposed) return;
+            dropCaption(itemId);
+            publishCaptions();
+          },
+          {
+            wait: () =>
+              captions.get(itemId)?.final === true ? FINAL_CAPTION_TTL_MS : INTERIM_CAPTION_TTL_MS,
+          },
+        );
+        captionTimers.set(itemId, timer);
+      }
+      timer.maybeExecute();
+      // Keep the map small; only the newest few lines are ever shown.
+      for (const oldest of captions.keys()) {
+        if (captions.size <= MAX_VISIBLE_CAPTIONS * 4) break;
+        dropCaption(oldest);
+      }
+      // A caption implies transcription is on, even if the state packet was missed.
+      setState((prev) =>
+        prev.transcriptionActive ? prev : { ...prev, transcriptionActive: true },
+      );
+      publishCaptions();
+    };
+
     room.on(RoomEvent.DataReceived, (payload, participant, _kind, topic) => {
       if (disposed) return;
+      if (topic === CAPTIONS_TOPIC) {
+        // Only the hidden transcriber (no visible sender, or a TR_ identity)
+        // may caption; a person in the call can't fake captions.
+        if (participant !== undefined && !participant.identity.startsWith("TR_")) return;
+        const message = parseCaptionsPayload(payload);
+        if (message?.type === "state") setTranscription(message.transcribing);
+        else if (message?.type === "caption") receiveCaption(message.caption);
+        return;
+      }
       // The server sends this only to hosts and co-hosts. It only triggers a
       // refetch of the lobby list, so who sent it doesn't matter.
       if (topic === LOBBY_TOPIC) {
@@ -345,6 +434,7 @@ export function useLiveKitCall({
 
     return () => {
       disposed = true;
+      clearCaptions();
       room.removeAllListeners();
       void room.disconnect().catch(() => undefined);
       if (roomRef.current === room) roomRef.current = null;
@@ -595,6 +685,52 @@ export function parseChatPayload(
   } catch {
     return null;
   }
+}
+
+export type CaptionsMessage =
+  | { readonly type: "state"; readonly transcribing: boolean }
+  | { readonly type: "caption"; readonly caption: MeetCaption };
+
+/** Parses a `helix.captions` packet (v1 state or caption); anything else is null. */
+export function parseCaptionsPayload(payload: Uint8Array): CaptionsMessage | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(decoder.decode(payload));
+  } catch {
+    return null;
+  }
+  if (typeof value !== "object" || value === null) return null;
+  const record = value as Record<string, unknown>;
+  if (record.v !== 1) return null;
+  if (record.type === "state") {
+    return typeof record.transcribing === "boolean"
+      ? { type: "state", transcribing: record.transcribing }
+      : null;
+  }
+  if (record.type !== "caption") return null;
+  const { itemId, speakerIdentity, speakerName, text, final } = record;
+  if (typeof itemId !== "string" || itemId.length === 0 || itemId.length > MAX_CAPTION_ID_LENGTH) {
+    return null;
+  }
+  if (typeof speakerIdentity !== "string" || typeof speakerName !== "string") return null;
+  if (typeof text !== "string" || typeof final !== "boolean") return null;
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return null;
+  const name = speakerName.trim().slice(0, MAX_CAPTION_NAME_LENGTH);
+  return {
+    type: "caption",
+    caption: {
+      itemId,
+      speakerIdentity: speakerIdentity.slice(0, MAX_CAPTION_ID_LENGTH),
+      speakerName: name.length > 0 ? name : "Speaker",
+      // Long interim text grows at the end; keep the newest words.
+      text:
+        trimmed.length > MAX_CAPTION_TEXT_LENGTH
+          ? `…${trimmed.slice(-(MAX_CAPTION_TEXT_LENGTH - 1)).trimStart()}`
+          : trimmed,
+      final,
+    },
+  };
 }
 
 /** True for the server's `{ "type": "lobby.waiting" }` nudge. */

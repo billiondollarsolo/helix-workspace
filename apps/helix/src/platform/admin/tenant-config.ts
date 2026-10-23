@@ -66,6 +66,10 @@ const featureFlagsSchema = z
     mail_ai_assistance: z.boolean().optional(),
     meet_transcription: z.boolean().optional(),
     meet_ai_recaps: z.boolean().optional(),
+    /** Caption language hint (ISO 639-1); empty lets the speech model detect it. */
+    meet_transcription_language: z
+      .union([z.literal(""), z.string().regex(/^[a-z]{2}$/u)])
+      .optional(),
     calendar_import_invitations: z.boolean().optional(),
     drive_s3_api: z.boolean().optional(),
     chat_admin_private_rooms: z.boolean().optional(),

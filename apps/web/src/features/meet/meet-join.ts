@@ -103,6 +103,8 @@ export function sessionFromToken(
     canStartRecording: token.canStartRecording,
     recordingNoticeVersion: token.recordingNoticeVersion,
     recordingActive: token.recordingActive,
+    transcriptionAvailable: token.transcriptionAvailable === true,
+    transcriptionActive: token.transcriptionActive === true,
     controls: token.controls,
     canModerate: token.canModerate,
     startedAtMs: room.startedAtMs,

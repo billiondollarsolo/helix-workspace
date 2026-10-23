@@ -45,6 +45,8 @@ export interface LiveKitGrants {
   readonly canPublishSources: readonly (
     "camera" | "microphone" | "screen_share" | "screen_share_audio"
   )[];
+  /** Invisible to other participants; used by the transcriber. */
+  readonly hidden?: boolean;
 }
 
 export interface MintLiveKitTokenInput {
@@ -88,6 +90,7 @@ export function mintLiveKitToken(input: MintLiveKitTokenInput): MintedLiveKitTok
       canSubscribe: input.grants.canSubscribe,
       canPublishData: input.grants.canPublishData,
       canPublishSources: input.grants.canPublishSources,
+      ...(input.grants.hidden === true ? { hidden: true } : {}),
       // Raised hand and similar state; names and Helix context stay server-issued.
       canUpdateOwnMetadata: true,
     },

@@ -170,6 +170,13 @@ export class FakeRoom {
     this.emit("recordingStatusChanged", recording);
   }
 
+  /** Fires dataReceived with a JSON payload (or raw string) on a topic, as a
+      reliable packet from `participant` (undefined: sent by the server). */
+  receiveData(topic: string, value: unknown, participant?: FakeParticipant) {
+    const text = typeof value === "string" ? value : JSON.stringify(value);
+    this.emit("dataReceived", new TextEncoder().encode(text), participant, 0, topic);
+  }
+
   removeRemote(identity: string) {
     const participant = this.remoteParticipants.get(identity);
     this.remoteParticipants.delete(identity);

@@ -7,9 +7,7 @@ import { MailProductivityWorker } from "../platform/mail/productivity/worker.js"
 import { MailProductivityService } from "../platform/mail/productivity/service.js";
 import { MailProductivityStore } from "../platform/mail/productivity/store.js";
 import { createMailProductivityTools } from "../platform/mail/productivity/tools.js";
-import { MeetTranscriptStore } from "../platform/meet/transcript-store.js";
-import { registerMeetTranscriptTools } from "../platform/meet/transcript-tools.js";
-import { meetTranscriptionSettings } from "../platform/meet/transcription-settings.js";
+import { createMeetTranscription } from "./meet-transcription.js";
 import { AgentRuntimeStore } from "../platform/agent-runtime/store.js";
 import { HostedAgentWorker } from "../platform/agent-runtime/worker.js";
 import { registerLiveTools } from "../platform/live/tools.js";
@@ -612,20 +610,24 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
     registerMeetStatusTool(tools, { missingSecrets: missingMeetSecrets(bootEnv) });
   }
 
-  if (configuredMeetSecrets !== null) {
-    registerMeetTranscriptTools(tools, {
-      meetings: meetStore,
-      transcripts: new MeetTranscriptStore(sql),
-      enabled: async (orgId) =>
-        meetTranscriptionSettings(
-          context.runtimeConfiguration.current,
-          (await loadEffectiveTenantConfig({ orgs: orgStore }, orgId))?.features,
-          Boolean(bootEnv.MEET_TRANSCRIPTION_PROXY_URL),
-          bootEnv.MEET_TRANSCRIPTION_ALLOWED_HOSTS?.split(",")
-            .map((host) => host.trim())
-            .filter(Boolean),
-        ).enabled,
-    });
+  const meetTranscription =
+    configuredMeetSecrets === null
+      ? undefined
+      : createMeetTranscription({
+          sql,
+          tools,
+          meetings: meetStore,
+          liveKit: configuredMeetSecrets.liveKit,
+          config: () => context.runtimeConfiguration.current,
+          features: async (orgId) =>
+            (await loadEffectiveTenantConfig({ orgs: orgStore }, orgId))?.features,
+          allowedHosts: bootEnv.MEET_TRANSCRIPTION_ALLOWED_HOSTS,
+          onError: (error) => {
+            app.log.error({ error }, "Meet live transcription failed");
+          },
+        });
+  if (configuredMeetSecrets !== null && meetTranscription !== undefined) {
+    const { transcripts, settings: transcriptionSettings } = meetTranscription;
     registerMeetTools(tools, {
       store: meetStore,
       liveKit: configuredMeetSecrets.liveKit,
@@ -633,6 +635,10 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
       recordings: new PostgresMeetEgressRecordingStore(sql),
       recordingDir: bootEnv.MEET_RECORDING_DIR,
       recordingAvailable: () => recordingDirectoryReady(bootEnv.MEET_RECORDING_DIR),
+      transcription: {
+        available: async (orgId) => (await transcriptionSettings(orgId)).enabled,
+        active: (orgId, roomId) => transcripts.requested(orgId, roomId),
+      },
       lobby: new PostgresMeetLobbyStore(sql),
       publicBaseUrl: bootEnv.PUBLIC_BASE_URL ?? "http://localhost:3000",
       metrics,
@@ -787,6 +793,7 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
     calendarInvitationDeliveryWorker,
     assistantOrchestrator,
     leaderGatedWorkers,
+    meetTranscription,
     trpcRouter,
     readinessProbes,
   };

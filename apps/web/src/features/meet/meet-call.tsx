@@ -2,6 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import {
+  Captions as CaptionsIcon,
   VideoOff as CamOffIcon,
   MessageCircle as ChatIcon,
   Copy as CopyIcon,
@@ -53,6 +54,14 @@ import {
 import { InviteGuestDialog } from "./meet-call-invite";
 import { LobbyNotice, useMeetLobby } from "./meet-call-lobby";
 import { RecordingControl, RecordingFeedback, useMeetRecording } from "./meet-call-recording";
+import {
+  CaptionsOverlay,
+  CaptionsToggle,
+  TranscriptionControl,
+  TranscriptionFeedback,
+  TranscriptionNotice,
+  useMeetTranscription,
+} from "./meet-call-transcription";
 import { copyMeetingLink, meetJoinLink } from "./meet-join";
 import type { MeetCallSession } from "./meet-shell";
 import { MeetVideoGrid } from "./meet-video-grid";
@@ -87,6 +96,7 @@ export function MeetCall({ session, onLeave, guestName }: MeetCallProps) {
   const [participantsOpen, setParticipantsOpen] = useState(false);
   const [hostControlsOpen, setHostControlsOpen] = useState(false);
   const [callOptionsOpen, setCallOptionsOpen] = useState(false);
+  const [captionsHidden, setCaptionsHidden] = useState(false);
   const [controls, setControls] = useState(session.controls);
   const leftRef = useRef(false);
 
@@ -105,6 +115,7 @@ export function MeetCall({ session, onLeave, guestName }: MeetCallProps) {
       token: session.token,
       displayName,
       initialRecordingActive: session.recordingActive,
+      initialTranscriptionActive: session.transcriptionActive === true,
       media: session.media,
     };
   }, [
@@ -112,6 +123,7 @@ export function MeetCall({ session, onLeave, guestName }: MeetCallProps) {
     session.token,
     session.serverUrl,
     session.recordingActive,
+    session.transcriptionActive,
     session.media,
     displayName,
   ]);
@@ -150,6 +162,9 @@ export function MeetCall({ session, onLeave, guestName }: MeetCallProps) {
   });
   const recording = useMeetRecording(session.roomId, call.recordingActive);
   const canRecord = hasLiveRoom && session.recordingAvailable && session.canStartRecording;
+  const transcription = useMeetTranscription(session.roomId, call.transcriptionActive);
+  const canTranscribe = hasLiveRoom && !guest && session.transcriptionAvailable === true;
+  const captionsShown = call.transcriptionActive && !captionsHidden;
   const applyControl = (control: MeetHostControl) => {
     if (!hostControl.isPending) hostControl.mutate(control);
   };
@@ -178,6 +193,12 @@ export function MeetCall({ session, onLeave, guestName }: MeetCallProps) {
             REC
           </span>
         ) : null}
+        {call.transcriptionActive ? (
+          <span className="chip info">
+            <CaptionsIcon size={12} aria-hidden="true" />
+            Transcribing
+          </span>
+        ) : null}
         {guest ? null : <MeetingDetails subject={session.subject} code={session.code} />}
         <div className="ml-auto flex items-center gap-2 [color:var(--text-2)] type-meta">
           <span className="[font-variant-numeric:tabular-nums]" aria-label="Elapsed time">
@@ -198,6 +219,7 @@ export function MeetCall({ session, onLeave, guestName }: MeetCallProps) {
       </div>
 
       <RecordingNotice active={call.recordingActive} />
+      <TranscriptionNotice active={call.transcriptionActive} />
 
       <div className="flex-1 flex min-h-0">
         {/* Main stage — the LiveKit video grid. */}
@@ -219,6 +241,7 @@ export function MeetCall({ session, onLeave, guestName }: MeetCallProps) {
             ) : !call.isJoined ? (
               <Overlay message="Joining…" />
             ) : null}
+            {captionsShown ? <CaptionsOverlay captions={call.captions} /> : null}
             <LobbyNotice lobby={lobby} />
           </div>
         </div>
@@ -473,6 +496,17 @@ export function MeetCall({ session, onLeave, guestName }: MeetCallProps) {
             <ChatIcon size={16} />
           </CallControl>
         ) : null}
+        {call.transcriptionActive ? (
+          <CaptionsToggle
+            shown={captionsShown}
+            onToggle={() => {
+              setCaptionsHidden((hidden) => !hidden);
+            }}
+          />
+        ) : null}
+        {canTranscribe ? (
+          <TranscriptionControl controls={transcription} disabled={!call.isJoined} />
+        ) : null}
         {canRecord ? (
           <RecordingControl
             controls={recording}
@@ -537,6 +571,7 @@ export function MeetCall({ session, onLeave, guestName }: MeetCallProps) {
         </div>
       </div>
       {canRecord ? <RecordingFeedback controls={recording} /> : null}
+      {canTranscribe ? <TranscriptionFeedback controls={transcription} /> : null}
       {inviteOpen && session.canModerate && !guest ? (
         <InviteGuestDialog
           roomId={session.roomId}

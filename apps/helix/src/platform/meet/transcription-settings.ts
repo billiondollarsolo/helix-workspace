@@ -5,7 +5,8 @@ import { resolveFeatureProviderCredentials } from "../config/ai-settings.js";
 export function meetTranscriptionSettings(
   config: HelixConfig,
   features: Readonly<Record<string, unknown>> | undefined,
-  proxyConfigured: boolean,
+  /** LiveKit is configured, so the transcriber can join meetings. */
+  liveKitConfigured: boolean,
   allowedHosts: readonly string[] = ["api.openai.com"],
 ) {
   const route = config.ai?.routing?.rules?.find((rule) => rule.feature === "meet.transcribe");
@@ -44,7 +45,7 @@ export function meetTranscriptionSettings(
   }
   const enabled = Boolean(
     config.ai?.enabled !== false &&
-    proxyConfigured &&
+    liveKitConfigured &&
     features?.meet_transcription === true &&
     declared &&
     endpoint &&
@@ -63,5 +64,9 @@ export function meetTranscriptionSettings(
       features?.meet_ai_recaps === true &&
       Boolean(recap?.primary.model?.trim() && recapProvider && recapProvider.enabled !== false),
     ...(enabled ? { apiKey: provider.apiKey, endpoint, model } : {}),
+    ...(typeof features?.meet_transcription_language === "string" &&
+    /^[a-z]{2}$/u.test(features.meet_transcription_language)
+      ? { language: features.meet_transcription_language }
+      : {}),
   };
 }

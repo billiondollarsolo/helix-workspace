@@ -36,6 +36,16 @@ export interface MeetChatMessage {
   readonly isLocal: boolean;
 }
 
+/** One caption line from the transcription service. */
+export interface MeetCaption {
+  readonly itemId: string;
+  readonly speakerIdentity: string;
+  readonly speakerName: string;
+  readonly text: string;
+  /** False while the text is still interim and may change. */
+  readonly final: boolean;
+}
+
 export interface MeetCallState {
   /** The media client is created and connecting. */
   readonly isReady: boolean;
@@ -56,6 +66,10 @@ export interface MeetCallState {
   readonly noiseSuppressionEnabled: boolean | null;
   /** Recording on: the join response's value (or the room's flag once connected), then LiveKit's RecordingStatusChanged events. */
   readonly recordingActive: boolean;
+  /** Transcription on: the join response's value, then the server's `state` packets. */
+  readonly transcriptionActive: boolean;
+  /** Latest live captions, oldest first (at most a few lines). */
+  readonly captions: readonly MeetCaption[];
   /** Remote participants (does not include local). */
   readonly participants: readonly MeetCallParticipant[];
   /** Id of the loudest participant (local or remote). */

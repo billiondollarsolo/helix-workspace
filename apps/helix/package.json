@@ -55,7 +55,7 @@
     "ical.js": "2.2.1",
     "ioredis": "5.11.1",
     "liquidjs": "10.29.0",
-    "mailauth": "5.0.2",
+    "mailauth": "8.0.4",
     "mailparser": "3.9.20",
     "nanoid": "6.0.0",
     "nodemailer": "10.0.9",

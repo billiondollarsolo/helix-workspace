@@ -6,7 +6,7 @@
   "private": true,
   "dependencies": {
     "@helix/sdk-types": "workspace:*",
-    "drizzle-orm": "0.45.2",
+    "drizzle-orm": "0.45.4",
     "@helix/contracts": "workspace:*"
   },
   "exports": {

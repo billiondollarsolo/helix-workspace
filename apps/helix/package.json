@@ -53,7 +53,7 @@
     "fastify": "5.12.5",
     "htmlparser2": "10.1.0",
     "ical.js": "2.2.1",
-    "ioredis": "5.11.1",
+    "ioredis": "6.0.0",
     "liquidjs": "10.29.0",
     "mailauth": "5.0.2",
     "mailparser": "3.9.20",
